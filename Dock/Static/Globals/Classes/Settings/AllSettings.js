@@ -1,5 +1,6 @@
 import { settingsMenus } from '../../Enumerations/SettingsMenus.js';
 import ProfileSettings from './ProfileSettings.js';
+import ModelSettings from './ModelSettings.js';
 
 class AllSettings
 {
@@ -8,7 +9,8 @@ class AllSettings
     constructor()
     {
         this.#settingsMap = new Map([
-            [settingsMenus.PROFILE, new ProfileSettings()]
+            [settingsMenus.PROFILE, new ProfileSettings()],
+            [settingsMenus.MODEL, new ModelSettings()]
         ]);
     }
 

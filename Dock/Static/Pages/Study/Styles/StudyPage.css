@@ -17,6 +17,23 @@ study-page .study-page-container
     overflow-y: auto;
 }
 
+/* Mobile selection: -webkit-touch-callout:none suppresses the iOS
+   long-press callout that would otherwise cover our TextSelectionContextMenu.
+   Text selection itself stays enabled via user-select:text — only the
+   default link / image action sheet is suppressed. The Android action-
+   mode toolbar is OS-owned and can't be fully hidden from a web page,
+   but on Android our menu still appears alongside it; the touchend
+   backstop in StudyPage ensures the JS path runs even when the OS
+   hijacks pointer events. */
+study-page .question-section,
+study-page .answer-section,
+study-page .study-material-content-section
+{
+    -webkit-touch-callout: none;
+    -webkit-user-select: text;
+    user-select: text;
+}
+
 study-page .question-section
 {
     flex: 1;

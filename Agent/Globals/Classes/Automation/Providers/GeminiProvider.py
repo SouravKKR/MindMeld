@@ -20,15 +20,22 @@ from google.genai import errors as genai_errors
 class GeminiProvider(AutomationProvider):
     GROUNDING_CONTENT_CHAR_BUDGET = 8000
 
-    # When the API responds with 429 RESOURCE_EXHAUSTED it includes a
-    # RetryInfo block with `retryDelay` (e.g. '3.957548552s'). Honour the
-    # server's suggested delay and retry — the user has explicitly asked
-    # for "slow is fine, failure is not", and 429 is by definition
-    # transient (some other call drained the bucket; it refills in
-    # seconds). We retry up to MAX_RATE_LIMIT_RETRIES times and bound
-    # each sleep to MAX_RETRY_SLEEP_SECONDS so a misbehaving server
-    # response can't pin us forever.
-    MAX_RATE_LIMIT_RETRIES = 8
+    # Two classes of failure are treated as transient and retried with the
+    # same backoff machinery:
+    #
+    #  - 429 RESOURCE_EXHAUSTED: rate / quota bucket drained. The API
+    #    response carries a RetryInfo block with `retryDelay` (e.g.
+    #    '3.957548552s') which we honour when present, otherwise we fall
+    #    back to exponential backoff.
+    #  - 5xx (UNAVAILABLE / INTERNAL / etc.): Gemini-side capacity blip.
+    #    No retry hint is supplied, so we use exponential backoff alone.
+    #
+    # The user has explicitly asked for "slow is fine, failure is not", so
+    # the broader 5xx case opts into the same retry path rather than
+    # surfacing as a task failure. We retry up to MAX_TRANSIENT_RETRIES
+    # times and bound each sleep to MAX_RETRY_SLEEP_SECONDS so a
+    # misbehaving server response can't pin us forever.
+    MAX_TRANSIENT_RETRIES = 8
     DEFAULT_RETRY_SLEEP_SECONDS = 8.0
     MAX_RETRY_SLEEP_SECONDS = 60.0
 
@@ -66,6 +73,9 @@ class GeminiProvider(AutomationProvider):
         generate_image = False
         thinking_level = None
         response_as_text = False
+        response_schema_override = None
+        temperature_override = None
+        max_output_tokens_override = None
 
         for content in inputs:
             metadata = content.get_metadata()
@@ -85,6 +95,17 @@ class GeminiProvider(AutomationProvider):
                 thinking_level = metadata.get("thinking_level")
             if metadata and metadata.get("response_as_text", False):
                 response_as_text = True
+
+            # Opt-in structured-output knobs. Only the EnhanceImages
+            # workflow uses these today (Pydantic schema enforcement
+            # for the diagram-extraction stage); every existing caller
+            # is unaffected because the fields default to None.
+            if metadata and metadata.get("response_schema") is not None:
+                response_schema_override = metadata.get("response_schema")
+            if metadata and metadata.get("temperature") is not None:
+                temperature_override = metadata.get("temperature")
+            if metadata and metadata.get("max_output_tokens") is not None:
+                max_output_tokens_override = metadata.get("max_output_tokens")
 
             match ctype:
                 case AutomationContentTypes.SYSTEM:
@@ -121,6 +142,15 @@ class GeminiProvider(AutomationProvider):
 
         config_args["response_mime_type"] = "text/plain" if response_as_text else "application/json"
 
+        if response_schema_override is not None:
+            config_args["response_schema"] = response_schema_override
+
+        if temperature_override is not None:
+            config_args["temperature"] = temperature_override
+
+        if max_output_tokens_override is not None:
+            config_args["max_output_tokens"] = max_output_tokens_override
+
         if enable_search:
             config_args["tools"] = [types.Tool(google_search=types.GoogleSearch())]
 
@@ -152,7 +182,8 @@ class GeminiProvider(AutomationProvider):
     async def __generate_content_with_retry(self, model: str, contents, config):
         """
         Calls Gemini generate_content with two layers of protection against
-        RESOURCE_EXHAUSTED:
+        transient failures (429 RESOURCE_EXHAUSTED and 5xx
+        UNAVAILABLE/INTERNAL):
 
         1. A cross-process Redis semaphore holds open at most N slots per
            model (configured in Common/Constants/ApiConcurrencyLimits.json).
@@ -160,11 +191,12 @@ class GeminiProvider(AutomationProvider):
            cluster from firing live calls in the same microsecond.
 
         2. Inside the slot we run the actual call. If the API still
-           returns 429 — possible if other consumers of the same API key
-           are sharing the quota, or the in-flight tokens exceed our
-           rough estimate — we honour the server-supplied retryDelay,
-           sleep, and retry. After MAX_RATE_LIMIT_RETRIES the caller is
-           informed via the original exception.
+           returns a transient error — 429 (quota share / rough TPM
+           estimate exceeded) or 5xx (Gemini-side capacity blip) — we
+           sleep and retry. 429 responses carry a server-supplied
+           retryDelay we honour; 5xx have no retry hint so we use
+           exponential backoff. After MAX_TRANSIENT_RETRIES the caller
+           is informed via the original exception.
         """
         attempt_index = 0
         while True:
@@ -182,21 +214,23 @@ class GeminiProvider(AutomationProvider):
                         contents = contents,
                         config = config,
                     )
-                except genai_errors.ClientError as client_error:
-                    if not GeminiProvider.__is_rate_limit_error(client_error):
+                except (genai_errors.ClientError, genai_errors.ServerError) as api_error:
+                    if not GeminiProvider.__is_transient_error(api_error):
                         raise
 
-                    if attempt_index >= GeminiProvider.MAX_RATE_LIMIT_RETRIES:
+                    error_label = GeminiProvider.__describe_transient_error(api_error)
+
+                    if attempt_index >= GeminiProvider.MAX_TRANSIENT_RETRIES:
                         print(
-                            f"[GeminiProvider] 429 RESOURCE_EXHAUSTED after "
+                            f"[GeminiProvider] {error_label} after "
                             f"{attempt_index} retries on model {model} — giving up."
                         )
                         raise
 
-                    sleep_seconds = GeminiProvider.__resolve_retry_delay_seconds(client_error, attempt_index)
+                    sleep_seconds = GeminiProvider.__resolve_retry_delay_seconds(api_error, attempt_index)
                     print(
-                        f"[GeminiProvider] 429 RESOURCE_EXHAUSTED on model {model} "
-                        f"(attempt {attempt_index + 1}/{GeminiProvider.MAX_RATE_LIMIT_RETRIES}). "
+                        f"[GeminiProvider] {error_label} on model {model} "
+                        f"(attempt {attempt_index + 1}/{GeminiProvider.MAX_TRANSIENT_RETRIES}). "
                         f"Sleeping {sleep_seconds:.1f}s then retrying."
                     )
 
@@ -214,12 +248,50 @@ class GeminiProvider(AutomationProvider):
             ApiConcurrencyLimits.DEFAULT_MAX_CONCURRENT,
         )
 
+    # Status codes treated as transient. 429 is quota; 5xx are
+    # Gemini-side capacity / internal errors. Both retry on the same
+    # exponential backoff path. 408 (request timeout) joins them since
+    # the SDK occasionally surfaces it for slow streamed responses.
+    _TRANSIENT_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+
+    # Substring fallbacks for SDK versions that don't populate the
+    # numeric code on the exception (we've seen both shapes in the wild).
+    _TRANSIENT_STATUS_KEYWORDS = (
+        "RESOURCE_EXHAUSTED",
+        "UNAVAILABLE",
+        "INTERNAL",
+        "DEADLINE_EXCEEDED",
+    )
+
     @staticmethod
-    def __is_rate_limit_error(client_error) -> bool:
-        status_code = getattr(client_error, "code", None)
-        if status_code == 429:
+    def __is_transient_error(api_error) -> bool:
+        status_code = getattr(api_error, "code", None)
+        if status_code in GeminiProvider._TRANSIENT_STATUS_CODES:
             return True
-        return "RESOURCE_EXHAUSTED" in str(client_error)
+
+        stringified_error = str(api_error)
+        for transient_keyword in GeminiProvider._TRANSIENT_STATUS_KEYWORDS:
+            if transient_keyword in stringified_error:
+                return True
+
+        return False
+
+    @staticmethod
+    def __describe_transient_error(api_error) -> str:
+        status_code = getattr(api_error, "code", None)
+        stringified_error = str(api_error)
+
+        if status_code == 429 or "RESOURCE_EXHAUSTED" in stringified_error:
+            return "429 RESOURCE_EXHAUSTED"
+        if status_code == 503 or "UNAVAILABLE" in stringified_error:
+            return "503 UNAVAILABLE"
+        if status_code == 500 or "INTERNAL" in stringified_error:
+            return "500 INTERNAL"
+        if status_code == 504 or "DEADLINE_EXCEEDED" in stringified_error:
+            return "504 DEADLINE_EXCEEDED"
+        if status_code is not None:
+            return f"{status_code} transient error"
+        return "transient error"
 
     @staticmethod
     def __resolve_retry_delay_seconds(client_error, attempt_index: int) -> float:
@@ -271,6 +343,67 @@ class GeminiProvider(AutomationProvider):
         except ValueError:
             return None
 
+    async def __stream_image_with_retry(self, model: str, contents, config) -> dict[int, bytearray]:
+        """
+        Streams generate_content_stream into image_buffers, retrying the
+        whole stream on transient errors. Buffers are reset between
+        attempts so a partial payload from a failed attempt cannot
+        contaminate the next attempt's data.
+        """
+        attempt_index = 0
+
+        while True:
+            sleep_seconds = None
+            image_buffers: dict[int, bytearray] = {}
+
+            async with RedisSemaphore.slot(
+                bucket = model,
+                max_concurrent = GeminiProvider.__resolve_concurrent_limit(model),
+                hold_timeout_seconds = ApiConcurrencyLimits.SLOT_HOLD_TIMEOUT_SECONDS,
+                poll_interval_seconds = ApiConcurrencyLimits.ACQUIRE_POLL_INTERVAL_SECONDS,
+            ):
+                def stream_sync():
+                    for chunk in self.__client.models.generate_content_stream(
+                        model = model,
+                        contents = contents,
+                        config = config,
+                    ):
+                        if chunk.parts is None:
+                            continue
+                        for part in chunk.parts:
+                            if part.inline_data and part.inline_data.data:
+                                buf = image_buffers.setdefault(0, bytearray())
+                                buf.extend(part.inline_data.data)
+                            elif hasattr(part, "text") and part.text:
+                                print(f"[GeminiProvider] stream text: {part.text}")
+
+                try:
+                    await asyncio.to_thread(stream_sync)
+                    return image_buffers
+                except (genai_errors.ClientError, genai_errors.ServerError) as api_error:
+                    if not GeminiProvider.__is_transient_error(api_error):
+                        raise
+
+                    error_label = GeminiProvider.__describe_transient_error(api_error)
+
+                    if attempt_index >= GeminiProvider.MAX_TRANSIENT_RETRIES:
+                        print(
+                            f"[GeminiProvider] {error_label} after "
+                            f"{attempt_index} retries on image stream (model {model}) — giving up."
+                        )
+                        raise
+
+                    sleep_seconds = GeminiProvider.__resolve_retry_delay_seconds(api_error, attempt_index)
+                    print(
+                        f"[GeminiProvider] {error_label} on image stream (model {model}, "
+                        f"attempt {attempt_index + 1}/{GeminiProvider.MAX_TRANSIENT_RETRIES}). "
+                        f"Sleeping {sleep_seconds:.1f}s then retrying."
+                    )
+
+            if sleep_seconds is not None:
+                await asyncio.sleep(sleep_seconds)
+            attempt_index += 1
+
     async def __fetch_image_generation(
         self,
         request:        AutomationRequest,
@@ -290,24 +423,15 @@ class GeminiProvider(AutomationProvider):
 
         print(f"[GeminiProvider] Starting image generation stream (model={request.get_model()})...")
 
-        image_buffers: dict[int, bytearray] = {}
-
-        def stream_sync():
-            for chunk in self.__client.models.generate_content_stream(
-                model=request.get_model(),
-                contents=contents,
-                config=config,
-            ):
-                if chunk.parts is None:
-                    continue
-                for part in chunk.parts:
-                    if part.inline_data and part.inline_data.data:
-                        buf = image_buffers.setdefault(0, bytearray())
-                        buf.extend(part.inline_data.data)
-                    elif hasattr(part, "text") and part.text:
-                        print(f"[GeminiProvider] stream text: {part.text}")
-
-        await asyncio.to_thread(stream_sync)
+        # The streaming endpoint hits the same transient-error surface as
+        # generate_content (429 / 5xx). Mirror the retry policy of
+        # __generate_content_with_retry so EnhanceImages survives a
+        # Gemini-side capacity blip mid-batch instead of failing the task.
+        image_buffers: dict[int, bytearray] = await self.__stream_image_with_retry(
+            model = request.get_model(),
+            contents = contents,
+            config = config,
+        )
 
         if not image_buffers:
             print("[GeminiProvider] Image generation stream produced no image data")

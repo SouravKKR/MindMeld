@@ -113,6 +113,14 @@ settings-page
     -webkit-text-fill-color: var(--primary-text-color);
 }
 
+/* ── Model tab — tier select ───────────────────────────────────────────── */
+
+.settings-model-row .settings-row-value llm-tier-select
+{
+    display: inline-flex;
+    min-width: 280px;
+}
+
 /* ── Danger zone — destructive, account-wide actions ─────────────────────── */
 
 .settings-danger-zone

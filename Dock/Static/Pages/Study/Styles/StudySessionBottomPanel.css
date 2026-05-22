@@ -47,6 +47,18 @@ study-session-bottom-panel.study-session-bottom-panel--collapsed .bottom-panel-b
     pointer-events: none;
 }
 
+/* ── Tier picker row ─────────────────────────────────────────────── */
+
+study-session-bottom-panel .bottom-panel-tier-row
+{
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    /* Tighter than the question row — the dropdown is a small chip,
+       not a full-width control. */
+    margin-bottom: 2px;
+}
+
 /* ── Question row ─────────────────────────────────────────────────── */
 
 study-session-bottom-panel .bottom-panel-question-row

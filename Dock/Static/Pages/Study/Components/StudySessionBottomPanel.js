@@ -1,5 +1,8 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import StudySessionEvents from "../Events/StudySessionEvents.js";
+import LlmTierSelect from "../../../CommonComponents/LlmTierSelect.js";
+import { modelTiers } from "../../../Globals/Enumerations/ModelTiers.js";
+import ModelTierMetadata from "../../../Globals/Constants/ModelTierMetadata.js";
 
 /**
  * StudySessionBottomPanel
@@ -73,6 +76,9 @@ class StudySessionBottomPanel extends HTMLElement
         this.innerHTML =
         `
             <div class="bottom-panel-body">
+                <div class="bottom-panel-tier-row">
+                    <llm-tier-select></llm-tier-select>
+                </div>
                 <div class="bottom-panel-question-row">
                     <div
                         class="bottom-panel-question-input"
@@ -190,9 +196,10 @@ class StudySessionBottomPanel extends HTMLElement
 
     async #showPlaceholderAlert(actionLabel)
     {
+        const tierLabel = this.#readCurrentTierLabel();
         await DialogBox.alert(
             StudySessionBottomPanel.AI_PLACEHOLDER_TITLE,
-            `${actionLabel} — ${StudySessionBottomPanel.AI_PLACEHOLDER_MESSAGE}`
+            `${actionLabel} (${tierLabel}) — ${StudySessionBottomPanel.AI_PLACEHOLDER_MESSAGE}`
         );
     }
 
@@ -202,11 +209,33 @@ class StudySessionBottomPanel extends HTMLElement
         // DialogBox.alert sets it via textContent, so any HTML is
         // shown verbatim. That's intentional for a placeholder — the
         // user sees exactly what would have gone to the backend.
+        const tierLabel = this.#readCurrentTierLabel();
         await DialogBox.alert(
             StudySessionBottomPanel.AI_PLACEHOLDER_TITLE,
-            `${actionLabel}. ${StudySessionBottomPanel.AI_PLACEHOLDER_MESSAGE}\n\n` +
+            `${actionLabel} (${tierLabel}). ${StudySessionBottomPanel.AI_PLACEHOLDER_MESSAGE}\n\n` +
             this.#stripHtmlForPlaintext(htmlBody)
         );
+    }
+
+    /**
+     * Reads the currently-selected tier from the select mounted at
+     * the top of the panel. Falls back to the BASIC tier label when
+     * the select isn't yet mounted (defensive — shouldn't happen
+     * once connectedCallback has run).
+     */
+    #readCurrentTierLabel()
+    {
+        const tierSelect = this.querySelector("llm-tier-select");
+        const chosenTier = tierSelect?.getCurrentTier() ?? modelTiers.BASIC;
+        for (const [tierKeyName, candidateValue] of Object.entries(modelTiers))
+        {
+            if (candidateValue === chosenTier)
+            {
+                const meta = ModelTierMetadata[tierKeyName];
+                return meta?.label || tierKeyName;
+            }
+        }
+        return "Basic";
     }
 
     #stripHtmlForPlaintext(htmlString)

@@ -6,6 +6,7 @@ import AllSettings from '../../Globals/Classes/Settings/AllSettings.js';
 import SettingFlags from '../../Globals/Constants/SettingFlags.js';
 import DialogBox from '../../CommonComponents/DialogBox.js';
 import SyncManager from '../../Globals/Classes/SyncManager.js';
+import LlmTierSelect from '../../CommonComponents/LlmTierSelect.js';
 
 class SettingsPage extends HTMLElement
 {
@@ -42,14 +43,36 @@ class SettingsPage extends HTMLElement
     #renderContent()
     {
         const tabKeys = Object.keys(settingsMenus);
-        const activeSettings = this.#allSettings.getSettings(this.#activeTab);
-        const settings = activeSettings ? activeSettings.getSettings() : [];
-
         const tabsHtml = tabKeys.map(key =>
         {
             const isActive = settingsMenus[key] === this.#activeTab;
             return `<button class="settings-tab-button ${isActive ? 'active' : ''}" data-tab="${settingsMenus[key]}">${enumerationToTitleCase(key)}</button>`;
         }).join('');
+        this.querySelector('.settings-sidebar').innerHTML = tabsHtml;
+
+        if (this.#activeTab === settingsMenus.MODEL)
+        {
+            this.#renderModelTabContent();
+        }
+        else
+        {
+            this.#renderRowBasedTabContent();
+        }
+
+        this.querySelectorAll('.settings-tab-button').forEach(tabButton =>
+        {
+            tabButton.addEventListener('click', () =>
+            {
+                this.#activeTab = parseInt(tabButton.dataset.tab);
+                this.#renderContent();
+            });
+        });
+    }
+
+    #renderRowBasedTabContent()
+    {
+        const activeSettings = this.#allSettings.getSettings(this.#activeTab);
+        const settings = activeSettings ? activeSettings.getSettings() : [];
 
         const rowsHtml = settings.map(setting =>
         {
@@ -91,23 +114,31 @@ class SettingsPage extends HTMLElement
             `
             : '';
 
-        this.querySelector('.settings-sidebar').innerHTML = tabsHtml;
         this.querySelector('.settings-content').innerHTML = rowsHtml + dangerZoneHtml;
-
-        this.querySelectorAll('.settings-tab-button').forEach(btn =>
-        {
-            btn.addEventListener('click', () =>
-            {
-                this.#activeTab = parseInt(btn.dataset.tab);
-                this.#renderContent();
-            });
-        });
 
         const clearServerDataButton = this.querySelector('.settings-clear-server-data-button');
         if(clearServerDataButton)
         {
             clearServerDataButton.addEventListener('click', () => this.#handleClearServerDataClick());
         }
+    }
+
+    #renderModelTabContent()
+    {
+        // Single labelled row with the live tier select as its
+        // control. The select component owns persistence, cross-
+        // component sync (window-level PREFERRED_TIER_CHANGED event),
+        // and its own "Free unavailable — …" status line. Picking a
+        // tier here updates the Study text-selection menu and the
+        // bottom panel without any explicit wiring on this page.
+        this.querySelector('.settings-content').innerHTML = `
+            <div class="settings-row settings-model-row">
+                <span class="settings-row-label">Model</span>
+                <span class="settings-row-value">
+                    <llm-tier-select></llm-tier-select>
+                </span>
+            </div>
+        `;
     }
 
     async #handleClearServerDataClick()

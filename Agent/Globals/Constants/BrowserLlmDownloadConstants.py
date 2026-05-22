@@ -1,0 +1,9 @@
+class BrowserLlmDownloadConstants:
+    MODEL_ID = 'Qwen2.5-3B-Instruct-q4f16_1-MLC'
+    MANIFEST_ENDPOINT_PATH = '/BrowserLlm/Manifest'
+    ASSETS_BASE_PATH = '/Assets/Models'
+    LOCAL_STATE_PERSISTENCE_KEY = 'BrowserLlm/DownloadState.mmsd'
+    LOCAL_DECLINED_PERSISTENCE_KEY = 'BrowserLlm/Declined.mmsd'
+    ESTIMATED_TOTAL_BYTES = 2147483648
+    ESTIMATED_TOTAL_LABEL = '~2 GB'
+    DECK_PREFERENCES_FIELD_KEY = 'askAiPreferences'

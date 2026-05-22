@@ -149,6 +149,11 @@ async def main():
                 from Workflows.GenerateCuratedStudyMaterial.GenerateCuratedStudyMaterial import GenerateCuratedStudyMaterial
                 workflow = GenerateCuratedStudyMaterial(task_descriptor.get_payload())
 
+            case TaskTypes.ENHANCE_IMAGES:
+                print("ENHANCE_IMAGES")
+                from Workflows.EnhanceImages.EnhanceImages import EnhanceImages
+                workflow = EnhanceImages(task_descriptor.get_payload())
+
             case _:
                 print("Invalid workflow")
 

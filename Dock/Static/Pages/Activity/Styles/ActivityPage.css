@@ -329,6 +329,11 @@ activity-entry-component
     color: var(--success-color);
 }
 
+.activity-entry-icon-download
+{
+    color: var(--accent-color);
+}
+
 .activity-entry-body
 {
     flex: 1 1 auto;

@@ -80,6 +80,40 @@ dialog-box .sync-blocking-status-error
     opacity: 1;
 }
 
+/* Force-unlock affordance — only revealed when SyncEvents.LOCK_BLOCKED
+   fires while the dialog is mounted. Visual language matches the Force
+   button on SyncStatusComponent so the user reads it as the same action
+   surfaced in a different place. */
+dialog-box .sync-blocking-actions
+{
+    display: flex;
+    justify-content: center;
+}
+
+dialog-box .sync-blocking-force-button
+{
+    padding: 8px 18px;
+    border: none;
+    border-radius: 8px;
+    background-color: #f0ad4e;
+    color: #1f1f23;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+dialog-box .sync-blocking-force-button:hover:not(:disabled)
+{
+    filter: brightness(1.1);
+}
+
+dialog-box .sync-blocking-force-button:disabled
+{
+    opacity: 0.5;
+    cursor: wait;
+}
+
 /* Portrait / narrow viewports: the base dialog-box caps at 85% of the
    viewport, so the inner content has to live within that. Drop the
    font size of the verbose body copy a notch and tighten the gap so a

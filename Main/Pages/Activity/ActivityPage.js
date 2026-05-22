@@ -1,8 +1,10 @@
 import HeaderComponent from "../../CommonComponents/HeaderComponent.js";
 import ActivityEntryComponent from "./Components/ActivityEntryComponent.js";
+import LocalDownloadActivitySource from "./Sources/LocalDownloadActivitySource.js";
 import { activityEntryTypes } from "../../Globals/Enumerations/ActivityEntryTypes.js";
 import { activitySortFields } from "../../Globals/Enumerations/ActivitySortFields.js";
 import { taskStatus } from "../../Globals/Enumerations/TaskStatus.js";
+import BrowserLlmDownloadEvents from "../../Globals/Events/BrowserLlmDownloadEvents.js";
 
 
 /**
@@ -33,10 +35,12 @@ class ActivityPage extends HTMLElement
     #currentTimestampUntil = "";
     #currentSortField = activitySortFields.TIMESTAMP;
     #currentSortDirection = -1;
-    #currentIncludeTypes = [activityEntryTypes.TASK, activityEntryTypes.PURCHASE];
+    #currentIncludeTypes = [activityEntryTypes.TASK, activityEntryTypes.PURCHASE, activityEntryTypes.DOWNLOAD];
     #currentOffset = 0;
     #latestSearchToken = 0;
     #searchDebounceTimeoutId = null;
+    #boundCapabilityChangedHandler = null;
+    #boundProgressHandler = null;
 
     async connectedCallback()
     {
@@ -58,6 +62,7 @@ class ActivityPage extends HTMLElement
                     <button type="button" class="activity-page-tab activity-page-tab-active" data-types="all">All</button>
                     <button type="button" class="activity-page-tab" data-types="tasks">Tasks</button>
                     <button type="button" class="activity-page-tab" data-types="purchases">Purchases</button>
+                    <button type="button" class="activity-page-tab" data-types="downloads">Downloads</button>
                 </div>
                 <div class="activity-page-sort">
                     <label>Sort by</label>
@@ -109,8 +114,38 @@ class ActivityPage extends HTMLElement
         this.#wireTabs();
         this.#wireSortControls();
         this.#wireFilterPanel();
+        this.#wireDownloadStateListeners();
 
         await this.#runSearch();
+    }
+
+    disconnectedCallback()
+    {
+        if (this.#boundCapabilityChangedHandler)
+        {
+            window.removeEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundCapabilityChangedHandler);
+            this.#boundCapabilityChangedHandler = null;
+        }
+        if (this.#boundProgressHandler)
+        {
+            window.removeEventListener(BrowserLlmDownloadEvents.PROGRESS, this.#boundProgressHandler);
+            this.#boundProgressHandler = null;
+        }
+    }
+
+    #wireDownloadStateListeners()
+    {
+        // Re-render on capability transitions so the Downloads entry
+        // appears / disappears / changes status without the user having
+        // to click the tab again. Progress ticks would be too noisy at
+        // a full re-render rate, so we only listen for state changes
+        // here; ActivityEntryComponent picks up live progress on its
+        // own subscription.
+        this.#boundCapabilityChangedHandler = () =>
+        {
+            this.#runSearch();
+        };
+        window.addEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundCapabilityChangedHandler);
     }
 
     #wireSearchBar()
@@ -184,9 +219,13 @@ class ActivityPage extends HTMLElement
                 {
                     this.#currentIncludeTypes = [activityEntryTypes.PURCHASE];
                 }
+                else if (typesAttribute === "downloads")
+                {
+                    this.#currentIncludeTypes = [activityEntryTypes.DOWNLOAD];
+                }
                 else
                 {
-                    this.#currentIncludeTypes = [activityEntryTypes.TASK, activityEntryTypes.PURCHASE];
+                    this.#currentIncludeTypes = [activityEntryTypes.TASK, activityEntryTypes.PURCHASE, activityEntryTypes.DOWNLOAD];
                 }
 
                 this.#currentOffset = 0;
@@ -269,12 +308,21 @@ class ActivityPage extends HTMLElement
             }
         }
 
+        // DOWNLOAD is a client-only entry type — strip it before the
+        // request so the server doesn't see an unknown enum value. The
+        // local source's entry is spliced in client-side after the
+        // server returns.
+        const serverSideIncludeTypes = this.#currentIncludeTypes.filter((entryType) =>
+        {
+            return entryType !== activityEntryTypes.DOWNLOAD;
+        });
+
         return {
             filters: filters,
             sort: { field: this.#currentSortField, direction: this.#currentSortDirection },
             limit: ActivityPage.#PAGE_SIZE,
             offset: this.#currentOffset,
-            includeTypes: this.#currentIncludeTypes
+            includeTypes: serverSideIncludeTypes
         };
     }
 
@@ -289,29 +337,43 @@ class ActivityPage extends HTMLElement
         this.#latestSearchToken++;
         const searchToken = this.#latestSearchToken;
 
+        const requestBody = this.#buildRequestBody();
+        const bSkipServerCall = Array.isArray(requestBody.includeTypes) && requestBody.includeTypes.length === 0;
+
         try
         {
-            const response = await fetch(ActivityPage.#ENDPOINT,
+            // Downloads-only tab: no point hitting the server — the
+            // local-download source is the sole entry contributor.
+            let responseJson;
+            if (bSkipServerCall)
             {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(this.#buildRequestBody())
-            });
+                responseJson = { entries: [], totalCount: 0, offset: 0, limit: ActivityPage.#PAGE_SIZE };
+            }
+            else
+            {
+                const response = await fetch(ActivityPage.#ENDPOINT,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(requestBody)
+                });
 
-            if (searchToken !== this.#latestSearchToken)
-            {
-                return;
+                if (searchToken !== this.#latestSearchToken)
+                {
+                    return;
+                }
+
+                if (!response.ok)
+                {
+                    listElement.innerHTML = `<div class="activity-page-error">Search failed (${response.status}).</div>`;
+                    resultCountElement.textContent = "";
+                    paginationElement.innerHTML = "";
+                    return;
+                }
+
+                responseJson = await response.json();
             }
 
-            if (!response.ok)
-            {
-                listElement.innerHTML = `<div class="activity-page-error">Search failed (${response.status}).</div>`;
-                resultCountElement.textContent = "";
-                paginationElement.innerHTML = "";
-                return;
-            }
-
-            const responseJson = await response.json();
             this.#renderResults(responseJson);
         }
         catch (searchError)
@@ -326,8 +388,43 @@ class ActivityPage extends HTMLElement
         }
     }
 
-    #renderResults(responseJson)
+    #spliceLocalDownloadEntry(responseJson)
     {
+        if (!LocalDownloadActivitySource.matchesIncludeTypes(this.#currentIncludeTypes))
+        {
+            return responseJson;
+        }
+
+        const localEntry = LocalDownloadActivitySource.getEntry();
+        if (!localEntry)
+        {
+            return responseJson;
+        }
+
+        // Free-text filter: skip the splice if the user typed a query
+        // that doesn't match the local entry's title.
+        if (this.#currentSearchQuery.length > 0
+            && !localEntry.title.toLowerCase().includes(this.#currentSearchQuery.toLowerCase()))
+        {
+            return responseJson;
+        }
+
+        const entries = Array.isArray(responseJson.entries) ? responseJson.entries.slice() : [];
+        // Live downloads belong at the top of the list — they're the
+        // user's most recent / most relevant activity.
+        entries.unshift(localEntry);
+
+        return {
+            ...responseJson,
+            entries,
+            totalCount: (responseJson.totalCount || 0) + 1
+        };
+    }
+
+    #renderResults(rawResponseJson)
+    {
+        const responseJson = this.#spliceLocalDownloadEntry(rawResponseJson);
+
         const listElement = this.querySelector('[data-role="list"]');
         const resultCountElement = this.querySelector('[data-role="result-count"]');
         const paginationElement = this.querySelector('[data-role="pagination"]');

@@ -19,6 +19,7 @@ import SyncEvents from "../Events/SyncEvents.js";
 import { entityTypes } from "../Enumerations/EntityTypes.js";
 import UserIdentityEvents from "../Events/UserIdentityEvents.js";
 import AutoAnalysisDeckFields from "../Classes/Analysis/AutoAnalysisDeckFields.js";
+import BrowserLlmDownloadConstants from "../Constants/BrowserLlmDownloadConstants.js";
 import SearchableDropdown from "../../CommonComponents/SearchableDropdown.js";
 import InitializationEvents from "../Events/InitializationEvents.js";
 
@@ -924,6 +925,15 @@ class Deck
                     delete deckJson.additionalData[analysisKey];
                 }
             }
+        }
+
+        // Always strip the ask-AI preferences (document-grounding flag +
+        // information-source list) from exports. They're per-account
+        // context the importer has no use for — and the source list can
+        // reference files only the original user has access to.
+        if (deckJson.additionalData && typeof deckJson.additionalData === "object")
+        {
+            delete deckJson.additionalData[BrowserLlmDownloadConstants.DECK_PREFERENCES_FIELD_KEY];
         }
 
         decks.push(deckJson);

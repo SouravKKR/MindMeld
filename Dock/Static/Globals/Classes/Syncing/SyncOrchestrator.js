@@ -256,6 +256,37 @@ class SyncOrchestrator
             // not auto-close the dialog the user is currently reading.
             SyncOrchestrator.#activeBlockingDialog = null;
         });
+
+        // Lock-blocked escape hatch — mirrors SyncStatusComponent's Force
+        // button. Without this the blocking modal would stay stuck on
+        // "Preparing…" forever when another device (or a leaked TTL) is
+        // holding the server-side lock. Gated on the same SyncEvents.LOCK_BLOCKED
+        // condition the status component uses, so the dialog only offers
+        // Force when the status pill would offer it.
+        window.addEventListener(SyncEvents.LOCK_BLOCKED, () =>
+        {
+            if (SyncOrchestrator.#activeBlockingDialog === null)
+            {
+                return;
+            }
+            SyncOrchestrator.#activeBlockingDialog.showForceAction(async () =>
+            {
+                await SyncOrchestrator.forceUnlockAndResync();
+            });
+        });
+
+        // When a fresh cycle starts (the retry kicked off by the Force
+        // button, or any subsequent normal cycle), drop the force action
+        // back out of view — the lock is being re-attempted and the
+        // user shouldn't be able to spam the button mid-flight.
+        window.addEventListener(SyncEvents.STARTED, () =>
+        {
+            if (SyncOrchestrator.#activeBlockingDialog === null)
+            {
+                return;
+            }
+            SyncOrchestrator.#activeBlockingDialog.hideForceAction();
+        });
     }
 
     // ──────────────────────────────────────────────────────────────────

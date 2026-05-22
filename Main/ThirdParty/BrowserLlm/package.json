@@ -1,0 +1,13 @@
+{
+    "name": "mindmeld-browserllm-bundle",
+    "version": "1.0.0",
+    "description": "Bundles WebLLM + Transformers.js into a single ESM file (BrowserLlm.js) served locally by MindMeld.",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "build": "node bundle.js"
+    },
+    "devDependencies": {
+        "esbuild": "^0.28.0"
+    }
+}

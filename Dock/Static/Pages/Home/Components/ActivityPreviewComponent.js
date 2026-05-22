@@ -1,6 +1,8 @@
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import { activityEntryTypes } from "../../../Globals/Enumerations/ActivityEntryTypes.js";
 import { taskStatus } from "../../../Globals/Enumerations/TaskStatus.js";
+import BrowserLlmDownloadEvents from "../../../Globals/Events/BrowserLlmDownloadEvents.js";
+import LocalDownloadActivitySource from "../../Activity/Sources/LocalDownloadActivitySource.js";
 
 
 /**
@@ -30,6 +32,8 @@ class ActivityPreviewComponent extends HTMLElement
 
     #pollTimeoutId = null;
     #boundHandleVisibility = null;
+    #boundDownloadCapabilityHandler = null;
+    #boundDownloadProgressHandler = null;
     #latestEntries = [];
     #bDisposed = false;
 
@@ -50,6 +54,14 @@ class ActivityPreviewComponent extends HTMLElement
         this.#boundHandleVisibility = () => this.#handleVisibilityChange();
         document.addEventListener("visibilitychange", this.#boundHandleVisibility);
 
+        // Local download events drive the badge directly — no need to
+        // wait for the next 4-second poll. The events surface state
+        // transitions and live progress on their own.
+        this.#boundDownloadCapabilityHandler = () => this.#renderBadge();
+        this.#boundDownloadProgressHandler   = () => this.#renderBadge();
+        window.addEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundDownloadCapabilityHandler);
+        window.addEventListener(BrowserLlmDownloadEvents.PROGRESS, this.#boundDownloadProgressHandler);
+
         this.#pollOnce();
     }
 
@@ -64,6 +76,16 @@ class ActivityPreviewComponent extends HTMLElement
         if (this.#boundHandleVisibility !== null)
         {
             document.removeEventListener("visibilitychange", this.#boundHandleVisibility);
+        }
+        if (this.#boundDownloadCapabilityHandler !== null)
+        {
+            window.removeEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundDownloadCapabilityHandler);
+            this.#boundDownloadCapabilityHandler = null;
+        }
+        if (this.#boundDownloadProgressHandler !== null)
+        {
+            window.removeEventListener(BrowserLlmDownloadEvents.PROGRESS, this.#boundDownloadProgressHandler);
+            this.#boundDownloadProgressHandler = null;
         }
     }
 
@@ -141,6 +163,17 @@ class ActivityPreviewComponent extends HTMLElement
         {
             return entry.entryType === activityEntryTypes.TASK && entry.status === taskStatus.IN_PROGRESS;
         });
+
+        // Splice in the local browser-LLM download as an in-progress
+        // entry when it's actively running. The local source returns
+        // null otherwise, which leaves the badge driven purely by
+        // server-side tasks.
+        const localDownloadEntry = LocalDownloadActivitySource.getEntry();
+        if (localDownloadEntry !== null
+            && localDownloadEntry.payload?.isLive === true)
+        {
+            inProgressEntries.unshift(localDownloadEntry);
+        }
 
         if (inProgressEntries.length === 0)
         {

@@ -31,8 +31,25 @@ class InformationSourceSelector extends HTMLElement
         this.#addSelect = this.querySelector(".information-source-add-select");
         this.#informationSourcesList = this.querySelector(".information-sources-list");
 
+        // Opt-in filter: callers that don't want every source type
+        // exposed (e.g. the Study-page ask-AI menu has no use for the
+        // Curriculum/Syllabus type) pass `exclude-types="KEY1,KEY2"`
+        // as a comma-separated attribute. Backwards-compatible —
+        // omit the attribute and every key is offered as before.
+        const excludeTypesAttribute = this.getAttribute("exclude-types") || "";
+        const excludedTypeKeySet = new Set(
+            excludeTypesAttribute
+                .split(",")
+                .map((rawKey) => rawKey.trim())
+                .filter((trimmedKey) => trimmedKey.length > 0)
+        );
+
         for (const key of Object.keys(informationSourceTypes))
         {
+            if (excludedTypeKeySet.has(key))
+            {
+                continue;
+            }
             const option = document.createElement("option");
             option.value = key;
             option.textContent = enumerationToTitleCase(key);

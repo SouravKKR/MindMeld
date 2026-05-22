@@ -19,6 +19,7 @@ class StudyPage extends HTMLElement
     #selectionDebounceFrameId = null;
     #pointerDownHandler = null;
     #pointerUpHandler = null;
+    #touchEndHandler = null;
     #bPointerSelectionInProgress = false;
 
     // ── Initialisation ─────────────────────────────────────────────────────────
@@ -267,6 +268,11 @@ class StudyPage extends HTMLElement
             document.removeEventListener("pointerup", this.#pointerUpHandler, true);
             this.#pointerUpHandler = null;
         }
+        if (this.#touchEndHandler)
+        {
+            document.removeEventListener("touchend", this.#touchEndHandler, true);
+            this.#touchEndHandler = null;
+        }
         if (this.#selectionDebounceFrameId)
         {
             cancelAnimationFrame(this.#selectionDebounceFrameId);
@@ -346,9 +352,26 @@ class StudyPage extends HTMLElement
             setTimeout(() => this.#evaluateSelection(), 0);
         };
 
+        // Touch backstop. On Android (and iOS to a lesser degree) the
+        // OS owns the selection-handle drag — pointerdown fires when
+        // the user first touches, but no matching pointerup fires when
+        // they release a selection handle. The in-progress flag would
+        // stay true forever and selectionchange would be permanently
+        // gated off, which is the "system copy/paste menu shows but
+        // ours never does" symptom on mobile. touchend always fires
+        // on release, so we clear the flag here and re-run the
+        // evaluator after a short delay (the system commits the
+        // selection asynchronously on touch).
+        this.#touchEndHandler = () =>
+        {
+            this.#bPointerSelectionInProgress = false;
+            setTimeout(() => this.#evaluateSelection(), 80);
+        };
+
         document.addEventListener("selectionchange", this.#selectionChangeHandler);
         document.addEventListener("pointerdown", this.#pointerDownHandler, true);
         document.addEventListener("pointerup", this.#pointerUpHandler, true);
+        document.addEventListener("touchend", this.#touchEndHandler, true);
     }
 
     #evaluateSelection()

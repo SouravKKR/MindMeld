@@ -33,6 +33,8 @@ class SyncBlockingDialog
     #barFill     = null;
     #statusLabel = null;
     #bClosed     = false;
+    #forceActionRow = null;
+    #forceButton = null;
 
     static show(title, bodyText = SyncBlockingDialog.#DEFAULT_BODY_TEXT)
     {
@@ -51,6 +53,9 @@ class SyncBlockingDialog
                     <div class="sync-blocking-bar-fill"></div>
                 </div>
                 <div class="sync-blocking-status">Preparing…</div>
+                <div class="sync-blocking-actions" style="display: none;">
+                    <button class="sync-blocking-force-button" type="button" title="Another device holds the sync lock — force release it and retry.">Force Unlock &amp; Retry</button>
+                </div>
             </div>
         `);
 
@@ -84,10 +89,64 @@ class SyncBlockingDialog
         this.#closeButton = this.#dialog.querySelector(".close-button");
         this.#barFill     = this.#dialog.querySelector(".sync-blocking-bar-fill");
         this.#statusLabel = this.#dialog.querySelector(".sync-blocking-status");
+        this.#forceActionRow = this.#dialog.querySelector(".sync-blocking-actions");
+        this.#forceButton = this.#dialog.querySelector(".sync-blocking-force-button");
 
         if (this.#closeButton)
         {
             this.#closeButton.style.display = "none";
+        }
+    }
+
+    /**
+     * Reveal a "Force Unlock & Retry" affordance below the status line.
+     * Called by SyncOrchestrator's LOCK_BLOCKED listener when the cycle
+     * couldn't acquire the server-side lock and the user would otherwise
+     * be stuck staring at "Preparing…". The handler is wired by the
+     * caller so the dialog stays decoupled from sync internals.
+     */
+    showForceAction(onForceClick)
+    {
+        if (this.#bClosed || this.#forceButton === null || this.#forceActionRow === null)
+        {
+            return;
+        }
+        this.#forceButton.onclick = async () =>
+        {
+            if (this.#bClosed)
+            {
+                return;
+            }
+            this.#forceButton.disabled = true;
+            try
+            {
+                await onForceClick();
+            }
+            catch (forceClickError)
+            {
+                console.error("[SyncBlockingDialog] Force action handler threw:", forceClickError);
+                this.#forceButton.disabled = false;
+            }
+        };
+        this.#forceButton.disabled = false;
+        this.#forceActionRow.style.display = "";
+        if (this.#statusLabel !== null)
+        {
+            this.#statusLabel.textContent = "Couldn't acquire sync lock — another device may be syncing.";
+        }
+    }
+
+    hideForceAction()
+    {
+        if (this.#bClosed || this.#forceActionRow === null)
+        {
+            return;
+        }
+        this.#forceActionRow.style.display = "none";
+        if (this.#forceButton !== null)
+        {
+            this.#forceButton.disabled = false;
+            this.#forceButton.onclick = null;
         }
     }
 

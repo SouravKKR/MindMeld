@@ -1,5 +1,13 @@
 import ContextMenu from "../../../CommonComponents/ContextMenu.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
+import LlmTierSelect from "../../../CommonComponents/LlmTierSelect.js";
+import { modelTiers } from "../../../Globals/Enumerations/ModelTiers.js";
+import ModelTierMetadata from "../../../Globals/Constants/ModelTierMetadata.js";
+import InformationSourceSelector from "../../AutomaticGeneration/Components/InformationSourceSelector.js";
+import ExtractableInformationSource from "../../../Globals/Classes/Decorators/ExtractableInformationSource.js";
+import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
+import BrowserLlmDownloadConstants from "../../../Globals/Constants/BrowserLlmDownloadConstants.js";
+import Deck from "../../../Globals/Model/Deck.js";
 
 /**
  * TextSelectionContextMenu
@@ -10,8 +18,26 @@ import DialogBox from "../../../CommonComponents/DialogBox.js";
  *   - Ask (contenteditable + Send) — sends a free-form question
  *     scoped to the selected text.
  *
- * Both actions are placeholder-stubbed via DialogBox.alert until the
- * backend wiring pass.
+ * For non-Free tiers, two additional opt-ins are surfaced:
+ *   - "Document grounded" — when checked, the LLM call is grounded
+ *     against information sources the user attaches inline (reusing
+ *     the AutomaticGeneration page's <information-source-selector>,
+ *     filtered to hide CURRICULUM_OR_SYLLABUS which is irrelevant to
+ *     a per-selection ask). Disables Explain/Send until at least one
+ *     source is present.
+ *   - "Include images from sources" — uses the same source list, but
+ *     opts the response into multimodal grounding. Image sources are
+ *     not chosen separately because per-image picking would overwhelm
+ *     the small menu.
+ *
+ * Both grounding state and the source list are persisted on the deck
+ * being studied via `Deck.additionalData.askAiPreferences`, so the
+ * configuration sticks across selections and rides the standard deck
+ * sync pipeline. Unchecking "Document grounded" hides the source UI
+ * but retains the sources on disk — re-checking later restores them.
+ *
+ * All Explain / Send actions are placeholder-stubbed via DialogBox.alert
+ * until the backend wiring pass.
  *
  * The menu is dismissed by:
  *   - Any pointerdown outside the menu (installed by `create`).
@@ -34,11 +60,29 @@ class TextSelectionContextMenu extends ContextMenu
     static #ANCHOR_GAP_PX = 8;
     static #VIEWPORT_MARGIN_PX = 8;
 
-    #selectedText               = "";
-    #selectionRect              = null;
-    #outsidePointerdownHandler  = null;
-    #escapeKeydownHandler       = null;
-    #sizeObserver               = null;
+    // Persisted under deck.additionalData[this key]. Single sub-object
+    // so all ask-AI prefs sync as one unit. Shared with
+    // Deck.getExportData (which strips this key on export) — the
+    // canonical name lives in BrowserLlmDownloadConstants.
+    static #ADDITIONAL_DATA_KEY = BrowserLlmDownloadConstants.DECK_PREFERENCES_FIELD_KEY;
+
+    // Surfaces the document-grounding controls only on tiers that
+    // actually call the cloud — the in-browser Free model is offline
+    // and doesn't ground against the user's sources this round.
+    static #TIERS_THAT_SUPPORT_GROUNDING = new Set([
+        modelTiers.BASIC,
+        modelTiers.PRO,
+        modelTiers.PRO_PLUS,
+    ]);
+
+    #selectedText = "";
+    #selectionRect = null;
+    #outsidePointerdownHandler = null;
+    #escapeKeydownHandler = null;
+    #sizeObserver = null;
+    #studyDeck = null;
+    #boundTierSelectedHandler = null;
+    #boundSourcesChangedHandler = null;
 
     static create(selectionRect, selectedText = "")
     {
@@ -72,6 +116,13 @@ class TextSelectionContextMenu extends ContextMenu
 
     connectedCallback()
     {
+        // The deck being studied — used as the persistence scope for
+        // the ask-AI prefs. setCurrentDeck is called by HomePage when
+        // entering a deck, so by the time a study session is running
+        // it already points at the right deck (i.e. the deck the user
+        // clicked Study on, NOT the leaf card / study-material).
+        this.#studyDeck = Deck.getCurrentDeck();
+
         this.innerHTML =
         `
             <button
@@ -92,6 +143,29 @@ class TextSelectionContextMenu extends ContextMenu
                     aria-label="Send question"
                 >Send</button>
             </div>
+            <div class="text-selection-divider" role="separator"></div>
+            <div class="text-selection-tier-row context-menu-item">
+                <llm-tier-select></llm-tier-select>
+            </div>
+            <div class="text-selection-grounding-controls context-menu-item" data-role="grounding-controls" hidden>
+                <label class="text-selection-grounding-checkbox-row">
+                    <input type="checkbox" data-role="document-grounded-checkbox">
+                    <span class="text-selection-grounding-label">Document grounded</span>
+                    <span class="text-selection-grounding-hint">slight extra cost</span>
+                </label>
+                <div class="text-selection-grounding-sources" data-role="grounding-sources" hidden>
+                    <information-source-selector exclude-types="CURRICULUM_OR_SYLLABUS"></information-source-selector>
+                    <label class="text-selection-grounding-checkbox-row">
+                        <input type="checkbox" data-role="include-images-checkbox">
+                        <span class="text-selection-grounding-label">Include images from sources</span>
+                    </label>
+                </div>
+            </div>
+            <div class="text-selection-divider" role="separator"></div>
+            <button
+                class="text-selection-copy-button context-menu-item"
+                type="button"
+            >Copy</button>
         `;
 
         // Skip super.connectedCallback for the same reason we skip
@@ -105,6 +179,9 @@ class TextSelectionContextMenu extends ContextMenu
         });
 
         this.#bindLocalEvents();
+        this.#bindGroundingEvents();
+        this.#hydrateGroundingFromDeck();
+        this.#applyTierAwareVisibility();
         this.#bindOutsideDismissHandlers();
 
         // Initial placement and reveal.
@@ -135,6 +212,20 @@ class TextSelectionContextMenu extends ContextMenu
         {
             document.removeEventListener("keydown", this.#escapeKeydownHandler, true);
             this.#escapeKeydownHandler = null;
+        }
+        if (this.#boundTierSelectedHandler)
+        {
+            // The select lives inside this; it's about to be removed
+            // along with this element, but detach explicitly for tidiness.
+            const tierSelect = this.querySelector("llm-tier-select");
+            tierSelect?.removeEventListener("tier-selected", this.#boundTierSelectedHandler);
+            this.#boundTierSelectedHandler = null;
+        }
+        if (this.#boundSourcesChangedHandler)
+        {
+            const sourceSelectorElement = this.querySelector("information-source-selector");
+            sourceSelectorElement?.removeEventListener(AutomaticGenerationEvents.ON_SOURCES_CHANGED, this.#boundSourcesChangedHandler);
+            this.#boundSourcesChangedHandler = null;
         }
     }
 
@@ -273,10 +364,27 @@ class TextSelectionContextMenu extends ContextMenu
         const explainButton   = this.querySelector(".text-selection-explain-button");
         const sendButton      = this.querySelector(".text-selection-send-button");
         const questionInput   = this.querySelector(".text-selection-question-input");
+        const copyButton = this.querySelector(".text-selection-copy-button");
+
+        const tierSelect = this.querySelector("llm-tier-select");
+
+        // Re-render the grounding controls' visibility on each tier
+        // change. The selection itself persists via the select's own
+        // event flow; this handler just keeps the menu in sync.
+        this.#boundTierSelectedHandler = () =>
+        {
+            this.#applyTierAwareVisibility();
+        };
+        tierSelect?.addEventListener("tier-selected", this.#boundTierSelectedHandler);
 
         explainButton.addEventListener("click", async () =>
         {
-            await this.#showPlaceholderAlertForAction("Explain", "");
+            const chosenTier = tierSelect?.getCurrentTier() ?? modelTiers.BASIC;
+            if (!await this.#validateBeforeProceeding(chosenTier))
+            {
+                return;
+            }
+            await this.#showPlaceholderAlertForAction("Explain", "", chosenTier);
             this.remove();
         });
 
@@ -289,16 +397,97 @@ class TextSelectionContextMenu extends ContextMenu
                 questionInput?.focus();
                 return;
             }
-            await this.#showPlaceholderAlertForAction("Ask", userQuery);
+            const chosenTier = tierSelect?.getCurrentTier() ?? modelTiers.BASIC;
+            if (!await this.#validateBeforeProceeding(chosenTier))
+            {
+                return;
+            }
+            await this.#showPlaceholderAlertForAction("Ask", userQuery, chosenTier);
+            this.remove();
+        });
+
+        copyButton.addEventListener("click", async () =>
+        {
+            await this.#copySelectedTextToClipboard();
             this.remove();
         });
     }
 
+    /**
+     * Copy the currently-selected text via the Clipboard API, falling
+     * back to the legacy execCommand path for environments where the
+     * async API is unavailable (older browsers, non-secure-context
+     * dev). We have the selection in #selectedText already, so we
+     * never need to touch window.getSelection here.
+     */
+    async #copySelectedTextToClipboard()
+    {
+        const textToCopy = this.#selectedText || "";
+        if (textToCopy.length === 0)
+        {
+            return;
+        }
+
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function")
+        {
+            try
+            {
+                await navigator.clipboard.writeText(textToCopy);
+                return;
+            }
+            catch (clipboardError)
+            {
+                console.warn(`[TextSelectionContextMenu] Clipboard API write failed; falling back to execCommand. ${clipboardError?.message || clipboardError}`);
+            }
+        }
+
+        // Legacy fallback: drop the text into an off-screen textarea,
+        // select it, execCommand("copy"), then remove the helper.
+        const helperTextarea = document.createElement("textarea");
+        helperTextarea.value = textToCopy;
+        helperTextarea.setAttribute("readonly", "");
+        helperTextarea.style.position = "fixed";
+        helperTextarea.style.top = "-1000px";
+        helperTextarea.style.left = "-1000px";
+        document.body.appendChild(helperTextarea);
+        helperTextarea.select();
+        try
+        {
+            document.execCommand("copy");
+        }
+        catch (legacyCopyError)
+        {
+            console.warn(`[TextSelectionContextMenu] execCommand copy fallback failed. ${legacyCopyError?.message || legacyCopyError}`);
+        }
+        helperTextarea.remove();
+    }
+
     #bindOutsideDismissHandlers()
     {
+        // Tolerate clicks inside transient chrome that semantically
+        // belongs to this menu but renders OUTSIDE its DOM subtree —
+        // any dialog the inline InformationSourceUploader may raise
+        // (file picker is native and doesn't fire DOM events, but a
+        // future upload dialog would). The tier picker is now a
+        // native <select>, whose dropdown is browser chrome (not DOM)
+        // and never triggers a document-level pointerdown.
+        const bClickInsideTransientChrome = (clickedElement) =>
+        {
+            if (!clickedElement) return false;
+            if (typeof clickedElement.closest !== "function") return false;
+            return Boolean(
+                clickedElement.closest("dialog-box")
+             || clickedElement.closest(".dialog-backdrop")
+            );
+        };
+
         this.#outsidePointerdownHandler = (pointerEvent) =>
         {
             if (this.contains(pointerEvent.target))
+            {
+                return;
+            }
+            if (bClickInsideTransientChrome(pointerEvent.target))
             {
                 return;
             }
@@ -319,14 +508,201 @@ class TextSelectionContextMenu extends ContextMenu
         document.addEventListener("keydown", this.#escapeKeydownHandler, true);
     }
 
-    async #showPlaceholderAlertForAction(actionLabel, userQuery)
+    /**
+     * Wire the document-grounding + include-images checkboxes + the
+     * inline information-source-selector. Each user change persists
+     * to the deck's additionalData and triggers a deck.save() so the
+     * choice rides the standard sync pipeline.
+     */
+    #bindGroundingEvents()
+    {
+        const groundingControlsElement = this.querySelector('[data-role="grounding-controls"]');
+        const groundingSourcesElement = this.querySelector('[data-role="grounding-sources"]');
+        const groundedCheckbox = this.querySelector('[data-role="document-grounded-checkbox"]');
+        const includeImagesCheckbox = this.querySelector('[data-role="include-images-checkbox"]');
+        const sourceSelectorElement = this.querySelector("information-source-selector");
+
+        if (!groundingControlsElement || !groundingSourcesElement
+            || !groundedCheckbox || !includeImagesCheckbox || !sourceSelectorElement)
+        {
+            return;
+        }
+
+        groundedCheckbox.addEventListener("change", async () =>
+        {
+            const bChecked = groundedCheckbox.checked;
+            groundingSourcesElement.hidden = !bChecked;
+            await this.#persistPartialPreferences({ documentGroundingEnabled: bChecked });
+        });
+
+        includeImagesCheckbox.addEventListener("change", async () =>
+        {
+            await this.#persistPartialPreferences({ includeImagesEnabled: includeImagesCheckbox.checked });
+        });
+
+        this.#boundSourcesChangedHandler = async () =>
+        {
+            const liveSources = sourceSelectorElement.getSources();
+            const serialisedList = liveSources.map((source) => source.toJson());
+            await this.#persistPartialPreferences({ informationSources: serialisedList });
+        };
+        sourceSelectorElement.addEventListener(AutomaticGenerationEvents.ON_SOURCES_CHANGED, this.#boundSourcesChangedHandler);
+    }
+
+    /**
+     * Hydrate the grounding UI from the deck's persisted preferences.
+     * Called once on mount; subsequent toggles update both the live
+     * UI and the persisted record via #persistPartialPreferences.
+     */
+    #hydrateGroundingFromDeck()
+    {
+        const preferences = this.#readAskAiPreferences();
+        const groundedCheckbox = this.querySelector('[data-role="document-grounded-checkbox"]');
+        const includeImagesCheckbox = this.querySelector('[data-role="include-images-checkbox"]');
+        const groundingSources = this.querySelector('[data-role="grounding-sources"]');
+        const sourceSelectorElement = this.querySelector("information-source-selector");
+
+        if (groundedCheckbox)
+        {
+            groundedCheckbox.checked = preferences.documentGroundingEnabled;
+        }
+        if (includeImagesCheckbox)
+        {
+            includeImagesCheckbox.checked = preferences.includeImagesEnabled;
+        }
+        if (groundingSources)
+        {
+            groundingSources.hidden = !preferences.documentGroundingEnabled;
+        }
+
+        if (sourceSelectorElement && preferences.informationSources.length > 0)
+        {
+            // The selector finishes wiring its DOM in its own
+            // connectedCallback — wait one frame so setSources finds
+            // the internal list element.
+            requestAnimationFrame(() =>
+            {
+                const rehydratedSources = preferences.informationSources
+                    .map((sourceJson) => ExtractableInformationSource.fromJson(sourceJson));
+                sourceSelectorElement.setSources(rehydratedSources);
+            });
+        }
+    }
+
+    /**
+     * Show or hide the grounding controls block based on the current
+     * tier. Free is a local model and doesn't ground against the
+     * user's documents in this round, so the block is hidden for it.
+     */
+    #applyTierAwareVisibility()
+    {
+        const groundingControlsElement = this.querySelector('[data-role="grounding-controls"]');
+        if (!groundingControlsElement)
+        {
+            return;
+        }
+
+        const tierSelect = this.querySelector("llm-tier-select");
+        const currentTier = tierSelect?.getCurrentTier() ?? modelTiers.BASIC;
+        const bShow = TextSelectionContextMenu.#TIERS_THAT_SUPPORT_GROUNDING.has(currentTier);
+
+        groundingControlsElement.hidden = !bShow;
+    }
+
+    /**
+     * Returns the current ask-AI preferences read from the deck's
+     * additionalData. Missing or malformed records resolve to a
+     * sensible "everything off" default so callers don't have to
+     * branch on shape.
+     */
+    #readAskAiPreferences()
+    {
+        const additionalData = this.#studyDeck?.getAdditionalData?.() ?? {};
+        const persisted = additionalData[TextSelectionContextMenu.#ADDITIONAL_DATA_KEY] ?? {};
+        return {
+            documentGroundingEnabled: persisted.documentGroundingEnabled === true,
+            includeImagesEnabled:     persisted.includeImagesEnabled     === true,
+            informationSources:       Array.isArray(persisted.informationSources)
+                ? persisted.informationSources
+                : [],
+        };
+    }
+
+    /**
+     * Merge the supplied fields into the persisted ask-AI prefs and
+     * push the record onto the deck. Unchanged fields (notably the
+     * source list when only a checkbox toggled) are preserved — so a
+     * user who unchecks "Document grounded" can re-check later and
+     * find their sources still in place.
+     */
+    async #persistPartialPreferences(partialUpdate)
+    {
+        if (!this.#studyDeck)
+        {
+            return;
+        }
+        const current = this.#readAskAiPreferences();
+        const merged =
+        {
+            documentGroundingEnabled: current.documentGroundingEnabled,
+            includeImagesEnabled: current.includeImagesEnabled,
+            informationSources: current.informationSources,
+            ...partialUpdate,
+        };
+        this.#studyDeck.setAdditionalDataField(TextSelectionContextMenu.#ADDITIONAL_DATA_KEY, merged);
+        try
+        {
+            await this.#studyDeck.save();
+        }
+        catch (saveError)
+        {
+            console.warn(`[TextSelectionContextMenu] Failed to persist ask-AI prefs: ${saveError?.message || saveError}`);
+        }
+    }
+
+    /**
+     * Pre-flight check before firing the stub action. Returns true
+     * iff the menu is in a state that can proceed; otherwise raises
+     * a DialogBox.alert explaining the missing piece and returns
+     * false so the caller can short-circuit. Free tier always
+     * proceeds.
+     */
+    async #validateBeforeProceeding(tier)
+    {
+        if (!TextSelectionContextMenu.#TIERS_THAT_SUPPORT_GROUNDING.has(tier))
+        {
+            return true;
+        }
+
+        const preferences = this.#readAskAiPreferences();
+        if (!preferences.documentGroundingEnabled)
+        {
+            return true;
+        }
+
+        if (preferences.informationSources.length === 0)
+        {
+            await DialogBox.alert(
+                "Add an information source",
+                "Document grounding is on but no information sources are configured. Add at least one source — or turn off Document grounded — to proceed."
+            );
+            return false;
+        }
+
+        return true;
+    }
+
+    async #showPlaceholderAlertForAction(actionLabel, userQuery, tier)
     {
         const truncatedSelection = this.#selectedText.length > 200
             ? this.#selectedText.substring(0, 200) + "…"
             : this.#selectedText;
 
+        const tierLabel = TextSelectionContextMenu.#tierLabelFor(tier);
+        const preferences = this.#readAskAiPreferences();
+
         const bodyLines = [
-            `${actionLabel} — ${TextSelectionContextMenu.AI_PLACEHOLDER_MESSAGE}`,
+            `${actionLabel} (${tierLabel}) — ${TextSelectionContextMenu.AI_PLACEHOLDER_MESSAGE}`,
             "",
             `Selected text: "${truncatedSelection}"`,
         ];
@@ -336,7 +712,31 @@ class TextSelectionContextMenu extends ContextMenu
             bodyLines.push(`Your question: ${userQuery}`);
         }
 
+        if (TextSelectionContextMenu.#TIERS_THAT_SUPPORT_GROUNDING.has(tier))
+        {
+            bodyLines.push(`Grounded: ${preferences.documentGroundingEnabled ? "yes" : "no"}`);
+            if (preferences.documentGroundingEnabled)
+            {
+                bodyLines.push(`Sources: ${preferences.informationSources.length}`);
+                bodyLines.push(`Images from sources: ${preferences.includeImagesEnabled ? "yes" : "no"}`);
+            }
+        }
+
+        console.warn(`[TextSelectionContextMenu] Tier ${tierLabel} action "${actionLabel}" is not wired yet — backend stub.`);
         await DialogBox.alert(TextSelectionContextMenu.AI_PLACEHOLDER_TITLE, bodyLines.join("\n"));
+    }
+
+    static #tierLabelFor(tierValue)
+    {
+        for (const [tierKeyName, candidateValue] of Object.entries(modelTiers))
+        {
+            if (candidateValue === tierValue)
+            {
+                const meta = ModelTierMetadata[tierKeyName];
+                return meta?.label || tierKeyName;
+            }
+        }
+        return "Basic";
     }
 }
 

@@ -259,10 +259,36 @@ async function handleGenerate(request, response)
 
     const shouldPrepareImages = captureImagesEnabled && (normalizedImageSources.length > 0 || hasWebImageSource);
 
+    // "Enhance Images" runs AFTER PrepareImages and re-synthesizes each
+    // embedded <figure> through Gemini so the published artwork is no
+    // longer a direct copy of the source asset. The original bytes still
+    // land in GCS / the figures collection (that work happens inside
+    // PrepareImages, before EnhanceImages ever runs) -- only the inline
+    // base64 inside flashcard.question/answer and studyMaterial.content
+    // is rewritten.
+    const enhanceImagesEnabled = generalGenerationSettings.getEnhanceImages() === true;
+
     if (shouldPrepareImages)
     {
         if (flashcardGenerationSettings !== null)
         {
+            let enhanceImagesFlashcardsTaskId = null;
+            if (enhanceImagesEnabled)
+            {
+                const enhanceImagesFlashcardsTask = new TaskDescriptor({
+                    type: taskTypes.ENHANCE_IMAGES,
+                    executionTarget: taskExecutionTargets.LOCAL,
+                    payload: {
+                        generateFlashcards: true,
+                        generateStudyMaterials: false,
+                    },
+                    nextTaskIds: [],
+                });
+
+                await TaskManager.setTask(enhanceImagesFlashcardsTask);
+                enhanceImagesFlashcardsTaskId = enhanceImagesFlashcardsTask.getId();
+            }
+
             const prepareImagesFlashcardsTask = new TaskDescriptor({
                 type: taskTypes.PREPARE_IMAGES,
                 executionTarget: taskExecutionTargets.LOCAL,
@@ -271,7 +297,7 @@ async function handleGenerate(request, response)
                     generateFlashcards: true,
                     generateStudyMaterials: false,
                 },
-                nextTaskIds: [],
+                nextTaskIds: enhanceImagesFlashcardsTaskId ? [enhanceImagesFlashcardsTaskId] : [],
             });
 
             await TaskManager.setTask(prepareImagesFlashcardsTask);
@@ -280,6 +306,23 @@ async function handleGenerate(request, response)
 
         if (studyMaterialGenerationSettings !== null)
         {
+            let enhanceImagesStudyMaterialsTaskId = null;
+            if (enhanceImagesEnabled)
+            {
+                const enhanceImagesStudyMaterialsTask = new TaskDescriptor({
+                    type: taskTypes.ENHANCE_IMAGES,
+                    executionTarget: taskExecutionTargets.LOCAL,
+                    payload: {
+                        generateFlashcards: false,
+                        generateStudyMaterials: true,
+                    },
+                    nextTaskIds: [],
+                });
+
+                await TaskManager.setTask(enhanceImagesStudyMaterialsTask);
+                enhanceImagesStudyMaterialsTaskId = enhanceImagesStudyMaterialsTask.getId();
+            }
+
             const prepareImagesStudyMaterialsTask = new TaskDescriptor({
                 type: taskTypes.PREPARE_IMAGES,
                 executionTarget: taskExecutionTargets.LOCAL,
@@ -288,7 +331,7 @@ async function handleGenerate(request, response)
                     generateFlashcards: false,
                     generateStudyMaterials: true,
                 },
-                nextTaskIds: [],
+                nextTaskIds: enhanceImagesStudyMaterialsTaskId ? [enhanceImagesStudyMaterialsTaskId] : [],
             });
 
             await TaskManager.setTask(prepareImagesStudyMaterialsTask);

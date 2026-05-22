@@ -28,6 +28,7 @@ const taskTypes =
   BEAUTIFY_DECK_SHORT_NAMES: 25,
   ANALYZE_DECK_PERFORMANCE: 26,
   GENERATE_CURATED_STUDY_MATERIAL: 27,
+  ENHANCE_IMAGES: 28,
 }
 
 module.exports = { taskTypes };
