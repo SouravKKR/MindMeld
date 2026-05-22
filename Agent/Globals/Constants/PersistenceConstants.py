@@ -1,0 +1,12 @@
+class PersistenceConstants:
+    INFORMATION_SOURCE_DIRECTORY = 'InformationSources'
+    TASKS_DIRECTORY = 'Tasks'
+    SYLLABUS_FILE_NAME = 'Syllabus.json'
+    BLUEPRINT_FILE_NAME = 'Blueprint.json'
+    MAPPED_TOPICS_DIRECTORY = 'MappedTopics'
+    FLASHCARDS_DIRECTORY = 'Flashcards'
+    STUDY_MATERIALS_DIRECTORY = 'StudyMaterials'
+    MOCK_TEST_QUESTIONS_DIRECTORY = 'MockTestQuestions'
+    MOCK_TESTS_DIRECTORY = 'MockTests'
+    IMAGE_SYLLABUS_FILE_NAME = 'ImageSyllabus.json'
+    VALIDATED_FIGURES_FILE_NAME = 'ValidatedFigures.json'

@@ -1,0 +1,8 @@
+Determine the question type distribution for the following exam:
+
+Exam: {exam_name}
+
+Available question type keys (use only these as JSON keys in your response):
+{question_types}
+
+Based on the typical structure and format of this exam, return a JSON object mapping the relevant question type keys to their relative weights. Only include types that are genuinely used in this exam.

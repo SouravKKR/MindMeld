@@ -1,0 +1,10 @@
+from enum import IntEnum
+
+class ScrapeFilterTypes(IntEnum):
+    EXTENSION = 0
+    SITE = 1
+    EXCLUDE_WORD = 2
+    EXACT_PHRASE = 3
+    TITLE = 4
+    URL_MATCH = 5
+    RESULT_COUNT = 6

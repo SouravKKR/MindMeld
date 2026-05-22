@@ -1,0 +1,88 @@
+.question-section,
+.answer-section
+{
+    font-size: 15px;
+    line-height: 1.6;
+}
+
+.question-section p,
+.answer-section p
+{
+    margin-bottom: 15px;
+}
+
+.question-section strong,
+.answer-section strong
+{
+    color: #ffffff;
+    font-weight: 600;
+}
+
+/* Lists */
+.question-section ul,
+.answer-section ul
+{
+    margin: 10px 0 15px 20px;
+}
+
+.question-section li,
+.answer-section li
+{
+    margin-bottom: 10px;
+}
+
+/* Table */
+.question-section table,
+.answer-section table
+{
+    max-width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 20px 0;
+    font-size: 14px;
+}
+
+.question-section th,
+.question-section td,
+.answer-section th,
+.answer-section td
+{
+    padding: 10px 12px;
+    text-align: left;
+}
+
+.question-section th,
+.answer-section th
+{
+    background: rgba(0, 0, 0, 0.3);
+    color: #ffffff;
+    font-weight: 600;
+}
+
+.question-section td,
+.answer-section td
+{
+    background: rgba(0, 0, 0, 0.15);
+}
+
+.question-section table,
+.question-section th,
+.question-section td,
+.answer-section table,
+.answer-section th,
+.answer-section td
+{
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+/* Remove <br> spacing hacks */
+/* .question-section br,
+.answer-section br
+{
+    display: none;
+} */
+
+.question-section > * + *,
+.answer-section > * + *
+{
+    margin-top: 15px;
+}

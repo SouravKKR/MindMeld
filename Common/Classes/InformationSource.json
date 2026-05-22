@@ -1,0 +1,52 @@
+{
+    "name": "InformationSource",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id": 
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "name": 
+        {
+            "datatype": "string",
+            "minLength": 1,
+            "maxLength": 256
+        },
+        "userId":
+        {
+            "datatype": "string",
+            "minLength": 1,
+            "maxLength": 256
+        },
+        "sourceType":
+        {
+            "datatype": "enum:InformationSourceTypes"
+        },
+        "directoryPath":
+        {
+            "datatype": "string"
+        },
+        "tags":
+        {
+            "datatype": "array<string>",
+            "defaultValue": []
+        },
+        "mimeType":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "hash":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "ocrMode":
+        {
+            "datatype": "enum:OcrModes",
+            "defaultValue": 1
+        }
+    }
+}

@@ -1,0 +1,15 @@
+Generate a comprehensive hierarchical JSON syllabus that fully covers what the user wants to learn, based on the following description.
+
+Subject context: {subject_name}
+Exam context: {exam_context}
+
+Rules reminder:
+- Top-level keys MUST be Unit names ("Unit I: Introduction", etc.) representing major thematic divisions.
+- Leaf nodes MUST be arrays of strings representing specific concepts.
+- Title Case all keys.
+- No metadata keys ("name", "subtopics", etc.).
+- Output ONLY a valid JSON object.
+
+-- USER DESCRIPTION BEGIN --
+{description}
+-- USER DESCRIPTION END --

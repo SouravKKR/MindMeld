@@ -1,0 +1,12 @@
+--- CONTENT BEGIN ---
+{content}
+--- CONTENT END ---
+
+This content covers: {topic_chain}
+{exam_context}
+Subject: {subject}
+
+Detail level instruction: {detail_level_instruction}
+
+Generate a complete HTML study material section for this topic using the content above as your primary source. Ensure you return the raw HTML directly without any surrounding arrays, JSON formatting, or text.
+{additional_instructions_block}

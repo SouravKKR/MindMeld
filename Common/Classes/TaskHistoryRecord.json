@@ -1,0 +1,63 @@
+{
+    "name": "TaskHistoryRecord",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "userId":
+        {
+            "datatype": "string"
+        },
+        "type":
+        {
+            "datatype": "enum:TaskTypes",
+            "defaultValue": 0
+        },
+        "status":
+        {
+            "datatype": "enum:TaskStatus",
+            "defaultValue": 0
+        },
+        "completion":
+        {
+            "datatype": "float",
+            "defaultValue": 0.0
+        },
+        "startDate":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "completedAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "durationMillis":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "payloadSummary":
+        {
+            "datatype": "string",
+            "defaultValue": "",
+            "maxLength": 512
+        },
+        "parentTaskId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "additionalData":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        }
+    }
+}

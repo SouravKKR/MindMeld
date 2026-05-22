@@ -1,0 +1,30 @@
+class DatabaseConstants
+{
+    static SESSIONS_COLLECTION = 'sessions';
+    static USERS_COLLECTION = 'users';
+    static PURCHASES_COLLECTION = 'purchases';
+    static INFORMATION_SOURCES_COLLECTION = 'informationSources';
+    static TEXT_EMBEDDINGS_COLLECTION = 'textEmbeddings';
+    static DECKS_COLLECTION = 'decks';
+    static CARDS_COLLECTION = 'cards';
+    static SYNC_DATA_COLLECTION = 'syncData';
+    static DELETIONS_COLLECTION = 'deletions';
+    static DELETIONS_TTL_DAYS = 90;
+    static STUDY_MATERIALS_COLLECTION = 'studyMaterials';
+    static MOCK_TESTS_COLLECTION = 'mockTests';
+    static FIGURES_COLLECTION = 'figures';
+    static GENERATION_TEMPLATES_COLLECTION = 'generationTemplates';
+    static LEGAL_DOCUMENTS_COLLECTION = 'legalDocuments';
+    static PAID_DECKS_COLLECTION = 'paidDecks';
+    static PAID_DECK_PRICINGS_COLLECTION = 'paidDeckPricings';
+    static PAID_DECK_ASSETS_COLLECTION = 'paidDeckAssets';
+    static DECK_LICENSES_COLLECTION = 'deckLicenses';
+    static DEVICES_COLLECTION = 'devices';
+    static UPLOAD_QUOTAS_COLLECTION = 'uploadQuotas';
+    static BUNDLE_DISCOUNTS_COLLECTION = 'bundleDiscounts';
+    static SCREENSHOT_EVENTS_COLLECTION = 'screenshotEvents';
+    static TASK_HISTORY_COLLECTION = 'taskHistory';
+    static ADMIN_EMAILS_COLLECTION = 'adminEmails';
+}
+
+export default DatabaseConstants;

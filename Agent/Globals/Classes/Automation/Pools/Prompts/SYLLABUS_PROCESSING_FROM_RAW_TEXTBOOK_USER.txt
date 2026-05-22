@@ -1,0 +1,7 @@
+Below is an indented outline extracted from a textbook on {subject_name}. Indentation represents hierarchy depth.
+
+Some entries may be noise picked up during extraction — raw data, table contents, figure labels, or other non-topic text. Discard anything that would not make sense as a standalone topic in {subject_name}. Only keep entries that a student would recognise as something worth studying.
+
+Convert the clean result into a nested JSON curriculum tree where leaf nodes are arrays of specific concept strings.
+
+-- OUTLINE BEGIN --

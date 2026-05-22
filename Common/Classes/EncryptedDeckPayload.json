@@ -1,0 +1,27 @@
+{
+    "name": "EncryptedDeckPayload",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "deckId":
+        {
+            "datatype": "string"
+        },
+        "keyVersion":
+        {
+            "datatype": "int",
+            "defaultValue": 1,
+            "min": 1
+        },
+        "ivBase64":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "ciphertextBase64":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        }
+    }
+}

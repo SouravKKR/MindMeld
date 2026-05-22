@@ -1,0 +1,51 @@
+{
+    "name": "DeckLicense",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "userId":
+        {
+            "datatype": "string"
+        },
+        "deckId":
+        {
+            "datatype": "string"
+        },
+        "status":
+        {
+            "datatype": "enum:DeckLicenseStatuses",
+            "defaultValue": 1
+        },
+        "keyVersion":
+        {
+            "datatype": "int",
+            "defaultValue": 1,
+            "min": 1
+        },
+        "wrappedKeyBlob":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "issuedAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "rotatedAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "additionalData":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        }
+    }
+}

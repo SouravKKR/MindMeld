@@ -1,0 +1,114 @@
+/* Layout overrides applied only when the dialog-box carries the .terms-conditions-dialog class. */
+
+dialog-box.terms-conditions-dialog
+{
+    max-width: 720px;
+    width: 90%;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+
+dialog-box.terms-conditions-dialog .terms-conditions-content
+{
+    max-height: min(50vh, calc(100vh - 240px));
+    overflow-y: auto;
+    padding: 18px 22px;
+    line-height: 1.45;
+    font-size: 0.95rem;
+    text-align: left;
+    background-color: var(--background-color, #1a1a1f);
+    border-radius: 6px;
+    margin: 0 15px;
+}
+
+dialog-box.terms-conditions-dialog .terms-conditions-error
+{
+    color: #ff6b6b;
+    font-size: 0.88rem;
+    margin: 8px 22px 0 22px;
+    padding: 8px 12px;
+    background-color: rgba(255, 107, 107, 0.1);
+    border: 1px solid rgba(255, 107, 107, 0.3);
+    border-radius: 6px;
+    line-height: 1.35;
+}
+
+dialog-box.terms-conditions-dialog .terms-conditions-error[hidden]
+{
+    display: none;
+}
+
+@media (max-width: 600px), (max-height: 500px)
+{
+    dialog-box.terms-conditions-dialog
+    {
+        max-width: 96%;
+        max-height: 92vh;
+    }
+
+    dialog-box.terms-conditions-dialog .terms-conditions-content
+    {
+        margin: 0 10px;
+        padding: 12px 14px;
+        font-size: 0.9rem;
+    }
+
+    dialog-box.terms-conditions-dialog .terms-conditions-buttons
+    {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+
+    dialog-box.terms-conditions-dialog .terms-conditions-buttons button
+    {
+        width: 100%;
+    }
+}
+
+dialog-box.terms-conditions-dialog .terms-conditions-content h3
+{
+    margin-top: 18px;
+    margin-bottom: 8px;
+    font-size: 1.05rem;
+}
+
+dialog-box.terms-conditions-dialog .terms-conditions-content h3:first-child
+{
+    margin-top: 0;
+}
+
+dialog-box.terms-conditions-dialog .terms-conditions-content p,
+dialog-box.terms-conditions-dialog .terms-conditions-content ul,
+dialog-box.terms-conditions-dialog .terms-conditions-content ol
+{
+    margin: 8px 0;
+}
+
+dialog-box.terms-conditions-dialog .terms-conditions-buttons
+{
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 14px;
+}
+
+dialog-box.terms-conditions-dialog .download-button
+{
+    padding: 10px 14px;
+    border-radius: 5px;
+    background-color: var(--tertiary-background-color, #2a2a32);
+}
+
+dialog-box.terms-conditions-dialog .download-button:hover
+{
+    background-color: var(--accent-color, #5a9cff);
+    transition: background-color 0.2s ease-in-out;
+}
+
+dialog-box.terms-conditions-dialog .agree-button[disabled],
+dialog-box.terms-conditions-dialog .decline-button[disabled]
+{
+    opacity: 0.6;
+    cursor: not-allowed;
+}

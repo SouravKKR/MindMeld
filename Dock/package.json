@@ -1,0 +1,21 @@
+{
+  "name": "dock",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@gamiumgamers/packetron": "^1.0.18",
+    "@google-cloud/storage": "^7.19.0",
+    "bson": "^7.2.0",
+    "dotenv": "^17.2.4",
+    "mime-types": "^3.0.2",
+    "mongodb": "^7.1.0",
+    "redis": "^5.11.0"
+  }
+}

@@ -1,0 +1,7 @@
+Exam Name: {exam_name}
+Subject: {subject_name}
+Number of provided baseline PDFs: {pdf_count}
+
+Analyze the attached baseline PDFs. If none are attached or they are insufficient, use your internal search-grounded knowledge to determine the exact question paper pattern for this exam and subject.
+
+Output the final blueprint strictly following the JSON schema provided in the system instructions.

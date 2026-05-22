@@ -1,0 +1,31 @@
+Exam: {exam_name}
+Subject: {subject_name}
+Topic: {topic_chain}
+
+════════════════════════════════════════════════════
+STUDY MATERIAL
+════════════════════════════════════════════════════
+
+{content}
+
+════════════════════════════════════════════════════
+PREVIOUS-YEAR QUESTIONS (SEED POOL)
+════════════════════════════════════════════════════
+
+{seed_questions_block}
+
+════════════════════════════════════════════════════
+GENERATION INSTRUCTIONS
+════════════════════════════════════════════════════
+
+Generate exactly {num_questions} question(s) total.
+
+Question type breakdown — exactly these counts:
+{type_breakdown}
+
+Difficulty breakdown — distribute exactly these counts across all questions:
+{difficulty_breakdown}
+
+Where a seed PYQ is a good fit for one of the requested type/difficulty slots, REPHRASE it (change numbers, swap variables, light twist) so the underlying concept is preserved but the question is materially different. Aim for roughly half the questions to be rephrased from seeds. For the remaining slots, generate fresh questions from the study material above. Never copy a seed verbatim.
+
+Calibrate marks to the exam context. Return only the JSON array.

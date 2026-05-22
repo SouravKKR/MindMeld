@@ -1,0 +1,46 @@
+{
+    "name": "User",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id": 
+        {
+            "datatype": "string"
+        },
+        "displayName":
+        {
+            "datatype": "string",
+            "minLength": 1,
+            "maxLength": 256
+        },
+        "provider":
+        {
+            "datatype": "enum:AuthenticationProviders",
+            "defaultValue": 0
+        },
+        "joinDate":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "preferences":
+        {
+            "datatype": "object"
+        },
+        "role":
+        {
+            "datatype": "enum:UserRoles",
+            "defaultValue": 0
+        },
+        "profilePictureUrl":
+        {
+            "datatype": "string",
+            "defaultValue": "",
+            "maxLength": 2048
+        },
+        "additionalData":
+        {
+            "datatype": "object"
+        }
+    }
+}

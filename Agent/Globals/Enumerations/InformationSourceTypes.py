@@ -1,0 +1,9 @@
+from enum import IntEnum
+
+class InformationSourceTypes(IntEnum):
+    PROVIDED_DOCUMENTS = 0
+    ANYWHERE_ON_THE_INTERNET = 1
+    SPECIFIC_URL_ON_THE_INTERNET = 2
+    AI_GENERATED = 3
+    REPUTED_EXTERNAL_SOURCES = 4
+    CURRICULUM_OR_SYLLABUS = 5

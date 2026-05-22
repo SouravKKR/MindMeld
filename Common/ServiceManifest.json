@@ -1,0 +1,11 @@
+{
+  "Agent": {
+    "language": "python"
+  },
+  "Dock": {
+    "language": "javascript"
+  },
+  "Main": {
+    "language": "html5"
+  }
+}

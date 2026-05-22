@@ -1,0 +1,52 @@
+dialog-box .progress-dialog-content
+{
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 10px;
+    min-width: 320px;
+}
+
+dialog-box .progress-dialog-title
+{
+    margin: 0;
+    text-align: center;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+dialog-box .progress-dialog-bar-track
+{
+    width: 100%;
+    height: 14px;
+    border-radius: 7px;
+    background-color: var(--tertiary-background-color);
+    overflow: hidden;
+}
+
+dialog-box .progress-dialog-bar-fill
+{
+    width: 0%;
+    height: 100%;
+    background: linear-gradient(90deg, #d5c300, #ffe44d);
+    transition: width 0.2s ease-out;
+}
+
+dialog-box .progress-dialog-footer
+{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    color: var(--primary-text-color);
+}
+
+dialog-box .progress-dialog-status
+{
+    opacity: 0.85;
+}
+
+dialog-box .progress-dialog-percent
+{
+    font-weight: bold;
+}

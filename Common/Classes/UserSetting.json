@@ -1,0 +1,32 @@
+{
+    "name": "UserSetting",
+    "relativePath": "Globals/Classes/Settings",
+    "members":
+    {
+        "key":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "value":
+        {
+            "datatype": "object",
+            "defaultValue": null
+        },
+        "defaultValue":
+        {
+            "datatype": "object",
+            "defaultValue": null
+        },
+        "flags":
+        {
+            "datatype": "int",
+            "defaultValue": 0
+        },
+        "additionalData":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        }
+    }
+}

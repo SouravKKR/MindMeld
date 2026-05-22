@@ -1,0 +1,32 @@
+{
+    "name": "GeneralGenerationSettings",
+    "relativePath": "Globals/Classes/Task/AutoGeneration",
+    "members":
+    {
+        "generationMode":
+        {
+            "datatype": "enum:AutomaticGenerationModes",
+            "defaultValue": 0
+        },
+        "inheritImageCurriculumFromInformationSources":
+        {
+            "datatype": "boolean",
+            "defaultValue": true
+        },
+        "captureImagesEnabled":
+        {
+            "datatype": "boolean",
+            "defaultValue": true
+        },
+        "goodQualityDeckShortNames":
+        {
+            "datatype": "boolean",
+            "defaultValue": false
+        }
+    },
+    "extends":
+    {
+        "name": "AutoGenerationSettings",
+        "relativePath": "Globals/Classes/Task/AutoGeneration"
+    }
+}

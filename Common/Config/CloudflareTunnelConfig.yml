@@ -1,0 +1,7 @@
+tunnel: mindmeld
+credentials-file: C:\Users\Sourav\.cloudflared\6156d866-df7e-47eb-a5e5-43810724ea26.json
+
+ingress:
+  - hostname: mindmeld.cogniumlabs.io
+    service: http://127.0.0.1:3000
+  - service: http_status:404

@@ -1,0 +1,40 @@
+require("dotenv").config();
+
+const { Packetron, PacketronServerFlags } = require("@gamiumgamers/packetron");
+const path = require("path");
+const { handleAuthenticationEndpoints } = require("./Endpoints/HandleAuthenticationEndpoints");
+const { handleAutomaticGenerationEndpoints } = require("./Endpoints/HandleAutomaticGenerationEndpoints");
+const TaskManager = require("./Globals/Classes/Task/TaskManager");
+const { noCache } = require("./Endpoints/Plugins/NoCache");
+const { handleSyncEndpoints } = require("./Endpoints/HandleSyncEndpoints");
+const { handleAdminEndpoints } = require("./Endpoints/HandleAdminEndpoints");
+const { handleLegalEndpoints } = require("./Endpoints/HandleLegalEndpoints");
+const { handlePaidDeckEndpoints } = require("./Endpoints/HandlePaidDeckEndpoints");
+const { handleActivityEndpoints } = require("./Endpoints/HandleActivityEndpoints");
+const { handleAnalysisEndpoints } = require("./Endpoints/HandleAnalysisEndpoints");
+const { handleProfileEndpoints } = require("./Endpoints/HandleProfileEndpoints");
+const Logger = require("./Globals/Classes/Logger");
+const KeyManagementService = require("./Globals/Classes/Security/KeyManagementService");
+const KeyRotationScheduler = require("./Globals/Classes/Security/KeyRotationScheduler");
+
+
+Logger.initialize();
+TaskManager.initialize();
+KeyManagementService.initialize();
+KeyRotationScheduler.start();
+
+const server = new Packetron({ port: 3000, flags: PacketronServerFlags.START_IMMEDIATELY, maxThreads: 1 });
+
+server.serve({ directory: path.join(__dirname, "Static"), plugins: [noCache] });
+
+server.serveFile({ routePath: "/", filePath: path.join(__dirname, "Static", "index.html"), plugins: [noCache] });
+
+handleAuthenticationEndpoints(server);
+handleAutomaticGenerationEndpoints(server);
+handleSyncEndpoints(server);
+handleAdminEndpoints(server);
+handleLegalEndpoints(server);
+handlePaidDeckEndpoints(server);
+handleActivityEndpoints(server);
+handleAnalysisEndpoints(server);
+handleProfileEndpoints(server);

@@ -1,0 +1,29 @@
+{
+    "name": "AdminEmailRecord",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "email":
+        {
+            "datatype": "string",
+            "minLength": 3,
+            "maxLength": 320
+        },
+        "addedBy":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "addedAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "notes":
+        {
+            "datatype": "string",
+            "defaultValue": "",
+            "maxLength": 1024
+        }
+    }
+}

@@ -1,0 +1,112 @@
+{
+    "name": "MockTestGenerationSettings",
+    "relativePath": "Globals/Classes/Task/AutoGeneration",
+    "members": 
+    {
+        "numTestsMethod":
+        {
+            "datatype": "enum:AutomationLevels",
+            "defaultValue": 0
+        },
+        "numberOfTests":
+        {
+            "datatype": "int",
+            "defaultValue": 2
+        },
+        "difficultyMethod":
+        {
+            "datatype": "enum:AutomationLevels",
+            "defaultValue": 0
+        },
+        "veryEasyQuestions":
+        {
+            "datatype": "float",
+            "defaultValue": 1.0
+        },
+        "easyQuestions":
+        {
+            "datatype": "float",
+            "defaultValue": 1.0
+        },
+        "mediumQuestions":
+        {
+            "datatype": "float",
+            "defaultValue": 1.0
+        },
+        "hardQuestions":
+        {
+            "datatype": "float",
+            "defaultValue": 1.0
+        },
+        "veryHardQuestions":
+        {
+            "datatype": "float",
+            "defaultValue": 1.0
+        },
+        "questionTypesMethod":
+        {
+            "datatype": "enum:AutomationLevels",
+            "defaultValue": 0
+        },
+        "questionTypesWithWeights":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        },
+        "numQuestionsMethod":
+        {
+            "datatype": "enum:AutomationLevels",
+            "defaultValue": 0
+        },
+        "numQuestionsPerTest":
+        {
+            "datatype": "int",
+            "defaultValue": 30
+        },
+        "correctMarks":
+        {
+            "datatype": "float",
+            "defaultValue": 4.0
+        },
+        "wrongMarks":
+        {
+            "datatype": "float",
+            "defaultValue": -1.0
+        },
+        "unattemptedMarks":
+        {
+            "datatype": "float",
+            "defaultValue": 0.0
+        },
+        "partialMarks":
+        {
+            "datatype": "float",
+            "defaultValue": 0.0
+        },
+        "perTypeMarkingOverrides":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        },
+        "sectionStructure":
+        {
+            "datatype": "array",
+            "defaultValue": []
+        },
+        "showSolvingSteps":
+        {
+            "datatype": "boolean",
+            "defaultValue": true
+        },
+        "durationMinutes":
+        {
+            "datatype": "int",
+            "defaultValue": 0
+        }
+    },
+    "extends": 
+    {
+        "name": "AutoGenerationSettings",
+        "relativePath": "Globals/Classes/Task/AutoGeneration"
+    }
+}

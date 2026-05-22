@@ -1,0 +1,99 @@
+{
+    "name": "PaidDeck",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "title":
+        {
+            "datatype": "string",
+            "minLength": 1,
+            "maxLength": 256
+        },
+        "description":
+        {
+            "datatype": "string",
+            "defaultValue": "",
+            "maxLength": 4096
+        },
+        "sellerId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "thumbnailUrl":
+        {
+            "datatype": "string",
+            "defaultValue": "",
+            "maxLength": 2048
+        },
+        "category":
+        {
+            "datatype": "string",
+            "defaultValue": "",
+            "maxLength": 128
+        },
+        "tags":
+        {
+            "datatype": "array<string>",
+            "defaultValue": []
+        },
+        "basePriceMinor":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "currency":
+        {
+            "datatype": "string",
+            "defaultValue": "INR",
+            "maxLength": 8
+        },
+        "granularity":
+        {
+            "datatype": "enum:DeckPurchaseGranularity",
+            "defaultValue": 0
+        },
+        "bundleChildIds":
+        {
+            "datatype": "array<string>",
+            "defaultValue": []
+        },
+        "parentBundleIds":
+        {
+            "datatype": "array<string>",
+            "defaultValue": []
+        },
+        "assetBlobId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "keyVersion":
+        {
+            "datatype": "int",
+            "defaultValue": 1,
+            "min": 1
+        },
+        "isPublished":
+        {
+            "datatype": "boolean",
+            "defaultValue": false
+        },
+        "publishedAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "additionalData":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        }
+    }
+}

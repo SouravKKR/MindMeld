@@ -1,0 +1,292 @@
+/* ── Picker modal shell ───────────────────────────────────────────────────── */
+
+.mock-test-picker-modal-header
+{
+    padding: 18px 20px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    flex-shrink: 0;
+}
+
+.mock-test-picker-modal-header-title
+{
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--primary-text-color);
+}
+
+.mock-test-picker-modal-header-subtitle
+{
+    font-size: 12px;
+    color: #777777;
+    margin-top: 3px;
+}
+
+.mock-test-picker-card-list
+{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 16px 20px;
+    overflow-y: auto;
+    flex: 1;
+    box-sizing: border-box;
+}
+
+.mock-test-picker-card-list::-webkit-scrollbar
+{
+    width: 4px;
+}
+
+.mock-test-picker-card-list::-webkit-scrollbar-thumb
+{
+    background-color: #333333;
+    border-radius: 4px;
+}
+
+
+/* ── Individual card ──────────────────────────────────────────────────────── */
+
+.mock-test-picker-card
+{
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    border: 1px solid #2c2c2c;
+    background-color: var(--secondary-background-color);
+    box-sizing: border-box;
+    transition: border-color 0.15s ease-in-out;
+}
+
+.mock-test-picker-card:hover
+{
+    border-color: #444444;
+}
+
+.mock-test-picker-card-header-row
+{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+}
+
+.mock-test-picker-card-icon-wrapper
+{
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    background: linear-gradient(45deg, rgba(0, 152, 196, 0.15), rgba(181, 91, 208, 0.15));
+    border: 1px solid rgba(0, 152, 196, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.mock-test-picker-card-info
+{
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.mock-test-picker-card-title
+{
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--primary-text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mock-test-picker-card-meta
+{
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.mock-test-picker-card-meta-badge
+{
+    font-size: 11px;
+    font-weight: 500;
+    color: #888888;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+
+/* ── Action buttons ───────────────────────────────────────────────────────── */
+
+.mock-test-picker-card-actions
+{
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    flex-shrink: 0;
+    align-items: center;
+}
+
+.mock-test-picker-action-button
+{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 13px;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+    color: var(--primary-text-color);
+    transition: opacity 0.15s ease-in-out, background-color 0.15s ease-in-out;
+}
+
+.mock-test-picker-take-test-button
+{
+    background: var(--primary-background-gradient);
+    color: #ffffff;
+}
+
+.mock-test-picker-take-test-button:hover
+{
+    opacity: 0.82;
+    background: var(--primary-background-gradient);
+}
+
+.mock-test-picker-print-button
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.mock-test-picker-print-button:hover
+{
+    background-color: var(--quaternary-background-color);
+}
+
+.mock-test-picker-history-button
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.mock-test-picker-history-button:hover
+{
+    background-color: var(--quaternary-background-color);
+}
+
+
+/* ── Print modal ──────────────────────────────────────────────────────────── */
+
+.mock-test-print-modal-toolbar
+{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    /* Extra right padding clears the DialogBox close button (45px wide, top:0 right:0) */
+    padding: 16px 60px 16px 22px;
+    background-color: var(--tertiary-background-color);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    flex-shrink: 0;
+    box-sizing: border-box;
+}
+
+.mock-test-print-modal-toolbar-info
+{
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.mock-test-print-modal-toolbar-title
+{
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--primary-text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mock-test-print-modal-toolbar-meta
+{
+    font-size: 11px;
+    color: #777777;
+}
+
+.mock-test-print-download-button
+{
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 16px;
+    background: var(--primary-background-gradient);
+    color: #ffffff;
+    border: none;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: opacity 0.15s ease-in-out;
+}
+
+.mock-test-print-download-button:hover
+{
+    opacity: 0.82;
+    background: var(--primary-background-gradient);
+}
+
+.mock-test-print-modal-pdf-frame
+{
+    flex: 1;
+    width: 100%;
+    border: none;
+    background: #f0f0f0;
+    min-height: 0;
+    display: block;
+}
+
+
+/* ── Responsive — portrait / narrow screens ───────────────────────────────── */
+
+@media (orientation: portrait), (max-width: 520px)
+{
+    .mock-test-picker-card
+    {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    .mock-test-picker-card-header-row
+    {
+        flex: unset;
+    }
+
+    .mock-test-picker-card-actions
+    {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 8px;
+    }
+
+    .mock-test-picker-action-button
+    {
+        padding: 9px 8px;
+        font-size: 11px;
+    }
+}

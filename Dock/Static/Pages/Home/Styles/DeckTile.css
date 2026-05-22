@@ -1,0 +1,358 @@
+deck-tile
+{
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-evenly;
+    align-items: center;
+    width: 160px;
+    height: 190px;
+    background: var(--primary-background-gradient);
+    gap: 10px;
+    border-radius: 10px;
+    margin: 10px;
+    cursor: pointer;
+    transition: box-shadow 0.2s ease-in-out;
+    font-size: 22px;
+    font-weight: bold;
+    line-height: 1.15;
+    color: white;
+    box-sizing: border-box;
+    user-select: none;
+}
+
+deck-tile > .deck-name-container
+{
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-word;
+    max-width: 90%;
+    text-align: center;
+    padding: 0 6px;
+    box-sizing: border-box;
+}
+
+.deck-options-button
+{
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background-color: transparent;
+    border: none;
+    border-radius: 50%;
+    color: white;
+    font-size: 22px;
+    font-weight: bold;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: background-color 0.15s ease-in-out, opacity 0.15s ease-in-out;
+    /* Touch target — 32px hits the WCAG 24x24 minimum and feels right on mobile. */
+    touch-action: manipulation;
+}
+
+.deck-options-button:hover,
+.deck-options-button:focus-visible
+{
+    background-color: rgba(255, 255, 255, 0.18);
+    opacity: 1;
+    outline: none;
+}
+
+.deck-options-button:active
+{
+    background-color: rgba(255, 255, 255, 0.28);
+}
+
+deck-tile:hover
+{
+    background-color: #fff;
+    box-shadow: 0 0 15px rgba(255, 255, 127, 0.7);
+}
+
+
+.study-button
+{
+    background-color: var(--tertiary-background-color);
+    border: none;
+    color: white;
+    padding: 10px 20px;
+    text-align: center;
+    text-decoration: none;
+    font-size: 16px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.study-button:hover
+{
+    background-color: var(--quaternary-background-color);
+}
+
+new-deck-tile
+{
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    box-sizing: border-box;
+    width: 160px;
+    height: 190px;
+    font-size: 64px;
+    background-color: var(--tertiary-background-color);
+    border-radius: 10px;
+    margin: 10px;
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out;
+}
+
+new-deck-tile:hover
+{
+    background-color: var(--quaternary-background-color);
+}
+
+.study-mode-selection-container
+{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background-color: var(--quaternary-background-color);
+    padding: 15px;
+    border-radius: 10px;
+}
+
+.study-mode-selection-container button
+{
+    padding: 10px;
+    border-radius: 10px;
+}
+
+.learn-more-button
+{
+    margin: 10px;
+    font-style: italic;
+    cursor: pointer;
+    color: rgb(0,170,255);
+    text-decoration: underline;
+    padding: 5px;
+    border-radius: 5px;
+}
+
+/* ── Long-press drag-to-merge states ───────────────────────────── */
+
+deck-tile.deck-tile-being-dragged
+{
+    opacity: 0.35;
+}
+
+deck-tile.deck-tile-drop-candidate
+{
+    /* Subtle outline + glow so the drop target is unambiguous without
+       hijacking the page accent colour. */
+    outline: 2px dashed #2EB6E0;
+    outline-offset: 4px;
+    box-shadow: 0 0 0 4px rgba(46, 182, 224, 0.18);
+}
+
+deck-tile.deck-tile-drag-ghost
+{
+    position: fixed;
+    pointer-events: none;
+    opacity: 0.75;
+    z-index: 10000;
+    transform: translate(-50%, -50%);
+    margin: 0;
+    cursor: grabbing;
+}
+
+/* ── Merge-flow dialog styles ──────────────────────────────────── */
+
+.deck-merge-flow-title
+{
+    margin: 0 0 6px 0;
+    font-size: 1.15rem;
+}
+
+.deck-merge-flow-body
+{
+    margin: 0 0 10px 0;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    opacity: 0.9;
+}
+
+.deck-merge-flow-body-warning
+{
+    color: #f0b030;
+    font-weight: 500;
+}
+
+.deck-merge-flow-choice-list
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.deck-merge-flow-choice-button
+{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    border: 1px solid transparent;
+    font-size: 0.9rem;
+    text-align: left;
+    cursor: pointer;
+}
+
+.deck-merge-flow-choice-button:hover
+{
+    border-color: #2EB6E0;
+    background-color: var(--secondary-background-color);
+}
+
+.deck-merge-flow-choice-tag
+{
+    flex-shrink: 0;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background-color: rgba(46, 182, 224, 0.18);
+    color: #2EB6E0;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.deck-merge-flow-choice-value
+{
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.deck-merge-flow-custom-row
+{
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.deck-merge-flow-custom-input
+{
+    flex: 1;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 0.9rem;
+}
+
+.deck-merge-flow-custom-input:focus
+{
+    outline: none;
+    border-color: #2EB6E0;
+}
+
+.deck-merge-flow-custom-button
+{
+    padding: 8px 14px;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.deck-merge-flow-custom-button:hover
+{
+    border-color: #2EB6E0;
+}
+
+.deck-merge-flow-buttons
+{
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.deck-merge-flow-cancel-button,
+.deck-merge-flow-confirm-button
+{
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.deck-merge-flow-cancel-button
+{
+    background-color: transparent;
+    color: var(--primary-text-color);
+}
+
+.deck-merge-flow-cancel-button:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.deck-merge-flow-confirm-button
+{
+    background-color: #2EB6E0;
+    color: white;
+    border-color: #2EB6E0;
+}
+
+.deck-merge-flow-confirm-button:hover
+{
+    background-color: #45c1e8;
+}
+
+/* The watermark border is a static ring around the buyer's profile
+   picture and is never replaced on hover, so a plain border is fine
+   here — there's no interactive state that would strip it. */
+.paid-deck-owner-watermark
+{
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    pointer-events: none;
+    opacity: 0.85;
+    box-shadow: 0 1px 3px var(--shadow-color-strong);
+    border: 2px solid var(--primary-text-color);
+}
+
+/* Provision for seller-side branding (creator marketplace, future phase).
+   Today only the buyer watermark is active; the seller class is reserved. */
+.paid-deck-seller-watermark
+{
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    pointer-events: none;
+    opacity: 0.75;
+}
+

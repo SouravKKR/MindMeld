@@ -1,0 +1,128 @@
+/* HomeFooterComponent.css
+ *
+ * Responsive footer at the bottom of the Home page:
+ *
+ *   Desktop / landscape — single row. View Activity (or, when logged
+ *                         out, the Terms of Service / Privacy notice)
+ *                         sits in the middle slot; sync pill on the
+ *                         left, profile pill on the right.
+ *
+ *   Mobile / narrow     — two stacked rows. The middle slot lifts to
+ *                         its own line above the sync + profile row,
+ *                         matching the previous floating legal-notice
+ *                         layout so the corner pills don't compete for
+ *                         horizontal space on small screens.
+ *
+ * The component is in normal document flow so the deck grid scrolls
+ * above it instead of sliding underneath. The slightly lighter band
+ * (`--secondary-background-color`) separates the footer visually
+ * from the deck grid above.
+ *
+ * Desktop implementation note: the JS template wraps the slots in
+ * `.home-footer-top-row` / `.home-footer-bottom-row` containers so
+ * the two-row mobile layout has natural row boxes. On desktop those
+ * containers use `display: contents`, dissolving themselves out of
+ * the layout — the slot elements become direct flex children of
+ * home-footer-component, and CSS `order` puts them in the right
+ * sequence (sync left, middle, profile right).
+ */
+
+home-footer-component
+{
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 16px;
+    flex-shrink: 0;
+    background-color: var(--secondary-background-color);
+    border-top: 1px solid var(--outline-color-subtle);
+    box-sizing: border-box;
+    width: 100%;
+    z-index: 5;
+}
+
+.home-footer-top-row,
+.home-footer-bottom-row
+{
+    display: contents;
+}
+
+/* Desktop order: sync (left) → middle slot (centre, stretches) → profile (right). */
+home-footer-component > .home-footer-bottom-row > sync-status-component
+{
+    order: 0;
+    flex: 0 0 auto;
+}
+
+home-footer-component > .home-footer-top-row > activity-preview-component,
+home-footer-component > .home-footer-top-row > sign-in-legal-notice-component
+{
+    order: 1;
+    flex: 1 1 auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-width: 0;
+}
+
+home-footer-component > .home-footer-bottom-row > profile-component
+{
+    order: 2;
+    flex: 0 0 auto;
+}
+
+/* On desktop the spacer is unnecessary — `justify-content: space-between`
+   on the home-footer-component plus `flex: 1 1 auto` on the middle slot
+   already pushes profile to the right edge when logged out. */
+home-footer-component .home-footer-bottom-spacer
+{
+    display: none;
+}
+
+@media (max-width: 600px)
+{
+    home-footer-component
+    {
+        flex-direction: column;
+        gap: 6px;
+        /* A little more headroom above the View Activity button so it
+           doesn't crowd against the bottom of the deck grid. */
+        padding: 12px 10px 10px 10px;
+    }
+
+    .home-footer-top-row
+    {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+    }
+
+    .home-footer-bottom-row
+    {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+    }
+
+    /* Spacer re-enabled to keep profile right-anchored on the second
+       row when logged out (no sync pill on the left). */
+    home-footer-component .home-footer-bottom-spacer
+    {
+        display: inline-block;
+        flex: 0 0 1px;
+        visibility: hidden;
+    }
+
+    /* Restore natural sizing on the middle slot — column layout
+       doesn't need it to stretch. */
+    home-footer-component > .home-footer-top-row > activity-preview-component,
+    home-footer-component > .home-footer-top-row > sign-in-legal-notice-component
+    {
+        flex: 0 0 auto;
+    }
+}

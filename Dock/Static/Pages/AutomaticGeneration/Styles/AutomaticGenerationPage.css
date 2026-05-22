@@ -1,0 +1,223 @@
+automatic-generation-page[page]
+{
+    overflow: hidden;
+}
+
+.automatic-generation-page-scroll-wrapper
+{
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.automatic-generation-page-container
+{
+    display: flex;
+    flex-direction: column;
+    padding: 24px 28px;
+    box-sizing: border-box;
+    max-width: 900px;
+    width: 100%;
+    align-self: center;
+}
+
+.generation-container
+{
+    margin-bottom: 12px;
+}
+
+.generation-type-title-container
+{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 0;
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.generation-type-title-container input[type="checkbox"]
+{
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: #0098C4;
+    flex-shrink: 0;
+}
+
+.generation-fields
+{
+    display: flex;
+    padding: 20px;
+    flex-direction: column;
+    border-radius: 15px;
+    background-color: var(--tertiary-background-color);
+    gap: 14px;
+    margin: 10px 0;
+}
+
+.generation-fields h2
+{
+    margin: 0 0 4px 0;
+    font-size: 1rem;
+    font-weight: 600;
+    opacity: 0.6;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.generation-fields input,
+.generation-fields select,
+.generation-fields div[contenteditable]
+{
+    padding: 12px;
+    border-radius: 10px;
+}
+
+.generation-fields input:hover,
+.generation-fields select:hover,
+.generation-fields div[contenteditable]:hover
+{
+    background-color: var(--quaternary-background-color);
+}
+
+/* ── Field rows — fluid, wrappable ──────────────────────────── */
+
+.field-container
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+
+.field-container > label:first-child
+{
+    flex: 0 0 200px;
+    font-size: 0.875rem;
+    opacity: 0.8;
+    line-height: 1.4;
+}
+
+.field-container > input,
+.field-container > select
+{
+    flex: 1 1 160px;
+    min-width: 0;
+}
+
+.field-container > input[type="number"]
+{
+    flex: 0 0 90px;
+}
+
+.field-container > input[type="checkbox"]
+{
+    flex: 0 0 auto;
+    width: 15px;
+    height: 15px;
+}
+
+@media (max-width: 520px)
+{
+    .automatic-generation-page-container
+    {
+        padding: 16px;
+    }
+
+    .field-container
+    {
+        align-items: stretch;
+    }
+
+    .field-container > label:first-child
+    {
+        flex: 1 0 100%;
+    }
+
+    .field-container > input,
+    .field-container > select
+    {
+        flex: 1 0 100%;
+        width: 100%;
+        box-sizing: border-box;
+    }
+}
+
+/* ── Action bar ─────────────────────────────────────────────── */
+
+.automatic-generation-action-bar
+{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 14px 28px 6px 28px;
+    background-color: var(--secondary-background-color);
+    border-top: 1px solid var(--tertiary-background-color);
+    flex-shrink: 0;
+}
+
+.automatic-generation-deck-library-hint
+{
+    /* The hint text is intentionally muted via rgba alpha on the color only,
+       NOT via parent opacity. Parent opacity multiplies through descendants,
+       which would also fade the link below readable contrast. */
+    text-align: center;
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.55);
+    padding: 0 28px 14px 28px;
+    background-color: var(--secondary-background-color);
+    flex-shrink: 0;
+}
+
+.automatic-generation-deck-library-link
+{
+    color: #2EB6E0;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.automatic-generation-deck-library-link:hover
+{
+    color: #5CCCEC;
+}
+
+.automatic-generation-compute-cost-button
+{
+    padding: 10px 20px;
+    border-radius: 10px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    opacity: 0.85;
+}
+
+.automatic-generation-compute-cost-button:hover
+{
+    background-color: var(--quaternary-background-color);
+    opacity: 1;
+}
+
+.automatic-generation-start-button
+{
+    padding: 13px 36px;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--primary-background-gradient);
+    color: var(--primary-text-color);
+}
+
+.automatic-generation-start-button:hover
+{
+    opacity: 0.88;
+    background: var(--primary-background-gradient);
+}

@@ -1,0 +1,123 @@
+.curated-batch-review-dialog
+{
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 4px 8px 16px 8px;
+    max-width: 560px;
+    color: var(--primary-text-color);
+}
+
+.curated-batch-review-title
+{
+    font-size: 20px;
+    font-weight: bold;
+    margin: 0;
+}
+
+.curated-batch-review-body
+{
+    font-size: 13px;
+    line-height: 1.6;
+    margin: 0;
+    color: var(--secondary-text-color, #aaaaaa);
+}
+
+.curated-batch-review-bulk-row
+{
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.curated-batch-review-bulk-button
+{
+    padding: 8px 14px;
+    border-radius: 8px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.curated-batch-review-bulk-button:hover
+{
+    background-color: var(--quaternary-background-color);
+}
+
+.curated-batch-review-entries
+{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 360px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.curated-batch-review-entry
+{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px;
+    border-radius: 10px;
+    background-color: var(--tertiary-background-color);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.curated-batch-review-entry-title
+{
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.curated-batch-review-entry-preview
+{
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--secondary-text-color, #888888);
+}
+
+.curated-batch-review-entry-actions
+{
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+
+.curated-batch-review-radio
+{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.curated-batch-review-confirm-row
+{
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 6px;
+}
+
+.curated-batch-review-confirm-button
+{
+    padding: 10px 22px;
+    border-radius: 8px;
+    background-color: var(--highlight-color, #F5B838);
+    color: var(--highlight-text-color, #1f1f23);
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.curated-batch-review-confirm-button:hover
+{
+    filter: brightness(1.06);
+}

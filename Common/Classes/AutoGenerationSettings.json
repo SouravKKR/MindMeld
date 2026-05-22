@@ -1,0 +1,49 @@
+{
+    "name": "AutoGenerationSettings",
+    "relativePath": "Globals/Classes/Task/AutoGeneration",
+    "members":
+    {
+        "additionalInstructions":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "description":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "informationSources":
+        {
+            "datatype": "array<class:ExtractableInformationSource>",
+            "defaultValue": [],
+            "classRelativePath": "Globals/Classes/Decorators"
+        },
+        "enhanceImages":
+        {
+            "datatype": "boolean",
+            "defaultValue": false
+        },
+        "imageSources":
+        {
+            "datatype": "array<class:ExtractableInformationSource>",
+            "defaultValue": [],
+            "classRelativePath": "Globals/Classes/Decorators"
+        },
+        "subjectName":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "examName":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        }
+    },
+    "extends":
+    {
+        "name": "TaskSettings",
+        "relativePath": "Globals/Classes/Task"
+    }
+}

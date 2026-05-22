@@ -1,0 +1,105 @@
+/* Custom menu shown above the user's text selection inside the Study
+   page's content. Replaces the browser default context menu for the
+   in-card / in-study-material text scope. Extends the ContextMenu base
+   styling. */
+
+text-selection-context-menu
+{
+    /* Anchor above the selection with a small visible footprint. The
+       base ContextMenu styles set position: fixed and z-index: 100 —
+       we widen the surface so the contenteditable Ask input fits
+       comfortably without wrapping. */
+    width: min(360px, 92vw);
+    padding: 6px;
+    gap: 6px;
+    /* Same chrome as other context menus (secondary bg + rounded
+       corners) but with a faint accent outline so it reads as
+       intentional AI-action chrome rather than a generic OS menu. */
+    outline: 1px solid rgba(0, 152, 196, 0.45);
+    outline-offset: -1px;
+}
+
+text-selection-context-menu .text-selection-explain-button
+{
+    /* Single-row primary action. Matches the accent button styling
+       used by the bottom panel send button so the two AI surfaces feel
+       like one family. */
+    padding: 8px 14px;
+    margin: 0;
+    border: none;
+    border-radius: 8px;
+    background-color: var(--accent-color);
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 0.88rem;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    text-align: center;
+}
+
+text-selection-context-menu .text-selection-explain-button:hover
+{
+    background-color: #0084ab;
+}
+
+text-selection-context-menu .text-selection-question-row
+{
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+    padding: 0;
+    margin: 0;
+}
+
+text-selection-context-menu .text-selection-question-input
+{
+    flex: 1;
+    min-height: 36px;
+    max-height: 120px;
+    overflow-y: auto;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    outline: 1px solid rgba(255, 255, 255, 0.08);
+    outline-offset: -1px;
+    font-size: 0.88rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+    transition: outline-color 0.15s ease;
+}
+
+text-selection-context-menu .text-selection-question-input:focus
+{
+    outline-color: var(--accent-color);
+}
+
+text-selection-context-menu .text-selection-question-input:empty::before
+{
+    content: attr(data-placeholder);
+    color: var(--secondary-text-color);
+    opacity: 0.55;
+    pointer-events: none;
+}
+
+text-selection-context-menu .text-selection-send-button
+{
+    padding: 0 14px;
+    border-radius: 6px;
+    border: none;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    outline: 1px solid rgba(255, 255, 255, 0.08);
+    outline-offset: -1px;
+    transition: background-color 0.15s ease, outline-color 0.15s ease;
+}
+
+text-selection-context-menu .text-selection-send-button:hover
+{
+    background-color: var(--quaternary-background-color);
+    outline-color: rgba(0, 152, 196, 0.55);
+}

@@ -1,0 +1,7 @@
+from enum import IntEnum
+
+class ProfileSettingKeys(IntEnum):
+    CREDITS = 0
+    DISPLAY_NAME = 1
+    EMAIL = 2
+    JOIN_DATE = 3

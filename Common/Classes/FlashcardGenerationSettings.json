@@ -1,0 +1,47 @@
+    {
+        "name": "FlashcardGenerationSettings",
+        "relativePath": "Globals/Classes/Task/AutoGeneration",
+        "members": 
+        {
+            "numCardsMethod":
+            {
+                "datatype": "enum:AutomationLevels",
+                "defaultValue": 0
+            },
+            "numQuestionsToGenerate": 
+            {
+                "datatype": "int",
+                "defaultValue": 20
+            },
+            "questionTypesMethod":
+            {
+                "datatype": "enum:AutomationLevels",
+                "defaultValue": 0
+            },
+            "questionTypesWithWeights": 
+            {
+                "datatype": "object",
+                "defaultValue": {}
+            },
+            "difficultyMethod":
+            {
+                "datatype": "enum:AutomationLevels",
+                "defaultValue": 0
+            },
+            "questionDifficultyWithWeights":
+            {
+                "datatype": "object",
+                "defaultValue": {}
+            },
+            "bMarkQuestionsForReview":
+            {
+                "datatype": "boolean",
+                "defaultValue": true
+            }
+        },
+        "extends": 
+        {
+            "name": "AutoGenerationSettings",
+            "relativePath": "Globals/Classes/Task/AutoGeneration"
+        }
+    }

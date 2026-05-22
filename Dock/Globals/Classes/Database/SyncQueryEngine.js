@@ -1,0 +1,497 @@
+const DatabaseConnector = require("./DatabaseConnector");
+const DatabaseConstants = require("../../Constants/DatabaseConstants");
+const { entityTypes } = require("../../Enumerations/EntityTypes");
+
+class SyncQueryEngine
+{
+    /**
+     * Upserts a deck into the decks collection.
+     * Only overwrites if the incoming data has a newer lifecycle.lastModified than the existing record.
+     * Sets serverUpdatedAt to the current time on every successful insert or update.
+     * @param {string} userId - The id of the user who owns the deck.
+     * @param {object} deckData - The deck's toSyncJson() output.
+     * @returns {Promise<boolean>} True if the document was inserted or updated, false if skipped.
+     */
+    static async upsertDeck(userId, deckData)
+    {
+        const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.DECKS_COLLECTION);
+        const existing = await collection.findOne({ userId: userId, "data.id": deckData.id });
+
+        if (!existing)
+        {
+            await collection.insertOne(
+            { 
+                userId: userId, 
+                data: deckData, 
+                serverUpdatedAt: new Date() 
+            });
+            return true;
+        }
+
+        const incomingLastModified = new Date(deckData.lifecycle.lastModified);
+        const existingLastModified = new Date(existing.data.lifecycle.lastModified);
+
+        if (incomingLastModified > existingLastModified)
+        {
+            await collection.updateOne(
+                { userId: userId, "data.id": deckData.id },
+                { $set: { data: deckData, serverUpdatedAt: new Date() } }
+            );
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Upserts a card into the cards collection.
+     * Only overwrites if the incoming data has a newer lifecycle.lastModified than the existing record.
+     * Sets serverUpdatedAt to the current time on every successful insert or update.
+     * @param {string} userId - The id of the user who owns the card.
+     * @param {object} cardData - The card's toJson() output.
+     * @returns {Promise<boolean>} True if the document was inserted or updated, false if skipped.
+     */
+    static async upsertCard(userId, cardData)
+    {
+        const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.CARDS_COLLECTION);
+        const existing = await collection.findOne({ userId: userId, "data.id": cardData.id });
+
+        if (!existing)
+        {
+            await collection.insertOne(
+            { 
+                userId: userId, 
+                data: cardData, 
+                serverUpdatedAt: new Date() 
+            });
+            return true;
+        }
+
+        const incomingLastModified = new Date(cardData.lifecycle.lastModified);
+        const existingLastModified = new Date(existing.data.lifecycle.lastModified);
+
+        if (incomingLastModified > existingLastModified)
+        {
+            await collection.updateOne(
+                { userId: userId, "data.id": cardData.id },
+                { $set: { data: cardData, serverUpdatedAt: new Date() } }
+            );
+            return true;
+        }
+
+        return false;
+    }
+
+    static async upsertStudyMaterial(userId, studyMaterialData)
+    {
+        const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.STUDY_MATERIALS_COLLECTION);
+
+        const existing = await collection.findOne({ userId: userId, "data.id": studyMaterialData.id });
+
+        if (!existing)
+        {
+            await collection.insertOne(
+            {
+                userId: userId,
+                data: studyMaterialData,
+                serverUpdatedAt: new Date()
+            });
+            return true;
+        }
+
+        const incomingLastModified = new Date(studyMaterialData.lifecycle.lastModified);
+        const existingLastModified = new Date(existing.data.lifecycle.lastModified);
+
+        if (incomingLastModified > existingLastModified)
+        {
+            await collection.updateOne(
+                { userId: userId, "data.id": studyMaterialData.id },
+                { $set: { data: studyMaterialData, serverUpdatedAt: new Date() } }
+            );
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Upserts a mock test into the mock tests collection.
+     * Only overwrites if the incoming data has a newer lifecycle.lastModified than the existing record.
+     * Sets serverUpdatedAt to the current time on every successful insert or update.
+     * NOTE: Add MOCK_TESTS_COLLECTION to DatabaseConstants.js to wire this up.
+     * @param {string} userId - The id of the user who owns the mock test.
+     * @param {object} mockTestData - The mock test's toJson() output.
+     * @returns {Promise<boolean>} True if the document was inserted or updated, false if skipped.
+     */
+    static async upsertMockTest(userId, mockTestData)
+    {
+        const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.MOCK_TESTS_COLLECTION);
+        const existing   = await collection.findOne({ userId: userId, "data.id": mockTestData.id });
+
+        if (!existing)
+        {
+            await collection.insertOne(
+            {
+                userId:          userId,
+                data:            mockTestData,
+                serverUpdatedAt: new Date()
+            });
+            return true;
+        }
+
+        const incomingLastModified = new Date(mockTestData.lifecycle.lastModified);
+        const existingLastModified = new Date(existing.data.lifecycle.lastModified);
+
+        if (incomingLastModified > existingLastModified)
+        {
+            await collection.updateOne(
+                { userId: userId, "data.id": mockTestData.id },
+                { $set: { data: mockTestData, serverUpdatedAt: new Date() } }
+            );
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Retrieves all decks updated on the server since the given timestamp for a user.
+     * Uses the server-side serverUpdatedAt field, not the entity's own lifecycle timestamp.
+     * @param {string} userId - The id of the user.
+     * @param {number} lastSyncTimestamp - Epoch milliseconds.
+     * @returns {Promise<object[]>} Array of deck data objects.
+     */
+    static async getDecksSince(userId, lastSyncTimestamp)
+    {
+        const collection    = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.DECKS_COLLECTION);
+        const lastSyncDate  = new Date(lastSyncTimestamp);
+
+        const documents = await collection.find(
+        {
+            userId: userId,
+            serverUpdatedAt: { $gt: lastSyncDate }
+        }).toArray();
+
+        return documents.map((document) => document.data);
+    }
+
+    /**
+     * Retrieves all cards updated on the server since the given timestamp for a user.
+     * Uses the server-side serverUpdatedAt field, not the entity's own lifecycle timestamp.
+     * @param {string} userId - The id of the user.
+     * @param {number} lastSyncTimestamp - Epoch milliseconds.
+     * @returns {Promise<object[]>} Array of card data objects.
+     */
+    static async getCardsSince(userId, lastSyncTimestamp)
+    {
+        const collection   = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.CARDS_COLLECTION);
+        const lastSyncDate = new Date(lastSyncTimestamp);
+
+        const documents = await collection.find(
+        {
+            userId: userId,
+            serverUpdatedAt: { $gt: lastSyncDate }
+        }).toArray();
+
+        return documents.map((document) => document.data);
+    }
+
+    static async getStudyMaterialsSince(userId, lastSyncTimestamp)
+    {
+        const collection   = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.STUDY_MATERIALS_COLLECTION);
+        const lastSyncDate = new Date(lastSyncTimestamp);
+
+        const documents = await collection.find(
+        {
+            userId: userId,
+            serverUpdatedAt: { $gt: lastSyncDate }
+        }).toArray();
+
+        return documents.map(doc => doc.data);
+    }
+
+    /**
+     * Retrieves all mock tests updated on the server since the given timestamp for a user.
+     * NOTE: Requires MOCK_TESTS_COLLECTION in DatabaseConstants.js.
+     * @param {string} userId - The id of the user.
+     * @param {number} lastSyncTimestamp - Epoch milliseconds.
+     * @returns {Promise<object[]>} Array of mock test data objects.
+     */
+    static async getMockTestsSince(userId, lastSyncTimestamp)
+    {
+        const collection   = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.MOCK_TESTS_COLLECTION);
+        const lastSyncDate = new Date(lastSyncTimestamp);
+
+        const documents = await collection.find(
+        {
+            userId: userId,
+            serverUpdatedAt: { $gt: lastSyncDate }
+        }).toArray();
+
+        return documents.map(doc => doc.data);
+    }
+
+    /**
+     * Records a deletion in the deletions collection and removes the entity from its source collection.
+     * @param {string} userId - The id of the user.
+     * @param {string} entityId - The id of the entity being deleted.
+     * @param {number} entityType - The entity type from the entityTypes enumeration.
+     * @returns {Promise<void>}
+     */
+    static async recordDeletion(userId, entityId, entityType)
+    {
+        const deletionsCollection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.DELETIONS_COLLECTION);
+
+        await deletionsCollection.updateOne(
+            { userId: userId, entityId: entityId },
+            {
+                $set:
+                {
+                    userId:      userId,
+                    entityId:    entityId,
+                    entityType:  entityType,
+                    deletedAt:   new Date()
+                }
+            },
+            { upsert: true }
+        );
+
+        if (entityType === entityTypes.DECK)
+        {
+            const decksCollection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.DECKS_COLLECTION);
+            await decksCollection.deleteOne({ userId: userId, "data.id": entityId });
+        }
+        else if (entityType === entityTypes.CARD)
+        {
+            const cardsCollection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.CARDS_COLLECTION);
+            await cardsCollection.deleteOne({ userId: userId, "data.id": entityId });
+        }
+        else if (entityType === entityTypes.STUDY_MATERIAL)
+        {
+            const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.STUDY_MATERIALS_COLLECTION);
+            await collection.deleteOne({ userId: userId, "data.id": entityId });
+        }
+        else if (entityType === entityTypes.MOCK_TEST)
+        {
+            const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.MOCK_TESTS_COLLECTION);
+            await collection.deleteOne({ userId: userId, "data.id": entityId });
+        }
+    }
+
+    /**
+     * Retrieves all deletion records since the given timestamp for a user.
+     * @param {string} userId - The id of the user.
+     * @param {number} lastSyncTimestamp - Epoch milliseconds.
+     * @returns {Promise<object[]>} Array of deletion records with entityId, entityType, and deletedAt.
+     */
+    static async getDeletionsSince(userId, lastSyncTimestamp)
+    {
+        const collection   = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.DELETIONS_COLLECTION);
+        const lastSyncDate = new Date(lastSyncTimestamp);
+
+        const documents = await collection.find(
+        {
+            userId: userId,
+            deletedAt: { $gt: lastSyncDate }
+        }).toArray();
+
+        return documents.map((document) =>
+        ({
+            entityId:   document.entityId,
+            entityType: document.entityType,
+            deletedAt:  document.deletedAt
+        }));
+    }
+
+    /**
+     * Bulk-upserts an array of entities into a collection using a single bulkWrite.
+     * Each entity is only written if the incoming lifecycle.lastModified is newer than
+     * the stored value (or the document does not yet exist).
+     *
+     * IMPORTANT: `serverUpdatedAt` is stamped with the Node process's
+     * `new Date()` (the `writeTimestamp` argument) — NOT MongoDB's
+     * `$$NOW`. The sync endpoint compares the response's `serverTime`
+     * (also Node clock) against the stored `serverUpdatedAt` on every
+     * subsequent pull; if those two values were drawn from different
+     * clocks (Node vs. Mongo host) any skew between them re-pulls the
+     * exact same documents on every cycle. Using one clock end-to-end
+     * makes the pull cutoff deterministic.
+     *
+     * @param {string} userId
+     * @param {Collection} collection - MongoDB collection instance.
+     * @param {object[]} dataArray - Array of entity toJson() outputs.
+     * @param {Date} writeTimestamp - The cycle-wide write timestamp the caller will also return as serverTime.
+     * @returns {Promise<void>}
+     */
+    static async bulkUpsert(userId, collection, dataArray, writeTimestamp)
+    {
+        if (!dataArray.length) return;
+
+        const writeDate = writeTimestamp instanceof Date ? writeTimestamp : new Date();
+
+        const ops = dataArray.map((data) =>
+        {
+            const incomingDate = new Date(data.lifecycle.lastModified);
+
+            return {
+                updateOne:
+                {
+                    filter: { userId, "data.id": data.id },
+                    update:
+                    [
+                        {
+                            $set:
+                            {
+                                userId,
+                                data:
+                                {
+                                    $cond:
+                                    {
+                                        if:   { $lt: [{ $toDate: { $ifNull: ["$data.lifecycle.lastModified", null] } }, incomingDate] },
+                                        then: data,
+                                        else: "$data"
+                                    }
+                                },
+                                serverUpdatedAt:
+                                {
+                                    $cond:
+                                    {
+                                        if:   { $lt: [{ $toDate: { $ifNull: ["$data.lifecycle.lastModified", null] } }, incomingDate] },
+                                        then: writeDate,
+                                        else: "$serverUpdatedAt"
+                                    }
+                                }
+                            }
+                        }
+                    ],
+                    upsert: true
+                }
+            };
+        });
+
+        await collection.bulkWrite(ops, { ordered: false });
+    }
+
+    /**
+     * Bulk-records deletions in the deletions collection and removes the entities
+     * from their respective source collections using deleteMany per entity type.
+     * @param {string} userId
+     * @param {Db} db - MongoDB Db instance.
+     * @param {object[]} deletionChanges - Array of change objects with entityId and entityType.
+     * @returns {Promise<void>}
+     */
+    static async bulkRecordDeletions(userId, db, deletionChanges)
+    {
+        if (!deletionChanges.length) return;
+
+        const deletionsCollection = db.collection(DatabaseConstants.DELETIONS_COLLECTION);
+
+        const deletionOps = deletionChanges.map(({ entityId, entityType }) => (
+        {
+            updateOne:
+            {
+                filter: { userId, entityId },
+                update: { $set: { userId, entityId, entityType, deletedAt: new Date() } },
+                upsert: true
+            }
+        }));
+
+        await deletionsCollection.bulkWrite(deletionOps, { ordered: false });
+
+        const collectionMap =
+        {
+            [entityTypes.DECK]:           DatabaseConstants.DECKS_COLLECTION,
+            [entityTypes.CARD]:           DatabaseConstants.CARDS_COLLECTION,
+            [entityTypes.STUDY_MATERIAL]: DatabaseConstants.STUDY_MATERIALS_COLLECTION,
+            [entityTypes.MOCK_TEST]:      DatabaseConstants.MOCK_TESTS_COLLECTION
+        };
+
+        const byType = {};
+
+        for (const { entityId, entityType } of deletionChanges)
+        {
+            if (!byType[entityType]) byType[entityType] = [];
+            byType[entityType].push(entityId);
+        }
+
+        for (const [entityType, ids] of Object.entries(byType))
+        {
+            const collectionName = collectionMap[entityType];
+            if (!collectionName) continue;
+            await db.collection(collectionName).deleteMany({ userId, "data.id": { $in: ids } });
+        }
+    }
+
+    /**
+     * Returns true if the user has at least one document in any of the
+     * synced collections (decks, cards, study materials, mock tests).
+     * Used by the sync endpoint to detect the asymmetric "server has
+     * nothing for this user, but the client thinks it's already synced"
+     * state that follows a server-side DB wipe.
+     *
+     * Implemented as four `findOne({ userId })` short-circuits — each
+     * backed by the existing `{ userId: 1 }` indexes, so the worst case
+     * is O(1) Mongo lookups per collection.
+     *
+     * @param {string} userId
+     * @param {Db} db Optional handle, threaded by the caller to avoid an extra getDatabase() round-trip.
+     * @returns {Promise<boolean>}
+     */
+    static async userHasAnyData(userId, db = null)
+    {
+        const database = db || (await DatabaseConnector.getDatabase());
+        if (!database)
+        {
+            return false;
+        }
+
+        const collectionNames =
+        [
+            DatabaseConstants.DECKS_COLLECTION,
+            DatabaseConstants.CARDS_COLLECTION,
+            DatabaseConstants.STUDY_MATERIALS_COLLECTION,
+            DatabaseConstants.MOCK_TESTS_COLLECTION
+        ];
+
+        for (const collectionName of collectionNames)
+        {
+            const oneDocument = await database
+                .collection(collectionName)
+                .findOne({ userId: userId }, { projection: { _id: 1 } });
+
+            if (oneDocument)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Updates the sync metadata record for a specific user and device pair.
+     * @param {string} userId - The id of the user.
+     * @param {string} deviceId - The id of the device.
+     * @param {number} lastSyncTimestamp - The server timestamp at sync completion, in epoch milliseconds.
+     * @returns {Promise<void>}
+     */
+    static async upsertSyncData(userId, deviceId, lastSyncTimestamp)
+    {
+        const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.SYNC_DATA_COLLECTION);
+
+        await collection.updateOne(
+            { userId: userId, deviceId: deviceId },
+            {
+                $set:
+                {
+                    userId:            userId,
+                    deviceId:          deviceId,
+                    lastSyncTimestamp: new Date(lastSyncTimestamp)
+                }
+            },
+            { upsert: true }
+        );
+    }
+}
+
+module.exports = SyncQueryEngine;

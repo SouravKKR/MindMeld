@@ -1,0 +1,9 @@
+const profileSettingKeys =
+{
+  CREDITS: 0,
+  DISPLAY_NAME: 1,
+  EMAIL: 2,
+  JOIN_DATE: 3,
+}
+
+module.exports = { profileSettingKeys };

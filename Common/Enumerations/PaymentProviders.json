@@ -1,0 +1,5 @@
+{
+    "RAZORPAY": 0,
+    "STRIPE": 1,
+    "PAYPAL": 2
+}

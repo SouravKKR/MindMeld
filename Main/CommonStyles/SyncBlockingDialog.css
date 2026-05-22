@@ -1,0 +1,111 @@
+/* Elevate the sync-blocking dialog + its backdrop above every other
+   interactive surface so the user cannot click through while a bulk
+   sync is mid-apply. Mirrored values stay above OptionsSidebar (1000),
+   drag ghosts (10000), RichTextEditor (9999) and TutorialOverlay
+   (2147483500). The dialog sits one step above its own backdrop. */
+
+.dialog-backdrop.sync-blocking-backdrop-elevated
+{
+    z-index: 2147483700;
+    pointer-events: all;
+    cursor: wait;
+}
+
+dialog-box.sync-blocking-dialog-elevated
+{
+    z-index: 2147483701;
+}
+
+dialog-box .sync-blocking-content
+{
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 10px;
+    width: 100%;
+    max-width: 480px;
+    box-sizing: border-box;
+}
+
+dialog-box .sync-blocking-title
+{
+    margin: 0;
+    text-align: center;
+    font-size: 18px;
+    font-weight: bold;
+    /* Reserve room for the absolutely-positioned close button so it
+       can't overlap the title once markError() reveals it. */
+    padding: 0 40px;
+}
+
+dialog-box .sync-blocking-body
+{
+    margin: 0;
+    opacity: 0.85;
+    line-height: 1.4;
+    text-align: center;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+dialog-box .sync-blocking-bar-track
+{
+    width: 100%;
+    height: 12px;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    overflow: hidden;
+}
+
+dialog-box .sync-blocking-bar-fill
+{
+    width: 0%;
+    height: 100%;
+    background: var(--primary-background-gradient);
+    transition: width 0.2s ease-out;
+}
+
+dialog-box .sync-blocking-status
+{
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.9;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+dialog-box .sync-blocking-status-error
+{
+    color: var(--danger-text-color);
+    opacity: 1;
+}
+
+/* Portrait / narrow viewports: the base dialog-box caps at 85% of the
+   viewport, so the inner content has to live within that. Drop the
+   font size of the verbose body copy a notch and tighten the gap so a
+   320px-wide phone still gets a sensible layout instead of overflow. */
+@media (max-width: 600px), (orientation: portrait)
+{
+    dialog-box .sync-blocking-content
+    {
+        gap: 12px;
+        padding: 6px;
+    }
+
+    dialog-box .sync-blocking-title
+    {
+        font-size: 16px;
+        padding: 0 36px;
+    }
+
+    dialog-box .sync-blocking-body
+    {
+        font-size: 13px;
+        line-height: 1.35;
+    }
+
+    dialog-box .sync-blocking-status
+    {
+        font-size: 13px;
+    }
+}

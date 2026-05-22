@@ -1,0 +1,10 @@
+Subject: {subject_name}
+{exam_context}
+
+Leaf topics from the syllabus (one per line):
+{topic_list}
+
+Candidate domains (you must only return verbatim entries from this list):
+{candidate_domains}
+
+Return the JSON object now.

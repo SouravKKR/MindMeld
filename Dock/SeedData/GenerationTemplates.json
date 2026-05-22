@@ -1,0 +1,1717 @@
+{
+    "JEE_MAINS": {
+        "displayName": "JEE Mains",
+        "tagline": "MCQ + integer-numerical; formula-driven speed test.",
+        "generalPatch": {
+            "setExamName": "JEE Mains"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "JEE Mains concept fluency. Build a deep grasp of the underlying Physics, Chemistry, and Mathematics concepts that Mains problems are built on — formulas with the conditions where they apply, common derivations, conceptual traps, and quick-recall identities. Do NOT make every card look like an exam question; mix definitions, short explanations, formula recalls, and a small share of recognition MCQs.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 3,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 4,
+                "MEDIUM_SUBJECTIVE": 3,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 2,
+                "MEDIUM": 5,
+                "HARD": 3,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "JEE Mains preparation. Single-correct MCQ + integer-type numerical only — no subjective answers, no multi-correct. Emphasize formulas, shortcuts, and conceptual depth on commonly-tested topics. For study material, include all relevant formulas, concept hierarchies, and quick-reference notes.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 4,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 75,
+            "setDurationMinutes": 180,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 7,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 0,
+                "MEDIUM_SUBJECTIVE": 0,
+                "LONG_SUBJECTIVE": 0,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 1,
+            "setMediumQuestions": 4,
+            "setHardQuestions": 4,
+            "setVeryHardQuestions": 1,
+            "setCorrectMarks": 4,
+            "setWrongMarks": -1,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": {
+                    "wrongMarks": 0
+                }
+            },
+            "setSectionStructure": [
+                {
+                    "name": "Section A (Single-correct MCQ)",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE"
+                    ],
+                    "questionCount": 60,
+                    "totalMarks": 240,
+                    "correctMarks": 4,
+                    "wrongMarks": -1
+                },
+                {
+                    "name": "Section B (Numerical integer)",
+                    "questionTypes": [
+                        "OBJECTIVE_SINGLE_WORD_OR_PHRASE"
+                    ],
+                    "questionCount": 15,
+                    "totalMarks": 60,
+                    "correctMarks": 4,
+                    "wrongMarks": 0
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "JEE_ADVANCED": {
+        "displayName": "JEE Advanced",
+        "tagline": "Multi-format objective; conceptual depth + multi-correct.",
+        "generalPatch": {
+            "setExamName": "JEE Advanced"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "JEE Advanced concept fluency. Build deep multi-concept fluency: every card should reinforce a definition, derivation, conceptual trap, or limiting case that an Advanced-level student must internalise. Mix short recall, medium explanations, derivations, and a small share of multi-correct recognition cards. Cards should test underlying reasoning, not mimic the exam paper's three-section format.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 2,
+                "MULTIPLE_CORRECT": 1,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 3,
+                "MEDIUM_SUBJECTIVE": 4,
+                "LONG_SUBJECTIVE": 2,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 0,
+                "MEDIUM": 3,
+                "HARD": 5,
+                "VERY_HARD": 2
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "JEE Advanced preparation. Multi-format objective paper only: single-correct MCQ, multiple-correct MCQ, integer-type numerical, matrix-match style. No subjective questions. Emphasize multi-concept blending, trap options, and depth over surface formulas. Difficulty skews HARD/VERY_HARD; include PYQ-style framing where possible.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 4,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 54,
+            "setDurationMinutes": 180,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 4,
+                "MULTIPLE_CORRECT": 5,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 0,
+                "MEDIUM_SUBJECTIVE": 0,
+                "LONG_SUBJECTIVE": 0,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 0,
+            "setMediumQuestions": 2,
+            "setHardQuestions": 5,
+            "setVeryHardQuestions": 3,
+            "setCorrectMarks": 4,
+            "setWrongMarks": -2,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 1,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "Section I (Single-correct MCQ)",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE"
+                    ],
+                    "questionCount": 18,
+                    "totalMarks": 72,
+                    "correctMarks": 4,
+                    "wrongMarks": -1
+                },
+                {
+                    "name": "Section II (Multi-correct MCQ)",
+                    "questionTypes": [
+                        "MULTIPLE_CORRECT"
+                    ],
+                    "questionCount": 18,
+                    "totalMarks": 72,
+                    "correctMarks": 4,
+                    "wrongMarks": -2,
+                    "partialMarks": 1
+                },
+                {
+                    "name": "Section III (Numerical integer)",
+                    "questionTypes": [
+                        "OBJECTIVE_SINGLE_WORD_OR_PHRASE"
+                    ],
+                    "questionCount": 18,
+                    "totalMarks": 72,
+                    "correctMarks": 4,
+                    "wrongMarks": 0
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "NEET_UG": {
+        "displayName": "NEET UG",
+        "tagline": "Single-correct MCQ only; Physics + Chemistry + Biology.",
+        "generalPatch": {
+            "setExamName": "NEET UG"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "NEET UG concept fluency. Anchor cards in NCERT-grounded biology, physics, and chemistry concepts — definitions, pathways, formulas, diagram-described mechanisms — that students must master to answer the actual MCQ paper. Mix short recall, definitions, brief explanations, and only a moderate share of MCQs. Cards should reinforce the WHY behind facts, not just simulate the exam's MCQ format.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 3,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 4,
+                "SHORT_SUBJECTIVE": 4,
+                "MEDIUM_SUBJECTIVE": 2,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 2,
+                "MEDIUM": 5,
+                "HARD": 3,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "NEET UG. Pure single-correct MCQ format. Emphasize NCERT-anchored facts, biological diagrams and pathways, formula application in Physics and Chemistry. Avoid multi-correct, subjective, or matrix-style framings — the actual paper has only single-correct MCQs with negative marking.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 4,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 200,
+            "setDurationMinutes": 200,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 10,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 0,
+                "SHORT_SUBJECTIVE": 0,
+                "MEDIUM_SUBJECTIVE": 0,
+                "LONG_SUBJECTIVE": 0,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 1,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 3,
+            "setVeryHardQuestions": 1,
+            "setCorrectMarks": 4,
+            "setWrongMarks": -1,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "Single MCQ Section",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE"
+                    ],
+                    "questionCount": 200,
+                    "totalMarks": 800,
+                    "correctMarks": 4,
+                    "wrongMarks": -1
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "CBSE_CLASS_10": {
+        "displayName": "CBSE Class 10 (Board)",
+        "tagline": "Boards: MCQ + short + long subjective mix.",
+        "generalPatch": {
+            "setExamName": "CBSE Class 10 Board"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "CBSE Class 10 concept fluency. Cover NCERT-aligned definitions, formulas, processes, and stepped reasoning. Mix quick-recall objective cards, recognition MCQs, short explanation cards, and a few medium-length answers — broad concept coverage across Maths, Science, Social Science, and English so the student can answer any section of the board paper.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 2,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 4,
+                "MEDIUM_SUBJECTIVE": 3,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 4,
+                "MEDIUM": 5,
+                "HARD": 1,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "CBSE Class 10 Boards. Mixed-format paper: Section A (MCQ / objective), Section B (very short, 2 marks), Section C (short answer, 3 marks), Section D (long answer, 5 marks), Section E (case-based competency questions). Cover NCERT-aligned content with stepped working for numerical answers; mirror NCERT phrasing where possible.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 3,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 38,
+            "setDurationMinutes": 180,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 2,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 2,
+                "SHORT_SUBJECTIVE": 5,
+                "MEDIUM_SUBJECTIVE": 3,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 4,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 1,
+            "setVeryHardQuestions": 0,
+            "setCorrectMarks": 5,
+            "setWrongMarks": 0,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "Section A (1 mark, objective)",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE",
+                        "OBJECTIVE_SINGLE_WORD_OR_PHRASE"
+                    ],
+                    "questionCount": 20,
+                    "totalMarks": 20,
+                    "correctMarks": 1
+                },
+                {
+                    "name": "Section B (2 marks, short)",
+                    "questionTypes": [
+                        "SHORT_SUBJECTIVE"
+                    ],
+                    "questionCount": 6,
+                    "totalMarks": 12,
+                    "correctMarks": 2
+                },
+                {
+                    "name": "Section C (3 marks, medium)",
+                    "questionTypes": [
+                        "MEDIUM_SUBJECTIVE"
+                    ],
+                    "questionCount": 7,
+                    "totalMarks": 21,
+                    "correctMarks": 3
+                },
+                {
+                    "name": "Section D (5 marks, long)",
+                    "questionTypes": [
+                        "LONG_SUBJECTIVE"
+                    ],
+                    "questionCount": 5,
+                    "totalMarks": 25,
+                    "correctMarks": 5
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "CBSE_CLASS_12": {
+        "displayName": "CBSE Class 12 (Board)",
+        "tagline": "Boards: short + medium + long subjective heavy.",
+        "generalPatch": {
+            "setExamName": "CBSE Class 12 Board"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "CBSE Class 12 concept fluency. Cover NCERT-grounded definitions, formulas, derivations, labeled-diagram explanations, and worked-example reasoning. Mix quick-recall objective cards, recognition MCQs, short explanations, medium definition+example cards, and a few longer derivations — broad concept coverage so the student can answer any section of the board paper.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 2,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 4,
+                "MEDIUM_SUBJECTIVE": 4,
+                "LONG_SUBJECTIVE": 2,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 2,
+                "MEDIUM": 5,
+                "HARD": 3,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "CBSE Class 12 Boards. Mixed paper graded by marks: 1-mark direct recall, 2-3 mark short answers (definition + example), 5-mark long answers (derivations + labeled diagrams), case-based questions for Chemistry/Biology. Mirror NCERT phrasing; show every derivation and numerical step.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 3,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 35,
+            "setDurationMinutes": 180,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 1,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 2,
+                "SHORT_SUBJECTIVE": 4,
+                "MEDIUM_SUBJECTIVE": 4,
+                "LONG_SUBJECTIVE": 3,
+                "VERY_LONG_SUBJECTIVE": 1
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 2,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 3,
+            "setVeryHardQuestions": 0,
+            "setCorrectMarks": 5,
+            "setWrongMarks": 0,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "Section A (1 mark)",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE",
+                        "OBJECTIVE_SINGLE_WORD_OR_PHRASE"
+                    ],
+                    "questionCount": 18,
+                    "totalMarks": 18,
+                    "correctMarks": 1
+                },
+                {
+                    "name": "Section B (2 marks)",
+                    "questionTypes": [
+                        "SHORT_SUBJECTIVE"
+                    ],
+                    "questionCount": 7,
+                    "totalMarks": 14,
+                    "correctMarks": 2
+                },
+                {
+                    "name": "Section C (3 marks)",
+                    "questionTypes": [
+                        "MEDIUM_SUBJECTIVE"
+                    ],
+                    "questionCount": 5,
+                    "totalMarks": 15,
+                    "correctMarks": 3
+                },
+                {
+                    "name": "Section D (5 marks)",
+                    "questionTypes": [
+                        "LONG_SUBJECTIVE"
+                    ],
+                    "questionCount": 5,
+                    "totalMarks": 25,
+                    "correctMarks": 5
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "ICSE_CLASS_10": {
+        "displayName": "ICSE Class 10",
+        "tagline": "Subjective-heavy; rigorous detailed answers.",
+        "generalPatch": {
+            "setExamName": "ICSE Class 10"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "ICSE Class 10 concept fluency. ICSE rewards detailed, well-structured subjective answers. Cards should reinforce full definitions, concept linkages, stepped reasoning, and worked examples — but balance the deck with quick objective recalls and a small share of recognition MCQs so revision sessions stay efficient. Cover concepts broadly; do NOT make every card a long-form answer.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 1,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 2,
+                "SHORT_SUBJECTIVE": 4,
+                "MEDIUM_SUBJECTIVE": 4,
+                "LONG_SUBJECTIVE": 3,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 2,
+                "MEDIUM": 5,
+                "HARD": 3,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "ICSE Class 10. Almost entirely subjective; answers expected to be detailed and well-structured. Emphasize complete sentences, full working, and concept linkages over bullet shortcuts. Two-mark to ten-mark range with most weight on 4-6 mark mid-length answers.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 3,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 40,
+            "setDurationMinutes": 150,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 0,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 1,
+                "SHORT_SUBJECTIVE": 4,
+                "MEDIUM_SUBJECTIVE": 5,
+                "LONG_SUBJECTIVE": 3,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 2,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 3,
+            "setVeryHardQuestions": 0,
+            "setCorrectMarks": 5,
+            "setWrongMarks": 0,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "Section A (Short, 2 marks)",
+                    "questionTypes": [
+                        "SHORT_SUBJECTIVE"
+                    ],
+                    "questionCount": 16,
+                    "totalMarks": 32,
+                    "correctMarks": 2
+                },
+                {
+                    "name": "Section B (Medium, 4 marks)",
+                    "questionTypes": [
+                        "MEDIUM_SUBJECTIVE"
+                    ],
+                    "questionCount": 16,
+                    "totalMarks": 64,
+                    "correctMarks": 4
+                },
+                {
+                    "name": "Section C (Long, 6 marks)",
+                    "questionTypes": [
+                        "LONG_SUBJECTIVE"
+                    ],
+                    "questionCount": 8,
+                    "totalMarks": 48,
+                    "correctMarks": 6
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "ISC_CLASS_12": {
+        "displayName": "ISC Class 12",
+        "tagline": "Long-answer subjective + numerical derivations.",
+        "generalPatch": {
+            "setExamName": "ISC Class 12"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "ISC Class 12 concept fluency. ISC tests deep written reasoning with derivations and worked numericals. Cards should reinforce definitions, formulas, full derivations, and worked-step explanations — but include a healthy share of quick-recall objective cards and recognition MCQs so the deck is usable for fast spaced repetition. Cover concepts broadly; do NOT make every card a long-answer derivation.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 1,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 2,
+                "SHORT_SUBJECTIVE": 3,
+                "MEDIUM_SUBJECTIVE": 4,
+                "LONG_SUBJECTIVE": 4,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 1,
+                "MEDIUM": 5,
+                "HARD": 4,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "ISC Class 12. Long-form subjective with significant numerical and derivation work. Solutions must show full steps with reasoning. Mid-to-long mark range (4-12 marks) dominates; include diagrams and labeled figures where the topic demands them.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 3,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 35,
+            "setDurationMinutes": 180,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 0,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 1,
+                "SHORT_SUBJECTIVE": 3,
+                "MEDIUM_SUBJECTIVE": 5,
+                "LONG_SUBJECTIVE": 4,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 1,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 4,
+            "setVeryHardQuestions": 0,
+            "setCorrectMarks": 5,
+            "setWrongMarks": 0,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "Section A (Short, 2 marks)",
+                    "questionTypes": [
+                        "SHORT_SUBJECTIVE"
+                    ],
+                    "questionCount": 10,
+                    "totalMarks": 20,
+                    "correctMarks": 2
+                },
+                {
+                    "name": "Section B (Medium, 4 marks)",
+                    "questionTypes": [
+                        "MEDIUM_SUBJECTIVE"
+                    ],
+                    "questionCount": 15,
+                    "totalMarks": 60,
+                    "correctMarks": 4
+                },
+                {
+                    "name": "Section C (Long, 6 marks)",
+                    "questionTypes": [
+                        "LONG_SUBJECTIVE"
+                    ],
+                    "questionCount": 10,
+                    "totalMarks": 60,
+                    "correctMarks": 6
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "KCET": {
+        "displayName": "KCET (Karnataka)",
+        "tagline": "Single-correct MCQ only; moderate difficulty.",
+        "generalPatch": {
+            "setExamName": "KCET"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "KCET concept fluency. Cover the Karnataka state-board and NCERT-aligned Physics, Chemistry, and Mathematics concepts that KCET MCQs are built on — definitions, key formulas, common reactions, and direct-application reasoning. Mix quick objective recalls, recognition MCQs, and short explanation cards. Do NOT make every card a multiple-choice exam question; concept understanding matters more than format mimicry.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 3,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 4,
+                "MEDIUM_SUBJECTIVE": 2,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 3,
+                "MEDIUM": 5,
+                "HARD": 2,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "KCET. Single-correct MCQ format only — no subjective questions, no multi-correct. Cover Karnataka state-board concepts plus standard NCERT-aligned material. Moderate difficulty with negative marking — avoid overly tricky options; favor direct application questions.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 3,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 60,
+            "setDurationMinutes": 80,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 10,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 0,
+                "SHORT_SUBJECTIVE": 0,
+                "MEDIUM_SUBJECTIVE": 0,
+                "LONG_SUBJECTIVE": 0,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 3,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 2,
+            "setVeryHardQuestions": 0,
+            "setCorrectMarks": 1,
+            "setWrongMarks": 0,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "MCQ Section",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE"
+                    ],
+                    "questionCount": 60,
+                    "totalMarks": 60,
+                    "correctMarks": 1,
+                    "wrongMarks": 0
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "WBJEE": {
+        "displayName": "WBJEE",
+        "tagline": "MCQ + multi-correct (Category I/II/III scoring).",
+        "generalPatch": {
+            "setExamName": "WBJEE"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "WBJEE concept fluency. Cover Physics, Chemistry, and Mathematics concepts that span single-correct, multi-correct, and conceptual reasoning. Mix definitions, formula recalls, short explanations, recognition MCQs, and a small share of multi-correct cards. Do NOT make every card mimic Category I/II/III formatting; concept depth matters more than exam format.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 3,
+                "MULTIPLE_CORRECT": 1,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 3,
+                "MEDIUM_SUBJECTIVE": 2,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 1,
+                "MEDIUM": 4,
+                "HARD": 4,
+                "VERY_HARD": 1
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "WBJEE. Three-tier objective paper only — no subjective questions: Category I/II are single-correct (Cat II harder), Category III is multiple-correct with partial marking. Mix conceptual MCQs with multi-correct multi-concept questions; treat hardest items as Category III style.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 3,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 80,
+            "setDurationMinutes": 120,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 6,
+                "MULTIPLE_CORRECT": 3,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 1,
+                "SHORT_SUBJECTIVE": 0,
+                "MEDIUM_SUBJECTIVE": 0,
+                "LONG_SUBJECTIVE": 0,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 1,
+            "setMediumQuestions": 4,
+            "setHardQuestions": 4,
+            "setVeryHardQuestions": 1,
+            "setCorrectMarks": 1,
+            "setWrongMarks": -0.25,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "Category I (Single-correct, 1 mark)",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE"
+                    ],
+                    "questionCount": 50,
+                    "totalMarks": 50,
+                    "correctMarks": 1,
+                    "wrongMarks": -0.25
+                },
+                {
+                    "name": "Category II (Single-correct, 2 marks)",
+                    "questionTypes": [
+                        "OBJECTIVE_SINGLE_WORD_OR_PHRASE"
+                    ],
+                    "questionCount": 15,
+                    "totalMarks": 30,
+                    "correctMarks": 2,
+                    "wrongMarks": -0.5
+                },
+                {
+                    "name": "Category III (Multi-correct, partial)",
+                    "questionTypes": [
+                        "MULTIPLE_CORRECT"
+                    ],
+                    "questionCount": 15,
+                    "totalMarks": 30,
+                    "correctMarks": 2,
+                    "wrongMarks": -0.25,
+                    "partialMarks": 1
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "BITSAT": {
+        "displayName": "BITSAT",
+        "tagline": "MCQ-only, speed-paced (PCM + English + LR).",
+        "generalPatch": {
+            "setExamName": "BITSAT"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "BITSAT concept fluency. Cover the Physics, Chemistry, Mathematics, English-vocabulary, and reasoning concepts BITSAT MCQs are drawn from. Mix quick objective recalls, recognition MCQs, short explanation cards, and a few medium-length ones. Concept understanding builds the speed BITSAT rewards; do NOT make every card a multiple-choice exam question.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 3,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 4,
+                "MEDIUM_SUBJECTIVE": 2,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 2,
+                "MEDIUM": 5,
+                "HARD": 3,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "BITSAT. Computer-based MCQ-only paper with PCM/Bio plus English Proficiency and Logical Reasoning — no subjective questions. Speed is critical (180 questions / 3 hours). Mix easy direct-recall MCQs to build pace alongside harder conceptual ones.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 4,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 130,
+            "setDurationMinutes": 180,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 10,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 0,
+                "SHORT_SUBJECTIVE": 0,
+                "MEDIUM_SUBJECTIVE": 0,
+                "LONG_SUBJECTIVE": 0,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 2,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 3,
+            "setVeryHardQuestions": 0,
+            "setCorrectMarks": 3,
+            "setWrongMarks": -1,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "MCQ Section",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE"
+                    ],
+                    "questionCount": 130,
+                    "totalMarks": 390,
+                    "correctMarks": 3,
+                    "wrongMarks": -1
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "VITEEE": {
+        "displayName": "VITEEE",
+        "tagline": "Single-correct MCQ; easy-moderate difficulty.",
+        "generalPatch": {
+            "setExamName": "VITEEE"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "VITEEE concept fluency. Cover NCERT-anchored Physics, Chemistry, and Mathematics concepts at moderate difficulty — formulas, key reactions, direct-application reasoning. Mix quick objective recalls, recognition MCQs, and short explanation cards. Do NOT make every card a multiple-choice exam question; concept understanding matters more than format mimicry.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 3,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 4,
+                "MEDIUM_SUBJECTIVE": 2,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 4,
+                "MEDIUM": 5,
+                "HARD": 1,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "VITEEE. Single-correct MCQ across PCM(B), no subjective questions. Difficulty is moderate; emphasize NCERT-anchored direct application questions over high-rigor conceptual depth.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 3,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 125,
+            "setDurationMinutes": 150,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 10,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 0,
+                "SHORT_SUBJECTIVE": 0,
+                "MEDIUM_SUBJECTIVE": 0,
+                "LONG_SUBJECTIVE": 0,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 4,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 1,
+            "setVeryHardQuestions": 0,
+            "setCorrectMarks": 1,
+            "setWrongMarks": 0,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "MCQ Section",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE"
+                    ],
+                    "questionCount": 125,
+                    "totalMarks": 125,
+                    "correctMarks": 1,
+                    "wrongMarks": 0
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "MHT_CET": {
+        "displayName": "MHT-CET (Maharashtra)",
+        "tagline": "MCQ-only; Class-12-syllabus weighted.",
+        "generalPatch": {
+            "setExamName": "MHT-CET"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "MHT-CET concept fluency. Cover Maharashtra state-board and NCERT-aligned PCM concepts, weighted toward Class 12 material — formulas, key reactions, direct-application reasoning. Mix quick objective recalls, recognition MCQs, and short explanation cards. Do NOT make every card a multiple-choice exam question.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 3,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 4,
+                "MEDIUM_SUBJECTIVE": 2,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 3,
+                "MEDIUM": 5,
+                "HARD": 2,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "MHT-CET. Single-correct MCQ only — no subjective questions, no multi-correct. Weight Class 12 syllabus more heavily than Class 11. Cover Maharashtra state board concepts alongside NCERT. No negative marking — favor coverage over trick questions.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 3,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 150,
+            "setDurationMinutes": 180,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 10,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 0,
+                "SHORT_SUBJECTIVE": 0,
+                "MEDIUM_SUBJECTIVE": 0,
+                "LONG_SUBJECTIVE": 0,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 3,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 2,
+            "setVeryHardQuestions": 0,
+            "setCorrectMarks": 1,
+            "setWrongMarks": 0,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "MCQ Section",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE"
+                    ],
+                    "questionCount": 150,
+                    "totalMarks": 200,
+                    "correctMarks": 1,
+                    "wrongMarks": 0
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "EAMCET": {
+        "displayName": "EAMCET (AP/Telangana)",
+        "tagline": "MCQ-only; PCM/PCB; AP-TS state syllabus.",
+        "generalPatch": {
+            "setExamName": "EAMCET"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "EAMCET (AP/TS) concept fluency. Cover AP/Telangana state-board and NCERT-overlap PCM/PCB concepts — definitions, formulas, key reactions, direct-application reasoning. Mix quick objective recalls, recognition MCQs, and short explanation cards. Do NOT make every card a multiple-choice exam question.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 3,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 4,
+                "MEDIUM_SUBJECTIVE": 2,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 3,
+                "MEDIUM": 5,
+                "HARD": 2,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "TS/AP EAMCET. Single-correct MCQ only — no subjective questions — across PCM/PCB. Align with AP/Telangana state-board syllabus plus NCERT overlap. Moderate difficulty, no negative marking.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 3,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 160,
+            "setDurationMinutes": 180,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 10,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 0,
+                "SHORT_SUBJECTIVE": 0,
+                "MEDIUM_SUBJECTIVE": 0,
+                "LONG_SUBJECTIVE": 0,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 3,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 2,
+            "setVeryHardQuestions": 0,
+            "setCorrectMarks": 1,
+            "setWrongMarks": 0,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "MCQ Section",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE"
+                    ],
+                    "questionCount": 160,
+                    "totalMarks": 160,
+                    "correctMarks": 1,
+                    "wrongMarks": 0
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "COMEDK_UGET": {
+        "displayName": "COMEDK UGET",
+        "tagline": "MCQ-only; Karnataka private engineering.",
+        "generalPatch": {
+            "setExamName": "COMEDK UGET"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "COMEDK UGET concept fluency. Cover Karnataka private-engineering PCM concepts at a difficulty between KCET and JEE Mains — formulas, derivations, key reactions, direct-application reasoning. Mix quick objective recalls, recognition MCQs, and short explanation cards. Do NOT make every card a multiple-choice exam question.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 3,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 4,
+                "MEDIUM_SUBJECTIVE": 2,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 2,
+                "MEDIUM": 5,
+                "HARD": 3,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "COMEDK UGET. Single-correct MCQ across PCM only — no subjective questions, no multi-correct. Difficulty sits between KCET and JEE Mains; include standard application-based questions over deep conceptual trap questions.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 3,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 180,
+            "setDurationMinutes": 180,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 10,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 0,
+                "SHORT_SUBJECTIVE": 0,
+                "MEDIUM_SUBJECTIVE": 0,
+                "LONG_SUBJECTIVE": 0,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 2,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 3,
+            "setVeryHardQuestions": 0,
+            "setCorrectMarks": 1,
+            "setWrongMarks": 0,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "MCQ Section",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE"
+                    ],
+                    "questionCount": 180,
+                    "totalMarks": 180,
+                    "correctMarks": 1,
+                    "wrongMarks": 0
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "ENGINEERING_INDIA": {
+        "displayName": "Engineering (India)",
+        "tagline": "University-level engineering; 5 units, 100 marks total.",
+        "generalPatch": {},
+        "flashcardPatch": {
+            "setAdditionalInstructions": "University-engineering concept fluency. Build a deep grasp of definitions, derivations, formulas, applied numericals, and inter-unit linkages — the conceptual ingredients students later assemble into 10-mark answers. Mix quick definition recalls, recognition MCQs, short explanations, derivations, and the occasional longer worked example. Do NOT make every card a 10-mark essay; broad concept coverage is the goal.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 1,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 2,
+                "SHORT_SUBJECTIVE": 3,
+                "MEDIUM_SUBJECTIVE": 4,
+                "LONG_SUBJECTIVE": 4,
+                "VERY_LONG_SUBJECTIVE": 1
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 3,
+                "MEDIUM": 5,
+                "HARD": 2,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "University-level engineering syllabus. Exam questions are predominantly long subjective answers in the 6-12 mark range, with occasional 15-mark questions; include a small share of short-definition prompts. Optimize for the long-answer format: structure responses as multi-part explanations that combine concise definitions where useful, derivations with each step justified, applied examples, and connections between related concepts so the answer is long enough to attract full marks. Derivations and applied examples remain core but should be framed as ingredients of a longer written answer rather than standalone artifacts.",
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 16,
+            "setDurationMinutes": 180,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 0,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 1,
+                "SHORT_SUBJECTIVE": 2,
+                "MEDIUM_SUBJECTIVE": 3,
+                "LONG_SUBJECTIVE": 7,
+                "VERY_LONG_SUBJECTIVE": 3
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 4,
+            "setMediumQuestions": 4,
+            "setHardQuestions": 1,
+            "setVeryHardQuestions": 0,
+            "setCorrectMarks": 10,
+            "setWrongMarks": 0,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "Unit 1",
+                    "questionTypes": [],
+                    "questionCountMode": 1,
+                    "questionCountMin": 2,
+                    "questionCountMax": 6,
+                    "questionCountWeights": { "2": 1, "3": 5, "4": 2, "5": 1, "6": 1 },
+                    "totalMarks": 20
+                },
+                {
+                    "name": "Unit 2",
+                    "questionTypes": [],
+                    "questionCountMode": 1,
+                    "questionCountMin": 2,
+                    "questionCountMax": 6,
+                    "questionCountWeights": { "2": 1, "3": 5, "4": 2, "5": 1, "6": 1 },
+                    "totalMarks": 20
+                },
+                {
+                    "name": "Unit 3",
+                    "questionTypes": [],
+                    "questionCountMode": 1,
+                    "questionCountMin": 2,
+                    "questionCountMax": 6,
+                    "questionCountWeights": { "2": 1, "3": 5, "4": 2, "5": 1, "6": 1 },
+                    "totalMarks": 20
+                },
+                {
+                    "name": "Unit 4",
+                    "questionTypes": [],
+                    "questionCountMode": 1,
+                    "questionCountMin": 2,
+                    "questionCountMax": 6,
+                    "questionCountWeights": { "2": 1, "3": 5, "4": 2, "5": 1, "6": 1 },
+                    "totalMarks": 20
+                },
+                {
+                    "name": "Unit 5",
+                    "questionTypes": [],
+                    "questionCountMode": 1,
+                    "questionCountMin": 2,
+                    "questionCountMax": 6,
+                    "questionCountWeights": { "2": 1, "3": 5, "4": 2, "5": 1, "6": 1 },
+                    "totalMarks": 20
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "GATE": {
+        "displayName": "GATE",
+        "tagline": "MCQ + numerical-answer + multi-correct; engineering grad.",
+        "generalPatch": {
+            "setExamName": "GATE"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "GATE concept fluency. Build a deep grasp of core engineering concepts, derivations, computation-heavy formulas, and numerical-answer reasoning. Mix quick formula recalls, recognition MCQs, short explanations, medium derivations, and a small share of multi-correct cards. Do NOT mimic the MCQ/MSQ/NAT exam format on every card; concept depth matters more than the exam's question-format split.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 2,
+                "MULTIPLE_CORRECT": 1,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 3,
+                "MEDIUM_SUBJECTIVE": 3,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 1,
+                "MEDIUM": 5,
+                "HARD": 4,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "GATE. Three objective formats only — no subjective: MCQ (single correct, negative marking), Multiple Select Questions (MSQ, no negative), and Numerical Answer Type (NAT, fill numeric value). Emphasize application of core engineering concepts and computation-driven problems.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 4,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 65,
+            "setDurationMinutes": 180,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 5,
+                "MULTIPLE_CORRECT": 1,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 4,
+                "SHORT_SUBJECTIVE": 0,
+                "MEDIUM_SUBJECTIVE": 0,
+                "LONG_SUBJECTIVE": 0,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 1,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 4,
+            "setVeryHardQuestions": 0,
+            "setCorrectMarks": 2,
+            "setWrongMarks": -0.67,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": {
+                    "wrongMarks": 0
+                },
+                "MULTIPLE_CORRECT": {
+                    "wrongMarks": 0,
+                    "partialMarks": 0
+                }
+            },
+            "setSectionStructure": [
+                {
+                    "name": "1-mark questions",
+                    "questionTypes": [],
+                    "questionCount": 25,
+                    "totalMarks": 25,
+                    "correctMarks": 1,
+                    "wrongMarks": -0.33
+                },
+                {
+                    "name": "2-mark questions",
+                    "questionTypes": [],
+                    "questionCount": 40,
+                    "totalMarks": 80,
+                    "correctMarks": 2,
+                    "wrongMarks": -0.67
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "CAT": {
+        "displayName": "CAT (MBA)",
+        "tagline": "Quant + DI/LR + VARC; MCQ + TITA.",
+        "generalPatch": {
+            "setExamName": "CAT"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "CAT concept fluency. Cover the quantitative-aptitude shortcuts, DI/LR reasoning frameworks, vocabulary, and reading-comprehension inference patterns CAT rewards. Mix quick objective recalls (formulas, vocab definitions), recognition MCQs (problem-solving), short reasoning explanations, and a few medium-length cards. Do NOT mimic CAT's three-section MCQ format; concept fluency and pattern recognition matter more.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 3,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 3,
+                "MEDIUM_SUBJECTIVE": 3,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 1,
+                "MEDIUM": 5,
+                "HARD": 3,
+                "VERY_HARD": 1
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "CAT. Three sections — no subjective questions: Quant, DI/LR, VARC. MCQ-dominant with some TITA (type-in-the-answer, no negative marking) questions. Emphasize problem-solving speed, comprehension, and inference-based reasoning.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 4,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 66,
+            "setDurationMinutes": 120,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 7,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 0,
+                "MEDIUM_SUBJECTIVE": 0,
+                "LONG_SUBJECTIVE": 0,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 1,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 3,
+            "setVeryHardQuestions": 1,
+            "setCorrectMarks": 3,
+            "setWrongMarks": -1,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": {
+                    "wrongMarks": 0
+                }
+            },
+            "setSectionStructure": [
+                {
+                    "name": "VARC",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE"
+                    ],
+                    "questionCount": 24,
+                    "totalMarks": 72,
+                    "correctMarks": 3,
+                    "wrongMarks": -1
+                },
+                {
+                    "name": "DI / LR",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE",
+                        "OBJECTIVE_SINGLE_WORD_OR_PHRASE"
+                    ],
+                    "questionCount": 20,
+                    "totalMarks": 60,
+                    "correctMarks": 3,
+                    "wrongMarks": -1
+                },
+                {
+                    "name": "Quant",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE",
+                        "OBJECTIVE_SINGLE_WORD_OR_PHRASE"
+                    ],
+                    "questionCount": 22,
+                    "totalMarks": 66,
+                    "correctMarks": 3,
+                    "wrongMarks": -1
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "UPSC_PRELIMS": {
+        "displayName": "UPSC CSE Prelims",
+        "tagline": "MCQ-only; broad GS coverage + CSAT.",
+        "generalPatch": {
+            "setExamName": "UPSC CSE Prelims"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "UPSC Prelims concept fluency. Cover the General Studies factual base (history, polity, geography, economy, environment, current affairs) and CSAT reasoning patterns. Mix quick objective recalls (dates, articles, treaties, definitions), recognition MCQs, and short explanation cards that link related facts. Concept linkages matter more than mimicking the MCQ-only paper format; do NOT make every card a multiple-choice exam question.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 3,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 5,
+                "SHORT_SUBJECTIVE": 3,
+                "MEDIUM_SUBJECTIVE": 2,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 2,
+                "MEDIUM": 5,
+                "HARD": 3,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "UPSC CSE Prelims. Single-correct MCQ only — no subjective questions — across General Studies (history, polity, geography, economy, environment, current affairs) and CSAT (comprehension, reasoning, basic math). Emphasize factual recall blended with analytical filtering — the paper rewards eliminating wrong options as much as knowing the right one.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 4,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 100,
+            "setDurationMinutes": 120,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 10,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 0,
+                "SHORT_SUBJECTIVE": 0,
+                "MEDIUM_SUBJECTIVE": 0,
+                "LONG_SUBJECTIVE": 0,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 2,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 3,
+            "setVeryHardQuestions": 0,
+            "setCorrectMarks": 2,
+            "setWrongMarks": -0.66,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "General Studies MCQ",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE"
+                    ],
+                    "questionCount": 100,
+                    "totalMarks": 200,
+                    "correctMarks": 2,
+                    "wrongMarks": -0.66
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "SSC_CGL": {
+        "displayName": "SSC CGL (Tier-1)",
+        "tagline": "MCQ-only; Tier-1: English + GA + Quant + Reasoning.",
+        "generalPatch": {
+            "setExamName": "SSC CGL Tier-1"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "SSC CGL Tier-1 concept fluency. Cover the English comprehension rules, General Awareness factual base, Quant shortcuts/formulas, and reasoning patterns. Mix quick objective recalls (vocab, GA facts, formulas), recognition MCQs (reasoning, quant), and short explanation cards. Speed is what the exam rewards; concept-fluency cards build that speed better than pure MCQ drills do.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 3,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 4,
+                "SHORT_SUBJECTIVE": 3,
+                "MEDIUM_SUBJECTIVE": 2,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 4,
+                "MEDIUM": 5,
+                "HARD": 1,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "SSC CGL Tier-1. Single-correct MCQ only — no subjective questions — across English Comprehension, General Awareness, Quantitative Aptitude, and Reasoning. Speed-paced (100 questions / 60 minutes). Difficulty leans easy-moderate; emphasize standard formulas, shortcuts, and elimination tactics.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 3,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 100,
+            "setDurationMinutes": 60,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 10,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 0,
+                "SHORT_SUBJECTIVE": 0,
+                "MEDIUM_SUBJECTIVE": 0,
+                "LONG_SUBJECTIVE": 0,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 4,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 1,
+            "setVeryHardQuestions": 0,
+            "setCorrectMarks": 2,
+            "setWrongMarks": -0.5,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "Tier-1 MCQ",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE"
+                    ],
+                    "questionCount": 100,
+                    "totalMarks": 200,
+                    "correctMarks": 2,
+                    "wrongMarks": -0.5
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    },
+    "NDA": {
+        "displayName": "NDA",
+        "tagline": "MCQ-only; Maths + General Ability.",
+        "generalPatch": {
+            "setExamName": "NDA"
+        },
+        "flashcardPatch": {
+            "setAdditionalInstructions": "NDA concept fluency. Cover the Mathematics (Class 11-12 level) and General Ability (English + GK across history, geography, science, current events) concepts NDA papers are drawn from. Mix quick objective recalls (formulas, facts), recognition MCQs, and short explanation cards. Do NOT make every card a multiple-choice exam question; concept fluency carries across both papers.",
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 3,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 3,
+                "SHORT_SUBJECTIVE": 4,
+                "MEDIUM_SUBJECTIVE": 2,
+                "LONG_SUBJECTIVE": 1,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setQuestionDifficultyWithWeights": {
+                "VERY_EASY": 0,
+                "EASY": 3,
+                "MEDIUM": 5,
+                "HARD": 2,
+                "VERY_HARD": 0
+            }
+        },
+        "studyMaterialPatch": {
+            "setDetailLevels": [
+                1
+            ]
+        },
+        "mockTestPatch": {
+            "setAdditionalInstructions": "NDA. Two papers, all MCQ — no subjective questions: Mathematics (Paper 1, Class 11-12 level) and General Ability Test (Paper 2: English plus GK across history, geography, science, current events). Negative marking. Moderate difficulty.",
+            "setNumTestsMethod": 1,
+            "setNumberOfTests": 3,
+            "setNumQuestionsMethod": 1,
+            "setNumQuestionsPerTest": 120,
+            "setDurationMinutes": 150,
+            "setQuestionTypesMethod": 1,
+            "setQuestionTypesWithWeights": {
+                "MULTIPLE_CHOICE": 10,
+                "MULTIPLE_CORRECT": 0,
+                "OBJECTIVE_SINGLE_WORD_OR_PHRASE": 0,
+                "SHORT_SUBJECTIVE": 0,
+                "MEDIUM_SUBJECTIVE": 0,
+                "LONG_SUBJECTIVE": 0,
+                "VERY_LONG_SUBJECTIVE": 0
+            },
+            "setDifficultyMethod": 1,
+            "setVeryEasyQuestions": 0,
+            "setEasyQuestions": 3,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 2,
+            "setVeryHardQuestions": 0,
+            "setCorrectMarks": 2.5,
+            "setWrongMarks": -0.83,
+            "setUnattemptedMarks": 0,
+            "setPartialMarks": 0,
+            "setPerTypeMarkingOverrides": {},
+            "setSectionStructure": [
+                {
+                    "name": "Mathematics Paper",
+                    "questionTypes": [
+                        "MULTIPLE_CHOICE"
+                    ],
+                    "questionCount": 120,
+                    "totalMarks": 300,
+                    "correctMarks": 2.5,
+                    "wrongMarks": -0.83
+                }
+            ]
+        },
+        "additionalInformationSources": []
+    }
+}

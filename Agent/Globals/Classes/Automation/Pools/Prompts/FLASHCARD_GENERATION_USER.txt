@@ -1,0 +1,16 @@
+--- CONTENT BEGIN ---
+{content}
+--- CONTENT END ---
+
+This content covers: {topic_chain}
+{exam_context}
+Subject: {subject}
+
+Generate exactly {total_cards} flashcards from the content above.
+
+{question_types_instruction}
+
+{difficulty_instruction}
+
+{mark_for_review_instruction}
+{additional_instructions_block}

@@ -1,0 +1,19 @@
+--- TOPIC BLOCKS BEGIN ---
+{topic_blocks}
+--- TOPIC BLOCKS END ---
+
+{exam_context}
+Subject: {subject}
+
+Detail levels to generate for each topic:
+{detail_levels_block}
+
+Each block above is a separate topic with limited content.
+For each topic, generate one HTML study material section per detail level listed above.
+
+Respond ONLY with a valid JSON array. Each element must have exactly these fields:
+- "topicChain": the array of strings identifying the topic hierarchy, copied exactly from the "Topic:" line above (split by " -> ")
+- "materials": an object where each key is a detail level name (e.g. "SUMMARY", "STANDARD") and the value is the raw HTML string for that level.
+
+No markdown, no preamble, no explanation outside the JSON array.
+{additional_instructions_block}

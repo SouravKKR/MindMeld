@@ -1,0 +1,155 @@
+/* Lives inline inside <home-footer-component> in normal document flow.
+   The old `position: fixed; left: 15px; bottom: 15px;` positioning was
+   removed when the footer was consolidated — keeping the pill visual
+   (rounded background, hover transition) but letting flex handle
+   placement. */
+sync-status-component
+{
+    display: flex;
+    background-color: var(--tertiary-background-color);
+    padding: 8px 12px;
+    border-radius: 10px;
+    gap: 8px;
+    align-items: center;
+    box-shadow: 0 1px 3px var(--shadow-color);
+    cursor: pointer;
+    user-select: none;
+    font-size: 14px;
+    box-sizing: border-box;
+    max-width: min(360px, 50%);
+}
+
+sync-status-component[hidden]
+{
+    display: none;
+}
+
+sync-status-component:hover
+{
+    background-color: var(--quaternary-background-color);
+}
+
+sync-status-component:active
+{
+    background-color: var(--quaternary-background-color);
+    filter: brightness(0.9);
+}
+
+.sync-status-label
+{
+    color: var(--primary-text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.sync-status-icon
+{
+    font-size: 16px;
+    color: var(--primary-text-color);
+    line-height: 1;
+}
+
+.sync-status-icon.sync-success
+{
+    color: var(--success-color);
+}
+
+.sync-status-icon.sync-error
+{
+    color: var(--danger-text-color);
+}
+
+.sync-status-icon.sync-deferred
+{
+    color: #f0ad4e;
+}
+
+.sync-status-spinner
+{
+    display: none;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--quaternary-background-color);
+    border-top: 2px solid #ffffff;
+    border-radius: 50%;
+    animation: sync-spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes sync-spin
+{
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.sync-status-force-button
+{
+    margin-left: 4px;
+    padding: 4px 10px;
+    border: none;
+    border-radius: 6px;
+    background-color: #f0ad4e;
+    color: #1f1f23;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.sync-status-force-button:hover:not(:disabled)
+{
+    filter: brightness(1.1);
+}
+
+.sync-status-force-button:disabled
+{
+    opacity: 0.5;
+    cursor: wait;
+}
+
+.sync-status-force-pull-button
+{
+    margin-left: 4px;
+    padding: 4px 10px;
+    border: none;
+    border-radius: 6px;
+    background-color: #5a9cff;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.sync-status-force-pull-button:hover:not(:disabled)
+{
+    filter: brightness(1.1);
+}
+
+.sync-status-force-pull-button:disabled
+{
+    opacity: 0.5;
+    cursor: wait;
+}
+
+/* Mobile: tighten the pill inside the footer so the label stays
+   readable when the footer wraps to multiple rows. */
+@media (max-width: 600px)
+{
+    sync-status-component
+    {
+        padding: 6px 10px;
+        font-size: 13px;
+        max-width: 100%;
+    }
+
+    .sync-status-force-button,
+    .sync-status-force-pull-button
+    {
+        padding: 4px 8px;
+        font-size: 11px;
+    }
+}

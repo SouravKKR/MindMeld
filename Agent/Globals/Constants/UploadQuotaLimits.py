@@ -1,0 +1,4 @@
+class UploadQuotaLimits:
+    MAX_FILES_PER_DAY = 5
+    MAX_BYTES_PER_DAY = 52428800
+    WINDOW_TYPE = 'daily'

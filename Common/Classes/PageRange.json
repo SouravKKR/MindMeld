@@ -1,0 +1,19 @@
+{
+    "name": "PageRange",
+    "relativePath": "Globals/Classes/Decorators",
+    "members":
+    {
+        "startPage":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "endPage":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        }
+    }
+}

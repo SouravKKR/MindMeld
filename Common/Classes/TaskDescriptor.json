@@ -1,0 +1,62 @@
+{
+    "name": "TaskDescriptor",
+    "relativePath": "Globals/Classes/Task",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "userId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "type":
+        {
+            "datatype": "enum:TaskTypes",
+            "defaultValue": 0
+        },
+        "startDate":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "expirationDate":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "status":
+        {
+            "datatype": "enum:TaskStatus",
+            "defaultValue": 0
+        }, 
+        "parentTaskId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "nextTaskIds":
+        {
+            "datatype": "array<string>",
+            "defaultValue": []
+        },
+        "completion":
+        {
+            "datatype": "float",
+            "defaultValue": 0.0
+        },
+        "payload":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        },
+        "executionTarget":
+        {
+            "datatype": "enum:TaskExecutionTargets",
+            "defaultValue": 0
+        }
+    }
+}

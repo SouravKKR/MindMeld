@@ -1,0 +1,3 @@
+class SettingFlags:
+    EDITABLE = 1
+    CALL_TO_ACTION = 2

@@ -1,0 +1,18 @@
+Below are several short content sections, each labelled with its topic chain.
+
+{topic_blocks}
+
+Subject: {subject}
+{exam_context}
+
+For each topic section above, generate exactly 2 flashcards.
+
+{mark_for_review_instruction}
+
+{additional_instructions_block}
+
+Return a JSON array where each element has exactly these fields:
+- "topicChain": the topic chain array exactly as labelled above
+- "cards": an array of 2 flashcard objects, each with "question", "answer", "type", "difficulty", and "markedForReview". All values must be plain text strings or booleans, with HTML content placed directly inside the "answer" string.
+
+Use any appropriate question types and difficulty levels suited to the content.ENDOFFILE

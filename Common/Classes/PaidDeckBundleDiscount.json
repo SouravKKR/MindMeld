@@ -1,0 +1,27 @@
+{
+    "name": "PaidDeckBundleDiscount",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "bundleDeckId":
+        {
+            "datatype": "string"
+        },
+        "includedDeckId":
+        {
+            "datatype": "string"
+        },
+        "discountPercentWhenIncluded":
+        {
+            "datatype": "float",
+            "defaultValue": 100,
+            "min": 0,
+            "max": 100
+        }
+    }
+}

@@ -1,0 +1,7 @@
+Topic: {topic_chain}
+
+--- CONTENT BEGIN ---
+{content}
+--- CONTENT END ---
+
+Does this content require complex problem solving to explain well? Respond with true or false only.

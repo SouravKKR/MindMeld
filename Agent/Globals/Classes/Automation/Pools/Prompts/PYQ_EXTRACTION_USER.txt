@@ -1,0 +1,5 @@
+Exam: {exam_name}
+Subject: {subject_name}
+PDF documents attached: {pdf_count}
+
+Extract previous-year exam questions from the attached PDFs as a JSON array per the system prompt's schema. Aim for up to {max_questions} questions total across all PDFs, weighted toward variety (don't take 50 MCQs in a row if subjective questions exist). Skip duplicates that appear across multiple PDFs.

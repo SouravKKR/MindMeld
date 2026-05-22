@@ -1,0 +1,73 @@
+{
+    "name": "Purchase",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "userId":
+        {
+            "datatype": "string"
+        },
+        "deckId":
+        {
+            "datatype": "string"
+        },
+        "paymentProvider":
+        {
+            "datatype": "enum:PaymentProviders",
+            "defaultValue": 0
+        },
+        "providerOrderId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "providerPaymentId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "amountMinor":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "currency":
+        {
+            "datatype": "string",
+            "defaultValue": "INR",
+            "maxLength": 8
+        },
+        "region":
+        {
+            "datatype": "string",
+            "defaultValue": "GLOBAL",
+            "maxLength": 16
+        },
+        "purchaseDate":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "refundedAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "status":
+        {
+            "datatype": "enum:PurchaseStatuses",
+            "defaultValue": 0
+        },
+        "additionalData":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        }
+    }
+}

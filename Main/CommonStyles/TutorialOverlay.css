@@ -1,0 +1,321 @@
+tutorial-overlay
+{
+    position: fixed;
+    inset: 0;
+    z-index: 2147483500;
+    pointer-events: none;
+}
+
+tutorial-overlay .tutorial-overlay-mask
+{
+    position: absolute;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.65);
+    pointer-events: auto;
+    transition: clip-path 0.15s ease-in-out;
+}
+
+tutorial-overlay.tutorial-overlay--modal .tutorial-overlay-mask
+{
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+}
+
+tutorial-overlay .tutorial-overlay-spotlight
+{
+    position: absolute;
+    border-radius: 10px;
+    box-shadow: 0 0 0 2px var(--accent-color, #5a9cff), 0 0 24px rgba(90, 156, 255, 0.55);
+    pointer-events: none;
+    transition: top 0.18s ease-in-out, left 0.18s ease-in-out, width 0.18s ease-in-out, height 0.18s ease-in-out;
+}
+
+tutorial-overlay.tutorial-overlay--modal .tutorial-overlay-spotlight
+{
+    display: none;
+}
+
+tutorial-overlay .tutorial-overlay-tooltip
+{
+    position: absolute;
+    pointer-events: auto;
+    background-color: var(--secondary-background-color, #1f1f23);
+    color: var(--primary-text-color, #ffffff);
+    border-radius: 12px;
+    padding: 18px 22px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    width: 360px;
+    max-width: 92vw;
+    max-height: 88vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    font-family: inherit;
+}
+
+tutorial-overlay .tutorial-overlay-tooltip.tutorial-overlay-tooltip--wide
+{
+    width: 600px;
+    max-width: 95vw;
+}
+
+tutorial-overlay .tutorial-overlay-tooltip.tutorial-overlay-tooltip--xwide
+{
+    /* Used by tutorial steps whose body carries a large diagram — the
+       Welcome step's MindMeldKnowledgeConsolidationLifecycle.png has fine
+       text that's unreadable at the standard 600px tooltip width. */
+    width: 880px;
+    max-width: 95vw;
+}
+
+tutorial-overlay.tutorial-overlay--floating .tutorial-overlay-mask
+{
+    background-color: transparent;
+    pointer-events: none;
+}
+
+tutorial-overlay .tutorial-overlay-progress
+{
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--secondary-text-color, #aaaab5);
+}
+
+tutorial-overlay .tutorial-overlay-title
+{
+    font-size: 1.15rem;
+    font-weight: 600;
+}
+
+tutorial-overlay .tutorial-overlay-body
+{
+    font-size: 0.95rem;
+    line-height: 1.45;
+    color: var(--secondary-text-color, #c3c3cc);
+}
+
+tutorial-overlay .tutorial-overlay-body p
+{
+    margin: 6px 0;
+}
+
+tutorial-overlay .tutorial-overlay-body ol,
+tutorial-overlay .tutorial-overlay-body ul
+{
+    margin: 6px 0;
+    padding-left: 22px;
+}
+
+tutorial-overlay .tutorial-overlay-body .tutorial-lifecycle-diagram
+{
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    max-height: 72vh;
+    object-fit: contain;
+    margin: 0 auto;
+    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.04);
+    padding: 6px;
+    box-sizing: border-box;
+}
+
+tutorial-overlay .tutorial-overlay-body .tutorial-lifecycle-diagram-zoom
+{
+    /* Wraps the diagram in a button so the whole image is one large tap
+       target on touch devices. Resets default button chrome — visual
+       affordance comes from the cursor + hover state + hint label. */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 0;
+    margin: 12px auto 4px auto;
+    background: none;
+    border: none;
+    cursor: zoom-in;
+    color: inherit;
+    font: inherit;
+}
+
+tutorial-overlay .tutorial-overlay-body .tutorial-lifecycle-diagram-zoom:hover .tutorial-lifecycle-diagram
+{
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+tutorial-overlay .tutorial-overlay-body .tutorial-lifecycle-diagram-zoom-hint
+{
+    font-size: 0.72rem;
+    opacity: 0.55;
+    /* On desktop the inline diagram is already readable; this hint is
+       informational. On mobile it becomes the primary instruction — see
+       the media query below. */
+}
+
+tutorial-overlay .tutorial-overlay-buttons
+{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+tutorial-overlay .tutorial-overlay-buttons-right
+{
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+tutorial-overlay .tutorial-overlay-buttons button
+{
+    padding: 8px 14px;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color, #2a2a32);
+    color: var(--primary-text-color, #ffffff);
+    cursor: pointer;
+    border: 0;
+    font-size: 0.88rem;
+}
+
+tutorial-overlay .tutorial-overlay-buttons button:hover
+{
+    background-color: var(--accent-color, #5a9cff);
+    transition: background-color 0.15s ease-in-out;
+}
+
+tutorial-overlay .tutorial-overlay-skip-button
+{
+    background-color: transparent !important;
+    color: var(--secondary-text-color, #aaaab5);
+    text-decoration: underline;
+    padding: 6px 8px !important;
+}
+
+tutorial-overlay .tutorial-overlay-skip-button:hover
+{
+    color: var(--primary-text-color, #ffffff);
+}
+
+tutorial-overlay .tutorial-overlay-start-over-button
+{
+    background-color: transparent !important;
+    color: var(--secondary-text-color, #aaaab5);
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+tutorial-overlay .tutorial-overlay-start-over-button:hover
+{
+    color: var(--primary-text-color, #ffffff);
+    border-color: rgba(255, 255, 255, 0.4) !important;
+    background-color: rgba(255, 255, 255, 0.04) !important;
+}
+
+tutorial-overlay .tutorial-overlay-finish-button
+{
+    background-color: var(--accent-color, #5a9cff) !important;
+}
+
+tutorial-overlay .tutorial-overlay-next-button:disabled,
+tutorial-overlay .tutorial-overlay-next-button.tutorial-overlay-next-button--disabled
+{
+    /* Disabled when a step's canAdvanceValidator returns false — the
+       user must fill in the highlighted field (or whatever the
+       validator gates on) before Next becomes clickable. */
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+tutorial-overlay .tutorial-overlay-iframe-frame
+{
+    position: absolute;
+    top: 6vh;
+    left: 8vw;
+    width: 84vw;
+    height: calc(88vh - 220px);
+    background-color: var(--background-color, #14141a);
+    border-radius: 12px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+    pointer-events: auto;
+    overflow: hidden;
+}
+
+tutorial-overlay .tutorial-overlay-iframe
+{
+    width: 100%;
+    height: 100%;
+    border: 0;
+    display: block;
+}
+
+tutorial-overlay.tutorial-overlay--iframe .tutorial-overlay-tooltip
+{
+    top: auto !important;
+    left: 50% !important;
+    bottom: 2vh;
+    transform: translateX(-50%);
+    width: 84vw;
+    max-width: 720px;
+}
+
+/* ── Mobile + narrow-window adjustments ─────────────────────────── */
+@media (max-width: 600px)
+{
+    tutorial-overlay .tutorial-overlay-tooltip,
+    tutorial-overlay .tutorial-overlay-tooltip.tutorial-overlay-tooltip--wide,
+    tutorial-overlay .tutorial-overlay-tooltip.tutorial-overlay-tooltip--xwide
+    {
+        width: 92vw;
+        max-width: 92vw;
+        padding: 14px 16px;
+    }
+
+    tutorial-overlay .tutorial-overlay-buttons
+    {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    tutorial-overlay .tutorial-overlay-buttons-right
+    {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    tutorial-overlay .tutorial-overlay-skip-button
+    {
+        align-self: flex-end;
+    }
+
+    tutorial-overlay .tutorial-overlay-iframe-frame
+    {
+        top: 4vh;
+        left: 4vw;
+        width: 92vw;
+        height: min(74vh, calc(100vh - 220px));
+    }
+
+    tutorial-overlay .tutorial-overlay-body .tutorial-lifecycle-diagram
+    {
+        /* On narrow viewports the inline diagram is unreadable no matter
+           what — keep it small so the surrounding body copy fits, and let
+           the user tap-to-expand for the real view. */
+        max-height: 36vh;
+    }
+
+    tutorial-overlay .tutorial-overlay-body .tutorial-lifecycle-diagram-zoom-hint
+    {
+        /* Make the hint the primary affordance on mobile — it's the only
+           way to get a readable view of the diagram. */
+        font-size: 0.78rem;
+        opacity: 0.85;
+        font-weight: 500;
+        color: #2EB6E0;
+    }
+}

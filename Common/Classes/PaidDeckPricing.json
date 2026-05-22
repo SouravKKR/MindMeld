@@ -1,0 +1,56 @@
+{
+    "name": "PaidDeckPricing",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "deckId":
+        {
+            "datatype": "string"
+        },
+        "region":
+        {
+            "datatype": "string",
+            "defaultValue": "GLOBAL",
+            "maxLength": 16
+        },
+        "priceMinor":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "currency":
+        {
+            "datatype": "string",
+            "defaultValue": "INR",
+            "maxLength": 8
+        },
+        "discountPercent":
+        {
+            "datatype": "float",
+            "defaultValue": 0,
+            "min": 0,
+            "max": 100
+        },
+        "effectiveFrom":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "effectiveUntil":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "additionalData":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        }
+    }
+}

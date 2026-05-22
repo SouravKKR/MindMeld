@@ -1,0 +1,503 @@
+admin-panel-page
+{
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.admin-panel-denied
+{
+    text-align: center;
+    padding: 80px 20px;
+    color: var(--secondary-text-color);
+}
+
+.admin-panel-tabs
+{
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--tertiary-background-color);
+    background-color: var(--secondary-background-color);
+    padding: 0 16px;
+    flex-shrink: 0;
+}
+
+/* The tab indicator uses border-bottom intentionally — width changes
+   between active/inactive states are handled by the indicator only and
+   the tab itself stays the same width because the border is part of
+   the flow. No outline needed here. */
+.admin-panel-tab
+{
+    padding: 12px 18px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    color: var(--secondary-text-color);
+}
+
+.admin-panel-tab-active
+{
+    border-bottom-color: var(--primary-text-color);
+    color: var(--primary-text-color);
+    font-weight: 600;
+}
+
+.admin-panel-content
+{
+    padding: 18px 20px;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.admin-panel-toolbar
+{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+.admin-panel-table
+{
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.admin-panel-table th,
+.admin-panel-table td
+{
+    text-align: left;
+    padding: 10px;
+    border-bottom: 1px solid var(--tertiary-background-color);
+}
+
+/* Buttons use outline rather than border so the theme's
+   `button:hover { border:none }` cannot strip the visual frame and
+   change the button's hit-box size. */
+.admin-panel-table button
+{
+    margin-right: 6px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    cursor: pointer;
+}
+
+.admin-panel-pricing-form,
+.admin-panel-bundle-children
+{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 12px 0;
+}
+
+.admin-panel-bundle-row
+{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.admin-panel-pricing-note,
+.admin-panel-stats-note
+{
+    margin-top: 14px;
+    padding: 12px;
+    background: var(--secondary-background-color);
+    border-left: 3px solid var(--primary-text-color);
+    font-size: 12px;
+    color: var(--secondary-text-color);
+    border-radius: 0 6px 6px 0;
+}
+
+.admin-panel-loading,
+.admin-panel-error
+{
+    padding: 30px;
+    text-align: center;
+    color: var(--secondary-text-color);
+}
+
+.admin-panel-upload
+{
+    padding: 10px 16px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    background: var(--primary-background-gradient);
+    color: var(--primary-text-color);
+    font-weight: 600;
+}
+
+.admin-panel-deck-search
+{
+    flex: 1 1 240px;
+    min-width: 200px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+}
+
+.admin-panel-deck-search:focus
+{
+    outline-color: var(--outline-color-strong);
+}
+
+.admin-panel-bulk-apply
+{
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: none;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    cursor: pointer;
+}
+
+.admin-panel-bulk-apply:disabled
+{
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Upload + edit dialog form */
+.paid-deck-upload-form,
+.paid-deck-edit-form,
+.bulk-apply-form
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    max-width: 720px;
+    box-sizing: border-box;
+}
+
+.paid-deck-upload-title,
+.paid-deck-edit-title,
+.bulk-apply-title
+{
+    margin: 0;
+    font-size: 20px;
+}
+
+.paid-deck-upload-subtitle,
+.bulk-apply-subtitle
+{
+    margin: 0;
+    color: var(--secondary-text-color);
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.paid-deck-upload-grid
+{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.paid-deck-upload-field
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--secondary-text-color);
+}
+
+.paid-deck-upload-field-full
+{
+    grid-column: 1 / -1;
+}
+
+.paid-deck-upload-field input,
+.paid-deck-upload-field textarea,
+.paid-deck-upload-field select,
+.bulk-apply-field-input
+{
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-family: inherit;
+    box-sizing: border-box;
+    width: 100%;
+}
+
+.paid-deck-upload-field input:focus,
+.paid-deck-upload-field textarea:focus,
+.paid-deck-upload-field select:focus,
+.bulk-apply-field-input:focus
+{
+    outline-color: var(--outline-color-strong);
+}
+
+.paid-deck-upload-field textarea,
+.bulk-apply-field-input[data-field="additionalDataMerge"]
+{
+    font-family: monospace;
+    font-size: 12px;
+    resize: vertical;
+}
+
+.paid-deck-upload-field-checkbox
+{
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+.paid-deck-upload-error,
+.paid-deck-edit-error,
+.bulk-apply-error
+{
+    padding: 10px 12px;
+    border-radius: 6px;
+    background-color: var(--danger-background-color);
+    color: var(--danger-text-color);
+    font-size: 13px;
+}
+
+.paid-deck-upload-actions
+{
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.paid-deck-upload-cancel,
+.paid-deck-edit-cancel,
+.bulk-apply-cancel
+{
+    padding: 10px 18px;
+    border-radius: 8px;
+    border: none;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    cursor: pointer;
+}
+
+.paid-deck-upload-submit,
+.paid-deck-edit-submit,
+.bulk-apply-submit
+{
+    padding: 10px 18px;
+    border-radius: 8px;
+    border: none;
+    background: var(--primary-background-gradient);
+    color: var(--primary-text-color);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.paid-deck-upload-submit:disabled,
+.paid-deck-edit-submit:disabled,
+.bulk-apply-submit:disabled
+{
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Bulk-apply field rows */
+.bulk-apply-fields
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.bulk-apply-field
+{
+    display: grid;
+    grid-template-columns: auto 200px 1fr;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background-color: var(--secondary-background-color);
+}
+
+.bulk-apply-field-label
+{
+    font-size: 13px;
+    color: var(--primary-text-color);
+}
+
+.bulk-apply-field-input:disabled
+{
+    opacity: 0.4;
+}
+
+@media (max-width: 600px)
+{
+    .paid-deck-upload-form,
+    .paid-deck-edit-form,
+    .bulk-apply-form
+    {
+        min-width: 0;
+        width: 100%;
+    }
+
+    .paid-deck-upload-grid
+    {
+        grid-template-columns: 1fr;
+    }
+
+    .bulk-apply-field
+    {
+        grid-template-columns: auto 1fr;
+    }
+
+    .bulk-apply-field-input
+    {
+        grid-column: 1 / -1;
+    }
+}
+
+/* Add-admin dialog (Admins tab) ----------------------------- */
+
+.admin-panel-add-dialog
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    max-width: 480px;
+    box-sizing: border-box;
+}
+
+.admin-panel-add-title
+{
+    margin: 0;
+    font-size: 18px;
+}
+
+.admin-panel-add-subtitle
+{
+    margin: 0;
+    color: var(--secondary-text-color);
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.admin-panel-add-field
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--secondary-text-color);
+}
+
+.admin-panel-add-field input,
+.admin-panel-add-field textarea
+{
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-family: inherit;
+    box-sizing: border-box;
+    width: 100%;
+}
+
+.admin-panel-add-field input:focus,
+.admin-panel-add-field textarea:focus
+{
+    outline-color: var(--outline-color-strong);
+}
+
+.admin-panel-add-error
+{
+    padding: 10px 12px;
+    border-radius: 6px;
+    background-color: var(--danger-background-color);
+    color: var(--danger-text-color);
+    font-size: 13px;
+}
+
+.admin-panel-add-actions
+{
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.admin-panel-add-cancel
+{
+    padding: 10px 18px;
+    border-radius: 8px;
+    border: none;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    cursor: pointer;
+}
+
+.admin-panel-add-submit
+{
+    padding: 10px 18px;
+    border-radius: 8px;
+    border: none;
+    background: var(--primary-background-gradient);
+    color: var(--primary-text-color);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+@media (max-width: 600px)
+{
+    .admin-panel-tabs
+    {
+        padding: 0 8px;
+        overflow-x: auto;
+    }
+
+    .admin-panel-tab
+    {
+        padding: 10px 14px;
+        white-space: nowrap;
+    }
+
+    .admin-panel-content
+    {
+        padding: 14px;
+    }
+
+    .admin-panel-table
+    {
+        font-size: 13px;
+    }
+
+    .admin-panel-table th,
+    .admin-panel-table td
+    {
+        padding: 8px 6px;
+    }
+}

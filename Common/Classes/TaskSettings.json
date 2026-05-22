@@ -1,0 +1,16 @@
+{
+    "name": "TaskSettings",
+    "relativePath": "Globals/Classes/Task",
+    "members": 
+    {
+        "id": 
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "type":
+        {
+            "datatype": "enum:TaskTypes" 
+        }
+    }
+}

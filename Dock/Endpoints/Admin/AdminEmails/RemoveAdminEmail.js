@@ -1,0 +1,89 @@
+const AdminEmailQueryEngine = require("../../../Globals/Classes/Database/AdminEmailQueryEngine");
+
+
+/**
+ * POST /Admin/AdminEmails/Remove
+ *
+ * Body: { email: string }
+ *
+ * Refuses two cases with 409 Conflict so the admin gets a clear,
+ * actionable error rather than a silent partial change:
+ *   1. SELF_REMOVAL — the email matches the requester's own email.
+ *      Demoting yourself in one click would log you out of the panel
+ *      mid-action.
+ *   2. LAST_ADMIN_PROTECTED — removing this row would empty the
+ *      allowlist, locking everybody out on the next login.
+ *
+ * Both checks are enforced server-side; the UI may also disable the
+ * button cosmetically.
+ */
+async function removeAdminEmail(request, response)
+{
+    const requester = request.user;
+    if (!requester)
+    {
+        response.sendStatusCode(401);
+        return;
+    }
+
+    let body;
+    try
+    {
+        body = await request.getBody();
+    }
+    catch (bodyError)
+    {
+        response.statusCode = 400;
+        response.sendJson({ error: "Malformed JSON body." });
+        return;
+    }
+
+    const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+    if (email.length === 0)
+    {
+        response.statusCode = 400;
+        response.sendJson({ error: "Email is required." });
+        return;
+    }
+
+    const requesterEmail = (requester.getAdditionalData()?.email || "").toLowerCase();
+    if (email === requesterEmail)
+    {
+        response.statusCode = 409;
+        response.sendJson({ error: "Cannot remove the currently logged-in admin.", reason: "SELF_REMOVAL" });
+        return;
+    }
+
+    try
+    {
+        const result = await AdminEmailQueryEngine.removeAdmin(email);
+        if (!result.removed)
+        {
+            if (result.reason === "LAST_ADMIN_PROTECTED")
+            {
+                response.statusCode = 409;
+                response.sendJson({ error: "Cannot remove the last admin.", reason: result.reason });
+                return;
+            }
+            if (result.reason === "NOT_FOUND")
+            {
+                response.statusCode = 404;
+                response.sendJson({ error: "Admin email not found.", reason: result.reason });
+                return;
+            }
+            response.statusCode = 500;
+            response.sendJson({ error: "Failed to remove admin.", reason: result.reason });
+            return;
+        }
+
+        response.sendJson({ ok: true });
+    }
+    catch (removeError)
+    {
+        console.error(`[RemoveAdminEmail] ${removeError.message}`);
+        response.statusCode = 500;
+        response.sendJson({ error: removeError.message || "Failed to remove admin email." });
+    }
+}
+
+module.exports = { removeAdminEmail };

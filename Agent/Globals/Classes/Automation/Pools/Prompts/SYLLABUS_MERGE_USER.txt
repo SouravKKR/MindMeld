@@ -1,0 +1,13 @@
+Merge the following {syllabus_count} syllabi into ONE unified hierarchical JSON tree. Subject context: {subject_name}.
+
+Rules reminder:
+- Preserve every unique topic from every input.
+- Fuse only semantically duplicate titles (same concept, different wording).
+- Where structures disagree, prefer the deeper, more granular hierarchy.
+- Title Case all keys.
+- No metadata keys.
+- Output ONLY a valid JSON object — no markdown, no prose.
+
+-- SYLLABI BEGIN --
+{syllabi_block}
+-- SYLLABI END --

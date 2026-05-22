@@ -1,0 +1,10 @@
+const adminPanelTabs =
+{
+  DECKS: 0,
+  PRICING: 1,
+  BUNDLES: 2,
+  STATS: 3,
+  ADMINS: 4,
+}
+
+module.exports = { adminPanelTabs };

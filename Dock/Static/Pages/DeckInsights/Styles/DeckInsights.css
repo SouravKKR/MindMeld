@@ -1,0 +1,39 @@
+deck-insights
+{
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    padding: 15px;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+deck-insights table
+{
+    border: 2px solid white;
+    border-collapse: collapse;
+    width: 100%;
+    
+}
+
+deck-insights th
+{
+    border: 1px solid white;
+    padding: 14px;
+    font-size: 1.15rem;
+    text-align: left;
+}
+
+deck-insights td
+{
+    border: 1px solid white;
+    padding: 10px;
+}
+
+deck-insights h2
+{
+    font-size: 28px;
+    margin: 25px;
+    text-align: center;
+    font-style: italic;
+}

@@ -1,0 +1,25 @@
+Exam: {exam_name}
+Subject: {subject_name}
+Topic: {topic_chain}
+
+════════════════════════════════════════════════════
+STUDY MATERIAL
+════════════════════════════════════════════════════
+
+{content}
+
+════════════════════════════════════════════════════
+GENERATION INSTRUCTIONS
+════════════════════════════════════════════════════
+
+Generate exactly {num_questions} question(s) from the study material above.
+
+Question type breakdown — generate exactly these counts:
+{type_breakdown}
+
+Difficulty breakdown — distribute exactly these counts across all questions:
+{difficulty_breakdown}
+
+Calibrate the marks for each question to the exam context above. If the exam is known, follow its standard marking scheme.
+
+Return only the JSON array of question objects. No other text.

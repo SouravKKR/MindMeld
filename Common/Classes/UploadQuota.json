@@ -1,0 +1,28 @@
+{
+    "name": "UploadQuota",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "userId":
+        {
+            "datatype": "string"
+        },
+        "windowStart":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "fileCount":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "totalBytes":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        }
+    }
+}

@@ -1,0 +1,259 @@
+information-source-selector
+{
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 160px;
+    min-width: 0;
+}
+
+.information-sources-content
+{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border: 1px solid var(--tertiary-background-color);
+    border-radius: 12px;
+    padding: 12px;
+    box-sizing: border-box;
+}
+
+.information-sources-list
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.information-source-add-select
+{
+    all: unset;
+    display: flex;
+    align-items: center;
+    align-self: flex-start;
+    gap: 6px;
+    padding: 7px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--quaternary-background-color);
+    font-size: 0.82rem;
+    color: var(--primary-text-color);
+    opacity: 0.7;
+    cursor: pointer;
+    background-color: var(--secondary-background-color);
+    transition: opacity 0.15s ease-in-out, border-color 0.15s ease-in-out;
+}
+
+.information-source-add-select:hover
+{
+    opacity: 1;
+    outline: 1px solid #0098C4;
+    background-color: var(--tertiary-background-color);
+}
+
+.information-source-item
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border-radius: 10px;
+    padding: 10px 14px;
+    border-left: 3px solid #0098C4;
+    background-color: var(--primary-background-color);
+}
+
+.information-source-item-header
+{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.information-source-item-header > label
+{
+    font-size: 0.82rem;
+    opacity: 0.9;
+    font-weight: 500;
+}
+
+.information-source-delete-button
+{
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.7rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.4;
+    transition: opacity 0.15s ease-in-out, background-color 0.15s ease-in-out;
+    background-color: transparent;
+}
+
+.information-source-delete-button:hover
+{
+    opacity: 1;
+    background-color: var(--tertiary-background-color);
+}
+
+.information-source-document-placeholder
+{
+    font-size: 0.78rem;
+    opacity: 0.35;
+    font-style: italic;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background-color: var(--secondary-background-color);
+}
+
+.information-source-url-input
+{
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 12px !important;
+    border-radius: 8px;
+    font-size: 0.82rem;
+}
+
+/* Page range */
+
+.information-source-page-range-container
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.information-source-page-range-label
+{
+    font-size: 0.78rem;
+    font-weight: 600;
+    opacity: 0.5;
+    flex-shrink: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.information-source-start-page-input,
+.information-source-end-page-input
+{
+    width: 60px;
+    flex-shrink: 0;
+    padding: 5px 8px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    text-align: center;
+    box-sizing: border-box;
+}
+
+.information-source-page-range-separator
+{
+    font-size: 0.78rem;
+    opacity: 0.4;
+    flex-shrink: 0;
+}
+
+/* Page range list editor (new multi-range model) */
+
+.information-source-page-range-editor
+{
+    display: block;
+    margin-top: 6px;
+}
+
+.page-range-editor-content
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.page-range-mode-select
+{
+    align-self: flex-start;
+    padding: 5px 8px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    background-color: var(--secondary-background-color);
+}
+
+.page-range-rows-container
+{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.page-range-row
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.page-range-start-input,
+.page-range-end-input
+{
+    width: 60px;
+    flex-shrink: 0;
+    padding: 5px 8px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    text-align: center;
+    box-sizing: border-box;
+}
+
+.page-range-separator
+{
+    font-size: 0.78rem;
+    opacity: 0.4;
+    flex-shrink: 0;
+}
+
+.page-range-delete-button
+{
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    opacity: 0.4;
+    cursor: pointer;
+    font-size: 0.85rem;
+    line-height: 1;
+}
+
+.page-range-delete-button:hover
+{
+    opacity: 1;
+    background-color: var(--tertiary-background-color);
+}
+
+.page-range-add-button
+{
+    align-self: flex-start;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--accent-border-color, #0098C4);
+    background-color: transparent;
+    color: var(--accent-border-color, #0098C4);
+    cursor: pointer;
+    font-size: 0.78rem;
+}
+
+.page-range-add-button:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.description-input
+{
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    resize: vertical;
+    font-family: inherit;
+}

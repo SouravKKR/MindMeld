@@ -1,0 +1,7 @@
+Exam: {exam_name}
+Subject: {subject_name}
+Total questions: {total_questions}
+Question type breakdown: {type_breakdown}
+
+If this is a well-known exam (e.g. JEE, NEET, KCET, UPSC, CBSE boards), return its official instructions and duration exactly as they would appear on the paper.
+If this is not a known exam, generate appropriate instructions based on the format above and set "duration" to 0.

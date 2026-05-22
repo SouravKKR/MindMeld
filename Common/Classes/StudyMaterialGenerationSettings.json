@@ -1,0 +1,17 @@
+{
+    "name": "StudyMaterialGenerationSettings",
+    "relativePath": "Globals/Classes/Task/AutoGeneration",
+    "members":
+    {
+        "detailLevels":
+        {
+            "datatype": "array<enum:StudyMaterialDetailLevels>",
+            "defaultValue": [1]
+        }
+    },
+    "extends":
+    {
+        "name": "AutoGenerationSettings",
+        "relativePath": "Globals/Classes/Task/AutoGeneration"
+    }
+}

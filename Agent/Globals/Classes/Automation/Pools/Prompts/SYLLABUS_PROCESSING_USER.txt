@@ -1,0 +1,12 @@
+I have provided a raw text dump of a course syllabus below. 
+
+Your task is to extract the technical topics into a nested JSON object. 
+- Top-level keys MUST be the Unit names (e.g., "Unit I: Introduction").
+- The leaf nodes (lowest level) MUST be an array of strings representing specific concepts.
+- Do NOT use generic keys like "Subtopics", "name", or "items". 
+- Do NOT repeat the example text; process the content within the tags.
+- Give every node (topic) in title case (Example: Title Case) (Wrong Example: title case)
+- Auto determine the depth of the hierarchy. 3 is ideal for most cases, expand to more levels if needed. The depth need not be uniform for every topic identified.
+to determine the depth of the hierarchy. 3 is good for most cases, expand to more levels if needed
+
+--Syllabus BEGIN --
