@@ -6,6 +6,8 @@ import CardEditorPage from "../../Pages/CardEditor/CardEditorPage.js";
 import StudyMaterialEditorPage from "../../Pages/StudyMaterialEditor/StudyMaterialEditorPage.js";
 import StudyPage from "../../Pages/Study/StudyPage.js";
 import BrowserPage from "../../Pages/Browser/BrowserPage.js";
+import MockTestEditorPage from "../../Pages/MockTestEditor/MockTestEditorPage.js";
+import MockTestAnswerKeyPage from "../../Pages/MockTestAnswerKey/MockTestAnswerKeyPage.js";
 import DeckInsightsPage from "../../Pages/DeckInsights/DeckInsightsPage.js";
 import AuthenticationEvents from "../Events/AuthenticationEvents.js";
 import AutomaticGenerationPage from "../../Pages/AutomaticGeneration/AutomaticGenerationPage.js";

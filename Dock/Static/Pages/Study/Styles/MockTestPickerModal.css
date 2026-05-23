@@ -185,6 +185,26 @@
     background-color: var(--quaternary-background-color);
 }
 
+.mock-test-picker-view-key-button
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.mock-test-picker-view-key-button:hover
+{
+    background-color: var(--quaternary-background-color);
+}
+
+.mock-test-picker-edit-button
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.mock-test-picker-edit-button:hover
+{
+    background-color: var(--quaternary-background-color);
+}
+
 
 /* ── Print modal ──────────────────────────────────────────────────────────── */
 

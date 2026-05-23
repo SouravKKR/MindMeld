@@ -685,7 +685,7 @@
             "setNumberOfTests": 3,
             "setNumQuestionsMethod": 1,
             "setNumQuestionsPerTest": 60,
-            "setDurationMinutes": 80,
+            "setDurationMinutes": 70,
             "setQuestionTypesMethod": 1,
             "setQuestionTypesWithWeights": {
                 "MULTIPLE_CHOICE": 10,

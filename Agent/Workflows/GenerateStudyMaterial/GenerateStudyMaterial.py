@@ -23,7 +23,6 @@ class GenerateStudyMaterial(Workflow):
         super().__init__(payload)
         self.__study_material_generation_settings = StudyMaterialGenerationSettings.from_json(payload)
         self.__payload = payload
-        self.__prepare_images_task_id = payload.get("prepareImagesTaskId")
 
     async def __update_progress(self, completion: float):
         task = await TaskManager.get_current_task()
@@ -139,12 +138,4 @@ class GenerateStudyMaterial(Workflow):
             for worker in worker_descriptors
         ])
 
-        # Use get_current_task() so we mutate the same object Main.py's finally block holds.
-        # get_task() creates a new object; Main.py would then overwrite Redis with the old
-        # nextTaskIds when it saves task_descriptor in its finally block.
-        current_task = await TaskManager.get_current_task()
-        next_ids = [self.__prepare_images_task_id] if self.__prepare_images_task_id else []
-        current_task.set_next_task_ids(next_ids)
-        await TaskManager.set_task(current_task)
-
-        print(f"[GenerateStudyMaterial] Workers done. Chaining to: {next_ids}")
+        print("[GenerateStudyMaterial] Workers done.")

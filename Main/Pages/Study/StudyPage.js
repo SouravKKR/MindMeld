@@ -38,9 +38,12 @@ class StudyPage extends HTMLElement
     {
         if (sessionClass === MockTestSession)
         {
-            // MockTestPickerModal always passes a specific MockTest instance here.
-            // The actual timed session is a TODO inside MockTestSession.start().
-            this.#session = new MockTestSession(this, deckOrMockTest);
+            // MockTestStartDialog passes a MockTest instance plus a session-options
+            // object { mode, durationMinutes } as the third argument. The session-
+            // options arg is optional — MockTestSession derives sane defaults when
+            // absent (e.g. for static PDF helpers).
+            const mockTestSessionOptions = extraSessionArgs.length > 0 ? extraSessionArgs[0] : null;
+            this.#session = new MockTestSession(this, deckOrMockTest, mockTestSessionOptions);
             return;
         }
 

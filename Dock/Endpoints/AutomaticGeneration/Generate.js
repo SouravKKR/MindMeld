@@ -237,9 +237,6 @@ async function handleGenerate(request, response)
         };
     });
 
-    let prepareImagesFlashcardsTaskId = null;
-    let prepareImagesStudyMaterialsTaskId = null;
-
     // Web sources can also contribute images (downloaded into Tasks/<id>/web_cache/images/
     // by FetchWebContent and consumed by PrepareImages without touching the figures MongoDB
     // collection). Schedule PrepareImages whenever PDF image sources OR web sources are active.
@@ -268,75 +265,50 @@ async function handleGenerate(request, response)
     // is rewritten.
     const enhanceImagesEnabled = generalGenerationSettings.getEnhanceImages() === true;
 
-    if (shouldPrepareImages)
+    // Single image-pipeline tasks shared across both scopes (flashcards +
+    // study materials). Both source PDFs and the Gemini work are identical
+    // for the two outputs -- running them in two separate per-scope tasks
+    // wasted PDF rendering AND doubled the Gemini cost of EnhanceImages.
+    // The unified tasks are scheduled here but NOT chained into the gen
+    // subtree (fan-in from flashcardGen + studyMaterialGen would
+    // double-execute, since the executor has no claim/dedup guard). They
+    // are kicked off manually in the post-execute callback below, after
+    // the entire gen tree resolves.
+    const hasFlashcardScope = (flashcardGenerationSettings !== null);
+    const hasStudyMaterialScope = (studyMaterialGenerationSettings !== null);
+
+    let prepareImagesTask = null;
+    let enhanceImagesTask = null;
+
+    if (shouldPrepareImages && (hasFlashcardScope || hasStudyMaterialScope))
     {
-        if (flashcardGenerationSettings !== null)
+        if (enhanceImagesEnabled)
         {
-            let enhanceImagesFlashcardsTaskId = null;
-            if (enhanceImagesEnabled)
-            {
-                const enhanceImagesFlashcardsTask = new TaskDescriptor({
-                    type: taskTypes.ENHANCE_IMAGES,
-                    executionTarget: taskExecutionTargets.LOCAL,
-                    payload: {
-                        generateFlashcards: true,
-                        generateStudyMaterials: false,
-                    },
-                    nextTaskIds: [],
-                });
-
-                await TaskManager.setTask(enhanceImagesFlashcardsTask);
-                enhanceImagesFlashcardsTaskId = enhanceImagesFlashcardsTask.getId();
-            }
-
-            const prepareImagesFlashcardsTask = new TaskDescriptor({
-                type: taskTypes.PREPARE_IMAGES,
+            enhanceImagesTask = new TaskDescriptor({
+                type: taskTypes.ENHANCE_IMAGES,
                 executionTarget: taskExecutionTargets.LOCAL,
                 payload: {
-                    imageSources: resolvedImageSourceJsons,
-                    generateFlashcards: true,
-                    generateStudyMaterials: false,
+                    generateFlashcards: hasFlashcardScope,
+                    generateStudyMaterials: hasStudyMaterialScope,
                 },
-                nextTaskIds: enhanceImagesFlashcardsTaskId ? [enhanceImagesFlashcardsTaskId] : [],
+                nextTaskIds: [],
             });
 
-            await TaskManager.setTask(prepareImagesFlashcardsTask);
-            prepareImagesFlashcardsTaskId = prepareImagesFlashcardsTask.getId();
+            await TaskManager.setTask(enhanceImagesTask);
         }
 
-        if (studyMaterialGenerationSettings !== null)
-        {
-            let enhanceImagesStudyMaterialsTaskId = null;
-            if (enhanceImagesEnabled)
-            {
-                const enhanceImagesStudyMaterialsTask = new TaskDescriptor({
-                    type: taskTypes.ENHANCE_IMAGES,
-                    executionTarget: taskExecutionTargets.LOCAL,
-                    payload: {
-                        generateFlashcards: false,
-                        generateStudyMaterials: true,
-                    },
-                    nextTaskIds: [],
-                });
+        prepareImagesTask = new TaskDescriptor({
+            type: taskTypes.PREPARE_IMAGES,
+            executionTarget: taskExecutionTargets.LOCAL,
+            payload: {
+                imageSources: resolvedImageSourceJsons,
+                generateFlashcards: hasFlashcardScope,
+                generateStudyMaterials: hasStudyMaterialScope,
+            },
+            nextTaskIds: enhanceImagesTask ? [enhanceImagesTask.getId()] : [],
+        });
 
-                await TaskManager.setTask(enhanceImagesStudyMaterialsTask);
-                enhanceImagesStudyMaterialsTaskId = enhanceImagesStudyMaterialsTask.getId();
-            }
-
-            const prepareImagesStudyMaterialsTask = new TaskDescriptor({
-                type: taskTypes.PREPARE_IMAGES,
-                executionTarget: taskExecutionTargets.LOCAL,
-                payload: {
-                    imageSources: resolvedImageSourceJsons,
-                    generateFlashcards: false,
-                    generateStudyMaterials: true,
-                },
-                nextTaskIds: enhanceImagesStudyMaterialsTaskId ? [enhanceImagesStudyMaterialsTaskId] : [],
-            });
-
-            await TaskManager.setTask(prepareImagesStudyMaterialsTask);
-            prepareImagesStudyMaterialsTaskId = prepareImagesStudyMaterialsTask.getId();
-        }
+        await TaskManager.setTask(prepareImagesTask);
     }
 
     if (flashcardGenerationSettings !== null)
@@ -346,7 +318,7 @@ async function handleGenerate(request, response)
         flashcardGenerationTask = new TaskDescriptor({
             type: taskTypes.GENERATE_FLASHCARDS,
             executionTarget: taskExecutionTargets.LOCAL,
-            payload: {...flashcardGenerationSettingsJson, prepareImagesTaskId: prepareImagesFlashcardsTaskId},
+            payload: flashcardGenerationSettingsJson,
             nextTaskIds: [],
         });
 
@@ -363,7 +335,7 @@ async function handleGenerate(request, response)
         studyMaterialGenerationTask = new TaskDescriptor({
             type: taskTypes.GENERATE_STUDY_MATERIAL,
             executionTarget: taskExecutionTargets.LOCAL,
-            payload: {...studyMaterialGenerationSettingsJson, prepareImagesTaskId: prepareImagesStudyMaterialsTaskId},
+            payload: studyMaterialGenerationSettingsJson,
             nextTaskIds: [],
         });
 
@@ -421,6 +393,29 @@ async function handleGenerate(request, response)
             catch (beautificationError)
             {
                 console.warn(`[Generate] Deck short name beautification failed for ${mainTaskId} — falling back to deterministic names: ${beautificationError.message}`);
+            }
+        }
+
+        // Run the unified image pipeline AFTER the gen tree resolves and
+        // BEFORE moveToDatabase, so the JSON files moveToDatabase reads
+        // already carry the enhanced base64 (when "Enhance Images" was
+        // checked) or the injected originals (when only "Capture Images"
+        // was checked). Same parent-task-id pattern as
+        // beautifyDeckShortNamesTask above so the activity tree nests
+        // the image work under the main task.
+        if (prepareImagesTask)
+        {
+            try
+            {
+                await TaskManager.execute(prepareImagesTask, 0, completedTask, mainTaskId);
+                console.log(`[Generate] Image pipeline complete for task ${mainTaskId}.`);
+            }
+            catch (imagePipelineError)
+            {
+                console.error(`[Generate] Image pipeline failed for ${mainTaskId}: ${imagePipelineError.message}`);
+                // Continue to moveToDatabase so the user still gets a deck
+                // with whatever image state was reached. The failed image
+                // task is visible in the activity tree.
             }
         }
 

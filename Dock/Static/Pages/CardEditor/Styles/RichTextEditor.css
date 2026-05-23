@@ -63,6 +63,14 @@ rich-text-editor .icon-button > img
     height: 20px;
 }
 
+rich-text-editor .insert-image-button > svg,
+rich-text-editor .draw-button > svg
+{
+    width: 20px;
+    height: 20px;
+    color: #ffffff;
+}
+
 
 /* ── Image Resize Overlay ───────────────────────────────────────────────────── */
 

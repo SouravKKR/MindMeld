@@ -16,6 +16,8 @@ import { enumerationToTitleCase } from "../Globals/UtilityFunctions/EnumerationT
  */
 class DetailLevelPickerDialog
 {
+    static #STORAGE_KEY = "mindmeld-detail-level-picker-selection";
+
     static #LEVEL_DESCRIPTIONS =
     {
         SUMMARY: "Crisp bullets and key formulas for quick revision",
@@ -32,16 +34,19 @@ class DetailLevelPickerDialog
     {
         return new Promise((resolve) =>
         {
+            const initiallySelected = DetailLevelPickerDialog.#resolveInitialSelection(availableLevels);
+
             const checkboxesHtml = availableLevels.map((levelValue) =>
             {
                 const levelKey = DetailLevelPickerDialog.#getLevelKey(levelValue);
                 const levelTitle = levelKey ? enumerationToTitleCase(levelKey) : `Level ${levelValue}`;
                 const levelDescription = DetailLevelPickerDialog.#LEVEL_DESCRIPTIONS[levelKey] ?? "";
                 const descriptionHtml = levelDescription ? ` <span class="detail-level-description">(${levelDescription})</span>` : "";
+                const checkedAttribute = initiallySelected.includes(levelValue) ? "checked" : "";
 
                 return `
                     <div class="detail-level-picker-row">
-                        <input type="checkbox" class="detail-level-picker-checkbox" id="detail-level-picker-${levelValue}" data-detail-level="${levelValue}" checked>
+                        <input type="checkbox" class="detail-level-picker-checkbox" id="detail-level-picker-${levelValue}" data-detail-level="${levelValue}" ${checkedAttribute}>
                         <label for="detail-level-picker-${levelValue}">${levelTitle}${descriptionHtml}</label>
                     </div>
                 `;
@@ -84,6 +89,8 @@ class DetailLevelPickerDialog
                     .map(checkbox => parseInt(checkbox.dataset.detailLevel, 10))
                     .filter(level => !Number.isNaN(level));
 
+                DetailLevelPickerDialog.#persistSelection(selected);
+
                 bResolved = true;
                 dialog.close();
                 resolve(selected);
@@ -121,6 +128,78 @@ class DetailLevelPickerDialog
             }
         }
         return null;
+    }
+
+    /**
+     * Pick which checkboxes should start out checked. Restores the user's
+     * last saved selection (filtered down to whatever the current deck
+     * actually has). When there's no saved selection, or none of the saved
+     * values are present in this deck, fall back to STANDARD if available,
+     * otherwise to the first available level — never to "everything
+     * checked", which was the source of the original "the dialog defaults
+     * to all three" complaint.
+     */
+    static #resolveInitialSelection(availableLevels)
+    {
+        const savedSelection = DetailLevelPickerDialog.#readSavedSelection();
+        const filtered = savedSelection.filter(level => availableLevels.includes(level));
+
+        if (filtered.length > 0)
+        {
+            return filtered;
+        }
+
+        if (availableLevels.includes(studyMaterialDetailLevels.STANDARD))
+        {
+            return [studyMaterialDetailLevels.STANDARD];
+        }
+
+        return availableLevels.length > 0 ? [availableLevels[0]] : [];
+    }
+
+    static #readSavedSelection()
+    {
+        try
+        {
+            const rawValue = window.localStorage.getItem(DetailLevelPickerDialog.#STORAGE_KEY);
+            if (rawValue === null)
+            {
+                return [];
+            }
+
+            const parsed = JSON.parse(rawValue);
+            if (!Array.isArray(parsed))
+            {
+                return [];
+            }
+
+            return parsed
+                .map(entry => parseInt(entry, 10))
+                .filter(level => !Number.isNaN(level));
+        }
+        catch (storageError)
+        {
+            return [];
+        }
+    }
+
+    static #persistSelection(selectedLevels)
+    {
+        if (!Array.isArray(selectedLevels) || selectedLevels.length === 0)
+        {
+            return;
+        }
+
+        try
+        {
+            window.localStorage.setItem(DetailLevelPickerDialog.#STORAGE_KEY, JSON.stringify(selectedLevels));
+        }
+        catch (storageError)
+        {
+            // localStorage may be unavailable (private mode); the picker
+            // still works for the current session, just won't remember the
+            // choice next time.
+        }
     }
 }
 

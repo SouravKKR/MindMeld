@@ -2,9 +2,17 @@ import { mockTestItemTypes } from "../../../Globals/Enumerations/MockTestItemTyp
 import { questionTypes } from "../../../Globals/Enumerations/QuestionTypes.js";
 import sanitizeForJsPdf from "../../../Globals/UtilityFunctions/SanitizeForJsPdf.js";
 import StudySession from "./StudySession.js";
+import DialogBox from "../../../CommonComponents/DialogBox.js";
+import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
+import MockTestAttempt from "../../../Globals/Model/MockTestEntities/MockTestAttempt.js";
+import MockTestItemFactory from "../../../Globals/Model/MockTestEntities/MockTestItemFactory.js";
+import "../Components/MockTestRunner.js";
 
 class MockTestSession extends StudySession
 {
+    static MODE_ONLINE = "online";
+    static MODE_OFFLINE = "offline";
+
     // Blank answer lines to draw per question type for subjective questions.
     // MCQ types (MULTIPLE_CHOICE, MULTIPLE_CORRECT) are handled separately
     // via options rendering and are not present in this map.
@@ -18,14 +26,34 @@ class MockTestSession extends StudySession
     ]);
 
     #mockTest = null;
+    #sessionOptions = null;
 
-    constructor(studyPage, mockTest)
+    /**
+     * @param {StudyPage|null} studyPage
+     * @param {MockTest} mockTest
+     * @param {{mode: string, durationMinutes: number}|null} sessionOptions
+     *     null when called from the static PDF helpers (no live session).
+     */
+    constructor(studyPage, mockTest, sessionOptions = null)
     {
         super(studyPage, null); // no deck — mock tests are standalone
         this.#mockTest = mockTest;
+        this.#sessionOptions = sessionOptions || MockTestSession.#deriveDefaultSessionOptions(mockTest);
+    }
+
+    static #deriveDefaultSessionOptions(mockTest)
+    {
+        const declaredDuration = mockTest && mockTest.getDuration ? mockTest.getDuration() : 0;
+        return {
+            mode: MockTestSession.MODE_ONLINE,
+            durationMinutes: declaredDuration > 0 ? declaredDuration : 60
+        };
     }
 
     getMockTest() { return this.#mockTest; }
+    getSessionOptions() { return this.#sessionOptions; }
+    getMode() { return this.#sessionOptions.mode; }
+    getDurationMinutes() { return this.#sessionOptions.durationMinutes; }
 
     // ── Static PDF utilities ───────────────────────────────────────────────────
 
@@ -58,12 +86,75 @@ class MockTestSession extends StudySession
 
     start()
     {
-        // TODO: Implement timed mock test session — display questions one by one
-        // (or all at once), run a countdown timer, collect user answers, and
-        // auto-evaluate when time runs out or the user submits.
+        if (!this._studyPage)
+        {
+            return;
+        }
+
+        const runnerHostContainer = this._studyPage.querySelector(".mock-test-container");
+        if (!runnerHostContainer)
+        {
+            return;
+        }
+
+        const mockTestRunner = document.createElement("mock-test-runner");
+        mockTestRunner.initialize(
+            this.#mockTest,
+            this.#sessionOptions,
+            (clonedItems, additionalData) => this.#handleSubmit(clonedItems, additionalData)
+        );
+        runnerHostContainer.appendChild(mockTestRunner);
     }
 
     next() { /* not applicable for mock tests */ }
+
+    /**
+     * Persists a completed attempt to the mock test's history, exits
+     * fullscreen, and navigates back. Evaluation is intentionally a
+     * TODO — answers (and any offline scan upload paths) are stored
+     * on the attempt for the future OCR + LLM evaluation pipeline.
+     */
+    async #handleSubmit(clonedItems, additionalData)
+    {
+        const maxScore = MockTestSession.#computeMaxScore(clonedItems);
+        const attempt = new MockTestAttempt(undefined, new Date(), clonedItems, 0, maxScore);
+        if (additionalData)
+        {
+            attempt.setAdditionalData(additionalData);
+        }
+
+        this.#mockTest.addAttempt(attempt);
+
+        try
+        {
+            await this.#mockTest.save();
+        }
+        catch (saveError)
+        {
+            console.error("[MockTestSession] Failed to persist attempt:", saveError);
+        }
+
+        if (document.fullscreenElement)
+        {
+            try { await document.exitFullscreen(); } catch (exitError) { /* ignore */ }
+        }
+
+        await DialogBox.alert("Submitted", "Your attempt has been recorded. Evaluation will be wired later.");
+        PageNavigator.back();
+    }
+
+    static #computeMaxScore(items)
+    {
+        let totalMarks = 0;
+        for (const item of items)
+        {
+            if (item.getType() === mockTestItemTypes.QUESTION && item.getMarks)
+            {
+                totalMarks += item.getMarks();
+            }
+        }
+        return totalMarks;
+    }
 
     // ── PDF Generation ────────────────────────────────────────────────────────
 

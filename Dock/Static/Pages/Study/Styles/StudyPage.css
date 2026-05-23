@@ -89,7 +89,11 @@ study-page .answer-section
 
 .user-score-section button
 {
+    /* min-width ensures all four grade buttons render at the same width
+       regardless of label length ("Very Hard" vs "Easy"). flex: 1 1 0
+       lets them grow past that minimum to fill the row in portrait. */
     flex: 1 1 0;
+    min-width: 96px;
     padding: 8px 6px;
     border-radius: 8px;
     font-weight: bold;
@@ -269,7 +273,11 @@ study-page study-zoom-controls .study-zoom-reset-button
 
     study-page .study-action-row .user-score-section button
     {
-        flex: 0 0 auto;
+        /* Keep flex: 1 1 0 so the four grade buttons stay the same width
+           even in landscape — the .user-score-section sizes to content,
+           and min-width (set on the base rule) pins each button at the
+           same minimum so labels of different lengths render uniformly. */
+        flex: 1 1 0;
         padding: 6px 10px;
     }
 
