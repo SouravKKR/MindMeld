@@ -300,9 +300,63 @@ mock-test-editor-page .mock-test-editor-remove-option-button
     cursor: pointer;
 }
 
-mock-test-editor-page .mock-test-editor-remove-option-button:hover
+mock-test-editor-page .mock-test-editor-remove-option-button:hover:not([disabled])
 {
     background-color: #a44;
+}
+
+mock-test-editor-page .mock-test-editor-remove-option-button[disabled]
+{
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+/* ── Expected answer field (option-letter dropdown / checkboxes) ────────────── */
+
+mock-test-editor-page .mock-test-editor-expected-answer-empty
+{
+    padding: 10px 12px;
+    border-radius: 5px;
+    background-color: var(--primary-background-color);
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    font-size: 13px;
+    font-style: italic;
+    opacity: 0.75;
+}
+
+mock-test-editor-page .mock-test-editor-expected-answer-checkboxes
+{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    background-color: var(--primary-background-color);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 5px;
+}
+
+mock-test-editor-page .mock-test-editor-expected-answer-checkbox-label
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+mock-test-editor-page .mock-test-editor-expected-answer-checkbox
+{
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent-color, #2EB6E0);
+    cursor: pointer;
+}
+
+mock-test-editor-page .mock-test-editor-expected-answer-checkbox-text
+{
+    flex: 1;
+    line-height: 1.4;
 }
 
 mock-test-editor-page .mock-test-editor-add-option-button,
@@ -436,4 +490,21 @@ mock-test-editor-page .mock-test-editor-save-button
 mock-test-editor-page .mock-test-editor-save-button:hover
 {
     opacity: 0.9;
+}
+
+mock-test-editor-page .mock-test-editor-preview-button
+{
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-weight: 600;
+    padding: 8px 18px;
+    border-radius: 5px;
+    cursor: pointer;
+    outline: 1px solid var(--outline-color-subtle, rgba(255, 255, 255, 0.18));
+    outline-offset: -1px;
+}
+
+mock-test-editor-page .mock-test-editor-preview-button:hover
+{
+    background-color: var(--quaternary-background-color, var(--secondary-background-color));
 }

@@ -186,7 +186,6 @@ class InformationSourceUploader extends HTMLElement
             const file = informationSourceFileSelector.getFile();
             const name = informationSourceFileSelector.getName();
             const tags = informationSourceFileSelector.getTags();
-            const ocrMode = informationSourceFileSelector.getOcrMode();
             const sourceTypeKey = this.getAttribute("source-type-key");
 
             const informationSource = new InformationSource
@@ -194,8 +193,7 @@ class InformationSourceUploader extends HTMLElement
                 name: name,
                 tags: tags,
                 sourceType: informationSourceTypes[sourceTypeKey],
-                mimeType: file !== null ? file.type : '',
-                ocrMode: ocrMode
+                mimeType: file !== null ? file.type : ''
             });
 
             const xhr = new XMLHttpRequest();

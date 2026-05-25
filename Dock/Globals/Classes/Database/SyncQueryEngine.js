@@ -375,6 +375,18 @@ class SyncQueryEngine
     /**
      * Bulk-records deletions in the deletions collection and removes the entities
      * from their respective source collections using deleteMany per entity type.
+     *
+     * When a DECK is being deleted, this method also performs a server-side
+     * cascade: it walks down the hierarchy, finding every descendant deck
+     * (by `data.parent`) and every card / study material / mock test that
+     * belongs to any deck in the deletion set (by `data.deckId`). Each
+     * descendant is added to the deletion batch — so a single deck-delete
+     * request fully removes the subtree even if the client only sent a
+     * tombstone for the root, and orphans cannot survive a delete.
+     *
+     * The cascade is idempotent: re-running on an already-cleaned tree
+     * finds no new descendants and is a no-op.
+     *
      * @param {string} userId
      * @param {Db} db - MongoDB Db instance.
      * @param {object[]} deletionChanges - Array of change objects with entityId and entityType.
@@ -386,7 +398,108 @@ class SyncQueryEngine
 
         const deletionsCollection = db.collection(DatabaseConstants.DELETIONS_COLLECTION);
 
-        const deletionOps = deletionChanges.map(({ entityId, entityType }) => (
+        const collectionMap =
+        {
+            [entityTypes.DECK]: DatabaseConstants.DECKS_COLLECTION,
+            [entityTypes.CARD]: DatabaseConstants.CARDS_COLLECTION,
+            [entityTypes.STUDY_MATERIAL]: DatabaseConstants.STUDY_MATERIALS_COLLECTION,
+            [entityTypes.MOCK_TEST]: DatabaseConstants.MOCK_TESTS_COLLECTION
+        };
+
+        const buildDeletionKey = (entityId, entityType) => `${entityType}::${entityId}`;
+        const seenDeletionKeys = new Set();
+        const fullDeletionSet = [];
+
+        for (const change of deletionChanges)
+        {
+            const deletionKey = buildDeletionKey(change.entityId, change.entityType);
+            if (seenDeletionKeys.has(deletionKey))
+            {
+                continue;
+            }
+            seenDeletionKeys.add(deletionKey);
+            fullDeletionSet.push({ entityId: change.entityId, entityType: change.entityType });
+        }
+
+        // ── Cascade descendants for any DECK deletions ────────────────────
+        // Frontier holds the deck ids whose descendants we still need to
+        // discover. Each iteration finds direct children (sub-decks +
+        // cards / materials / mock tests) and feeds the sub-deck ids
+        // into the next iteration. Terminates when no new sub-decks are
+        // found (tree depth bound).
+        let frontierDeckIds = fullDeletionSet
+            .filter((deletion) => deletion.entityType === entityTypes.DECK)
+            .map((deletion) => deletion.entityId);
+
+        while (frontierDeckIds.length > 0)
+        {
+            const [childDecks, childCards, childStudyMaterials, childMockTests] = await Promise.all(
+            [
+                db.collection(DatabaseConstants.DECKS_COLLECTION)
+                    .find({ userId: userId, "data.parent": { $in: frontierDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
+                    .toArray(),
+                db.collection(DatabaseConstants.CARDS_COLLECTION)
+                    .find({ userId: userId, "data.deckId": { $in: frontierDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
+                    .toArray(),
+                db.collection(DatabaseConstants.STUDY_MATERIALS_COLLECTION)
+                    .find({ userId: userId, "data.deckId": { $in: frontierDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
+                    .toArray(),
+                db.collection(DatabaseConstants.MOCK_TESTS_COLLECTION)
+                    .find({ userId: userId, "data.deckId": { $in: frontierDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
+                    .toArray()
+            ]);
+
+            const nextFrontier = [];
+
+            for (const document of childDecks)
+            {
+                const deletionKey = buildDeletionKey(document.data.id, entityTypes.DECK);
+                if (seenDeletionKeys.has(deletionKey))
+                {
+                    continue;
+                }
+                seenDeletionKeys.add(deletionKey);
+                fullDeletionSet.push({ entityId: document.data.id, entityType: entityTypes.DECK });
+                nextFrontier.push(document.data.id);
+            }
+
+            for (const document of childCards)
+            {
+                const deletionKey = buildDeletionKey(document.data.id, entityTypes.CARD);
+                if (seenDeletionKeys.has(deletionKey))
+                {
+                    continue;
+                }
+                seenDeletionKeys.add(deletionKey);
+                fullDeletionSet.push({ entityId: document.data.id, entityType: entityTypes.CARD });
+            }
+
+            for (const document of childStudyMaterials)
+            {
+                const deletionKey = buildDeletionKey(document.data.id, entityTypes.STUDY_MATERIAL);
+                if (seenDeletionKeys.has(deletionKey))
+                {
+                    continue;
+                }
+                seenDeletionKeys.add(deletionKey);
+                fullDeletionSet.push({ entityId: document.data.id, entityType: entityTypes.STUDY_MATERIAL });
+            }
+
+            for (const document of childMockTests)
+            {
+                const deletionKey = buildDeletionKey(document.data.id, entityTypes.MOCK_TEST);
+                if (seenDeletionKeys.has(deletionKey))
+                {
+                    continue;
+                }
+                seenDeletionKeys.add(deletionKey);
+                fullDeletionSet.push({ entityId: document.data.id, entityType: entityTypes.MOCK_TEST });
+            }
+
+            frontierDeckIds = nextFrontier;
+        }
+
+        const deletionOps = fullDeletionSet.map(({ entityId, entityType }) => (
         {
             updateOne:
             {
@@ -398,17 +511,9 @@ class SyncQueryEngine
 
         await deletionsCollection.bulkWrite(deletionOps, { ordered: false });
 
-        const collectionMap =
-        {
-            [entityTypes.DECK]:           DatabaseConstants.DECKS_COLLECTION,
-            [entityTypes.CARD]:           DatabaseConstants.CARDS_COLLECTION,
-            [entityTypes.STUDY_MATERIAL]: DatabaseConstants.STUDY_MATERIALS_COLLECTION,
-            [entityTypes.MOCK_TEST]:      DatabaseConstants.MOCK_TESTS_COLLECTION
-        };
-
         const byType = {};
 
-        for (const { entityId, entityType } of deletionChanges)
+        for (const { entityId, entityType } of fullDeletionSet)
         {
             if (!byType[entityType]) byType[entityType] = [];
             byType[entityType].push(entityId);

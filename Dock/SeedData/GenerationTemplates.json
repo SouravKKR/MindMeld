@@ -28,6 +28,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -117,6 +118,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -213,6 +215,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -288,6 +291,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -390,6 +394,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -492,6 +497,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -584,6 +590,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -676,6 +683,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -751,6 +759,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -847,6 +856,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -922,6 +932,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -997,6 +1008,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -1072,6 +1084,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -1147,6 +1160,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -1198,7 +1212,7 @@
         "tagline": "University-level engineering; 5 units, 100 marks total.",
         "generalPatch": {},
         "flashcardPatch": {
-            "setAdditionalInstructions": "University-engineering concept fluency. Build a deep grasp of definitions, derivations, formulas, applied numericals, and inter-unit linkages — the conceptual ingredients students later assemble into 10-mark answers. Mix quick definition recalls, recognition MCQs, short explanations, derivations, and the occasional longer worked example. Do NOT make every card a 10-mark essay; broad concept coverage is the goal.",
+            "setAdditionalInstructions": "Ask definitions, derivations, formulas, applied numericals, and inter-unit linkages — the conceptual ingredients students later assemble into 10-mark answers. Mix quick definition recalls, short explanations, derivations, and the occasional longer questions (with example where applicable). Do NOT make every card a 10-mark essay although long format questions covering the topic is desirable; concept coverage is the goal.",
             "setQuestionTypesMethod": 1,
             "setQuestionTypesWithWeights": {
                 "MULTIPLE_CHOICE": 1,
@@ -1214,17 +1228,18 @@
                 "VERY_EASY": 0,
                 "EASY": 3,
                 "MEDIUM": 5,
-                "HARD": 2,
+                "HARD": 0,
                 "VERY_HARD": 0
             }
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
         "mockTestPatch": {
-            "setAdditionalInstructions": "University-level engineering syllabus. Exam questions are predominantly long subjective answers in the 6-12 mark range, with occasional 15-mark questions; include a small share of short-definition prompts. Optimize for the long-answer format: structure responses as multi-part explanations that combine concise definitions where useful, derivations with each step justified, applied examples, and connections between related concepts so the answer is long enough to attract full marks. Derivations and applied examples remain core but should be framed as ingredients of a longer written answer rather than standalone artifacts.",
+            "setAdditionalInstructions": "University-level engineering syllabus. Exam questions are predominantly long subjective answers in the 6-12 mark range, with a possibility of 15-mark questions; include a small share of short-definition prompts. Optimize for the long-answer format: structure responses as multi-part explanations that combine concise definitions where useful, derivations with each step justified, applied examples, and connections between related concepts so the answer is long enough to attract full marks. Derivations and applied examples remain core but should be framed as ingredients of a longer written answer rather than standalone artifacts.",
             "setNumQuestionsMethod": 1,
             "setNumQuestionsPerTest": 16,
             "setDurationMinutes": 180,
@@ -1241,8 +1256,8 @@
             "setDifficultyMethod": 1,
             "setVeryEasyQuestions": 0,
             "setEasyQuestions": 4,
-            "setMediumQuestions": 4,
-            "setHardQuestions": 1,
+            "setMediumQuestions": 5,
+            "setHardQuestions": 0,
             "setVeryHardQuestions": 0,
             "setCorrectMarks": 10,
             "setWrongMarks": 0,
@@ -1328,6 +1343,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -1417,6 +1433,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -1518,6 +1535,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -1593,6 +1611,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },
@@ -1668,6 +1687,7 @@
         },
         "studyMaterialPatch": {
             "setDetailLevels": [
+                0,
                 1
             ]
         },

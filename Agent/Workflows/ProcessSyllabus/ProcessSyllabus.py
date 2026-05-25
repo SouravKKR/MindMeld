@@ -18,6 +18,7 @@ from Globals.Constants.PersistenceConstants import PersistenceConstants
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
 from Globals.Enumerations.InformationSourceTypes import InformationSourceTypes
 from Globals.Enumerations.TaskTypes import TaskTypes
+from Globals.Utility.ExpandPageRanges import is_full_document_range
 from Globals.Utility.JoinPath import join_path
 from Globals.Utility.StripJsonMarkdown import strip_json_markdown
 
@@ -108,7 +109,7 @@ class ProcessSyllabus(Workflow):
 
         ranges = []
         for page_range in page_ranges:
-            if page_range.is_full_document():
+            if is_full_document_range(page_range):
                 return [(0, 0)]
             ranges.append((page_range.get_start_page(), page_range.get_end_page()))
         return ranges

@@ -256,6 +256,21 @@ class MockTestPickerModal
             MockTestSession.downloadPdf(mockTest);
         });
 
+        // Mobile browsers (iOS Safari, Android Chrome) refuse to render
+        // PDF blob: URLs in <iframe>, leaving the preview area blank.
+        // The fallback panel below replaces the iframe on narrow screens
+        // with an "Open PDF" button that calls window.open() on the
+        // blob URL -- the mobile OS then hands the PDF to its native
+        // viewer (Files / iBooks / Drive) which can actually render it.
+        const openInBrowserButton = printDialog.querySelector(".mock-test-print-modal-fallback-open-button");
+        if (openInBrowserButton)
+        {
+            openInBrowserButton.addEventListener("click", () =>
+            {
+                window.open(blobUrl, "_blank", "noopener,noreferrer");
+            });
+        }
+
         // Revoke the blob URL when the print dialog is removed from the DOM.
         const domObserver = new MutationObserver(() =>
         {
@@ -288,6 +303,19 @@ class MockTestPickerModal
                 src="${blobUrl}"
                 title="${title}"
             ></iframe>
+            <div class="mock-test-print-modal-fallback">
+                <div class="mock-test-print-modal-fallback-icon">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                </div>
+                <div class="mock-test-print-modal-fallback-title">${title}</div>
+                <div class="mock-test-print-modal-fallback-body">
+                    Mobile browsers can't preview PDFs inline. Tap below to open the test in your phone's PDF viewer, or use the Download button up top to save it.
+                </div>
+                <button class="mock-test-print-modal-fallback-open-button" type="button">Open PDF</button>
+            </div>
         `;
     }
 }

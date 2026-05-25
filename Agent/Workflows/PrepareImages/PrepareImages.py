@@ -31,6 +31,20 @@ _VISION_BATCH_SIZE = 10
 _WEB_SOURCE_HASH_MARKER = "__web__"
 _WEB_CACHE_TOPICS_PREFIX = "web_cache/topics"
 
+# Per-task scratch path for figure bytes when EnhanceImages is enabled.
+# Every figure referenced by the sidecar -- PDF-extracted AND web-sourced
+# -- is staged here so EnhanceImages can fetch by hash without depending
+# on the global figures/<hash>.png path. The global path can be stale on
+# bucket resets even when the Mongo figures cache still holds the record,
+# which previously surfaced as a 404 in EnhanceImages.
+_FIGURE_SCRATCH_PREFIX = "figures_scratch"
+
+# Sidecar file emitted by PrepareImages when EnhanceImages is enabled,
+# consumed by EnhanceImages to drive injection. Lives at
+# Tasks/{mainTaskId}/figure_assignments.json so EnhanceImages can find
+# it by joining the per-task directory with this name.
+_FIGURE_ASSIGNMENTS_SIDECAR_FILENAME = "figure_assignments.json"
+
 _DOCUMENT_SOURCE_TYPES = (
     InformationSourceTypes.PROVIDED_DOCUMENTS,
     InformationSourceTypes.CURRICULUM_OR_SYLLABUS,
@@ -41,10 +55,17 @@ class PrepareImages(Workflow):
 
     _EMBED_MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
     _SENTENCE_EMBED_BATCH_SIZE = 32
-    _STUDY_MATERIAL_SIMILARITY_THRESHOLD = 0.70
-    _CARD_SIMILARITY_THRESHOLD = 0.70
+    # Tuned to a middle ground. 0.70 (original) was too strict — academic
+    # illustrations whose generated phrasing differed from the figure's
+    # caption + vision description fell off entirely. 0.45 (the recall
+    # patch) was too loose and let in topically-adjacent but irrelevant
+    # junk. 0.58 catches genuine same-topic matches without inviting
+    # ambient logos, decorative borders, or generic stock visuals. Tier 3
+    # LLM verification (see _verify_pairs_with_vision) still has final say.
+    _STUDY_MATERIAL_SIMILARITY_THRESHOLD = 0.58
+    _CARD_SIMILARITY_THRESHOLD = 0.58
     _MAX_FIGURES_PER_CARD = 1
-    _TOP_CANDIDATES_PER_FIGURE = 2
+    _TOP_CANDIDATES_PER_FIGURE = 3
 
     def __init__(self, payload={}):
         super().__init__(payload)
@@ -55,6 +76,12 @@ class PrepareImages(Workflow):
         ]
         self._generate_study_materials = payload.get("generateStudyMaterials", True)
         self._generate_flashcards = payload.get("generateFlashcards", True)
+        # When True, skip the HTML-injection step and write a JSON
+        # sidecar of figure assignments instead. EnhanceImages reads
+        # that sidecar and does the injection with the enhanced figure
+        # bytes directly, so intermediate JSONs never carry source
+        # artwork.
+        self._enhance_images_enabled = bool(payload.get("enhanceImagesEnabled", False))
 
     @staticmethod
     def _cosine_similarity(vector_a: list, vector_b: list) -> float:
@@ -287,14 +314,11 @@ class PrepareImages(Workflow):
                 AutomationContent(
                     AutomationContentTypes.TEXT,
                     (
-                        f"Look at these {batch_size} images. Are they meaningful educational visual aids? "
-                        f"Valid visual aids include charts, graphs, flowcharts, tables, organizational hierarchies, "
-                        f"and conceptual infographics. "
-                        f"Crucial Instruction: Do NOT reject an image just because it contains a lot of text, "
-                        f"provided the text is structured visually (e.g., inside colored blocks, connected by arrows, "
-                        f"or formatted as a table). "
-                        f"Reject ONLY pure decorative elements, plain background patterns, company logos, "
-                        f"and meaningless user interface artifacts. "
+                        f"Look at these {batch_size} images. For each one, decide whether it should appear in a study deck. "
+                        f"Include the image if it contains technical detail, illustrates something that could be discussed "
+                        f"in the surrounding text, or looks like the kind of figure that could be asked about in an exam. "
+                        f"Exclude headers, footers, page numbers, watermarks, logos, decorative borders, and any other "
+                        f"ambient junk. "
                         f"Reply strictly with a JSON array containing exactly {batch_size} objects. "
                         f"Each object must have imageCategory (string), isEducationalContent (boolean), and "
                         f"visionModelGeneratedDescription (string). "
@@ -399,16 +423,24 @@ class PrepareImages(Workflow):
             inputs = [
                 AutomationContent(
                     AutomationContentTypes.SYSTEM,
-                    "You are a strict visual-content relevance verifier."
+                    "You are a relevance verifier for academic study materials."
                 ),
                 AutomationContent(
                     AutomationContentTypes.TEXT,
                     (
                         f"You will be provided with {batch_size} images, each paired with a specific "
-                        f"flashcard or study text. Does the image directly help answer or visually "
-                        f"explain the exact concept in its paired text? "
-                        f"Reply strictly with a JSON array containing exactly {batch_size} boolean "
-                        f"values (true or false) representing your verification."
+                        f"flashcard or study text. Both come from the same source document the student "
+                        f"uploaded. Return TRUE only when the image clearly illustrates, depicts, or "
+                        f"visually supports the SAME specific topic that the paired text discusses. "
+                        f"Return FALSE when the image is about a different topic (even a related one "
+                        f"in the same broad subject area), when the image is generic decoration or a "
+                        f"logo or a header/footer watermark, or when the image's subject matter is "
+                        f"plainly different from the text's. Topical adjacency within the same broad "
+                        f"subject is NOT enough — the image must depict the SAME specific concept the "
+                        f"text is describing, not merely a sibling concept under the same parent. When "
+                        f"in doubt, return FALSE — irrelevant images in a study deck are worse than a "
+                        f"missing illustration. "
+                        f"Reply strictly with a JSON array containing exactly {batch_size} boolean values."
                     ),
                 ),
             ]
@@ -441,6 +473,262 @@ class PrepareImages(Workflow):
                     results[batch_start + offset] = verdict
 
         return results
+
+    async def __inject_inline_into_files(
+        self,
+        all_validated_figures: list[dict],
+        figure_to_study_material_assignment: dict,
+        figure_to_card_assignments: dict,
+        figure_number_map: dict,
+        study_material_files: list[dict],
+        flashcard_files: list[dict],
+    ):
+        """
+        Inline-mode injection: builds figure HTML with the source bytes
+        embedded as a base64 data URL and splices it into each affected
+        block. Used when EnhanceImages is NOT enabled — the per-task
+        JSONs end up carrying the source artwork as-is, and moveToDatabase
+        persists them directly to the user library.
+        """
+        study_material_index_to_figure_assignments: dict[int, list] = {}
+
+        for figure_index, assignment in figure_to_study_material_assignment.items():
+            target_sm_index = assignment["study_material_index"]
+            study_material_index_to_figure_assignments.setdefault(target_sm_index, []).append({
+                "figure_index": figure_index,
+                "block_index": assignment["block_index"],
+            })
+
+        for sm_index, figure_assignments in study_material_index_to_figure_assignments.items():
+            content_html = study_material_files[sm_index]["content"]
+            block_elements = HtmlInjector.extract_block_elements(content_html)
+
+            if not block_elements:
+                continue
+
+            sorted_ascending = sorted(figure_assignments, key=lambda a: a["block_index"])
+
+            for figure_assignment in reversed(sorted_ascending):
+                figure = all_validated_figures[figure_assignment["figure_index"]]
+                target_block_index = min(figure_assignment["block_index"], len(block_elements) - 1)
+                figure_html = HtmlInjector.build_figure_html(
+                    figure["imageBytes"],
+                    figure["captionText"],
+                    figure_number_map[figure_assignment["figure_index"]],
+                    source_url      = figure.get("_sourceUrl") if figure.get("_isWebFigure") else None,
+                    source_page_url = figure.get("_sourcePageUrl") if figure.get("_isWebFigure") else None,
+                    bounding_box    = figure.get("boundingBoxCoordinates"),
+                )
+                insertion_position = block_elements[target_block_index]["end"]
+                content_html = HtmlInjector.inject_figure_after_block(
+                    content_html, insertion_position, figure_html
+                )
+
+            study_material_files[sm_index]["content"] = content_html
+
+        for study_material_file in study_material_files:
+            if "_filePath" not in study_material_file:
+                continue
+            original_file_path = study_material_file.pop("_filePath")
+            await Persistence.write(
+                original_file_path,
+                json.dumps(study_material_file, ensure_ascii=False)
+            )
+
+        print(
+            f"[PrepareImages] Inline mode: injected figures into "
+            f"{len(study_material_index_to_figure_assignments)} study material file(s)."
+        )
+
+        card_field_key_to_figure_assignments: dict[tuple, list] = {}
+
+        for figure_index, card_assignments_list in figure_to_card_assignments.items():
+            for card_assignment in card_assignments_list:
+                card_field_key = (
+                    card_assignment["flashcard_file_index"],
+                    card_assignment["card_index"],
+                    card_assignment["field_name"],
+                )
+                card_field_key_to_figure_assignments.setdefault(card_field_key, []).append({
+                    "figure_index": figure_index,
+                    "block_index": card_assignment["block_index"],
+                })
+
+        for (
+            flashcard_file_index, card_index, field_name
+        ), figure_assignments in card_field_key_to_figure_assignments.items():
+            card = flashcard_files[flashcard_file_index]["cards"][card_index]
+            field_html = card[field_name]
+            block_elements = HtmlInjector.extract_block_elements(field_html)
+
+            if not block_elements:
+                continue
+
+            capped = sorted(
+                figure_assignments,
+                key=lambda a: all_validated_figures[a["figure_index"]].get("_score", 0.0),
+                reverse=True,
+            )[:PrepareImages._MAX_FIGURES_PER_CARD]
+
+            sorted_ascending = sorted(capped, key=lambda a: a["block_index"])
+
+            for figure_assignment in reversed(sorted_ascending):
+                figure = all_validated_figures[figure_assignment["figure_index"]]
+                target_block_index = min(figure_assignment["block_index"], len(block_elements) - 1)
+                figure_html = HtmlInjector.build_figure_html(
+                    figure["imageBytes"],
+                    figure["captionText"],
+                    figure_number_map[figure_assignment["figure_index"]],
+                    source_url      = figure.get("_sourceUrl") if figure.get("_isWebFigure") else None,
+                    source_page_url = figure.get("_sourcePageUrl") if figure.get("_isWebFigure") else None,
+                    bounding_box    = figure.get("boundingBoxCoordinates"),
+                )
+                insertion_position = block_elements[target_block_index]["end"]
+                field_html = HtmlInjector.inject_figure_after_block(
+                    field_html, insertion_position, figure_html
+                )
+
+            flashcard_files[flashcard_file_index]["cards"][card_index][field_name] = field_html
+
+        modified_flashcard_file_indices = set(
+            key[0] for key in card_field_key_to_figure_assignments.keys()
+        )
+
+        for flashcard_file_index in modified_flashcard_file_indices:
+            flashcard_file = flashcard_files[flashcard_file_index]
+
+            if "_filePath" not in flashcard_file:
+                continue
+
+            original_file_path = flashcard_file.pop("_filePath")
+            await Persistence.write(
+                original_file_path,
+                json.dumps(flashcard_file, ensure_ascii=False)
+            )
+
+        print(
+            f"[PrepareImages] Inline mode: injected figures into cards across "
+            f"{len(modified_flashcard_file_indices)} flashcard file(s)."
+        )
+
+    async def __write_sidecar_and_stage_figure_bytes(
+        self,
+        all_validated_figures: list[dict],
+        figure_to_study_material_assignment: dict,
+        figure_to_card_assignments: dict,
+        figure_number_map: dict,
+        study_material_files: list[dict],
+        flashcard_files: list[dict],
+    ):
+        """
+        Sidecar-mode handoff: skips HTML injection entirely and writes a
+        single JSON sidecar listing each assignment + the per-task scratch
+        path where each figure's bytes are staged. Stages bytes for every
+        referenced figure (PDF-extracted AND web-sourced) into the per-
+        task scratch prefix so EnhanceImages can fetch them by hash
+        without depending on the global figures/<phash>.png path -- that
+        path can 404 when the Mongo figures cache outlives the GCS object
+        (e.g. after a bucket reset).
+        """
+        # Figures referenced by the assignments only — we don't want to
+        # waste writes staging figures that matched nothing.
+        referenced_figure_indices = (
+            set(figure_to_study_material_assignment.keys())
+            | set(figure_to_card_assignments.keys())
+        )
+
+        for figure_index in referenced_figure_indices:
+            figure = all_validated_figures[figure_index]
+            scratch_path = self.__compute_figure_scratch_path(figure["perceptualImageHash"])
+            await Persistence.write(scratch_path, figure["imageBytes"])
+
+        assignments: list[dict] = []
+
+        for figure_index, assignment in figure_to_study_material_assignment.items():
+            figure = all_validated_figures[figure_index]
+            target_sm_index = assignment["study_material_index"]
+            study_material_file_path = study_material_files[target_sm_index].get("_filePath")
+            if not study_material_file_path:
+                continue
+            assignments.append({
+                "fileType":                "studyMaterial",
+                "filePath":                study_material_file_path,
+                "blockIndex":              assignment["block_index"],
+                "figureNumber":            figure_number_map[figure_index],
+                "perceptualHash":          figure["perceptualImageHash"],
+                "captionText":             figure.get("captionText") or "",
+                "boundingBoxCoordinates":  figure.get("boundingBoxCoordinates"),
+                "isWebFigure":             bool(figure.get("_isWebFigure")),
+                "sourceUrl":               figure.get("_sourceUrl") if figure.get("_isWebFigure") else None,
+                "sourcePageUrl":           figure.get("_sourcePageUrl") if figure.get("_isWebFigure") else None,
+                "gcsImagePath":            self.__compute_gcs_image_path(figure),
+            })
+
+        for figure_index, card_assignments_list in figure_to_card_assignments.items():
+            figure = all_validated_figures[figure_index]
+            for card_assignment in card_assignments_list:
+                flashcard_file_path = flashcard_files[card_assignment["flashcard_file_index"]].get("_filePath")
+                if not flashcard_file_path:
+                    continue
+                assignments.append({
+                    "fileType":                "flashcard",
+                    "filePath":                flashcard_file_path,
+                    "cardIndex":               card_assignment["card_index"],
+                    "fieldName":               card_assignment["field_name"],
+                    "blockIndex":              card_assignment["block_index"],
+                    "figureNumber":            figure_number_map[figure_index],
+                    "perceptualHash":          figure["perceptualImageHash"],
+                    "captionText":             figure.get("captionText") or "",
+                    "boundingBoxCoordinates":  figure.get("boundingBoxCoordinates"),
+                    "isWebFigure":             bool(figure.get("_isWebFigure")),
+                    "sourceUrl":               figure.get("_sourceUrl") if figure.get("_isWebFigure") else None,
+                    "sourcePageUrl":           figure.get("_sourcePageUrl") if figure.get("_isWebFigure") else None,
+                    "gcsImagePath":            self.__compute_gcs_image_path(figure),
+                    "matchScore":              figure.get("_score", 0.0),
+                })
+
+        sidecar_document = {
+            "version":           1,
+            "assignments":       assignments,
+            "maxFiguresPerCard": PrepareImages._MAX_FIGURES_PER_CARD,
+        }
+
+        sidecar_path = self.__compute_sidecar_path()
+        await Persistence.write(
+            sidecar_path,
+            json.dumps(sidecar_document, ensure_ascii=False),
+        )
+
+        print(
+            f"[PrepareImages] Sidecar mode: wrote {len(assignments)} assignment(s) "
+            f"to {sidecar_path}; staged {len(referenced_figure_indices)} figure(s) "
+            f"into per-task scratch."
+        )
+
+    def __compute_sidecar_path(self) -> str:
+        return join_path(
+            "/",
+            PersistenceConstants.TASKS_DIRECTORY,
+            self._generation_task_id,
+            _FIGURE_ASSIGNMENTS_SIDECAR_FILENAME,
+        )
+
+    def __compute_figure_scratch_path(self, perceptual_hash: str) -> str:
+        return join_path(
+            "/",
+            PersistenceConstants.TASKS_DIRECTORY,
+            self._generation_task_id,
+            _FIGURE_SCRATCH_PREFIX,
+            f"{perceptual_hash}.png",
+        )
+
+    def __compute_gcs_image_path(self, figure: dict) -> str:
+        # Always reference the per-task scratch path -- bytes for every
+        # referenced figure are staged there in sidecar mode so we never
+        # depend on the global figures/<phash>.png object (which can be
+        # missing on bucket resets even when the Mongo cache still holds
+        # the record).
+        return self.__compute_figure_scratch_path(figure["perceptualImageHash"])
 
     async def run(self, args={}):
         # ── 1. Extract figures from every image source PDF ─────────────────────
@@ -764,128 +1052,67 @@ class PrepareImages(Workflow):
             figure_number_map[figure_index] = current_figure_number
             current_figure_number += 1
 
-        # ── 12. Inject figures into study material HTML ─────────────────────────
-        study_material_index_to_figure_assignments: dict[int, list] = {}
-
-        for figure_index, assignment in figure_to_study_material_assignment.items():
-            target_sm_index = assignment["study_material_index"]
-            study_material_index_to_figure_assignments.setdefault(target_sm_index, []).append({
-                "figure_index": figure_index,
-                "block_index": assignment["block_index"],
-            })
-
-        for sm_index, figure_assignments in study_material_index_to_figure_assignments.items():
-            content_html = study_material_files[sm_index]["content"]
-            block_elements = HtmlInjector.extract_block_elements(content_html)
-
-            if not block_elements:
-                continue
-
-            sorted_ascending = sorted(figure_assignments, key=lambda a: a["block_index"])
-
-            for figure_assignment in reversed(sorted_ascending):
-                figure = all_validated_figures[figure_assignment["figure_index"]]
-                target_block_index = min(figure_assignment["block_index"], len(block_elements) - 1)
-                figure_html = HtmlInjector.build_figure_html(
-                    figure["imageBytes"],
-                    figure["captionText"],
-                    figure_number_map[figure_assignment["figure_index"]],
-                    source_url      = figure.get("_sourceUrl") if figure.get("_isWebFigure") else None,
-                    source_page_url = figure.get("_sourcePageUrl") if figure.get("_isWebFigure") else None,
-                    bounding_box    = figure.get("boundingBoxCoordinates"),
-                )
-                insertion_position = block_elements[target_block_index]["end"]
-                content_html = HtmlInjector.inject_figure_after_block(
-                    content_html, insertion_position, figure_html
-                )
-
-            study_material_files[sm_index]["content"] = content_html
-
-        for study_material_file in study_material_files:
-            if "_filePath" not in study_material_file:
-                continue
-            original_file_path = study_material_file.pop("_filePath")
-            await Persistence.write(
-                original_file_path,
-                json.dumps(study_material_file, ensure_ascii=False)
+        # ── 12 / 13. Either inject inline OR hand off to EnhanceImages ──────────
+        #
+        # Two paths, gated by the `enhanceImagesEnabled` flag passed in via
+        # the task payload:
+        #
+        # • Sidecar mode (enhance enabled): write a single JSON sidecar
+        #   listing every assignment + the GCS path of each figure's
+        #   bytes. EnhanceImages reads the sidecar, enhances each figure,
+        #   and injects the enhanced result directly. The per-task
+        #   study-material and flashcard JSONs are NOT modified here;
+        #   EnhanceImages owns the only write-back.
+        #
+        # • Inline mode (enhance disabled): the original behaviour —
+        #   build the figure HTML right here with the source bytes
+        #   embedded, splice into each affected block, write JSON back.
+        if self._enhance_images_enabled:
+            await self.__write_sidecar_and_stage_figure_bytes(
+                all_validated_figures,
+                figure_to_study_material_assignment,
+                figure_to_card_assignments,
+                figure_number_map,
+                study_material_files,
+                flashcard_files,
+            )
+        else:
+            await self.__inject_inline_into_files(
+                all_validated_figures,
+                figure_to_study_material_assignment,
+                figure_to_card_assignments,
+                figure_number_map,
+                study_material_files,
+                flashcard_files,
+            )
+        # Recall diagnostic: tell the user exactly which validated figures
+        # did NOT make it into any study material or flashcard, so they
+        # can eyeball them against the source PDF and tell us whether
+        # the matching gates need to relax further.
+        unassigned_figures = [
+            figure for figure_index, figure in enumerate(all_validated_figures)
+            if figure_index not in used_figure_indices
+        ]
+        if unassigned_figures:
+            unassigned_summary_lines = []
+            for figure in unassigned_figures[:20]:
+                caption_preview = (figure.get("captionText") or "").strip().replace("\n", " ")
+                if len(caption_preview) > 80:
+                    caption_preview = caption_preview[:77] + "..."
+                page_label = figure.get("pageNumber")
+                if page_label is None:
+                    page_label = "web"
+                else:
+                    page_label = f"page {page_label + 1}"
+                unassigned_summary_lines.append(f"  - {page_label}: \"{caption_preview}\"")
+            extra_count = max(0, len(unassigned_figures) - 20)
+            extra_suffix = f" (+{extra_count} more)" if extra_count > 0 else ""
+            print(
+                f"[PrepareImages] {len(unassigned_figures)} validated figure(s) had no Tier-1/2/3 "
+                f"match and were NOT injected{extra_suffix}:\n"
+                + "\n".join(unassigned_summary_lines)
             )
 
-        print(
-            f"[PrepareImages] Injected figures into "
-            f"{len(study_material_index_to_figure_assignments)} study material file(s)."
-        )
-
-        # ── 13. Inject figures into flashcard HTML ──────────────────────────────
-        card_field_key_to_figure_assignments: dict[tuple, list] = {}
-
-        for figure_index, card_assignments_list in figure_to_card_assignments.items():
-            for card_assignment in card_assignments_list:
-                card_field_key = (
-                    card_assignment["flashcard_file_index"],
-                    card_assignment["card_index"],
-                    card_assignment["field_name"],
-                )
-                card_field_key_to_figure_assignments.setdefault(card_field_key, []).append({
-                    "figure_index": figure_index,
-                    "block_index": card_assignment["block_index"],
-                })
-
-        for (
-            flashcard_file_index, card_index, field_name
-        ), figure_assignments in card_field_key_to_figure_assignments.items():
-            card = flashcard_files[flashcard_file_index]["cards"][card_index]
-            field_html = card[field_name]
-            block_elements = HtmlInjector.extract_block_elements(field_html)
-
-            if not block_elements:
-                continue
-
-            capped = sorted(
-                figure_assignments,
-                key=lambda a: all_validated_figures[a["figure_index"]].get("_score", 0.0),
-                reverse=True,
-            )[:PrepareImages._MAX_FIGURES_PER_CARD]
-
-            sorted_ascending = sorted(capped, key=lambda a: a["block_index"])
-
-            for figure_assignment in reversed(sorted_ascending):
-                figure = all_validated_figures[figure_assignment["figure_index"]]
-                target_block_index = min(figure_assignment["block_index"], len(block_elements) - 1)
-                figure_html = HtmlInjector.build_figure_html(
-                    figure["imageBytes"],
-                    figure["captionText"],
-                    figure_number_map[figure_assignment["figure_index"]],
-                    source_url      = figure.get("_sourceUrl") if figure.get("_isWebFigure") else None,
-                    source_page_url = figure.get("_sourcePageUrl") if figure.get("_isWebFigure") else None,
-                    bounding_box    = figure.get("boundingBoxCoordinates"),
-                )
-                insertion_position = block_elements[target_block_index]["end"]
-                field_html = HtmlInjector.inject_figure_after_block(
-                    field_html, insertion_position, figure_html
-                )
-
-            flashcard_files[flashcard_file_index]["cards"][card_index][field_name] = field_html
-
-        modified_flashcard_file_indices = set(
-            key[0] for key in card_field_key_to_figure_assignments.keys()
-        )
-
-        for flashcard_file_index in modified_flashcard_file_indices:
-            flashcard_file = flashcard_files[flashcard_file_index]
-
-            if "_filePath" not in flashcard_file:
-                continue
-
-            original_file_path = flashcard_file.pop("_filePath")
-            await Persistence.write(
-                original_file_path,
-                json.dumps(flashcard_file, ensure_ascii=False)
-            )
-
-        print(
-            f"[PrepareImages] Injected figures into cards across "
-            f"{len(modified_flashcard_file_indices)} flashcard file(s)."
-        )
         print(
             f"[PrepareImages] Done. {len(figure_number_map)} unique figure(s) assigned."
         )

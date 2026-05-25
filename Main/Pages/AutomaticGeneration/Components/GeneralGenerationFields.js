@@ -4,6 +4,7 @@ import { convertElementToEnumSelect } from "../../../Globals/UtilityFunctions/Co
 import InformationSourceSelector from "./InformationSourceSelector.js";
 import GenerationFields from "./GenerationFields.js";
 import { taskTypes } from "../../../Globals/Enumerations/TaskTypes.js";
+import { informationSourceTypes } from "../../../Globals/Enumerations/InformationSourceTypes.js";
 import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
 import TemplatePickerDialog from "../../../CommonComponents/TemplatePickerDialog.js";
 
@@ -434,11 +435,60 @@ class GeneralGenerationFields extends GenerationFields
             return;
         }
 
+        // Merge — never replace. Previously this overwrote the entire
+        // image-source list with the information-source list, which wiped
+        // any manually-added image sources (singletons, extra documents,
+        // URLs) the user had picked. The user's complaint was "all my
+        // existing selections go away". The merge below keeps every
+        // existing image source AND ensures every information source is
+        // also represented; matching info sources update the existing
+        // image-source entry so page-range edits propagate.
+        const existingImageSources = this.#imageSourceSelector.getSources();
+        const informationSourceFingerprintToExtractable = new Map();
+        for (const informationSource of informationSources)
+        {
+            informationSourceFingerprintToExtractable.set(
+                GeneralGenerationFields.#computeExtractableFingerprint(informationSource),
+                informationSource,
+            );
+        }
+
+        const mergedSources = [];
+        const seenFingerprints = new Set();
+
+        // Pass 1 — preserve existing image sources, but for each one
+        // whose fingerprint matches an information source, swap in the
+        // info-source extractable so the page ranges stay current.
+        for (const existingImageSource of existingImageSources)
+        {
+            const fingerprint = GeneralGenerationFields.#computeExtractableFingerprint(existingImageSource);
+            if (informationSourceFingerprintToExtractable.has(fingerprint))
+            {
+                mergedSources.push(informationSourceFingerprintToExtractable.get(fingerprint));
+            }
+            else
+            {
+                mergedSources.push(existingImageSource);
+            }
+            seenFingerprints.add(fingerprint);
+        }
+
+        // Pass 2 — append any information sources not already present.
+        for (const informationSource of informationSources)
+        {
+            const fingerprint = GeneralGenerationFields.#computeExtractableFingerprint(informationSource);
+            if (!seenFingerprints.has(fingerprint))
+            {
+                mergedSources.push(informationSource);
+                seenFingerprints.add(fingerprint);
+            }
+        }
+
         // Suppress the "user edited it directly" detection while we mirror programmatically
         this.#suppressImageUserEdits = true;
         try
         {
-            this.#imageSourceSelector.setSources(informationSources);
+            this.#imageSourceSelector.setSources(mergedSources);
             this.getSettings().setImageSources(this.#imageSourceSelector.getSources());
         }
         finally
@@ -451,6 +501,32 @@ class GeneralGenerationFields extends GenerationFields
             detail: {sources: this.getSettings().getImageSources()},
             bubbles: true
         }));
+    }
+
+    /**
+     * Produces a stable identity key for dedup across mirror passes.
+     * Documents identify by their persisted source id; URL sources by
+     * the URL text; singleton types (ANYWHERE_ON_THE_INTERNET,
+     * AI_GENERATED, REPUTED_EXTERNAL_SOURCES) by type alone since at
+     * most one of each can exist in a settings instance.
+     */
+    static #computeExtractableFingerprint(extractableInformationSource)
+    {
+        const informationSource = extractableInformationSource.getInformationSource();
+        const sourceTypeValue   = informationSource.getSourceType();
+
+        if (sourceTypeValue === informationSourceTypes.PROVIDED_DOCUMENTS
+            || sourceTypeValue === informationSourceTypes.CURRICULUM_OR_SYLLABUS)
+        {
+            return `doc:${informationSource.getId()}`;
+        }
+
+        if (sourceTypeValue === informationSourceTypes.SPECIFIC_URL_ON_THE_INTERNET)
+        {
+            return `url:${informationSource.getName() ?? ""}`;
+        }
+
+        return `singleton:${sourceTypeValue}`;
     }
 
     connectedCallback()
@@ -488,8 +564,8 @@ class GeneralGenerationFields extends GenerationFields
                 <input type="checkbox" class="enhance-images-checkbox">
             </div>
             <div class="inherit-image-curriculum-container field-container">
-                <label>Inherit Image Sources Curriculum From Information Sources: </label>
-                <input type="checkbox" class="inherit-image-curriculum-checkbox">
+                <label for="inherit-image-sources-checkbox">Inherit Image Sources From Information Sources: </label>
+                <input id="inherit-image-sources-checkbox" type="checkbox" class="inherit-image-curriculum-checkbox">
             </div>
             <div class="good-quality-deck-short-names-container field-container">
                 <label title="Uses an extra AI pass to craft readable short names for each generated deck instead of mechanical abbreviations.">Good Quality Deck Short Names (uses a few extra credits): </label>

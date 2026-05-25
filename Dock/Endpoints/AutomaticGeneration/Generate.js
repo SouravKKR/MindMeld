@@ -304,6 +304,16 @@ async function handleGenerate(request, response)
                 imageSources: resolvedImageSourceJsons,
                 generateFlashcards: hasFlashcardScope,
                 generateStudyMaterials: hasStudyMaterialScope,
+                // When enhance is enabled, PrepareImages writes a JSON
+                // sidecar of figure assignments instead of injecting
+                // the originals into the per-task study-material and
+                // flashcard JSONs. EnhanceImages later reads the
+                // sidecar, fetches each figure's bytes from GCS,
+                // enhances them, and injects the enhanced figures
+                // directly. This avoids the wasted write/re-rewrite
+                // cycle and keeps un-enhanced source artwork out of
+                // every intermediate JSON.
+                enhanceImagesEnabled: enhanceImagesEnabled,
             },
             nextTaskIds: enhanceImagesTask ? [enhanceImagesTask.getId()] : [],
         });
@@ -364,6 +374,31 @@ async function handleGenerate(request, response)
 
     const mainTaskId = mainTaskDescriptor.getId();
 
+    // Bracket the entire pipeline (main tree + beautify + image work +
+    // moveToDatabase) with a Redis marker so GetProgress can keep
+    // reporting the tree as not-yet-complete until the very last
+    // database write lands. Without this the frontend flips to "done"
+    // the moment the main tree resolves, which is ~2 minutes before
+    // the user's deck actually exists in Mongo.
+    await TaskManager.markPostPipelinePending(mainTaskId);
+
+    // Register the top-level post-pipeline task ids so GetProgress
+    // can surface real per-stage progress (PREPARE_IMAGES →
+    // ENHANCE_IMAGES, BEAUTIFY_DECK_SHORT_NAMES) instead of a flat
+    // synthetic placeholder. prepareImagesTask already has
+    // enhanceImagesTask chained as a nextTaskIds child, so storing
+    // the prepareImages id alone surfaces the entire image subtree
+    // when GetProgress walks it.
+    const postPipelineTaskIds = [];
+    if (prepareImagesTask)
+    {
+        postPipelineTaskIds.push(prepareImagesTask.getId());
+    }
+    if (postPipelineTaskIds.length > 0)
+    {
+        await TaskManager.registerPostPipelineTasks(mainTaskId, postPipelineTaskIds);
+    }
+
     response.sendJson({taskId: mainTaskId});
 
     TaskManager.execute(mainTaskDescriptor)
@@ -403,6 +438,16 @@ async function handleGenerate(request, response)
         // was checked). Same parent-task-id pattern as
         // beautifyDeckShortNamesTask above so the activity tree nests
         // the image work under the main task.
+        //
+        // IPR safety: when ENHANCE_IMAGES is part of the pipeline, an
+        // image-pipeline failure means some figures still carry the
+        // un-enhanced copyrighted source artwork. Persisting that
+        // partial state would leak the originals into the user's
+        // library, so we mark the entire Generate as FAILED and skip
+        // moveToDatabase. The staged JSON files in Tasks/{mainTaskId}/
+        // are left behind for the next retry to consume or for cleanup
+        // to garbage-collect; the user's cards/studyMaterials
+        // collections are unaffected.
         if (prepareImagesTask)
         {
             try
@@ -412,10 +457,25 @@ async function handleGenerate(request, response)
             }
             catch (imagePipelineError)
             {
-                console.error(`[Generate] Image pipeline failed for ${mainTaskId}: ${imagePipelineError.message}`);
-                // Continue to moveToDatabase so the user still gets a deck
-                // with whatever image state was reached. The failed image
-                // task is visible in the activity tree.
+                console.error(`[Generate] Image pipeline failed for ${mainTaskId} — ABORTING moveToDatabase to keep un-enhanced originals out of the user's library: ${imagePipelineError.message}`);
+
+                try
+                {
+                    const failedMainTask = await TaskManager.getTask(mainTaskId);
+                    failedMainTask.setStatus(taskStatus.FAILED);
+                    const existingPayload = failedMainTask.getPayload() || {};
+                    failedMainTask.setPayload({
+                        ...existingPayload,
+                        error: `Image pipeline failed: ${imagePipelineError.message}`
+                    });
+                    await TaskManager.updateTask(failedMainTask);
+                }
+                catch (statusUpdateError)
+                {
+                    console.error(`[Generate] Failed to mark mainTask ${mainTaskId} as FAILED: ${statusUpdateError.message}`);
+                }
+
+                throw imagePipelineError;
             }
         }
 
@@ -454,6 +514,21 @@ async function handleGenerate(request, response)
             console.error(`[Generate] Failed to record taskHistory (failure path) for ${mainTaskId}: ${historyError.message}`);
         }
         await TaskManager.untrackForUser(userId, mainTaskId);
+    })
+    .finally(async () =>
+    {
+        // Always clear the post-pipeline marker — both success and
+        // failure paths reach here. If we leak this marker the
+        // frontend's progress poll would hang forever on a synthetic
+        // "Finalizing" child even though nothing is actually running.
+        try
+        {
+            await TaskManager.markPostPipelineDone(mainTaskId);
+        }
+        catch (markerError)
+        {
+            console.error(`[Generate] Failed to clear post-pipeline marker for ${mainTaskId}: ${markerError.message}`);
+        }
     });
 }
 

@@ -3,7 +3,7 @@ const DatabaseConstants = require("../../Constants/DatabaseConstants");
 
 
 /**
- * Read-only query engine for the curated generation-template collection.
+ * Query engine for the curated generation-template collection.
  *
  * The collection is keyed by `key` (the stable string identifier, e.g.
  * "JEE_MAINS"). Two indices back the queries:
@@ -15,10 +15,13 @@ const DatabaseConstants = require("../../Constants/DatabaseConstants");
  * shipping their full settings to the client. The full template document
  * is fetched on selection via `getByKey`.
  *
- * Writes are intentionally not exposed here — the collection is seeded
- * from `Dock/SeedData/GenerationTemplates.json` on startup and is not
- * mutable through the application. New templates land by adding them to
- * the seed file and restarting Dock.
+ * The only write path is `upsertFromSeed`, invoked at boot by
+ * `GenerationTemplateSeeder`. The seed file at
+ * `Dock/SeedData/GenerationTemplates.json` is the source of truth: every
+ * template is replaced from the seed on every Dock boot, so the in-app
+ * UI always reflects whatever is in the JSON. Manual edits to seeded
+ * keys via the Mongo shell will be clobbered on the next restart — to
+ * persist an admin override, also update the seed file.
  */
 class GenerationTemplateQueryEngine
 {
@@ -191,51 +194,67 @@ class GenerationTemplateQueryEngine
     }
 
     /**
-     * Inserts a template if (and only if) no document with the same
-     * (userId, key) pair already exists. Used by the boot-time seeder:
-     * existing templates — including ones an admin may have hand-edited
-     * via the Mongo shell — are intentionally left untouched. The
-     * `seededAt` timestamp marks the insertion time so operators can audit
-     * which entries came from the seed file and when.
+     * Replaces the document for `(userId, templateKey)` with the seed
+     * payload, inserting it if it does not yet exist. The boot-time
+     * seeder calls this once per entry in the seed JSON, so the on-disk
+     * file is the source of truth: every Dock boot brings the database
+     * back into agreement with `Dock/SeedData/GenerationTemplates.json`.
+     * Manual admin edits to seeded keys are clobbered on the next
+     * restart — to make an admin override stick, also update the seed
+     * file.
+     *
+     * `replaceOne` with `upsert: true` preserves the existing document's
+     * `_id` on a match, so the picker's lookup-by-key and any external
+     * references via `_id` remain stable across reseeds. `seededAt` is
+     * refreshed to the current time on every call so operators can audit
+     * the most recent reseed.
      *
      * Global templates are stored with `userId: null` so the composite
-     * `{userId:1, key:1}` unique index keys cleanly without relying on
+     * `{userId:1, key:1}` filter keys cleanly without relying on
      * MongoDB's partial-index semantics.
      *
      * @param {string} templateKey
      * @param {object} templateData
-     * @returns {Promise<boolean>} true if the template was newly inserted, false if a record with the same (userId, key) already existed.
+     * @returns {Promise<{inserted: boolean, updated: boolean}>} inserted=true on a fresh insert, updated=true when an existing document was replaced.
      */
-    static async insertIfMissing(templateKey, templateData)
+    static async upsertFromSeed(templateKey, templateData)
     {
         if (!templateKey || typeof templateKey !== "string")
         {
-            return false;
+            return { inserted: false, updated: false };
         }
 
         const collection = await GenerationTemplateQueryEngine.#getCollection();
         if (!collection)
         {
-            return false;
+            return { inserted: false, updated: false };
         }
 
         const ownerId = templateData && templateData.userId ? templateData.userId : null;
 
-        const result = await collection.updateOne(
+        // replaceOne errors if the replacement carries an `_id` that
+        // differs from the matched document's, so we strip any incoming
+        // `_id` to keep the call shape-compatible whether the document
+        // is being inserted fresh or replaced in place.
+        const replacementDocument =
+        {
+            ...templateData,
+            key: templateKey,
+            userId: ownerId,
+            seededAt: new Date()
+        };
+        delete replacementDocument._id;
+
+        const result = await collection.replaceOne(
             { key: templateKey, userId: ownerId },
-            {
-                $setOnInsert:
-                {
-                    ...templateData,
-                    key: templateKey,
-                    userId: ownerId,
-                    seededAt: new Date()
-                }
-            },
+            replacementDocument,
             { upsert: true }
         );
 
-        return result.upsertedCount > 0;
+        return {
+            inserted: result.upsertedCount > 0,
+            updated: result.matchedCount > 0
+        };
     }
 
     static #clampLimit(rawLimit)

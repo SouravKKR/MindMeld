@@ -22,8 +22,12 @@ class MockTestStartDialog
     /**
      * @param {MockTest} mockTest
      * @param {HTMLElement|null} parentPickerDialog - The MockTestPickerModal dialog to close before navigating.
+     * @param {boolean} bPreviewMode - When true, the resulting session is started in preview mode:
+     *     the runner behaves identically but Finish does not persist an attempt. The dialog
+     *     switches its labels ("Start Preview", "Exit Preview") so the user knows the run is
+     *     throwaway.
      */
-    static show(mockTest, parentPickerDialog = null)
+    static show(mockTest, parentPickerDialog = null, bPreviewMode = false)
     {
         if (!mockTest)
         {
@@ -35,7 +39,7 @@ class MockTestStartDialog
         const totalMarks = MockTestStartDialog.#computeTotalMarks(mockTest);
         const markingSchemeText = MockTestStartDialog.#formatMarkingSchemeSummary(mockTest);
 
-        const dialog = DialogBox.modal(MockTestStartDialog.#buildHtml(mockTest.getTitle() || "Mock Test", defaultDurationMinutes, totalMarks, markingSchemeText));
+        const dialog = DialogBox.modal(MockTestStartDialog.#buildHtml(mockTest.getTitle() || "Mock Test", defaultDurationMinutes, totalMarks, markingSchemeText, bPreviewMode));
 
         dialog.style.padding = "0";
         dialog.style.overflow = "hidden";
@@ -82,7 +86,7 @@ class MockTestStartDialog
             }
             dialog.close();
 
-            PageNavigator.open("study-page", MockTestSession, mockTest, { mode: selectedMode, durationMinutes: durationMinutes });
+            PageNavigator.open("study-page", MockTestSession, mockTest, { mode: selectedMode, durationMinutes: durationMinutes, bPreview: bPreviewMode });
         });
     }
 
@@ -132,14 +136,20 @@ class MockTestStartDialog
         return parts.join(" / ");
     }
 
-    static #buildHtml(testTitle, defaultDurationMinutes, totalMarks, markingSchemeText)
+    static #buildHtml(testTitle, defaultDurationMinutes, totalMarks, markingSchemeText, bPreviewMode = false)
     {
+        const headerLabel = bPreviewMode ? "Start Preview" : "Start Test";
+        const startButtonLabel = bPreviewMode ? "Start Preview" : "Start Test";
+        const previewNotice = bPreviewMode
+            ? `<div class="mock-test-start-preview-notice">Preview mode — finishing the test will exit without saving any attempt.</div>`
+            : "";
         return `
             <div class="mock-test-start-dialog-root">
                 <div class="mock-test-start-dialog-header">
-                    <div class="mock-test-start-dialog-title">Start Test</div>
+                    <div class="mock-test-start-dialog-title">${headerLabel}</div>
                     <div class="mock-test-start-dialog-subtitle">${testTitle}</div>
                 </div>
+                ${previewNotice}
 
                 <div class="mock-test-start-dialog-body">
 
@@ -181,7 +191,7 @@ class MockTestStartDialog
 
                 <div class="mock-test-start-dialog-footer">
                     <button class="mock-test-start-cancel-button" type="button">Cancel</button>
-                    <button class="mock-test-start-start-button" type="button">Start Test</button>
+                    <button class="mock-test-start-start-button" type="button">${startButtonLabel}</button>
                 </div>
             </div>
         `;

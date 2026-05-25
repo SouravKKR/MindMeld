@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from Workflows.EnhanceImages.DiagramNode import DiagramNode
 from Workflows.EnhanceImages.DiagramConnection import DiagramConnection
 from Workflows.EnhanceImages.DiagramGroup import DiagramGroup
+from Workflows.EnhanceImages.DiagramSubjectRegion import DiagramSubjectRegion
 
 
 class UnifiedAssetExtraction(BaseModel):
@@ -53,6 +54,18 @@ class UnifiedAssetExtraction(BaseModel):
         default = None,
         description = (
             "Every visible container / grouping frame that encloses one or more nodes."
+        )
+    )
+
+    diagram_subject_region_percent: Optional[DiagramSubjectRegion] = Field(
+        default = None,
+        description = (
+            "The bounding rectangle that snugly encloses just the diagram subject "
+            "(shapes, arrows, container frames, in-figure title), expressed as "
+            "percentages of the SOURCE image. Excludes ambient body text, marginal "
+            "text, page numbers, watermarks, and figure captions printed outside "
+            "the figure border. Omit entirely (null) if the diagram already fills "
+            "the source image edge-to-edge."
         )
     )
 

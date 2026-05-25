@@ -3,7 +3,18 @@ import base64
 from html import escape as html_escape
 from urllib.parse import urlparse
 
+from Globals.Classes.ImageProcessing.ImageCompressor import ImageCompressor
 
+
+# Styling contract for any HTML this module emits:
+#   - Allowed inline styles: STRUCTURAL only -- margin, padding, width,
+#     max-width, height, display, flex/grid, font-size, word-wrap.
+#   - Forbidden inline styles: APPEARANCE -- colour, background, border-colour,
+#     border-radius, opacity, box-shadow, text-transform, letter-spacing,
+#     font-weight, font-family, text-decoration.
+#   Appearance lives in Main/CommonStyles/GeneratedContent.css and is driven
+#   by --content-* variables in Main/CommonStyles/Theme.css so the user can
+#   re-theme generated content without a backend redeploy.
 class HtmlInjector:
 
     _BLOCK_ELEMENT_PATTERN = re.compile(
@@ -113,7 +124,13 @@ class HtmlInjector:
         injected `<img>` carry a max-width that matches its original
         in-document size rather than stretching to the container width.
         """
-        base64_encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+        # Compress before base64-embedding. Raw PDF-extracted figures are
+        # routinely 1-3 MB; without this the encoded HTML balloons past
+        # 20 MB per deck and breaks sync. Originals remain untouched in
+        # GCS / the figures collection -- this only affects the inline
+        # copy that ships to the user.
+        compressed_image_bytes = ImageCompressor.compress_for_embedding(image_bytes)
+        base64_encoded_image = base64.b64encode(compressed_image_bytes).decode("utf-8")
 
         display_caption = caption_text.strip() if caption_text and caption_text.strip() else f"Fig. {figure_number}"
 
@@ -123,7 +140,7 @@ class HtmlInjector:
             host_name        = (urlparse(host_display_url).hostname or "web").lower()
             link_target      = source_page_url or source_url
             attribution_html = (
-                f'<div class="figure-attribution" style="font-size: 0.75em; color: #888;'
+                f'<div class="figure-attribution" style="font-size: 0.75em;'
                 f' margin-top: 0.25em;">'
                 f'Source: <a href="{html_escape(link_target, quote=True)}" target="_blank" rel="noopener noreferrer">'
                 f'{html_escape(host_name)}</a>'
@@ -147,7 +164,7 @@ class HtmlInjector:
             f'<figure class="extracted-figure" style="margin: 1em 0;">'
             f'<img src="data:image/jpeg;base64,{base64_encoded_image}"'
             f' style="{image_style}" alt="Figure {figure_number}">'
-            f'<figcaption style="font-size: 0.85em; color: #555;'
+            f'<figcaption style="font-size: 0.85em;'
             f' margin-top: 0.4em; word-wrap: break-word;">'
             f'{display_caption}'
             f'{attribution_html}'

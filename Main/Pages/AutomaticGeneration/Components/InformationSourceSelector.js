@@ -80,9 +80,25 @@ class InformationSourceSelector extends HTMLElement
     /**
      * Replaces the current source list with the given ExtractableInformationSource[]
      * Used by the "Inherit Syllabus Sources From Information Sources" mirroring logic.
+     *
+     * In-progress uploads (PROVIDED_DOCUMENTS / CURRICULUM_OR_SYLLABUS items
+     * whose XHR has not yet returned, identified by _serverInformationSource
+     * being unset) are preserved across the rebuild. Settings only learns
+     * about an upload after xhr.load fires `attachPageRangeEditor` — so
+     * during OCR the upload is in DOM only, and a naive innerHTML wipe
+     * would silently destroy the card while the request keeps running
+     * server-side. The TEMPLATE→ADVANCED downgrade path is the canonical
+     * caller that triggered this; the fix here is trigger-agnostic.
      */
     setSources(extractableSources)
     {
+        const PRESERVABLE_SOURCE_TYPES = new Set(["PROVIDED_DOCUMENTS", "CURRICULUM_OR_SYLLABUS"]);
+        const pendingUploadItems = Array.from(this.#informationSourcesList.children).filter(item =>
+        {
+            return (item._serverInformationSource == null)
+                && PRESERVABLE_SOURCE_TYPES.has(item.dataset.sourceType);
+        });
+
         this.#informationSourcesList.innerHTML = "";
 
         // Re-enable any singleton options that were previously consumed
@@ -96,14 +112,17 @@ class InformationSourceSelector extends HTMLElement
             }
         }
 
-        if (!Array.isArray(extractableSources))
+        if (Array.isArray(extractableSources))
         {
-            return;
+            for (const extractable of extractableSources)
+            {
+                this.#appendExistingSource(extractable);
+            }
         }
 
-        for (const extractable of extractableSources)
+        for (const pendingItem of pendingUploadItems)
         {
-            this.#appendExistingSource(extractable);
+            this.#informationSourcesList.appendChild(pendingItem);
         }
     }
 
@@ -183,6 +202,9 @@ class InformationSourceSelector extends HTMLElement
 
         const informationSourceItem = this.#buildSourceItemSkeleton(selectedKey);
 
+        let pendingPageRangeEditor = null;
+        let pendingPageRangesToApply = null;
+
         if (selectedKey === "PROVIDED_DOCUMENTS" || selectedKey === "CURRICULUM_OR_SYLLABUS")
         {
             informationSourceItem._serverInformationSource = informationSource;
@@ -196,10 +218,14 @@ class InformationSourceSelector extends HTMLElement
 
             pageRangeEditor.addEventListener(AutomaticGenerationEvents.ON_SOURCES_CHANGED, () => this.#dispatchSourcesChanged());
 
-            requestAnimationFrame(() =>
-            {
-                pageRangeEditor.setPageRanges(extractable.getPageRanges() || []);
-            });
+            // setPageRanges has to wait until the editor is actually
+            // attached to the document — until then its connectedCallback
+            // hasn't fired and #rangesContainer is still null. The
+            // informationSourceItem is still detached at this point, so
+            // we stash the editor + page-range payload and apply them
+            // below right after the item is appended to the live list.
+            pendingPageRangeEditor   = pageRangeEditor;
+            pendingPageRangesToApply = extractable.getPageRanges() || [];
         }
         else if (selectedKey === "SPECIFIC_URL_ON_THE_INTERNET")
         {
@@ -221,6 +247,16 @@ class InformationSourceSelector extends HTMLElement
         }
 
         this.#informationSourcesList.appendChild(informationSourceItem);
+
+        // Editor is now in the document tree -- connectedCallback has
+        // fired, #modeSelect and #rangesContainer exist. Safe to apply
+        // the captured page ranges synchronously so the subsequent
+        // .getSources() call inside the mirror logic reads the correct
+        // ranges instead of the editor's default FULL_BOOK state.
+        if (pendingPageRangeEditor !== null)
+        {
+            pendingPageRangeEditor.setPageRanges(pendingPageRangesToApply);
+        }
     }
 
     #buildSourceItemSkeleton(selectedKey)

@@ -1,15 +1,29 @@
-import { ocrModes } from "../../../Globals/Enumerations/OcrModes.js";
-import { pollTaskCompletion } from "../../../Globals/UtilityFunctions/PollTaskCompletion.js";
-
-
 class InformationSourceCard extends HTMLElement
 {
     static tagName = "information-source-card";
 
-    // Fraction of the bar reserved for the byte-upload phase when OCR is
-    // also expected — the remainder is fed by the Agent OCR task's
-    // completion ticks via /Generate/Progress polling.
-    static UPLOAD_PHASE_FRACTION_WITH_OCR = 0.5;
+    // Fraction of the bar reserved for the byte-upload phase. The remainder
+    // is held back until the server response returns (which happens after
+    // the server-side OCR step). Without the cap the bar would hit 100%
+    // immediately on upload completion while OCR was still running.
+    static UPLOAD_PHASE_FRACTION = 0.5;
+
+    // Asymptotic ceiling for the OCR-phase animation. The bar approaches
+    // this value while the HTTP response is in flight but never reaches
+    // it — that final jump happens when the server actually responds.
+    static OCR_PHASE_CEILING = 0.95;
+
+    // Tunes how fast the OCR animation creeps. Higher = slower approach
+    // to the ceiling. At t = HALF_LIFE_MILLISECONDS, the animation is at
+    // half the remaining distance to the ceiling; at 2 × that, it's at
+    // three-quarters; etc. Picked so a typical sub-minute OCR pass looks
+    // visibly active without sprinting to the ceiling in 5 seconds.
+    static OCR_ANIMATION_HALF_LIFE_MILLISECONDS = 20 * 1000;
+
+    // Cadence for the OCR-phase animation tick. 200ms is the longest
+    // interval that still feels live to the user; anything shorter
+    // wastes redraws.
+    static OCR_ANIMATION_TICK_MILLISECONDS = 200;
 
     #informationSource = null;
     #xhr = null;
@@ -19,6 +33,8 @@ class InformationSourceCard extends HTMLElement
     #progressTrack = null;
     #tagsContainer = null;
     #errorMessage = null;
+
+    #ocrAnimationIntervalId = null;
 
     static create(informationSource, xhr)
     {
@@ -197,16 +213,9 @@ class InformationSourceCard extends HTMLElement
 
     #bindXhrEvents()
     {
-        const bOcrExpected = this.#isOcrRequested();
-        const uploadPhaseCeiling = bOcrExpected ? InformationSourceCard.UPLOAD_PHASE_FRACTION_WITH_OCR : 1;
+        const uploadPhaseCeiling = InformationSourceCard.UPLOAD_PHASE_FRACTION;
 
-        if (bOcrExpected)
-        {
-            // Set the initial label so the user knows OCR will run after
-            // the byte upload finishes — the bar otherwise looks paused
-            // mid-way through the operation.
-            this.#statusLabel.textContent = "Uploading...";
-        }
+        this.#statusLabel.textContent = "Uploading...";
 
         this.#xhr.upload.addEventListener("progress", (uploadProgressEvent) =>
         {
@@ -219,13 +228,40 @@ class InformationSourceCard extends HTMLElement
             }
         });
 
+        // Once the byte upload finishes the server starts OCR. We have
+        // no real progress channel from ocrmypdf back to the client
+        // during a single HTTP request, so animate an asymptotic creep
+        // from the upload ceiling toward (but never to) OCR_PHASE_CEILING.
+        // The bar visibly moves, the user sees a percentage, and the
+        // final jump to 100% happens when the response actually lands.
+        this.#xhr.upload.addEventListener("load", () =>
+        {
+            this.#startOcrPhaseAnimation();
+        });
+
         this.#xhr.addEventListener("load", () =>
         {
+            this.#stopOcrPhaseAnimation();
+
             if (this.#xhr.status !== 200)
             {
                 if (this.#xhr.status === 409)
                 {
                     this.#renderErrorState(this.#xhr.responseText || "You have already uploaded a source with the same content.");
+                }
+                else if (this.#xhr.status === 500)
+                {
+                    let serverReason = "Upload failed during OCR or storage step.";
+                    try
+                    {
+                        const parsedResponse = JSON.parse(this.#xhr.responseText);
+                        if (parsedResponse?.reason)
+                        {
+                            serverReason = parsedResponse.reason;
+                        }
+                    }
+                    catch (_) {}
+                    this.#renderErrorState(serverReason);
                 }
                 else
                 {
@@ -234,77 +270,64 @@ class InformationSourceCard extends HTMLElement
                 return;
             }
 
-            const pendingTaskId = this.#extractPendingTaskIdFromResponse();
-            if (pendingTaskId === null)
-            {
-                this.#renderCompleteState();
-                return;
-            }
-
-            this.#trackOcrTaskCompletion(pendingTaskId);
+            this.#renderCompleteState();
         });
 
         this.#xhr.addEventListener("error", () =>
         {
+            this.#stopOcrPhaseAnimation();
             this.#renderErrorState("Network error — upload could not complete");
         });
 
         this.#xhr.addEventListener("abort", () =>
         {
+            this.#stopOcrPhaseAnimation();
             this.#renderErrorState("Upload was cancelled");
         });
     }
 
-    #isOcrRequested()
+    #startOcrPhaseAnimation()
     {
-        if (!this.#informationSource || typeof this.#informationSource.getOcrMode !== "function")
+        // Defensive: if a previous call already started the animation
+        // (e.g. xhr.upload "load" fired twice on a quirky browser),
+        // don't stack a second interval.
+        if (this.#ocrAnimationIntervalId !== null)
         {
-            return false;
+            return;
         }
-        const ocrModeValue = this.#informationSource.getOcrMode();
-        return ocrModeValue !== undefined && ocrModeValue !== null && ocrModeValue !== ocrModes.DISABLED;
+
+        const animationStartFraction  = InformationSourceCard.UPLOAD_PHASE_FRACTION;
+        const animationCeilingFraction = InformationSourceCard.OCR_PHASE_CEILING;
+        const animationStartTime       = Date.now();
+        const halfLifeMilliseconds     = InformationSourceCard.OCR_ANIMATION_HALF_LIFE_MILLISECONDS;
+
+        const tick = () =>
+        {
+            const elapsedMilliseconds = Date.now() - animationStartTime;
+            // Exponential approach: at elapsed == halfLife the bar is at
+            // half the remaining distance to the ceiling; at 2× halfLife,
+            // three-quarters; etc. Bounded above by the ceiling.
+            const approachProgress = 1 - Math.pow(0.5, elapsedMilliseconds / halfLifeMilliseconds);
+            const currentFraction  = animationStartFraction
+                + (animationCeilingFraction - animationStartFraction) * approachProgress;
+            const currentPercent   = Math.round(currentFraction * 100);
+
+            this.#progressFill.style.width = `${currentPercent}%`;
+            this.#statusLabel.textContent  = `OCR ${currentPercent}%`;
+        };
+
+        tick();
+        this.#ocrAnimationIntervalId = setInterval(tick, InformationSourceCard.OCR_ANIMATION_TICK_MILLISECONDS);
     }
 
-    #extractPendingTaskIdFromResponse()
+    #stopOcrPhaseAnimation()
     {
-        try
+        if (this.#ocrAnimationIntervalId === null)
         {
-            const parsedResponse = JSON.parse(this.#xhr.responseText);
-            return parsedResponse?.pendingTaskId ?? null;
+            return;
         }
-        catch (parseError)
-        {
-            return null;
-        }
-    }
-
-    async #trackOcrTaskCompletion(pendingTaskId)
-    {
-        // Snap the bar to the upload-phase ceiling and switch the label so
-        // the user knows we're now waiting on the Agent rather than the
-        // network upload.
-        const uploadPercent = Math.round(InformationSourceCard.UPLOAD_PHASE_FRACTION_WITH_OCR * 100);
-        this.#progressFill.style.width = `${uploadPercent}%`;
-        this.#statusLabel.textContent = "Running OCR...";
-
-        try
-        {
-            await pollTaskCompletion(pendingTaskId, (taskCompletionFraction) =>
-            {
-                const overallFraction = InformationSourceCard.UPLOAD_PHASE_FRACTION_WITH_OCR
-                    + (1 - InformationSourceCard.UPLOAD_PHASE_FRACTION_WITH_OCR) * taskCompletionFraction;
-                const overallPercent = Math.round(overallFraction * 100);
-                this.#progressFill.style.width = `${overallPercent}%`;
-                this.#statusLabel.textContent = `OCR ${overallPercent}%`;
-            });
-
-            this.#renderCompleteState();
-        }
-        catch (pollError)
-        {
-            console.error(`[InformationSourceCard] OCR poll failed: ${pollError.message}`);
-            this.#renderErrorState("OCR processing failed. Please retry, or upload with OCR disabled.");
-        }
+        clearInterval(this.#ocrAnimationIntervalId);
+        this.#ocrAnimationIntervalId = null;
     }
 
     #renderCompleteState()

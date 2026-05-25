@@ -1,4 +1,6 @@
 import InitializationEvents from "../Globals/Events/InitializationEvents.js";
+import BlockingOverlayCoordinator from "../Globals/Classes/BlockingOverlayCoordinator.js";
+import CopyrightNotice from "./CopyrightNotice.js";
 
 /**
  * InitializationOverlay
@@ -23,6 +25,7 @@ import InitializationEvents from "../Globals/Events/InitializationEvents.js";
 class InitializationOverlay extends HTMLElement
 {
     static #STYLE_ID = "initialization-overlay-style";
+    static #COORDINATOR_OWNER_ID = "InitializationOverlay";
     static #CREEP_DURATION_MILLISECONDS = 6000;
     static #SETTLE_DURATION_MILLISECONDS = 220;
 
@@ -48,6 +51,7 @@ class InitializationOverlay extends HTMLElement
                     </div>
                     <div class="initialization-overlay-message">Preparing your library…</div>
                 </div>
+                <copyright-notice position="bottom-center"></copyright-notice>
             </div>
         `;
 
@@ -57,6 +61,11 @@ class InitializationOverlay extends HTMLElement
         this.#messageElement      = this.querySelector(".initialization-overlay-message");
 
         this.style.display = "block";
+
+        // Claim the blocking-overlay slot synchronously. We mount eagerly
+        // from index.html on page load, so by definition we're first and
+        // nothing else has had a chance to grab the slot yet.
+        BlockingOverlayCoordinator.markActive(InitializationOverlay.#COORDINATOR_OWNER_ID);
 
         for(const eventName of ["click", "pointerdown", "pointerup", "keydown", "keyup", "wheel", "touchstart", "touchend"])
         {
@@ -113,6 +122,9 @@ class InitializationOverlay extends HTMLElement
         requestAnimationFrame(() =>
         {
             this.style.display = "none";
+            // Release the slot once we're visually gone so the next
+            // queued overlay (sync / tutorial) can take over.
+            BlockingOverlayCoordinator.release(InitializationOverlay.#COORDINATOR_OWNER_ID);
         });
     };
 

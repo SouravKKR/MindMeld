@@ -8,33 +8,58 @@ from Globals.Utility.JoinPath import join_path
 
 from Workflows.EnhanceImages.AssetEnhancer import AssetEnhancer
 from Workflows.EnhanceImages.HtmlImageRewriter import HtmlImageRewriter
+from Workflows.PrepareImages.HtmlInjector import HtmlInjector
 from Workflows.Workflow import Workflow
+
+
+# Sidecar PrepareImages writes when EnhanceImages is enabled. Lives at
+# Tasks/{mainTaskId}/figure_assignments.json. Names match the constant
+# PrepareImages writes to -- keep them in sync if either side moves.
+_FIGURE_ASSIGNMENTS_SIDECAR_FILENAME = "figure_assignments.json"
 
 
 class EnhanceImages(Workflow):
     """
-    Copyright-safe / brand-consistent post-processing of base64 images
-    previously injected into the generated flashcard and study-material
-    HTML by PrepareImages.
+    Copyright-safe / brand-consistent image pass that runs AFTER
+    PrepareImages and BEFORE moveToDatabase. Reads the per-task figure
+    assignments sidecar emitted by PrepareImages, fetches each figure's
+    bytes from GCS, enhances them via Gemini (AssetEnhancer), and
+    injects the result directly into the per-task flashcard /
+    study-material JSON files.
+
+    Sidecar-driven design rationale:
+      * PrepareImages skipping injection when this workflow is in the
+        pipeline means the per-task JSONs never carry the source
+        artwork as intermediate state. If EnhanceImages crashes the
+        upstream JSONs are still pristine and a retry can re-enhance
+        cleanly.
+      * The whole pipeline aborts on EnhanceImages failure (Generate.js
+        re-throws so moveToDatabase doesn't run), so a half-enhanced
+        deck cannot leak un-enhanced source artwork into the user's
+        library.
 
     Invariants:
-      * The original image bytes uploaded to GCS (`figures/<phash>.png`)
-        and the `figures` MongoDB collection are NOT touched -- they keep
-        the source material verbatim. This workflow only rewrites the
-        embedded `<figure>` blocks inside the per-task flashcard /
-        study-material JSON files, which `moveToDatabase` later persists
-        into the `cards` and `studyMaterials` collections.
+      * PrepareImages stages every referenced figure's bytes under
+        Tasks/{taskId}/figures_scratch/<phash>.png and points each
+        sidecar assignment at that path; this workflow reads from there
+        and does NOT touch the global figures/<phash>.png objects. The
+        global path is a long-lived dedup cache that can outlive an
+        individual generation task -- reading from it would 404 if the
+        bucket has been reset between extraction and enhancement.
+        This workflow only writes the per-task flashcard / study-
+        material JSONs that moveToDatabase later persists into the cards
+        and studyMaterials collections.
       * Per-image failures (Gemini error, malformed extraction, empty
-        image payload, markdown render failure) are propagated as task
-        failures. The user explicitly chose strict error semantics over
-        silent fallback to the original image.
+        image payload, markdown render failure) are propagated as
+        task failures. The user explicitly chose strict error semantics
+        over silent fallback to the original image -- a half-enhanced
+        deck leaking copyrighted source artwork is worse than no deck
+        at all.
     """
 
     def __init__(self, payload = {}):
         super().__init__(payload)
         self.__generation_task_id = os.getenv("MAIN_TASK_ID")
-        self.__generate_study_materials = payload.get("generateStudyMaterials", False)
-        self.__generate_flashcards = payload.get("generateFlashcards", False)
 
     async def run(self, args = {}):
         if not self.__generation_task_id:
@@ -43,54 +68,71 @@ class EnhanceImages(Workflow):
 
         await self.__update_progress(0.05)
 
-        study_material_files = await self.__load_study_material_files()
-        flashcard_files = await self.__load_flashcard_files()
-
-        if not study_material_files and not flashcard_files:
-            print("[EnhanceImages] No generated content files found -- nothing to enhance.")
-            return
-
-        await self.__update_progress(0.15)
-
-        asset_enhancer = AssetEnhancer()
-
-        total_figure_count = self.__count_total_figures(study_material_files, flashcard_files)
-        if total_figure_count == 0:
-            print("[EnhanceImages] No embedded <figure> blocks found in any content file -- skipping.")
+        sidecar_path = self.__compute_sidecar_path()
+        sidecar_document = await self.__load_sidecar(sidecar_path)
+        if sidecar_document is None:
+            print(
+                f"[EnhanceImages] No assignments sidecar at {sidecar_path} -- "
+                f"PrepareImages either skipped or ran in inline mode. Nothing to enhance."
+            )
             await self.__update_progress(1.0)
             return
 
-        print(
-            f"[EnhanceImages] Enhancing {total_figure_count} embedded figure(s) across "
-            f"{len(study_material_files)} study material file(s) and "
-            f"{len(flashcard_files)} flashcard file(s)."
-        )
+        assignments = sidecar_document.get("assignments") or []
+        if not assignments:
+            print("[EnhanceImages] Sidecar has zero assignments -- nothing to enhance.")
+            await self.__update_progress(1.0)
+            return
 
-        processed_figure_count = 0
+        print(f"[EnhanceImages] Enhancing {len(assignments)} assignment(s) from sidecar.")
 
-        for study_material_file in study_material_files:
-            processed_figure_count = await self.__enhance_figures_in_study_material(
-                study_material_file,
+        # Group assignments by their target file so we load + write each
+        # JSON exactly once. Per-file lists are sorted by block index
+        # descending so we splice from the back -- preserving the
+        # earlier-block byte offsets while inserting later-block figures
+        # (the same trick PrepareImages.HtmlInjector relies on).
+        assignments_by_file_path: dict[str, list] = {}
+        for assignment in assignments:
+            file_path = assignment.get("filePath")
+            if not file_path:
+                continue
+            assignments_by_file_path.setdefault(file_path, []).append(assignment)
+
+        await self.__update_progress(0.10)
+
+        asset_enhancer = AssetEnhancer()
+        total_assignment_count = len(assignments)
+        completed_assignment_count = 0
+
+        for file_path, file_assignments in assignments_by_file_path.items():
+            file_document = await self.__load_json_file(file_path)
+            if file_document is None:
+                # PrepareImages flagged this file path but we can't read
+                # it back -- treat as a hard error so moveToDatabase
+                # doesn't persist a partially-enhanced deck.
+                raise RuntimeError(
+                    f"EnhanceImages: assignment references unreadable file '{file_path}'."
+                )
+
+            await self.__enhance_assignments_in_file(
+                file_document,
+                file_assignments,
                 asset_enhancer,
-                processed_figure_count,
-                total_figure_count,
             )
 
-        for flashcard_file in flashcard_files:
-            processed_figure_count = await self.__enhance_figures_in_flashcard_file(
-                flashcard_file,
-                asset_enhancer,
-                processed_figure_count,
-                total_figure_count,
+            await Persistence.write(
+                file_path,
+                json.dumps(file_document, ensure_ascii = False),
             )
 
-        # Persist the modified JSON files back -- matches PrepareImages' write
-        # pattern (pop the synthetic _filePath key, then Persistence.write).
-        await self.__write_modified_files(study_material_files)
-        await self.__write_modified_files(flashcard_files)
+            completed_assignment_count += len(file_assignments)
+            if total_assignment_count > 0:
+                fraction_done = completed_assignment_count / total_assignment_count
+                await self.__update_progress(0.10 + 0.85 * fraction_done)
 
         print(
-            f"[EnhanceImages] Done. Enhanced {processed_figure_count} figure(s) across all content files."
+            f"[EnhanceImages] Done. Enhanced {total_assignment_count} figure(s) across "
+            f"{len(assignments_by_file_path)} file(s)."
         )
         await self.__update_progress(1.0)
 
@@ -101,154 +143,172 @@ class EnhanceImages(Workflow):
         current_task.set_completion(completion)
         await TaskManager.set_task(current_task)
 
-    async def __load_study_material_files(self) -> list[dict]:
-        if not self.__generate_study_materials:
-            return []
-
-        study_material_prefix = join_path(
+    def __compute_sidecar_path(self) -> str:
+        return join_path(
             "/",
             PersistenceConstants.TASKS_DIRECTORY,
             self.__generation_task_id,
-            PersistenceConstants.STUDY_MATERIALS_DIRECTORY,
+            _FIGURE_ASSIGNMENTS_SIDECAR_FILENAME,
         )
-        return await self.__load_json_files_from_prefix(study_material_prefix)
 
-    async def __load_flashcard_files(self) -> list[dict]:
-        if not self.__generate_flashcards:
-            return []
+    async def __load_sidecar(self, sidecar_path: str) -> dict | None:
+        try:
+            sidecar_bytes = await Persistence.read(sidecar_path)
+        except Exception as read_error:
+            print(f"[EnhanceImages] Could not read sidecar at {sidecar_path}: {read_error}")
+            return None
 
-        flashcard_prefix = join_path(
-            "/",
-            PersistenceConstants.TASKS_DIRECTORY,
-            self.__generation_task_id,
-            PersistenceConstants.FLASHCARDS_DIRECTORY,
-        )
-        return await self.__load_json_files_from_prefix(flashcard_prefix)
+        try:
+            return json.loads(sidecar_bytes.decode("utf-8"))
+        except Exception as parse_error:
+            raise RuntimeError(
+                f"EnhanceImages: sidecar at {sidecar_path} is not valid JSON: {parse_error}"
+            )
 
-    async def __load_json_files_from_prefix(self, persistence_prefix: str) -> list[dict]:
-        file_paths = await Persistence.list(persistence_prefix)
-        loaded_files: list[dict] = []
-
-        for file_path in file_paths:
-            if not file_path.endswith(".json"):
-                continue
+    async def __load_json_file(self, file_path: str) -> dict | None:
+        try:
             file_bytes = await Persistence.read(file_path)
-            file_data = json.loads(file_bytes.decode("utf-8"))
-            file_data["_filePath"] = file_path
-            loaded_files.append(file_data)
+            return json.loads(file_bytes.decode("utf-8"))
+        except Exception as load_error:
+            print(f"[EnhanceImages] Could not load file {file_path}: {load_error}")
+            return None
 
-        return loaded_files
-
-    def __count_total_figures(
+    async def __enhance_assignments_in_file(
         self,
-        study_material_files: list[dict],
-        flashcard_files: list[dict],
-    ) -> int:
-        running_total = 0
-
-        for study_material_file in study_material_files:
-            content_html = study_material_file.get("content") or ""
-            running_total += len(HtmlImageRewriter.find_extracted_figures(content_html))
-
-        for flashcard_file in flashcard_files:
-            for card in flashcard_file.get("cards") or []:
-                for field_name in ("question", "answer"):
-                    field_html = card.get(field_name) or ""
-                    running_total += len(HtmlImageRewriter.find_extracted_figures(field_html))
-
-        return running_total
-
-    async def __enhance_figures_in_study_material(
-        self,
-        study_material_file: dict,
+        file_document: dict,
+        file_assignments: list,
         asset_enhancer: AssetEnhancer,
-        processed_figure_count: int,
-        total_figure_count: int,
-    ) -> int:
-        content_html = study_material_file.get("content") or ""
-        new_content_html, processed_figure_count = await self.__enhance_html_field(
-            content_html,
-            asset_enhancer,
-            processed_figure_count,
-            total_figure_count,
-        )
-        study_material_file["content"] = new_content_html
-        return processed_figure_count
-
-    async def __enhance_figures_in_flashcard_file(
-        self,
-        flashcard_file: dict,
-        asset_enhancer: AssetEnhancer,
-        processed_figure_count: int,
-        total_figure_count: int,
-    ) -> int:
-        cards = flashcard_file.get("cards") or []
-
-        for card in cards:
-            for field_name in ("question", "answer"):
-                field_html = card.get(field_name) or ""
-                new_field_html, processed_figure_count = await self.__enhance_html_field(
-                    field_html,
-                    asset_enhancer,
-                    processed_figure_count,
-                    total_figure_count,
-                )
-                card[field_name] = new_field_html
-
-        return processed_figure_count
-
-    async def __enhance_html_field(
-        self,
-        html_content: str,
-        asset_enhancer: AssetEnhancer,
-        processed_figure_count: int,
-        total_figure_count: int,
-    ) -> tuple[str, int]:
-        figure_matches = HtmlImageRewriter.find_extracted_figures(html_content)
-        if not figure_matches:
-            return html_content, processed_figure_count
-
-        replacements: list[dict] = []
-
-        for figure_match in figure_matches:
-            enhancement_result = await asset_enhancer.enhance(figure_match["imageBytes"])
-
-            if enhancement_result["kind"] == "DIAGRAM":
-                new_figure_html = HtmlImageRewriter.build_diagram_replacement_html(
-                    enhancement_result["imageBytes"],
-                    figure_match["figcaptionHtml"],
-                )
-            elif enhancement_result["kind"] == "TEXT_DATA":
-                new_figure_html = HtmlImageRewriter.build_text_data_replacement_html(
-                    enhancement_result["markdown"],
-                )
+    ):
+        """
+        Splices every assignment for a single content file into its HTML.
+        Study materials carry a single "content" field; flashcards carry a
+        list of cards each with question/answer fields. We dispatch on
+        the assignment's `fileType` rather than peeking at the document
+        shape so an unexpected payload fails loudly.
+        """
+        # Inserting figures at later block positions FIRST keeps earlier-block
+        # byte offsets valid for the subsequent inserts in the same field.
+        # We bucket by (cardIndex, fieldName) for flashcards because each
+        # field is its own independent HTML blob; study-material content
+        # is a single field so all assignments share the same bucket.
+        for assignment in sorted(file_assignments, key = lambda a: a.get("blockIndex", 0), reverse = True):
+            file_type = assignment.get("fileType")
+            if file_type == "studyMaterial":
+                await self.__inject_into_study_material(file_document, assignment, asset_enhancer)
+            elif file_type == "flashcard":
+                await self.__inject_into_flashcard(file_document, assignment, asset_enhancer)
             else:
                 raise RuntimeError(
-                    f"EnhanceImages: AssetEnhancer returned unrecognized kind "
-                    f"'{enhancement_result.get('kind')}'."
+                    f"EnhanceImages: unrecognized assignment fileType '{file_type}'."
                 )
 
-            replacements.append({
-                "start": figure_match["start"],
-                "end": figure_match["end"],
-                "newHtml": new_figure_html,
-            })
+    async def __inject_into_study_material(
+        self,
+        study_material_document: dict,
+        assignment: dict,
+        asset_enhancer: AssetEnhancer,
+    ):
+        content_html = study_material_document.get("content") or ""
+        block_elements = HtmlInjector.extract_block_elements(content_html)
+        if not block_elements:
+            return
 
-            processed_figure_count += 1
-            if total_figure_count > 0:
-                # Reserve the [0.15, 0.95] band for per-figure work so the
-                # bookkeeping ticks at start/end remain visible.
-                fraction_done = processed_figure_count / total_figure_count
-                await self.__update_progress(0.15 + 0.80 * fraction_done)
+        target_block_index  = min(assignment.get("blockIndex", 0), len(block_elements) - 1)
+        insertion_position  = block_elements[target_block_index]["end"]
 
-        return HtmlImageRewriter.apply_replacements(html_content, replacements), processed_figure_count
+        replacement_html = await self.__build_enhanced_html(assignment, asset_enhancer)
+        study_material_document["content"] = HtmlInjector.inject_figure_after_block(
+            content_html, insertion_position, replacement_html
+        )
 
-    async def __write_modified_files(self, loaded_files: list[dict]):
-        for loaded_file in loaded_files:
-            if "_filePath" not in loaded_file:
-                continue
-            original_file_path = loaded_file.pop("_filePath")
-            await Persistence.write(
-                original_file_path,
-                json.dumps(loaded_file, ensure_ascii = False),
+    async def __inject_into_flashcard(
+        self,
+        flashcard_document: dict,
+        assignment: dict,
+        asset_enhancer: AssetEnhancer,
+    ):
+        cards = flashcard_document.get("cards") or []
+        card_index = assignment.get("cardIndex")
+        if not isinstance(card_index, int) or card_index < 0 or card_index >= len(cards):
+            return
+
+        card = cards[card_index]
+        field_name = assignment.get("fieldName")
+        if field_name not in ("question", "answer"):
+            return
+
+        field_html = card.get(field_name) or ""
+        block_elements = HtmlInjector.extract_block_elements(field_html)
+        if not block_elements:
+            return
+
+        target_block_index = min(assignment.get("blockIndex", 0), len(block_elements) - 1)
+        insertion_position = block_elements[target_block_index]["end"]
+
+        replacement_html = await self.__build_enhanced_html(assignment, asset_enhancer)
+        card[field_name] = HtmlInjector.inject_figure_after_block(
+            field_html, insertion_position, replacement_html
+        )
+
+    async def __build_enhanced_html(
+        self,
+        assignment: dict,
+        asset_enhancer: AssetEnhancer,
+    ) -> str:
+        """
+        Fetches the original figure bytes from the GCS path embedded in
+        the assignment, runs AssetEnhancer, and returns the final HTML
+        snippet to splice into the surrounding content. AssetEnhancer
+        decides DIAGRAM vs TEXT_DATA per figure; we render each branch
+        through its existing builder so the markup matches inline-mode
+        injection exactly.
+        """
+        gcs_image_path = assignment.get("gcsImagePath")
+        if not gcs_image_path:
+            raise RuntimeError("EnhanceImages: assignment has no gcsImagePath.")
+
+        try:
+            original_image_bytes = await Persistence.read(gcs_image_path)
+        except Exception as fetch_error:
+            raise RuntimeError(
+                f"EnhanceImages: could not fetch original figure bytes at "
+                f"{gcs_image_path}: {fetch_error}"
             )
+
+        enhancement_result = await asset_enhancer.enhance(original_image_bytes)
+
+        if enhancement_result["kind"] == "DIAGRAM":
+            # Reuse HtmlInjector.build_figure_html so the enhanced figure
+            # carries the same figure-number caption, attribution, and
+            # max-width sizing as an inline-mode injection.
+            return HtmlInjector.build_figure_html(
+                enhancement_result["imageBytes"],
+                assignment.get("captionText") or "",
+                assignment.get("figureNumber") or 0,
+                source_url      = assignment.get("sourceUrl"),
+                source_page_url = assignment.get("sourcePageUrl"),
+                bounding_box    = assignment.get("boundingBoxCoordinates"),
+            )
+
+        if enhancement_result["kind"] == "TEXT_DATA":
+            return HtmlImageRewriter.build_text_data_replacement_html(
+                enhancement_result["markdown"],
+            )
+
+        if enhancement_result["kind"] == "DIAGRAM_TEXT_FALLBACK":
+            # Stage 2 image generation came back empty (intermittent
+            # preview-model behaviour). AssetEnhancer already synthesised
+            # a markdown description from Stage 1's structured extraction;
+            # render it in a visually distinct box so the student still
+            # sees the diagram's content and any "see Figure N" reference
+            # in the surrounding text continues to resolve.
+            return HtmlImageRewriter.build_diagram_text_fallback_html(
+                enhancement_result["markdown"],
+                assignment.get("captionText") or "",
+                assignment.get("figureNumber") or 0,
+            )
+
+        raise RuntimeError(
+            f"EnhanceImages: AssetEnhancer returned unrecognized kind "
+            f"'{enhancement_result.get('kind')}'."
+        )

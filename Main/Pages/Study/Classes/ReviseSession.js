@@ -65,8 +65,26 @@ class ReviseSession extends StudySession
     previous()
     {
         this.#index = (this.#index - 1 + this.#cards.length) % this.#cards.length;
-        
+
         this._showCard(this.#cards[this.#index]);
+    }
+
+    /**
+     * Revise lets the user skip freely, so prev/next stay visible from the
+     * moment a card is shown — not just after the answer is revealed. The
+     * Spaced-Repetition session deliberately keeps the base behavior (prev/
+     * next hidden until a grade is submitted) so the algorithm-driven order
+     * can't be bypassed.
+     */
+    _showCard(card)
+    {
+        super._showCard(card);
+
+        const previousNextButtonContainer = this._studyPage.querySelector(".previous-next-button-container");
+        if (previousNextButtonContainer)
+        {
+            previousNextButtonContainer.style.display = "flex";
+        }
     }
 
     _revealAnswer()
@@ -75,7 +93,7 @@ class ReviseSession extends StudySession
 
         const userScoreSection = this._studyPage.querySelector(".user-score-section");
         const previousNextButtonContainer = this._studyPage.querySelector(".previous-next-button-container");
-        
+
         userScoreSection.style.display = "none";
         previousNextButtonContainer.style.display = "flex";
     }

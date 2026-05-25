@@ -6,7 +6,7 @@ class StudyMaterialGenerationSettings extends AutoGenerationSettings
 {
     #detailLevels;
 
-    constructor({type = null, additionalInstructions = '', description = '', informationSources = [], enhanceImages = false, imageSources = [], subjectName = '', examName = '', detailLevels = [1]} = {})
+    constructor({type = null, additionalInstructions = '', description = '', informationSources = [], enhanceImages = false, imageSources = [], subjectName = '', examName = '', detailLevels = [0,1]} = {})
     {
         super({type, additionalInstructions, description, informationSources, enhanceImages, imageSources, subjectName, examName});
         this.setDetailLevels(detailLevels);

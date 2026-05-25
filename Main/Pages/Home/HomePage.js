@@ -270,6 +270,7 @@ class HomePage extends HTMLElement
             <header-component title="MindMeld Home"></header-component>
             <button class="back-to-parent-button">Navigate to ${Deck.getCurrentDeck()?.getParent()?.getName() || ""}</button>
             <div class="decks-container"></div>
+            <copyright-notice position="inline"></copyright-notice>
             <home-footer-component></home-footer-component>
         `;
 

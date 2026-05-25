@@ -3,7 +3,18 @@ import re
 
 import markdown as markdown_renderer
 
+from Globals.Classes.ImageProcessing.ImageCompressor import ImageCompressor
 
+
+# Styling contract for any HTML this module emits:
+#   - Allowed inline styles: STRUCTURAL only -- margin, padding, width,
+#     max-width, height, display, flex/grid, font-size, word-wrap.
+#   - Forbidden inline styles: APPEARANCE -- colour, background, border-colour,
+#     border-radius, opacity, box-shadow, text-transform, letter-spacing,
+#     font-weight, font-family, text-decoration.
+#   Appearance lives in Main/CommonStyles/GeneratedContent.css and is driven
+#   by --content-* variables in Main/CommonStyles/Theme.css so the user can
+#   re-theme generated content without a backend redeploy.
 class HtmlImageRewriter:
     """
     Locates and rewrites `<figure class="extracted-figure">…</figure>`
@@ -133,7 +144,12 @@ class HtmlImageRewriter:
         conventions of HtmlInjector.build_figure_html so the rendered
         position inside the surrounding HTML is visually identical.
         """
-        base64_encoded_image = base64.b64encode(enhanced_image_bytes).decode("utf-8")
+        # Gemini's image-generation output is typically a 2K PNG which is
+        # several MB raw. Compress to a small JPEG before base64-embedding
+        # so the deck stays sync-able. Same justification as the
+        # compression call in HtmlInjector.build_figure_html.
+        compressed_image_bytes = ImageCompressor.compress_for_embedding(enhanced_image_bytes)
+        base64_encoded_image = base64.b64encode(compressed_image_bytes).decode("utf-8")
 
         image_style = (
             f'width: 100%;'
@@ -172,3 +188,56 @@ class HtmlImageRewriter:
         )
 
         return f'<div class="enhanced-extracted-text">{rendered_html}</div>'
+
+    @staticmethod
+    def build_diagram_text_fallback_html(
+        markdown_text: str,
+        caption_text: str,
+        figure_number: int,
+    ) -> str:
+        """
+        Build a visually-distinct fallback box used when the image-
+        generation stage fails to produce an image. Renders the diagram's
+        structure as styled text so the student still sees the diagram's
+        content, with a small header noting it's a textual stand-in. The
+        figure number is preserved so any in-text references (e.g.
+        "see Figure 3") still resolve.
+        """
+        if not isinstance(markdown_text, str):
+            raise RuntimeError(
+                "HtmlImageRewriter: DIAGRAM_TEXT_FALLBACK requires a string markdown payload."
+            )
+
+        rendered_body_html = markdown_renderer.markdown(
+            markdown_text,
+            extensions = list(HtmlImageRewriter.MARKDOWN_EXTENSIONS),
+        )
+
+        figure_number_label = f"Figure {figure_number}" if figure_number else "Figure"
+        caption_text_safe = (caption_text or "").strip()
+        caption_html_fragment = (
+            f' &mdash; {caption_text_safe}' if caption_text_safe else ''
+        )
+
+        # Only structural inline styles below. All colour / background /
+        # border / opacity / text-transform / letter-spacing / font-weight
+        # treatment lives in Main/CommonStyles/GeneratedContent.css and is
+        # driven by --content-* variables in Theme.css so the user can
+        # re-theme generated content without a backend redeploy.
+        container_style = (
+            'margin: 1.2em 0;'
+            ' padding: 12px 18px;'
+        )
+        header_style = (
+            'font-size: 0.85em;'
+            ' margin-bottom: 0.5em;'
+        )
+
+        return (
+            f'<aside class="diagram-text-fallback" style="{container_style}">'
+            f'<div class="diagram-text-fallback-header" style="{header_style}">'
+            f'{figure_number_label} (text description){caption_html_fragment}'
+            f'</div>'
+            f'<div class="diagram-text-fallback-body">{rendered_body_html}</div>'
+            f'</aside>'
+        )

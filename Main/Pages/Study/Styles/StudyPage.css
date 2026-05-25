@@ -44,6 +44,11 @@ study-page .question-section
     background-color: var(--tertiary-background-color);
     padding: 15px;
     font-size: calc(var(--study-card-zoom, 1) * 1em);
+    /* Constrain reading width on wide monitors; em-based so zooming
+       widens the card the same way it does a PDF reader. */
+    width: 100%;
+    max-width: 56em;
+    margin: 0 auto;
 }
 
 study-page .answer-section
@@ -56,11 +61,18 @@ study-page .answer-section
     padding: 15px;
     background-color: var(--tertiary-background-color);
     font-size: calc(var(--study-card-zoom, 1) * 1em);
+    width: 100%;
+    max-width: 56em;
+    margin: 0 auto;
 }
 
 .show-answer-button
 {
-    margin: 0 auto;
+    /* No `margin: 0 auto` — in the action flex row, auto margins absorb
+       all leftover space and push every sibling (prev/next, zoom, edit,
+       assistant) to the opposite edge. The parent `.study-action-row`
+       already has justify-content: center, so the group centers as a
+       whole and the green button sits flush against its neighbors. */
     padding: 8px 24px;
     border-radius: 8px;
     background-color: green;

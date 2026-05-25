@@ -51,6 +51,7 @@ class LegalDocumentQueryEngine
         }
         return await collection
             .find({}, LegalDocumentQueryEngine.#PUBLIC_PROJECTION)
+            .limit(100)
             .toArray();
     }
 

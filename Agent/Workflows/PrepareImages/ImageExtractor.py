@@ -20,6 +20,11 @@ class ImageExtractor:
     _YOLO_REPO_ID = "juliozhao/DocLayout-YOLO-DocStructBench"
     _YOLO_WEIGHTS_FILENAME = "doclayout_yolo_docstructbench_imgsz1024.pt"
     _RENDER_DPI = 200
+    # Was 0.15. Lowered after observing complex textbook flowcharts (dashed
+    # borders, 3D-shaded boxes, paper-texture backgrounds) falling below
+    # YOLO's figure-class confidence floor and never reaching the LLM
+    # validator. 0.15 is still well above the noise where YOLO starts to
+    # mislabel body-text regions as figures.
     _YOLO_CONFIDENCE_THRESHOLD = 0.15
     _YOLO_IMAGE_SIZE = 1024
     _MIN_FIGURE_DIMENSION_PIXELS = 80
@@ -34,8 +39,14 @@ class ImageExtractor:
     _AREA_BYPASS_FRACTION = 0.05
     _DRAWING_CLUSTER_GAP_PX = 30
     _DRAWING_COMPONENT_GAP_PX = 5
-    _DRAWING_MIN_DISTINCT_SHAPES = 4
+    # Was 4. Loosened to 3 because flowcharts with arrows connecting adjacent
+    # boxes physically merge box+arrow+box into a single tight component, so
+    # a 9-box diagram can collapse to only a few distinct components at the
+    # 5px component-gap. 3 still excludes single callout boxes and plain
+    # text-block borders (which yield 1-2 components).
+    _DRAWING_MIN_DISTINCT_SHAPES = 3
     _DRAWING_OVERLAP_IOU_THRESHOLD = 0.3
+    _EMBEDDED_IMAGE_OVERLAP_IOU_THRESHOLD = 0.3
 
     _cached_yolo_model = None
 
@@ -167,6 +178,109 @@ class ImageExtractor:
         return new_detections
 
     @staticmethod
+    def _embedded_image_detections(
+        page,
+        render_dpi: int,
+        existing_boxes: list[list[int]],
+    ) -> list[dict]:
+        """
+        Catches embedded raster images (PNG/JPEG screenshots, scanned figures,
+        slide-deck exports) that YOLO and the vector-drawing fallback both
+        miss. Most academic textbook diagrams arrive as embedded images, so
+        this path materially improves recall on slide screenshots of the
+        "Process of MBO" variety -- a circular flow with text labels rendered
+        as a single PNG.
+
+        Uses page.get_image_rects(xref) to recover the on-page bounding box
+        for each embedded image. Skips images that substantially overlap an
+        existing YOLO detection so we don't double-extract the same figure.
+        """
+        try:
+            embedded_image_records = page.get_images(full=True)
+        except Exception:
+            return []
+
+        if not embedded_image_records:
+            return []
+
+        scale = render_dpi / 72.0
+        new_detections: list[dict] = []
+        seen_pixel_rects: set[tuple] = set()
+
+        for image_record in embedded_image_records:
+            image_xref = image_record[0]
+
+            try:
+                image_rects = page.get_image_rects(image_xref)
+            except Exception:
+                continue
+
+            for image_rect in image_rects or []:
+                if image_rect.width < 5 or image_rect.height < 5:
+                    continue
+
+                pixel_box = (
+                    int(image_rect.x0 * scale),
+                    int(image_rect.y0 * scale),
+                    int(image_rect.x1 * scale),
+                    int(image_rect.y1 * scale),
+                )
+
+                # An identical xref can appear in get_images() multiple times
+                # for the same on-page rect; dedup before continuing.
+                if pixel_box in seen_pixel_rects:
+                    continue
+                seen_pixel_rects.add(pixel_box)
+
+                pixel_width = pixel_box[2] - pixel_box[0]
+                pixel_height = pixel_box[3] - pixel_box[1]
+                if (pixel_width < ImageExtractor._MIN_FIGURE_DIMENSION_PIXELS
+                        or pixel_height < ImageExtractor._MIN_FIGURE_DIMENSION_PIXELS):
+                    continue
+
+                if ImageExtractor._box_overlaps_existing(
+                    pixel_box,
+                    existing_boxes,
+                    ImageExtractor._EMBEDDED_IMAGE_OVERLAP_IOU_THRESHOLD,
+                ):
+                    continue
+
+                new_detections.append({
+                    "box": pixel_box,
+                    "caption_box": None,
+                    "caption_text": "",
+                })
+
+        return new_detections
+
+    @staticmethod
+    def _box_overlaps_existing(
+        candidate_box: tuple[int, int, int, int],
+        existing_boxes: list[list[int]],
+        iou_threshold: float,
+    ) -> bool:
+        cx0, cy0, cx1, cy1 = candidate_box
+        candidate_area = max(0, cx1 - cx0) * max(0, cy1 - cy0)
+        if candidate_area == 0:
+            return False
+
+        for ex0, ey0, ex1, ey1 in existing_boxes:
+            ix0 = max(cx0, ex0)
+            iy0 = max(cy0, ey0)
+            ix1 = min(cx1, ex1)
+            iy1 = min(cy1, ey1)
+            if ix1 <= ix0 or iy1 <= iy0:
+                continue
+
+            intersection_area = (ix1 - ix0) * (iy1 - iy0)
+            existing_area = max(0, ex1 - ex0) * max(0, ey1 - ey0)
+            union_area = candidate_area + existing_area - intersection_area
+            if union_area > 0 and (intersection_area / union_area) > iou_threshold:
+                return True
+
+        return False
+
+    @staticmethod
     def _detect_figure_detections(
         yolo_model,
         page_image: Image.Image,
@@ -182,8 +296,13 @@ class ImageExtractor:
         )
 
         if not detection_results:
+            # No YOLO hits at all -- fall back to BOTH the drawing-region
+            # path (vector flowcharts) and the embedded-image path (raster
+            # screenshots like slide-deck exports). These are the two
+            # geometries YOLO most commonly misses on academic content.
             drawing_detections = ImageExtractor._drawing_region_detections(page, render_dpi, [])
-            return drawing_detections
+            embedded_detections = ImageExtractor._embedded_image_detections(page, render_dpi, [])
+            return drawing_detections + embedded_detections
 
         result = detection_results[0]
         figure_boxes: list[list[int]] = []
@@ -243,6 +362,20 @@ class ImageExtractor:
             page, render_dpi, mutable_figure_boxes
         )
         detections.extend(drawing_detections)
+
+        # Boxes considered "already covered" for the embedded-image pass
+        # must include both the YOLO detections AND any drawing-region
+        # detections we just added, otherwise a YOLO figure that happens
+        # to be an embedded raster gets extracted twice and the dedup
+        # only catches it via perceptual hash later.
+        combined_existing_boxes = list(mutable_figure_boxes)
+        for drawing_detection in drawing_detections:
+            combined_existing_boxes.append(list(drawing_detection["box"]))
+
+        embedded_detections = ImageExtractor._embedded_image_detections(
+            page, render_dpi, combined_existing_boxes
+        )
+        detections.extend(embedded_detections)
 
         return detections
 

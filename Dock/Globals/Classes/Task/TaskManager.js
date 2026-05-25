@@ -16,6 +16,8 @@ class TaskManager
     static #TASK_PREFIX = "Task/";
     static #TASK_TTL_SECONDS = 5 * 60 * 60;
     static #TASK_COMPLETION_SUFFIX = ":completion";
+    static #POST_PIPELINE_PREFIX = "PostPipeline/";
+    static #POST_PIPELINE_TASKS_PREFIX = "PostPipelineTasks/";
     static #SYNC_LOCK_TTL_SECONDS = 5 * 60;
     static #SYNC_LOCK_PREFIX = "SyncLock/";
     // Per-user index of top-level task ids so the Activity preview can
@@ -193,6 +195,162 @@ class TaskManager
         }
 
         return false;
+    }
+
+    /**
+     * Marks the post-pipeline (BeautifyDeckShortNames + PrepareImages +
+     * moveToDatabase) as still running for the given top-level Generate
+     * task. GetProgress consults this flag and, if set, surfaces a
+     * synthetic "finalization" child so the frontend doesn't conclude
+     * the user's deck is ready until the database write actually lands.
+     *
+     * Bracket Generate.js with markPostPipelinePending(...) before
+     * starting the main pipeline and markPostPipelineDone(...) in the
+     * finally of the .then() chain.
+     *
+     * @param {string} mainTaskId - The root Generate task id.
+     */
+    static async markPostPipelinePending(mainTaskId)
+    {
+        if (!mainTaskId)
+        {
+            return;
+        }
+        await TaskManager.#redisClient.set(
+            TaskManager.#POST_PIPELINE_PREFIX + mainTaskId,
+            "pending",
+            { EX: TaskManager.#TASK_TTL_SECONDS }
+        );
+    }
+
+    /**
+     * Clears the post-pipeline marker so subsequent GetProgress polls
+     * stop appending the synthetic finalization child and the
+     * frontend's #computeOverallStatus() can resolve to COMPLETED.
+     * Also clears the registered post-pipeline task ids so a stale
+     * list never survives past the marker.
+     *
+     * @param {string} mainTaskId
+     */
+    static async markPostPipelineDone(mainTaskId)
+    {
+        if (!mainTaskId)
+        {
+            return;
+        }
+        await TaskManager.#redisClient.del(TaskManager.#POST_PIPELINE_PREFIX + mainTaskId);
+        await TaskManager.clearPostPipelineTasks(mainTaskId);
+    }
+
+    /**
+     * Returns true when a post-pipeline marker is still present —
+     * i.e. moveToDatabase hasn't finished yet for this Generate task.
+     * Returns false if no marker was ever set OR it was cleared OR
+     * its TTL expired.
+     *
+     * @param {string} mainTaskId
+     * @returns {Promise<boolean>}
+     */
+    static async isPostPipelinePending(mainTaskId)
+    {
+        if (!mainTaskId)
+        {
+            return false;
+        }
+        const value = await TaskManager.#redisClient.get(TaskManager.#POST_PIPELINE_PREFIX + mainTaskId);
+        if (value === null || value === undefined)
+        {
+            return false;
+        }
+        const asString = typeof value === "string" ? value : value.toString();
+        return asString === "pending";
+    }
+
+    /**
+     * Registers the top-level post-pipeline task ids (e.g. beautify,
+     * prepareImages — prepareImages already has enhanceImages chained
+     * via its own nextTaskIds, so storing the prepareImages id is
+     * enough to surface the entire image subtree to GetProgress).
+     *
+     * GetProgress reads these ids and recursively walks each subtree,
+     * appending the resulting nodes as children of the main task's
+     * tree. That replaces the old flat synthetic "Finalizing 50%"
+     * placeholder with real per-stage progress so the user can see
+     * PREPARE_IMAGES and ENHANCE_IMAGES actually moving.
+     *
+     * Idempotent — re-registering the same set is a no-op overwrite.
+     *
+     * @param {string} mainTaskId
+     * @param {string[]} taskIds
+     */
+    static async registerPostPipelineTasks(mainTaskId, taskIds)
+    {
+        if (!mainTaskId || !Array.isArray(taskIds) || taskIds.length === 0)
+        {
+            return;
+        }
+        const cleanedTaskIds = taskIds.filter(taskId => typeof taskId === "string" && taskId.length > 0);
+        if (cleanedTaskIds.length === 0)
+        {
+            return;
+        }
+        await TaskManager.#redisClient.set(
+            TaskManager.#POST_PIPELINE_TASKS_PREFIX + mainTaskId,
+            JSON.stringify(cleanedTaskIds),
+            { EX: TaskManager.#TASK_TTL_SECONDS }
+        );
+    }
+
+    /**
+     * Returns the registered post-pipeline task ids for the given
+     * main task, or an empty array if none were registered or the
+     * record expired.
+     *
+     * @param {string} mainTaskId
+     * @returns {Promise<string[]>}
+     */
+    static async getPostPipelineTaskIds(mainTaskId)
+    {
+        if (!mainTaskId)
+        {
+            return [];
+        }
+        const raw = await TaskManager.#redisClient.get(TaskManager.#POST_PIPELINE_TASKS_PREFIX + mainTaskId);
+        if (raw === null || raw === undefined)
+        {
+            return [];
+        }
+        const asString = typeof raw === "string" ? raw : raw.toString();
+        try
+        {
+            const parsed = JSON.parse(asString);
+            if (!Array.isArray(parsed))
+            {
+                return [];
+            }
+            return parsed.filter(taskId => typeof taskId === "string" && taskId.length > 0);
+        }
+        catch (parseError)
+        {
+            console.warn(`[TaskManager] getPostPipelineTaskIds: malformed JSON for ${mainTaskId}: ${parseError.message}`);
+            return [];
+        }
+    }
+
+    /**
+     * Clears the post-pipeline task id registry for the given main
+     * task. Called from markPostPipelineDone so a stale list never
+     * survives past the marker.
+     *
+     * @param {string} mainTaskId
+     */
+    static async clearPostPipelineTasks(mainTaskId)
+    {
+        if (!mainTaskId)
+        {
+            return;
+        }
+        await TaskManager.#redisClient.del(TaskManager.#POST_PIPELINE_TASKS_PREFIX + mainTaskId);
     }
 
     /**

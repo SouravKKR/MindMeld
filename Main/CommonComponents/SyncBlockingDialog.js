@@ -1,4 +1,5 @@
 import DialogBox from "./DialogBox.js";
+import BlockingOverlayCoordinator from "../Globals/Classes/BlockingOverlayCoordinator.js";
 
 
 /**
@@ -23,6 +24,7 @@ import DialogBox from "./DialogBox.js";
  */
 class SyncBlockingDialog
 {
+    static #COORDINATOR_OWNER_ID = "SyncBlockingDialog";
     static #AUTO_CLOSE_AFTER_SUCCESS_MILLISECONDS = 700;
     static #DEFAULT_BODY_TEXT =
         "This may be due to an app update or because your saved sync state is stale. "
@@ -36,11 +38,54 @@ class SyncBlockingDialog
     #forceActionRow = null;
     #forceButton = null;
 
+    // Buffered state for the pre-mount window. We hand the instance
+    // back to the caller synchronously even though the actual mount
+    // waits for the BlockingOverlayCoordinator slot — so callers can
+    // freely updateFraction / updateLabel / showForceAction before
+    // mount, and we replay the latest values when the slot opens up.
+    #titleAtConstruction      = "";
+    #bodyTextAtConstruction   = "";
+    #latestFraction           = 0;
+    #latestLabel              = "Preparing…";
+    #pendingForceClickHandler = null;
+    #bForceActionRequested    = false;
+    #bErrorMarked             = false;
+    #lastErrorMessage         = null;
+
     static show(title, bodyText = SyncBlockingDialog.#DEFAULT_BODY_TEXT)
     {
         const instance = new SyncBlockingDialog();
-        instance.#mount(title, bodyText);
+        instance.#titleAtConstruction    = title;
+        instance.#bodyTextAtConstruction = bodyText;
+        instance.#requestSlotAndMount();
         return instance;
+    }
+
+    async #requestSlotAndMount()
+    {
+        await BlockingOverlayCoordinator.request(SyncBlockingDialog.#COORDINATOR_OWNER_ID);
+
+        // close() may have been called before our turn came — bail and
+        // release the slot we just acquired so the next overlay can show.
+        if (this.#bClosed)
+        {
+            BlockingOverlayCoordinator.release(SyncBlockingDialog.#COORDINATOR_OWNER_ID);
+            return;
+        }
+
+        this.#mount(this.#titleAtConstruction, this.#bodyTextAtConstruction);
+
+        // Replay buffered state into the just-mounted DOM.
+        this.updateFraction(this.#latestFraction);
+        this.updateLabel(this.#latestLabel);
+        if (this.#bForceActionRequested && this.#pendingForceClickHandler !== null)
+        {
+            this.showForceAction(this.#pendingForceClickHandler);
+        }
+        if (this.#bErrorMarked)
+        {
+            this.markError(this.#lastErrorMessage);
+        }
     }
 
     #mount(title, bodyText)
@@ -107,6 +152,12 @@ class SyncBlockingDialog
      */
     showForceAction(onForceClick)
     {
+        // Buffer for the pre-mount window — if we're not on screen yet,
+        // #requestSlotAndMount will call back into showForceAction with
+        // this same handler once the DOM is ready.
+        this.#bForceActionRequested    = true;
+        this.#pendingForceClickHandler = onForceClick;
+
         if (this.#bClosed || this.#forceButton === null || this.#forceActionRow === null)
         {
             return;
@@ -138,6 +189,10 @@ class SyncBlockingDialog
 
     hideForceAction()
     {
+        // Clear buffered request too, in case we're still pre-mount.
+        this.#bForceActionRequested    = false;
+        this.#pendingForceClickHandler = null;
+
         if (this.#bClosed || this.#forceActionRow === null)
         {
             return;
@@ -152,6 +207,7 @@ class SyncBlockingDialog
 
     updateFraction(fraction)
     {
+        this.#latestFraction = fraction;
         if (this.#bClosed || this.#barFill === null)
         {
             return;
@@ -162,6 +218,7 @@ class SyncBlockingDialog
 
     updateLabel(statusText)
     {
+        this.#latestLabel = statusText;
         if (this.#bClosed || this.#statusLabel === null)
         {
             return;
@@ -185,6 +242,9 @@ class SyncBlockingDialog
 
     markError(errorMessage)
     {
+        this.#bErrorMarked     = true;
+        this.#lastErrorMessage = errorMessage;
+
         if (this.#bClosed || this.#statusLabel === null)
         {
             return;
@@ -206,6 +266,14 @@ class SyncBlockingDialog
             return;
         }
         this.#bClosed = true;
+
+        // Release the coordinator slot in both paths — mounted-and-closed
+        // and queued-but-never-presented. #requestSlotAndMount's own
+        // early-exit branch handles the "released-by-close-before-our-turn"
+        // case symmetrically; the explicit release here covers the
+        // mounted-and-closing path.
+        BlockingOverlayCoordinator.release(SyncBlockingDialog.#COORDINATOR_OWNER_ID);
+
         if (this.#dialog !== null)
         {
             this.#dialog.close();

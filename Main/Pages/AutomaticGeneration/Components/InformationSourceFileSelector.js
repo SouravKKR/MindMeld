@@ -1,7 +1,3 @@
-import { ocrModes } from "../../../Globals/Enumerations/OcrModes.js";
-import { convertElementToEnumSelect } from "../../../Globals/UtilityFunctions/ConvertElementToEnumSelect.js";
-
-
 class InformationSourceFileSelector extends HTMLElement
 {
     static tagName = "information-source-file-selector";
@@ -9,7 +5,6 @@ class InformationSourceFileSelector extends HTMLElement
     #fileInput = null;
     #nameInput = null;
     #tagsInput = null;
-    #ocrModeSelect = null;
     #fileNameDisplay = null;
 
     connectedCallback()
@@ -158,28 +153,12 @@ class InformationSourceFileSelector extends HTMLElement
                     placeholder="e.g. biology, chapter-3, important"
                 >
             </div>
-
-            <div class="file-selector-field-group">
-                <label class="file-selector-field-label" title="Runs ocrmypdf during upload so downstream chunking and image extraction can see clean text. Enabled re-OCRs pages whose existing text looks low-quality.">OCR Mode</label>
-                <select class="file-selector-field-input file-selector-ocr-mode-select"></select>
-            </div>
         `;
 
         this.#fileInput = this.querySelector(".file-selector-hidden-file-input");
         this.#nameInput = this.querySelector(".file-selector-name-input");
         this.#tagsInput = this.querySelector(".file-selector-tags-input");
-        this.#ocrModeSelect = this.querySelector(".file-selector-ocr-mode-select");
         this.#fileNameDisplay = this.querySelector(".file-selector-selected-file-name");
-
-        convertElementToEnumSelect(this.#ocrModeSelect, ocrModes);
-        // Default to ENABLED so newly uploaded PDFs get cleaned-up OCR text
-        // without the user having to think about it. They can switch to
-        // DISABLED for already-clean digital PDFs.
-        const enabledKey = Object.keys(ocrModes).find(key => ocrModes[key] === ocrModes.ENABLED);
-        if (enabledKey)
-        {
-            this.#ocrModeSelect.value = enabledKey;
-        }
 
         this.#handleEvents();
     }
@@ -255,16 +234,6 @@ class InformationSourceFileSelector extends HTMLElement
             .split(",")
             .map(tag => tag.trim())
             .filter(tag => tag.length > 0);
-    }
-
-    getOcrMode()
-    {
-        const selectedKey = this.#ocrModeSelect?.value;
-        if (selectedKey && Object.prototype.hasOwnProperty.call(ocrModes, selectedKey))
-        {
-            return ocrModes[selectedKey];
-        }
-        return ocrModes.ENABLED;
     }
 }
 

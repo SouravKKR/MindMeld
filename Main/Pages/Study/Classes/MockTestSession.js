@@ -54,6 +54,7 @@ class MockTestSession extends StudySession
     getSessionOptions() { return this.#sessionOptions; }
     getMode() { return this.#sessionOptions.mode; }
     getDurationMinutes() { return this.#sessionOptions.durationMinutes; }
+    isPreviewMode() { return this.#sessionOptions.bPreview === true; }
 
     // ── Static PDF utilities ───────────────────────────────────────────────────
 
@@ -113,9 +114,24 @@ class MockTestSession extends StudySession
      * fullscreen, and navigates back. Evaluation is intentionally a
      * TODO — answers (and any offline scan upload paths) are stored
      * on the attempt for the future OCR + LLM evaluation pipeline.
+     *
+     * In preview mode (started from the editor's Preview button) the
+     * attempt is neither created nor saved — the runner just closes —
+     * so the in-memory transient MockTest used by the editor never
+     * touches storage or the deck's mock-test list.
      */
     async #handleSubmit(clonedItems, additionalData)
     {
+        if (this.isPreviewMode())
+        {
+            if (document.fullscreenElement)
+            {
+                try { await document.exitFullscreen(); } catch (exitError) { /* ignore */ }
+            }
+            PageNavigator.back();
+            return;
+        }
+
         const maxScore = MockTestSession.#computeMaxScore(clonedItems);
         const attempt = new MockTestAttempt(undefined, new Date(), clonedItems, 0, maxScore);
         if (additionalData)

@@ -6,7 +6,7 @@
         "detailLevels":
         {
             "datatype": "array<enum:StudyMaterialDetailLevels>",
-            "defaultValue": [1]
+            "defaultValue": [0, 1]
         }
     },
     "extends":

@@ -123,7 +123,11 @@ class FlashcardGenerationFields extends GenerationFields
         {
             const questionTypeKey = questionTypeCard.dataset.questionType;
             const weightValue = questionTypesWithWeights[questionTypeKey];
-            const isIncluded = isQuestionTypesEmpty || weightValue !== undefined;
+            // A weight of 0 is "not included" — templates use it to flag
+            // a type the exam profile excludes (e.g. NEET UG sets every
+            // non-MCQ slot to 0). Treating it as included would tick the
+            // row with a zero value and roll through to the generator.
+            const isIncluded = isQuestionTypesEmpty || (typeof weightValue === "number" && weightValue > 0);
 
             questionTypeCard.querySelector("input[type='checkbox']").checked = isIncluded;
             questionTypeCard.querySelector("input[type='number']").value = isIncluded && !isQuestionTypesEmpty ? weightValue : 1;
@@ -136,7 +140,7 @@ class FlashcardGenerationFields extends GenerationFields
         {
             const difficultyKey = difficultyCard.dataset.difficultyLevel;
             const weightValue = questionDifficultyWithWeights[difficultyKey];
-            const isIncluded = isDifficultyEmpty || weightValue !== undefined;
+            const isIncluded = isDifficultyEmpty || (typeof weightValue === "number" && weightValue > 0);
 
             difficultyCard.querySelector("input[type='checkbox']").checked = isIncluded;
             difficultyCard.querySelector("input[type='number']").value = isIncluded && !isDifficultyEmpty ? weightValue : 1;

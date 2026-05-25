@@ -1,0 +1,47 @@
+/*
+ * Theme styling for generated card and study-material content.
+ *
+ * Targets the class hooks emitted by the Agent backend's HTML injection
+ * paths (Agent/Workflows/PrepareImages/HtmlInjector.py and
+ * Agent/Workflows/EnhanceImages/HtmlImageRewriter.py). Those modules
+ * intentionally emit STRUCTURAL inline styles only (margin / padding /
+ * sizing); all colour / background / border / decorative treatment lives
+ * here, driven by --content-* variables defined in Theme.css.
+ *
+ * Class hooks targeted:
+ *   .extracted-figure figcaption    -- caption text under an injected figure
+ *   .figure-attribution             -- source-url attribution line in figcaption
+ *   .diagram-text-fallback          -- Stage-2 text-only fallback box
+ *   .diagram-text-fallback-header   -- header line inside the fallback box
+ *   .diagram-text-fallback-body     -- markdown body inside the fallback box
+ *
+ * Global selectors are deliberate: these class names are only emitted by
+ * the Agent injection paths and only appear inside backend-generated HTML,
+ * so they will not collide with the rest of the Main/ UI.
+ */
+
+.extracted-figure figcaption
+{
+    color: var(--content-muted-text-color);
+}
+
+.figure-attribution
+{
+    color: var(--content-attribution-text-color);
+}
+
+.diagram-text-fallback
+{
+    background-color: var(--content-callout-background-color);
+    border-left: 3px solid var(--content-callout-border-color);
+    border-radius: var(--content-callout-border-radius);
+    opacity: 0.85;
+}
+
+.diagram-text-fallback-header
+{
+    color: var(--content-accent-color);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}

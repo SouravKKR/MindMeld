@@ -13,6 +13,7 @@ async function listPaidDecks(request, response)
         .collection(DatabaseConstants.PAID_DECKS_COLLECTION)
         .find(filter)
         .sort({ publishedAt: -1 })
+        .limit(5000)
         .toArray();
 
     response.statusCode = 200;

@@ -2,6 +2,7 @@ from Globals.Classes.Automation.AutomationCaller import AutomationCaller
 from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Automation.AutomationRequest import AutomationRequest
 from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
+from Globals.Classes.ImageProcessing.ImageRegionCropper import ImageRegionCropper
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
 
 from Workflows.EnhanceImages.UnifiedAssetExtraction import UnifiedAssetExtraction
@@ -64,6 +65,15 @@ class AssetEnhancer:
         "- Course / subject codes, slide deck titles, lecture numbers, dates.\n"
         "- Figure captions printed outside the figure border. Use them to inform core_topic / "
         "  caption only; do not add them as nodes.\n\n"
+        "DIAGRAM SUBJECT REGION: populate `diagram_subject_region_percent` with the bounding "
+        "rectangle that snugly encloses just the diagram itself -- its shapes, arrows, container "
+        "frames, and in-figure title. Values are 0-100 percentages of the SOURCE image's width "
+        "and height (top_percent, left_percent, bottom_percent, right_percent). EXCLUDE everything "
+        "in the IGNORE list above: surrounding body text, marginal text, captions printed outside "
+        "the figure border, page numbers, watermarks, headers, footers, and adjacent columns of "
+        "unrelated text. If the diagram already fills the entire source image edge-to-edge, omit "
+        "this field (leave it null). Add a small visual margin of roughly 1-2 percent on each side "
+        "so arrowheads at the diagram's edge are not clipped.\n\n"
         "TIE-BREAKER: if you are unsure whether a piece of text is diagram content or ambient "
         "text, ask whether it has an arrow touching it, sits inside/on a shape, or labels a "
         "container frame. If yes to any, it is diagram content -- capture it.\n\n"
@@ -108,14 +118,18 @@ class AssetEnhancer:
     async def enhance(self, image_bytes: bytes) -> dict:
         """
         Run the full Stage-1 + Stage-2 enhancement pipeline on a single
-        image. Returns either:
+        image. Returns one of:
 
-          - {"kind": "DIAGRAM",   "imageBytes": <regenerated PNG/JPEG bytes>}
-          - {"kind": "TEXT_DATA", "markdown":   <extracted markdown text>}
+          - {"kind": "DIAGRAM",                "imageBytes": <regenerated PNG/JPEG bytes>}
+          - {"kind": "TEXT_DATA",              "markdown":   <extracted markdown text>}
+          - {"kind": "DIAGRAM_TEXT_FALLBACK",  "markdown":   <text description of the diagram>}
 
-        Any failure (Gemini error, malformed extraction, empty image
-        payload) is raised; the EnhanceImages workflow surfaces it as a
-        task failure per the user's strict-error contract.
+        Stage 1 (extraction) failures still raise -- without an extraction
+        we have nothing to fall back to. Stage 2 (image generation)
+        failures are recovered as DIAGRAM_TEXT_FALLBACK: the model
+        intermittently returns an empty image stream (preview model
+        quirks, content-policy filters), and losing one figure to a text
+        substitute is far better than killing the whole task.
         """
         extraction = await self.__run_extraction_stage(image_bytes)
 
@@ -132,14 +146,83 @@ class AssetEnhancer:
                 f"-- expected 'DIAGRAM' or 'TEXT_DATA'."
             )
 
-        regenerated_image_bytes = await self.__run_image_generation_stage(
-            extraction,
-            image_bytes,
-        )
+        try:
+            regenerated_image_bytes = await self.__run_image_generation_stage(
+                extraction,
+                image_bytes,
+            )
+        except Exception as image_generation_failure:
+            print(
+                f"[AssetEnhancer] Stage 2 image generation failed "
+                f"({image_generation_failure}) -- falling back to a text "
+                f"description of the diagram so the figure still appears."
+            )
+            fallback_markdown = AssetEnhancer.__build_diagram_text_fallback(extraction)
+            return {
+                "kind": "DIAGRAM_TEXT_FALLBACK",
+                "markdown": fallback_markdown,
+            }
+
         return {
             "kind": "DIAGRAM",
             "imageBytes": regenerated_image_bytes,
         }
+
+    @staticmethod
+    def __build_diagram_text_fallback(extraction: UnifiedAssetExtraction) -> str:
+        """
+        Render the Stage 1 extraction as a clean markdown description so
+        the student sees the diagram's structure even when image
+        regeneration produced no image. Same data the image model would
+        have consumed -- just laid out as text.
+        """
+        markdown_lines: list[str] = []
+
+        diagram_topic = (extraction.core_topic or "").strip()
+        if diagram_topic:
+            markdown_lines.append(f"**{diagram_topic}**")
+            markdown_lines.append("")
+
+        diagram_caption = (extraction.caption or "").strip()
+        if diagram_caption:
+            markdown_lines.append(diagram_caption)
+            markdown_lines.append("")
+
+        diagram_nodes = extraction.nodes or []
+        if diagram_nodes:
+            markdown_lines.append("**Elements:**")
+            sorted_nodes = sorted(
+                diagram_nodes,
+                key = lambda node: (node.y_percent, node.x_percent),
+            )
+            for current_node in sorted_nodes:
+                node_label = (current_node.label or "").replace("\n", " / ").strip()
+                if node_label:
+                    markdown_lines.append(f"- {node_label}")
+            markdown_lines.append("")
+
+        diagram_connections = extraction.connections or []
+        if diagram_connections:
+            markdown_lines.append("**Flow:**")
+            for current_connection in diagram_connections:
+                from_label = AssetEnhancer.__resolve_label_for_node_id(
+                    current_connection.from_node, diagram_nodes,
+                )
+                to_label = AssetEnhancer.__resolve_label_for_node_id(
+                    current_connection.to_node, diagram_nodes,
+                )
+                from_label_clean = (from_label or "").replace("\n", " / ").strip() or "?"
+                to_label_clean = (to_label or "").replace("\n", " / ").strip() or "?"
+                connection_label = (current_connection.label or "").strip()
+                if connection_label:
+                    markdown_lines.append(
+                        f"- {from_label_clean} → {to_label_clean} ({connection_label})"
+                    )
+                else:
+                    markdown_lines.append(f"- {from_label_clean} → {to_label_clean}")
+            markdown_lines.append("")
+
+        return "\n".join(markdown_lines).strip()
 
     async def __run_extraction_stage(self, image_bytes: bytes) -> UnifiedAssetExtraction:
         extraction_request = AutomationRequest(
@@ -184,6 +267,19 @@ class AssetEnhancer:
         extraction: UnifiedAssetExtraction,
         source_image_bytes: bytes,
     ) -> bytes:
+        # Crop the reference image down to just the diagram subject before
+        # handing it to the image model. When ImageExtractor's YOLO crop is
+        # loose (or, in the worst case, grabbed an entire textbook page),
+        # the model otherwise dutifully redraws all the ambient text /
+        # paragraphs visible in the reference. The Stage-1 extractor has
+        # already located the subject region for us; fall back to the full
+        # image if the region is absent or invalid (see ImageRegionCropper
+        # for the fail-soft behaviour).
+        effective_source_image_bytes = ImageRegionCropper.crop_to_subject_region(
+            source_image_bytes,
+            extraction.diagram_subject_region_percent,
+        )
+
         blueprint_prompt = AssetEnhancer.__build_blueprint_prompt(extraction)
         rendering_guardrail = AssetEnhancer.__build_rendering_guardrail()
 
@@ -205,7 +301,7 @@ class AssetEnhancer:
                     final_generation_prompt,
                     metadata = {"generate_image": True},
                 ),
-                AutomationContent(AutomationContentTypes.IMAGE, source_image_bytes),
+                AutomationContent(AutomationContentTypes.IMAGE, effective_source_image_bytes),
             ],
         )
 

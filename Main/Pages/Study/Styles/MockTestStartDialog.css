@@ -166,3 +166,15 @@ dialog-box .mock-test-start-start-button:hover
 {
     opacity: 0.9;
 }
+
+dialog-box .mock-test-start-preview-notice
+{
+    margin: 0 18px;
+    padding: 8px 12px;
+    border-radius: 5px;
+    background-color: rgba(46, 182, 224, 0.12);
+    border: 1px solid rgba(46, 182, 224, 0.35);
+    color: var(--primary-text-color);
+    font-size: 12px;
+    line-height: 1.4;
+}

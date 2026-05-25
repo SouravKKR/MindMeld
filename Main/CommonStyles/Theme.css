@@ -39,6 +39,21 @@
     /* Shadow used by floating elements (profile pill, deck tiles). */
     --shadow-color: rgba(0, 0, 0, 0.2);
     --shadow-color-strong: rgba(0, 0, 0, 0.4);
+
+    /* Generated card / study-material content theme.
+       Used by Main/CommonStyles/GeneratedContent.css to style the class
+       hooks emitted by Agent/Workflows/PrepareImages/HtmlInjector.py and
+       Agent/Workflows/EnhanceImages/HtmlImageRewriter.py. Kept in sync
+       with the AssetEnhancer brand template (#00D2FF cyan accent) so
+       regenerated diagrams visually match the surrounding figcaptions /
+       fallback boxes. Override these to re-theme generated content
+       without a backend redeploy. */
+    --content-accent-color: #00D2FF;
+    --content-muted-text-color: rgba(255, 255, 255, 0.6);
+    --content-attribution-text-color: rgba(255, 255, 255, 0.45);
+    --content-callout-background-color: rgba(0, 0, 0, 0.15);
+    --content-callout-border-color: rgba(255, 255, 255, 0.25);
+    --content-callout-border-radius: 0 6px 6px 0;
 }
 
 * > *

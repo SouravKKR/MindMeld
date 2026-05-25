@@ -339,7 +339,13 @@ class SyncTransport
 
                 if (onProgress && (processedCount % SyncTransport.#BULK_SNAPSHOT_PROGRESS_BATCH_SIZE === 0))
                 {
-                    onProgress(processedCount, totalCount);
+                    // Clamp the denominator so the bar never visually
+                    // overshoots if the cursor outpaces the header count
+                    // (server-side mismatch, retry collision, etc.) —
+                    // bars going past 100% read as broken even though
+                    // they are recoverable.
+                    const denominator = Math.max(totalCount, processedCount);
+                    onProgress(processedCount, denominator);
                 }
             };
 
@@ -380,7 +386,13 @@ class SyncTransport
 
             if (onProgress)
             {
-                onProgress(processedCount, totalCount || processedCount);
+                // Stream completed cleanly — force the bar to 100% so
+                // the "Restoring sync state" dialog dismisses even if
+                // the header's promised count and the actual streamed
+                // count disagree. Any callers downstream still get the
+                // accurate processedCount in the returned object below.
+                const finalCount = Math.max(totalCount, processedCount);
+                onProgress(finalCount, finalCount);
             }
 
             return { decks, cards, studyMaterials, mockTests, serverTime, totalCount };

@@ -102,7 +102,7 @@ async function handleGetShadowStats(request, response)
         createdAt:      1,
     };
 
-    const pairs = await collection.find({}, { projection }).toArray();
+    const pairs = await collection.find({}, { projection }).limit(50000).toArray();
 
     const cellStats = aggregateByCell(pairs);
 

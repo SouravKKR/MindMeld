@@ -914,6 +914,16 @@ class Deck
             {
                 cards[cardIndex].progress = new Progress().toJson();
             }
+
+            // Mock-test attempt history is "progress" for tests — the same
+            // retain-progress toggle that wipes card FSRS state should also
+            // wipe per-attempt answers/scores. The test definition itself
+            // (items, marking scheme, duration) is preserved.
+            const mockTests = Array.isArray(deckJson.mockTests) ? deckJson.mockTests : [];
+            for(let mockTestIndex = 0; mockTestIndex < mockTests.length; mockTestIndex++)
+            {
+                mockTests[mockTestIndex].history = [];
+            }
         }
 
         if (!options.bRetainAutoAnalysisSettings && deckJson.additionalData && typeof deckJson.additionalData === "object")

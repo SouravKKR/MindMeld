@@ -2,6 +2,7 @@ import TutorialRegistry from "../Constants/TutorialRegistry.js";
 import TutorialCompletionTracker from "./TutorialCompletionTracker.js";
 import TutorialEntityCleanup from "./TutorialEntityCleanup.js";
 import NavigationEvents from "../Events/NavigationEvents.js";
+import BlockingOverlayCoordinator from "./BlockingOverlayCoordinator.js";
 
 // PageNavigator is lazy-imported on demand to avoid a class-load-time
 // import cycle (PageNavigator pulls in every page module, several of
@@ -36,12 +37,15 @@ class TutorialEngine
      */
     static CREATED_DURING_TUTORIAL_KEY = "bCreatedDuringTutorial";
 
+    static #COORDINATOR_OWNER_ID = "TutorialOverlay";
+
     static #activeTutorial      = null;
     static #activeStepIndex     = -1;
     static #autoPlayAttempted   = false;
     static #navigationListenerRegistered = false;
     static #bSuppressNavigationGuard     = false;
     static #pendingStepSetupAction       = null;
+    static #bHoldingCoordinatorSlot      = false;
 
     static getOverlayElement()
     {
@@ -92,9 +96,33 @@ class TutorialEngine
         TutorialEngine.#activeStepIndex = 0;
 
         TutorialEngine.#ensureNavigationGuardRegistered();
-        TutorialEngine.#renderCurrentStep();
+
+        // Wait for the blocking-overlay coordinator slot before mounting
+        // the tutorial overlay. On first launch the initialization
+        // overlay and sync-blocking dialog may still be on screen — if
+        // we mounted directly, the tutorial would pile on top of them
+        // and the user would see all three stacked.
+        TutorialEngine.#mountWhenSlotAvailable();
 
         return true;
+    }
+
+    static async #mountWhenSlotAvailable()
+    {
+        await BlockingOverlayCoordinator.request(TutorialEngine.#COORDINATOR_OWNER_ID);
+
+        // Tutorial may have been exited before our turn (rare — the
+        // user couldn't have clicked Skip without the overlay being
+        // visible — but the engine's #requestExit can also be invoked
+        // programmatically). Bail and release symmetrically.
+        if (!TutorialEngine.isRunning())
+        {
+            BlockingOverlayCoordinator.release(TutorialEngine.#COORDINATOR_OWNER_ID);
+            return;
+        }
+
+        TutorialEngine.#bHoldingCoordinatorSlot = true;
+        TutorialEngine.#renderCurrentStep();
     }
 
     /**
@@ -346,6 +374,18 @@ class TutorialEngine
 
         const overlay = TutorialEngine.getOverlayElement();
         overlay.hide();
+
+        // Release the blocking-overlay slot the moment the overlay
+        // visually disappears, so any queued overlay (a sync prompt
+        // that triggered mid-tutorial, say) can take over immediately.
+        // We track #bHoldingCoordinatorSlot so we never double-release —
+        // a programmatic exit before #mountWhenSlotAvailable resolves
+        // would leave the slot already in someone else's hands.
+        if (TutorialEngine.#bHoldingCoordinatorSlot)
+        {
+            BlockingOverlayCoordinator.release(TutorialEngine.#COORDINATOR_OWNER_ID);
+            TutorialEngine.#bHoldingCoordinatorSlot = false;
+        }
 
         const bCleanupChosen = await TutorialEngine.#showCleanupDialog({
             bSkipped,

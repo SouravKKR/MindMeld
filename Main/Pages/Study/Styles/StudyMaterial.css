@@ -9,6 +9,9 @@
        carry the same rule for the same reason. */
     min-height: 0;
     width: 100%;
+    /* max-width is in em so it scales with --study-card-zoom — zooming
+       in widens the content the same way a PDF reader's zoom does. */
+    max-width: 56em;
     margin: 0 auto;
     padding: 36px 40px;
     box-sizing: border-box;

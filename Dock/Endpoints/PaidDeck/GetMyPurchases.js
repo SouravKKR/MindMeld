@@ -16,11 +16,13 @@ async function getMyPurchases(request, response)
         .collection(DatabaseConstants.PURCHASES_COLLECTION)
         .find({ userId: session.getUserId() })
         .sort({ purchaseDate: -1 })
+        .limit(2000)
         .toArray();
 
     const licenses = await database
         .collection(DatabaseConstants.DECK_LICENSES_COLLECTION)
         .find({ userId: session.getUserId() })
+        .limit(2000)
         .toArray();
 
     response.statusCode = 200;

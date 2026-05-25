@@ -31,7 +31,7 @@ const { entityTypes } = require("../../Globals/Enumerations/EntityTypes");
 // one cycle guarantees the full topology is in memory before any card,
 // study-material or mock-test apply runs.
 const MAX_PULL_DECKS              = 50000;
-const MAX_PULL_PER_COLLECTION     = 500;
+const MAX_PULL_PER_COLLECTION     = 200;
 const FETCH_BUFFER_BEYOND_MAX     = 100;
 const MAX_PULL_DELETIONS          = 2000;
 

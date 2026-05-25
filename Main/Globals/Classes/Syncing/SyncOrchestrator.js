@@ -1272,15 +1272,10 @@ class SyncOrchestrator
 
             const tailAnimationPromise = SyncProgressReporter.animateLinearTo(glideTarget, tailGlideMs);
 
-            const applyResult = await SyncApplier.applyServerChanges(serverChanges, dirtyDeckIds);
+            await SyncApplier.applyServerChanges(serverChanges, dirtyDeckIds);
             await SyncApplier.applyServerDeletions(serverDeletions, dirtyDeckIds);
             await SyncApplier.flushDirtyDecks(dirtyDeckIds);
             await tailAnimationPromise;
-
-            if (applyResult.bForceFullResync)
-            {
-                SyncTransport.setLastSyncTimestamp(0);
-            }
 
             if (bResponseChunked)
             {

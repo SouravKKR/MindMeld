@@ -1,0 +1,12 @@
+{
+    "name": "mindmeld-build-scripts",
+    "version": "1.0.0",
+    "private": true,
+    "description": "Build-time dependencies for the MindMeld setup scripts (codegen, static-file copy, minification, obfuscation). Not shipped at runtime.",
+    "dependencies": {
+        "clean-css": "^5.3.3",
+        "esbuild": "^0.24.2",
+        "html-minifier-terser": "^7.2.0",
+        "javascript-obfuscator": "^5.4.3"
+    }
+}

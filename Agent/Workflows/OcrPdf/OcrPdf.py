@@ -35,10 +35,27 @@ class OcrPdf(Workflow):
     # OcrModes value → list of mode-specific ocrmypdf flags. Shared flags
     # (language, optimize) are appended by __build_command so each entry
     # here is purely the "what should we do with already-text pages" policy.
-    # ENABLED re-OCRs pages whose existing text looks low-quality.
+    # ENABLED uses --redo-ocr. We briefly switched to --force-ocr to OCR
+    # image regions on pages that also carry born-digital text, but that
+    # mode rasterizes EVERY page at --oversample dpi and re-embeds it,
+    # which inflated a 5 MB upload to 457 MB. Reverted to --redo-ocr +
+    # higher dpi + PSM 11 to chase recall without paying the size cost.
+    # The mirror in Dock/Endpoints/AutomaticGeneration/Helpers/OcrLocalFile.js
+    # carries the same flag set -- keep them in sync.
     _MODE_FLAG_MAP = {
         OcrModes.ENABLED: ["--redo-ocr"],
     }
+
+    # Tesseract page-segmentation mode 11 = "sparse text". Replaces the
+    # default mode 3 (single uniform block) which fails on slide layouts
+    # with scattered labels around a diagram. PSM 11 doesn't try to
+    # cluster glyphs into a single column, so isolated labels in graphic
+    # regions get recognised.
+    TESSERACT_PAGE_SEGMENTATION_MODE = "11"
+
+    # 400dpi catches small or anti-aliased text in slide-deck PNGs without
+    # ballooning runtime. Default ocrmypdf oversample is 300dpi.
+    OVERSAMPLE_DPI = "400"
 
     def __init__(self, payload = {}):
         super().__init__(payload)
@@ -66,12 +83,18 @@ class OcrPdf(Workflow):
         if mode_flags is None:
             raise ValueError(f"[OcrPdf] No flag mapping for OcrModes value {self.__ocr_mode}.")
 
+        # NOTE: ocrmypdf forbids --deskew, --clean-final and
+        # --remove-background under --redo-ocr. Those flags are
+        # intentionally absent from this list so the size-safe re-OCR
+        # mode keeps working.
         return [
             OcrPdf.OCRMYPDF_EXECUTABLE,
             *mode_flags,
-            "--language",     OcrPdf.OCR_LANGUAGE,
-            "--optimize",     "1",
-            "--output-type",  "pdf",
+            "--language",                OcrPdf.OCR_LANGUAGE,
+            "--oversample",              OcrPdf.OVERSAMPLE_DPI,
+            "--tesseract-pagesegmode",   OcrPdf.TESSERACT_PAGE_SEGMENTATION_MODE,
+            "--optimize",                "1",
+            "--output-type",             "pdf",
             "--quiet",
             input_path,
             output_path,

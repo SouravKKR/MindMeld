@@ -2,6 +2,19 @@ from typing import List
 from Globals.Classes.Decorators.PageRange import PageRange
 
 
+def is_full_document_range(page_range: PageRange) -> bool:
+    """
+    Returns True when a single PageRange is the (0, 0) sentinel that
+    callers use to mean "the entire document".
+
+    Lives here instead of on PageRange itself because PageRange is
+    codegen'd from Common/Classes/PageRange.json and gets overwritten
+    on every setup.bat run, so any method added to the class file
+    silently disappears on the next codegen.
+    """
+    return page_range.get_start_page() == 0 and page_range.get_end_page() == 0
+
+
 def expand_page_ranges(page_ranges: List[PageRange], total_pages: int) -> List[int]:
     """
     Expands a list of PageRange objects into a sorted, deduplicated list of
@@ -17,7 +30,7 @@ def expand_page_ranges(page_ranges: List[PageRange], total_pages: int) -> List[i
         return list(range(1, total_pages + 1))
 
     for page_range in page_ranges:
-        if page_range.is_full_document():
+        if is_full_document_range(page_range):
             return list(range(1, total_pages + 1))
 
     page_numbers = set()
@@ -40,4 +53,4 @@ def is_full_document(page_ranges: List[PageRange]) -> bool:
     """
     if not page_ranges:
         return True
-    return any(page_range.is_full_document() for page_range in page_ranges)
+    return any(is_full_document_range(page_range) for page_range in page_ranges)

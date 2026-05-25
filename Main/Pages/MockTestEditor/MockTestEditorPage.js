@@ -11,6 +11,7 @@ import MockTestQuestion from "../../Globals/Model/MockTestEntities/MockTestQuest
 import MockTestSection from "../../Globals/Model/MockTestEntities/MockTestSection.js";
 import MockTestTitle from "../../Globals/Model/MockTestEntities/MockTestTitle.js";
 import MockTestInstructions from "../../Globals/Model/MockTestEntities/MockTestInstructions.js";
+import MockTestStartDialog from "../Study/Components/MockTestStartDialog.js";
 import RichTextEditor from "../CardEditor/Components/RichTextEditor.js";
 
 // Requires: Pages/MockTestEditor/Styles/MockTestEditorPage.css
@@ -141,6 +142,7 @@ class MockTestEditorPage extends HTMLElement
             <div class="mock-test-editor-action-bar">
                 <button class="mock-test-editor-cancel-button" type="button">Cancel</button>
                 ${this.#bNewMockTest ? "" : `<button class="mock-test-editor-delete-button" type="button">Delete</button>`}
+                <button class="mock-test-editor-preview-button" type="button">Preview</button>
                 <button class="mock-test-editor-save-button" type="button">Save</button>
             </div>
         `;
@@ -337,6 +339,7 @@ class MockTestEditorPage extends HTMLElement
         const options = Array.isArray(additionalData.options) ? additionalData.options : [];
         const isOptionBased = resolvedType === questionTypes.MULTIPLE_CHOICE || resolvedType === questionTypes.MULTIPLE_CORRECT;
         const showOptions = isOptionBased || options.length > 0;
+        const canRemoveOption = !isOptionBased || options.length > 2;
 
         const typeOptionsHtml = MockTestEditorPage.QUESTION_TYPE_OPTIONS.map((typeOption) => `
             <option value="${typeOption.value}" ${typeOption.value === resolvedType ? "selected" : ""}>${MockTestEditorPage.#escapeHtml(typeOption.label)}</option>
@@ -357,9 +360,12 @@ class MockTestEditorPage extends HTMLElement
                     class="mock-test-editor-remove-option-button"
                     data-item-index="${itemIndex}"
                     data-option-index="${optionIndex}"
+                    ${canRemoveOption ? "" : "disabled title=\"At least 2 options are required\""}
                 >&times;</button>
             </div>
         `).join("");
+
+        const expectedAnswerFieldHtml = MockTestEditorPage.#renderExpectedAnswerField(questionItem, itemIndex, resolvedType, options);
 
         return this.#renderItemCardShell(itemIndex, `Q.${questionNumber}`, `
             <div class="mock-test-editor-field">
@@ -380,7 +386,7 @@ class MockTestEditorPage extends HTMLElement
             </div>
 
             <div class="mock-test-editor-field mock-test-editor-options-section ${showOptions ? "" : "mock-test-editor-options-section-hidden"}">
-                <label class="mock-test-editor-label">Options</label>
+                <label class="mock-test-editor-label">Options${isOptionBased ? " (minimum 2)" : ""}</label>
                 <div class="mock-test-editor-options-list">${optionsHtml}</div>
                 <button
                     type="button"
@@ -389,15 +395,7 @@ class MockTestEditorPage extends HTMLElement
                 >+ Add Option</button>
             </div>
 
-            <div class="mock-test-editor-field">
-                <label class="mock-test-editor-label">Expected answer ${showOptions ? "(option letter(s) e.g. A or A,C)" : ""}</label>
-                <input
-                    type="text"
-                    class="mock-test-editor-expected-answer-input"
-                    data-item-index="${itemIndex}"
-                    value="${MockTestEditorPage.#escapeHtml(questionItem.getExpectedAnswer() || "")}"
-                />
-            </div>
+            ${expectedAnswerFieldHtml}
 
             <div class="mock-test-editor-field">
                 <label class="mock-test-editor-label">Reason (optional)</label>
@@ -540,13 +538,42 @@ class MockTestEditorPage extends HTMLElement
         {
             removeOptionButton.addEventListener("click", () =>
             {
+                if (removeOptionButton.hasAttribute("disabled"))
+                {
+                    return;
+                }
                 const itemIndex = parseInt(removeOptionButton.dataset.itemIndex, 10);
                 const optionIndex = parseInt(removeOptionButton.dataset.optionIndex, 10);
-                const additionalData = { ...this.#draftItems[itemIndex].getAdditionalData() };
-                const nextOptions = Array.isArray(additionalData.options) ? [...additionalData.options] : [];
+                const draftItem = this.#draftItems[itemIndex];
+                const additionalData = { ...draftItem.getAdditionalData() };
+                const resolvedType = Number.isFinite(additionalData.type) ? additionalData.type : questionTypes.MULTIPLE_CHOICE;
+                const isOptionBased = resolvedType === questionTypes.MULTIPLE_CHOICE || resolvedType === questionTypes.MULTIPLE_CORRECT;
+                const previousOptions = Array.isArray(additionalData.options) ? additionalData.options : [];
+
+                if (isOptionBased && previousOptions.length <= 2)
+                {
+                    return;
+                }
+
+                const nextOptions = [...previousOptions];
                 nextOptions.splice(optionIndex, 1);
                 additionalData.options = nextOptions;
-                this.#draftItems[itemIndex].setAdditionalData(additionalData);
+                draftItem.setAdditionalData(additionalData);
+
+                // Re-map the expected answer indices so any reference to the
+                // removed option is dropped and indices above it shift down by one.
+                const previousIndices = MockTestEditorPage.#parseExpectedAnswerToIndices(draftItem.getExpectedAnswer(), previousOptions.length);
+                const nextIndices = new Set();
+                for (const previousIndex of previousIndices)
+                {
+                    if (previousIndex === optionIndex)
+                    {
+                        continue;
+                    }
+                    nextIndices.add(previousIndex > optionIndex ? previousIndex - 1 : previousIndex);
+                }
+                draftItem.setExpectedAnswer(MockTestEditorPage.#indicesToExpectedAnswerString(nextIndices));
+
                 this.#renderItems();
             });
         });
@@ -572,6 +599,36 @@ class MockTestEditorPage extends HTMLElement
                 const itemIndex = parseInt(expectedAnswerInput.dataset.itemIndex, 10);
                 this.#draftItems[itemIndex].setExpectedAnswer(expectedAnswerInput.value);
             });
+        });
+
+        this.querySelectorAll(".mock-test-editor-expected-answer-select").forEach((expectedAnswerSelect) =>
+        {
+            expectedAnswerSelect.addEventListener("change", () =>
+            {
+                const itemIndex = parseInt(expectedAnswerSelect.dataset.itemIndex, 10);
+                this.#draftItems[itemIndex].setExpectedAnswer(expectedAnswerSelect.value || "");
+            });
+        });
+
+        this.querySelectorAll(".mock-test-editor-expected-answer-checkboxes").forEach((checkboxGroup) =>
+        {
+            const itemIndex = parseInt(checkboxGroup.dataset.itemIndex, 10);
+            const checkboxes = checkboxGroup.querySelectorAll(".mock-test-editor-expected-answer-checkbox");
+            for (const checkbox of checkboxes)
+            {
+                checkbox.addEventListener("change", () =>
+                {
+                    const checkedLetters = [];
+                    for (const otherCheckbox of checkboxes)
+                    {
+                        if (otherCheckbox.checked)
+                        {
+                            checkedLetters.push(otherCheckbox.dataset.optionLetter);
+                        }
+                    }
+                    this.#draftItems[itemIndex].setExpectedAnswer(checkedLetters.join(","));
+                });
+            }
         });
 
         // (Answer reason + solving steps are wired below via the
@@ -799,6 +856,47 @@ class MockTestEditorPage extends HTMLElement
         {
             deleteButton.addEventListener("click", () => this.#onDeleteClicked());
         }
+
+        const previewButton = this.querySelector(".mock-test-editor-preview-button");
+        if (previewButton)
+        {
+            previewButton.addEventListener("click", () => this.#onPreviewClicked());
+        }
+    }
+
+    /**
+     * Opens the same mode + duration popup that the "Take Test" button uses,
+     * fed with a transient MockTest built from the current (unsaved) draft.
+     * Items are deep-cloned through toJson/fromJson so the live runner cannot
+     * mutate the editor's draft state. Nothing is persisted: closing the
+     * runner returns the user to the editor with their work intact.
+     */
+    async #onPreviewClicked()
+    {
+        const optionValidationError = this.#findFirstOptionValidationError();
+        if (optionValidationError)
+        {
+            await DialogBox.alert("Not enough options", optionValidationError);
+            return;
+        }
+
+        const previewTitle = `Preview: ${this.#draftTitle.trim() || "Untitled Mock Test"}`;
+        const previewDeckId = this.#deck ? this.#deck.getId() : "";
+        const clonedItems = this.#draftItems.map((draftItem) => MockTestItemFactory.fromJson(draftItem.toJson()));
+        const clonedMarkingScheme = MockTestEditorPage.#cloneMarkingScheme(this.#draftMarkingScheme);
+
+        const previewMockTest = new MockTest(
+            MockTest.generateId(),
+            previewDeckId,
+            previewTitle,
+            this.#draftDurationMinutes,
+            clonedItems,
+            [],
+            new Lifecycle(),
+            clonedMarkingScheme
+        );
+
+        MockTestStartDialog.show(previewMockTest, null, true);
     }
 
     async #onSaveClicked()
@@ -806,6 +904,13 @@ class MockTestEditorPage extends HTMLElement
         if (!this.#draftTitle.trim())
         {
             await DialogBox.alert("Title required", "Please enter a title for the mock test.");
+            return;
+        }
+
+        const optionValidationError = this.#findFirstOptionValidationError();
+        if (optionValidationError)
+        {
+            await DialogBox.alert("Not enough options", optionValidationError);
             return;
         }
 
@@ -883,6 +988,37 @@ class MockTestEditorPage extends HTMLElement
         PageNavigator.back();
     }
 
+    /**
+     * Walks the draft items and returns a human-readable error string for the
+     * first MULTIPLE_CHOICE / MULTIPLE_CORRECT question that has fewer than
+     * two options. Returns null when all option-based questions are valid.
+     */
+    #findFirstOptionValidationError()
+    {
+        let runningQuestionNumber = 0;
+        for (const draftItem of this.#draftItems)
+        {
+            if (draftItem.getType() !== mockTestItemTypes.QUESTION)
+            {
+                continue;
+            }
+            runningQuestionNumber += 1;
+            const additionalData = draftItem.getAdditionalData() || {};
+            const resolvedType = Number.isFinite(additionalData.type) ? additionalData.type : questionTypes.MULTIPLE_CHOICE;
+            const isOptionBased = resolvedType === questionTypes.MULTIPLE_CHOICE || resolvedType === questionTypes.MULTIPLE_CORRECT;
+            if (!isOptionBased)
+            {
+                continue;
+            }
+            const options = Array.isArray(additionalData.options) ? additionalData.options : [];
+            if (options.length < 2)
+            {
+                return `Question ${runningQuestionNumber} needs at least 2 options.`;
+            }
+        }
+        return null;
+    }
+
     // ── Static helpers ─────────────────────────────────────────────────────────
 
     static #cloneMarkingScheme(markingScheme)
@@ -902,6 +1038,154 @@ class MockTestEditorPage extends HTMLElement
     {
         const upperA = 65;
         return String.fromCharCode(upperA + optionIndex);
+    }
+
+    /**
+     * Renders the Expected Answer form field for a question. For MULTIPLE_CHOICE
+     * questions this is a single-value dropdown of option letters; for
+     * MULTIPLE_CORRECT it is a row of checkboxes (one per option letter); for
+     * all other (subjective / objective-text) types it is the existing free
+     * text input. The dropdown / checkbox state is derived from the stored
+     * expected answer string, which may be a numeric index ("0") or a letter
+     * ("A") — both formats are accepted on read; saves are normalized to
+     * comma-separated uppercase letters.
+     */
+    static #renderExpectedAnswerField(questionItem, itemIndex, resolvedType, options)
+    {
+        const isOptionBased = resolvedType === questionTypes.MULTIPLE_CHOICE || resolvedType === questionTypes.MULTIPLE_CORRECT;
+        const rawExpectedAnswer = questionItem.getExpectedAnswer() || "";
+
+        if (!isOptionBased)
+        {
+            return `
+                <div class="mock-test-editor-field">
+                    <label class="mock-test-editor-label">Expected answer</label>
+                    <input
+                        type="text"
+                        class="mock-test-editor-expected-answer-input"
+                        data-item-index="${itemIndex}"
+                        value="${MockTestEditorPage.#escapeHtml(rawExpectedAnswer)}"
+                    />
+                </div>
+            `;
+        }
+
+        if (!Array.isArray(options) || options.length === 0)
+        {
+            return `
+                <div class="mock-test-editor-field">
+                    <label class="mock-test-editor-label">Expected answer</label>
+                    <div class="mock-test-editor-expected-answer-empty">Add at least 2 options above to pick an expected answer.</div>
+                </div>
+            `;
+        }
+
+        const selectedIndices = MockTestEditorPage.#parseExpectedAnswerToIndices(rawExpectedAnswer, options.length);
+
+        if (resolvedType === questionTypes.MULTIPLE_CHOICE)
+        {
+            const selectedIndex = selectedIndices.size > 0 ? selectedIndices.values().next().value : -1;
+            const optionTags = options.map((optionText, optionIndex) =>
+            {
+                const letter = MockTestEditorPage.#getOptionLetter(optionIndex);
+                const previewText = MockTestEditorPage.#truncateForOptionLabel(optionText) || "(empty)";
+                const selectedAttribute = optionIndex === selectedIndex ? "selected" : "";
+                return `<option value="${letter}" ${selectedAttribute}>${letter}. ${MockTestEditorPage.#escapeHtml(previewText)}</option>`;
+            }).join("");
+            return `
+                <div class="mock-test-editor-field">
+                    <label class="mock-test-editor-label">Expected answer</label>
+                    <select class="mock-test-editor-expected-answer-select" data-item-index="${itemIndex}">
+                        <option value="" ${selectedIndex === -1 ? "selected" : ""}>— Select correct option —</option>
+                        ${optionTags}
+                    </select>
+                </div>
+            `;
+        }
+
+        // MULTIPLE_CORRECT
+        const checkboxRows = options.map((optionText, optionIndex) =>
+        {
+            const letter = MockTestEditorPage.#getOptionLetter(optionIndex);
+            const previewText = MockTestEditorPage.#truncateForOptionLabel(optionText) || "(empty)";
+            const checkedAttribute = selectedIndices.has(optionIndex) ? "checked" : "";
+            return `
+                <label class="mock-test-editor-expected-answer-checkbox-label">
+                    <input
+                        type="checkbox"
+                        class="mock-test-editor-expected-answer-checkbox"
+                        data-option-letter="${letter}"
+                        ${checkedAttribute}
+                    />
+                    <span class="mock-test-editor-expected-answer-checkbox-text">${letter}. ${MockTestEditorPage.#escapeHtml(previewText)}</span>
+                </label>
+            `;
+        }).join("");
+        return `
+            <div class="mock-test-editor-field">
+                <label class="mock-test-editor-label">Expected answer (select all that apply)</label>
+                <div class="mock-test-editor-expected-answer-checkboxes" data-item-index="${itemIndex}">
+                    ${checkboxRows}
+                </div>
+            </div>
+        `;
+    }
+
+    /**
+     * Decodes a stored expected-answer string into a Set of zero-based option
+     * indices. Accepts both numeric ("0,2") and letter ("A,C") tokens — the
+     * generator emits numeric, the editor saves letters, and legacy data may
+     * use either. Tokens that don't resolve to a valid option position are
+     * silently dropped.
+     */
+    static #parseExpectedAnswerToIndices(rawValue, optionsCount)
+    {
+        const result = new Set();
+        if (rawValue === null || rawValue === undefined)
+        {
+            return result;
+        }
+        const tokens = String(rawValue).trim().split(/[,;|\s/]+/).filter((token) => token.length > 0);
+        for (const token of tokens)
+        {
+            const cleaned = token.replace(/[()\s\[\]]/g, "");
+            if (cleaned === "")
+            {
+                continue;
+            }
+            const asNumber = parseInt(cleaned, 10);
+            if (Number.isFinite(asNumber) && String(asNumber) === cleaned && asNumber >= 0 && asNumber < optionsCount)
+            {
+                result.add(asNumber);
+                continue;
+            }
+            if (/^[a-zA-Z]$/.test(cleaned))
+            {
+                const letterIndex = cleaned.toUpperCase().charCodeAt(0) - 65;
+                if (letterIndex >= 0 && letterIndex < optionsCount)
+                {
+                    result.add(letterIndex);
+                }
+            }
+        }
+        return result;
+    }
+
+    static #indicesToExpectedAnswerString(indices)
+    {
+        const sortedIndices = [...indices].sort((leftIndex, rightIndex) => leftIndex - rightIndex);
+        return sortedIndices.map((index) => MockTestEditorPage.#getOptionLetter(index)).join(",");
+    }
+
+    static #truncateForOptionLabel(optionText)
+    {
+        const safeText = String(optionText || "").replace(/\s+/g, " ").trim();
+        const maxLength = 60;
+        if (safeText.length <= maxLength)
+        {
+            return safeText;
+        }
+        return safeText.slice(0, maxLength - 1) + "…";
     }
 
     static #escapeHtml(value)

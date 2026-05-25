@@ -80,7 +80,7 @@ class StudySession
         const answerSection = this._studyPage.querySelector(".answer-section");
         const showAnswerButton = this._studyPage.querySelector(".show-answer-button");
         
-        if(!this._current instanceof Card)
+        if(!(this._current instanceof Card))
         {
             return;
         }

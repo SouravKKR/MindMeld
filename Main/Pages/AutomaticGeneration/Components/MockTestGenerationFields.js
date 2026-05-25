@@ -160,7 +160,11 @@ class MockTestGenerationFields extends GenerationFields
         {
             const questionTypeKey = questionTypeCard.dataset.questionType;
             const weightValue = questionTypesWithWeights[questionTypeKey];
-            const isIncluded = isQuestionTypesEmpty || weightValue !== undefined;
+            // A weight of 0 is "not included" — templates use it to flag
+            // a question type the exam profile excludes (e.g. NEET UG
+            // zeroes every non-MCQ slot). Difficulty above already uses
+            // `> 0`; this keeps question-type rendering consistent.
+            const isIncluded = isQuestionTypesEmpty || (typeof weightValue === "number" && weightValue > 0);
 
             questionTypeCard.querySelector("input[type='checkbox']").checked = isIncluded;
             questionTypeCard.querySelector("input[type='number']").value = isIncluded && !isQuestionTypesEmpty ? weightValue : 1;

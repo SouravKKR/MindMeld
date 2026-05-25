@@ -50,7 +50,15 @@ class BulkSnapshotEndpoint
         const studyMaterialsCollection = database.collection(DatabaseConstants.STUDY_MATERIALS_COLLECTION);
         const mockTestsCollection      = database.collection(DatabaseConstants.MOCK_TESTS_COLLECTION);
 
-        const userFilter = { userId: userId };
+        // Snapshot the server clock at request start. Both countDocuments
+        // and the streaming cursor are gated on serverUpdatedAt <= this
+        // ceiling, so the header's totalCount always equals the actual
+        // number of entities the stream will emit — even if Generate is
+        // still writing new rows on the same Mongo behind us. Anything
+        // created after the ceiling is picked up by the next /Sync delta
+        // because the client advances lastSync to this exact value.
+        const snapshotCeiling = new Date();
+        const userFilter      = { userId: userId, serverUpdatedAt: { $lte: snapshotCeiling } };
 
         const deckCount          = await decksCollection.countDocuments(userFilter);
         const cardCount          = await cardsCollection.countDocuments(userFilter);
@@ -58,7 +66,7 @@ class BulkSnapshotEndpoint
         const mockTestCount      = await mockTestsCollection.countDocuments(userFilter);
         const totalCount         = deckCount + cardCount + studyMaterialCount + mockTestCount;
 
-        console.log(`[Sync/BulkSnapshot] user=${userId} — streaming decks:${deckCount} cards:${cardCount} studyMaterials:${studyMaterialCount} mockTests:${mockTestCount} totalCount:${totalCount}`);
+        console.log(`[Sync/BulkSnapshot] user=${userId} — streaming decks:${deckCount} cards:${cardCount} studyMaterials:${studyMaterialCount} mockTests:${mockTestCount} totalCount:${totalCount} ceiling:${snapshotCeiling.toISOString()}`);
 
         response.setHeader("Content-Type", "application/x-ndjson");
         response.setHeader("Cache-Control", "no-store");
@@ -72,6 +80,7 @@ class BulkSnapshotEndpoint
                 cardCount:          cardCount,
                 studyMaterialCount: studyMaterialCount,
                 mockTestCount:      mockTestCount,
+                serverTime:         snapshotCeiling.getTime(),
             });
 
             await BulkSnapshotEndpoint.#streamCollection(response, decksCollection,          userFilter, entityTypes.DECK);
@@ -99,8 +108,11 @@ class BulkSnapshotEndpoint
 
     /**
      * Emits the header NDJSON line with collection counts and the
-     * server clock — the client uses both for the progress UI and
-     * to advance its lastSync after the stream completes.
+     * snapshot ceiling — the client uses both for the progress UI
+     * and to advance its lastSync after the stream completes. The
+     * snapshot ceiling MUST match the value used to gate the count
+     * + cursor filters or the client's next delta /Sync would either
+     * miss or duplicate rows that landed during the stream.
      */
     static async #writeHeaderLine(response, counts)
     {
@@ -112,7 +124,7 @@ class BulkSnapshotEndpoint
             cardCount:          counts.cardCount,
             studyMaterialCount: counts.studyMaterialCount,
             mockTestCount:      counts.mockTestCount,
-            serverTime:         Date.now(),
+            serverTime:         counts.serverTime,
         };
         await BulkSnapshotEndpoint.#writeLine(response, JSON.stringify(headerObject));
     }

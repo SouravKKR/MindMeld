@@ -7,22 +7,22 @@ const GenerationTemplateQueryEngine = require("./GenerationTemplateQueryEngine")
 /**
  * GenerationTemplateSeeder
  *
- * Loads `Dock/SeedData/GenerationTemplates.json` on Dock boot and inserts
- * any entries whose `key` is not already in the `generationTemplates`
- * Mongo collection. Existing entries are intentionally left untouched —
- * once a template has been seeded, it is treated as live data and never
- * clobbered by a subsequent boot. This lets the seed file act as a
- * "deliver new templates only" channel rather than a hard sync.
+ * Loads `Dock/SeedData/GenerationTemplates.json` on Dock boot and
+ * upserts every entry into the `generationTemplates` Mongo collection,
+ * keyed by `(userId, key)`. The seed file is the source of truth: any
+ * value in the JSON wins, even if the document already exists. This
+ * makes the workflow "edit JSON → restart Dock → UI reflects the new
+ * values" reliable.
  *
- * Inserted documents carry a `seededAt: Date` stamp so it is easy to see
- * from the Mongo shell which templates came in on which boot. Documents
- * that already exist before this seeder runs (e.g. legacy data, admin
- * additions) keep their existing shape and timestamps.
+ * Documents carry a `seededAt: Date` stamp refreshed on every reseed,
+ * so operators can see from the Mongo shell when a given template was
+ * last synced from disk. `_id` is preserved across reseeds via
+ * `replaceOne`, so external references that point at a template by
+ * `_id` remain stable.
  *
- * Safe to call multiple times. Each call is idempotent: editing a value
- * in the JSON and rebooting Dock will NOT propagate the change to a key
- * that already exists in Mongo — the operator must drop that key (or
- * edit the doc directly) for the new value to take effect.
+ * Safe to call multiple times. Manual edits to seeded keys via the
+ * Mongo shell will be overwritten on the next boot — to persist an
+ * admin override, also update the seed file.
  */
 class GenerationTemplateSeeder
 {
@@ -67,29 +67,30 @@ class GenerationTemplateSeeder
         }
 
         let insertedCount = 0;
-        let skippedCount = 0;
+        let updatedCount = 0;
 
         for (const templateKey of Object.keys(seedData))
         {
             try
             {
-                const bInserted = await GenerationTemplateQueryEngine.insertIfMissing(templateKey, seedData[templateKey]);
-                if (bInserted)
+                const seedResult = await GenerationTemplateQueryEngine.upsertFromSeed(templateKey, seedData[templateKey]);
+                if (seedResult.inserted)
                 {
                     insertedCount++;
                 }
-                else
+                else if (seedResult.updated)
                 {
-                    skippedCount++;
+                    updatedCount++;
                 }
             }
-            catch (insertError)
+            catch (seedError)
             {
-                console.error(`[GenerationTemplateSeeder] Failed to insert template ${templateKey}: ${insertError.message}`);
+                console.error(`[GenerationTemplateSeeder] Failed to seed template ${templateKey}: ${seedError.message}`);
             }
         }
 
-        console.log(`[GenerationTemplateSeeder] Inserted ${insertedCount} new template(s); ${skippedCount} already present (left untouched).`);
+        const totalSeedEntries = Object.keys(seedData).length;
+        console.log(`[GenerationTemplateSeeder] Inserted ${insertedCount} new template(s); updated ${updatedCount} existing; total seed entries = ${totalSeedEntries}.`);
     }
 }
 

@@ -16,6 +16,7 @@ from Globals.Constants.PersistenceConstants import PersistenceConstants
 from Globals.Constants.ReputedSources import ReputedSources
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
 from Globals.Enumerations.InformationSourceTypes import InformationSourceTypes
+from Globals.Utility.ExpandPageRanges import is_full_document_range
 from Globals.Utility.JoinPath import join_path
 from Globals.Utility.SanitizeFilename import sanitize_filename
 from Globals.Utility.StripJsonMarkdown import strip_json_markdown
@@ -65,7 +66,7 @@ class MapTopicsWithContent(Workflow):
 
         ranges: List[Tuple[int, int | None]] = []
         for page_range in page_ranges:
-            if page_range.is_full_document():
+            if is_full_document_range(page_range):
                 return [(1, None)]
             start_page = max(1, page_range.get_start_page())
             end_page   = max(start_page, page_range.get_end_page())

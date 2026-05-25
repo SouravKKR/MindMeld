@@ -131,5 +131,5 @@ class ModelPool:
 
     MOCK_TEST_AUTO_MODEL                        = ("gemini-3.1-flash-lite", GeminiProvider)
 
-    IMAGE_VALIDATION_MODEL                      = ("gemini-3.1-flash-lite", GeminiProvider)
+    IMAGE_VALIDATION_MODEL                      = ("gemini-2.5-flash-lite", GeminiProvider)
     IMAGE_VERIFICATION_MODEL                    = ("gemini-3.1-flash-lite", GeminiProvider)

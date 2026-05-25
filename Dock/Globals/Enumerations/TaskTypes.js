@@ -29,6 +29,7 @@ const taskTypes =
   ANALYZE_DECK_PERFORMANCE: 26,
   GENERATE_CURATED_STUDY_MATERIAL: 27,
   ENHANCE_IMAGES: 28,
+  GENERATION_FINALIZATION: 29,
 }
 
 module.exports = { taskTypes };
