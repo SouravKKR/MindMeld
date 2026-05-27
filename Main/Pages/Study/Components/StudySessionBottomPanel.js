@@ -2,7 +2,15 @@ import DialogBox from "../../../CommonComponents/DialogBox.js";
 import StudySessionEvents from "../Events/StudySessionEvents.js";
 import LlmTierSelect from "../../../CommonComponents/LlmTierSelect.js";
 import { modelTiers } from "../../../Globals/Enumerations/ModelTiers.js";
+import { askAiPromptModes } from "../../../Globals/Enumerations/AskAiPromptModes.js";
 import ModelTierMetadata from "../../../Globals/Constants/ModelTierMetadata.js";
+import BrowserLlmDownloadConstants from "../../../Globals/Constants/BrowserLlmDownloadConstants.js";
+import InformationSourceSelector from "../../AutomaticGeneration/Components/InformationSourceSelector.js";
+import ExtractableInformationSource from "../../../Globals/Classes/Decorators/ExtractableInformationSource.js";
+import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
+import Deck from "../../../Globals/Model/Deck.js";
+import AskAiSession from "../Classes/AskAiSession.js";
+import AskAiImageAttachmentManager from "../Classes/AskAiImageAttachmentManager.js";
 
 /**
  * StudySessionBottomPanel
@@ -13,14 +21,26 @@ import ModelTierMetadata from "../../../Globals/Constants/ModelTierMetadata.js";
  * different chrome.
  *
  * The panel exposes:
- *   - A multi-line "Ask" contenteditable + Send button.
+ *   - LlmTierSelect to pick the cloud model tier.
+ *   - "Use Information Sources" grounding controls (mirrors the
+ *     TextSelectionContextMenu's controls; persistence key is shared so
+ *     the two surfaces show the same on/off + source list per deck).
+ *   - A multi-line "Ask" contenteditable + Send button, with a "+"
+ *     image-attach affordance and paste-image interception (delegated
+ *     to AskAiImageAttachmentManager).
  *   - Explain / Summarize / Enhance action buttons.
  *   - (Card mode only) a Mark-for-Review toggle that persists immediately.
- *   - A collapse toggle that slides the body down with a CSS animation,
- *     leaving only the drag-bar visible so the user can re-open it.
  *
- * AI actions are placeholder-stubbed via DialogBox.alert until the
- * backend hookup pass.
+ * Explain / Summarize / Ask all run through AskAiSession with no
+ * `selectedText` — the prompt builder reads "no selection" as "act on
+ * the whole entity" and picks the WHOLE-variant template
+ * (ASK_AI_*_WHOLE_USER.txt / ASK_AI_SUMMARIZE_*_USER.txt).
+ *
+ * Enhance opens a sub-tool picker (Make mnemonic / Format) and routes
+ * each tool through AskAiSession with its own prompt mode. The result
+ * streams into the same dialog as Explain / Summarize / Ask. The
+ * "insert back into the card / study material" step has its own slot
+ * in the result view's actions bar — wiring that lands in a later pass.
  *
  * The panel tracks the currently-displayed Card / StudyMaterial via
  * the StudySessionEvents.CARD_CHANGED / STUDY_MATERIAL_CHANGED events
@@ -31,20 +51,46 @@ class StudySessionBottomPanel extends HTMLElement
     static MODE_CARD            = "card";
     static MODE_STUDY_MATERIAL  = "study-material";
 
-    static AI_PLACEHOLDER_TITLE   = "AI feature placeholder";
-    static AI_PLACEHOLDER_MESSAGE = "This action will be wired up in a later pass — backend not connected yet.";
+    static AI_FREE_TIER_TITLE   = "Free tier unavailable";
+    static AI_FREE_TIER_MESSAGE = "The Free tier is offline-only and not wired for streaming yet. Pick Basic, Pro, or Pro Plus.";
 
+    // Each entry maps an Enhance sub-tool to the AskAi prompt mode it
+    // dispatches. The dialog's Apply button reads the selected radio's
+    // value, looks up the descriptor here, and hands the promptMode to
+    // #dispatchWholeEntitySession alongside the user's free-form
+    // instructions textarea.
     static ENHANCEMENT_TOOLS =
     [
-        { key: "make-mnemonic", label: "Make mnemonic" },
-        { key: "format",        label: "Format" }
+        { key: "format",        label: "Format",        promptModeKey: "FORMAT" },
+        { key: "make-mnemonic", label: "Make mnemonic", promptModeKey: "MAKE_MNEMONIC" },
+        { key: "give-examples", label: "Give examples", promptModeKey: "GIVE_EXAMPLES" },
+        { key: "glossary",      label: "Glossary",      promptModeKey: "GLOSSARY" }
     ];
+
+    // Tiers that support the cloud Ask-AI flow (Free is in-browser only).
+    // Mirrors TextSelectionContextMenu so the grounding/image-attach UI
+    // shows under the same conditions on both surfaces.
+    static #TIERS_THAT_SUPPORT_GROUNDING = new Set([
+        modelTiers.BASIC,
+        modelTiers.PRO,
+        modelTiers.PRO_PLUS,
+    ]);
+
+    // Shared persistence key with the TextSelectionContextMenu. A single
+    // toggle per deck drives both surfaces' grounding state — the user
+    // configures sources once and they apply wherever the AskAi flow
+    // runs.
+    static #ADDITIONAL_DATA_KEY = BrowserLlmDownloadConstants.DECK_PREFERENCES_FIELD_KEY;
 
     #mode             = StudySessionBottomPanel.MODE_CARD;
     #currentCard      = null;
     #currentStudyMaterial = null;
+    #studyDeck        = null;
     #cardChangedHandler          = null;
     #studyMaterialChangedHandler = null;
+    #boundTierSelectedHandler    = null;
+    #boundSourcesChangedHandler  = null;
+    #imageAttachmentManager      = null;
 
     static create(mode, initialEntity = null)
     {
@@ -72,12 +118,27 @@ class StudySessionBottomPanel extends HTMLElement
     connectedCallback()
     {
         this.dataset.mode = this.#mode;
+        this.#studyDeck   = Deck.getCurrentDeck();
 
         this.innerHTML =
         `
             <div class="bottom-panel-body">
                 <div class="bottom-panel-tier-row">
                     <llm-tier-select></llm-tier-select>
+                </div>
+                <div class="bottom-panel-grounding-controls" data-role="grounding-controls" hidden>
+                    <label class="bottom-panel-grounding-checkbox-row">
+                        <input type="checkbox" data-role="document-grounded-checkbox">
+                        <span class="bottom-panel-grounding-label">Use Information Sources</span>
+                        <span class="bottom-panel-grounding-hint">slight extra cost</span>
+                    </label>
+                    <div class="bottom-panel-grounding-sources" data-role="grounding-sources" hidden>
+                        <information-source-selector exclude-types="CURRICULUM_OR_SYLLABUS"></information-source-selector>
+                        <label class="bottom-panel-grounding-checkbox-row">
+                            <input type="checkbox" data-role="include-images-checkbox">
+                            <span class="bottom-panel-grounding-label">Include images from sources</span>
+                        </label>
+                    </div>
                 </div>
                 <div class="bottom-panel-question-row">
                     <div
@@ -100,6 +161,10 @@ class StudySessionBottomPanel extends HTMLElement
 
         this.#bindButtons();
         this.#bindSessionEventListeners();
+        this.#bindGroundingEvents();
+        this.#hydrateGroundingFromDeck();
+        this.#mountImageAttachmentManager();
+        this.#applyTierAwareVisibility();
         this.#refreshMarkReviewToggleLabel();
     }
 
@@ -114,6 +179,23 @@ class StudySessionBottomPanel extends HTMLElement
         {
             window.removeEventListener(StudySessionEvents.STUDY_MATERIAL_CHANGED, this.#studyMaterialChangedHandler);
             this.#studyMaterialChangedHandler = null;
+        }
+        if (this.#boundTierSelectedHandler)
+        {
+            const tierSelect = this.querySelector("llm-tier-select");
+            tierSelect?.removeEventListener("tier-selected", this.#boundTierSelectedHandler);
+            this.#boundTierSelectedHandler = null;
+        }
+        if (this.#boundSourcesChangedHandler)
+        {
+            const sourceSelectorElement = this.querySelector("information-source-selector");
+            sourceSelectorElement?.removeEventListener(AutomaticGenerationEvents.ON_SOURCES_CHANGED, this.#boundSourcesChangedHandler);
+            this.#boundSourcesChangedHandler = null;
+        }
+        if (this.#imageAttachmentManager)
+        {
+            this.#imageAttachmentManager.detach();
+            this.#imageAttachmentManager = null;
         }
     }
 
@@ -132,12 +214,12 @@ class StudySessionBottomPanel extends HTMLElement
 
         explainButton.addEventListener("click", async () =>
         {
-            await this.#showPlaceholderAlert("Explain");
+            await this.#dispatchWholeEntitySession(askAiPromptModes.EXPLAIN, null);
         });
 
         summarizeButton.addEventListener("click", async () =>
         {
-            await this.#showPlaceholderAlert("Summarize");
+            await this.#dispatchWholeEntitySession(askAiPromptModes.SUMMARIZE, null);
         });
 
         enhanceButton.addEventListener("click", async () =>
@@ -149,6 +231,16 @@ class StudySessionBottomPanel extends HTMLElement
         {
             await this.#toggleMarkForReview();
         });
+
+        // The Ask contenteditable needs a tier-change listener so the
+        // grounding-controls and image-attach UI re-evaluate visibility
+        // when the user picks a new tier from the dropdown.
+        const tierSelect = this.querySelector("llm-tier-select");
+        this.#boundTierSelectedHandler = () =>
+        {
+            this.#applyTierAwareVisibility();
+        };
+        tierSelect?.addEventListener("tier-selected", this.#boundTierSelectedHandler);
     }
 
     #bindSessionEventListeners()
@@ -176,73 +268,277 @@ class StudySessionBottomPanel extends HTMLElement
         window.addEventListener(StudySessionEvents.STUDY_MATERIAL_CHANGED, this.#studyMaterialChangedHandler);
     }
 
+    /**
+     * Wire the document-grounding + include-images checkboxes + the
+     * inline information-source-selector. Each user change persists to
+     * the deck's additionalData under the SAME key the
+     * TextSelectionContextMenu uses, so toggling on one surface is
+     * reflected on the other.
+     */
+    #bindGroundingEvents()
+    {
+        const groundingSourcesElement = this.querySelector('[data-role="grounding-sources"]');
+        const groundedCheckbox        = this.querySelector('[data-role="document-grounded-checkbox"]');
+        const includeImagesCheckbox   = this.querySelector('[data-role="include-images-checkbox"]');
+        const sourceSelectorElement   = this.querySelector("information-source-selector");
+
+        if (!groundingSourcesElement || !groundedCheckbox || !includeImagesCheckbox || !sourceSelectorElement)
+        {
+            return;
+        }
+
+        groundedCheckbox.addEventListener("change", async () =>
+        {
+            const bChecked = groundedCheckbox.checked;
+            groundingSourcesElement.hidden = !bChecked;
+            await this.#persistPartialPreferences({ documentGroundingEnabled: bChecked });
+        });
+
+        includeImagesCheckbox.addEventListener("change", async () =>
+        {
+            await this.#persistPartialPreferences({ includeImagesEnabled: includeImagesCheckbox.checked });
+        });
+
+        this.#boundSourcesChangedHandler = async () =>
+        {
+            const liveSources    = sourceSelectorElement.getSources();
+            const serialisedList = liveSources.map((source) => source.toJson());
+            await this.#persistPartialPreferences({ informationSources: serialisedList });
+        };
+        sourceSelectorElement.addEventListener(AutomaticGenerationEvents.ON_SOURCES_CHANGED, this.#boundSourcesChangedHandler);
+    }
+
+    /**
+     * Hydrate the grounding UI from the deck's persisted preferences.
+     */
+    #hydrateGroundingFromDeck()
+    {
+        const preferences           = this.#readAskAiPreferences();
+        const groundedCheckbox      = this.querySelector('[data-role="document-grounded-checkbox"]');
+        const includeImagesCheckbox = this.querySelector('[data-role="include-images-checkbox"]');
+        const groundingSources      = this.querySelector('[data-role="grounding-sources"]');
+        const sourceSelectorElement = this.querySelector("information-source-selector");
+
+        if (groundedCheckbox)
+        {
+            groundedCheckbox.checked = preferences.documentGroundingEnabled;
+        }
+        if (includeImagesCheckbox)
+        {
+            includeImagesCheckbox.checked = preferences.includeImagesEnabled;
+        }
+        if (groundingSources)
+        {
+            groundingSources.hidden = !preferences.documentGroundingEnabled;
+        }
+
+        if (sourceSelectorElement && preferences.informationSources.length > 0)
+        {
+            // The selector finishes wiring its DOM in its own
+            // connectedCallback — wait one frame so setSources finds
+            // the internal list element.
+            requestAnimationFrame(() =>
+            {
+                const rehydratedSources = preferences.informationSources
+                    .map((sourceJson) => ExtractableInformationSource.fromJson(sourceJson));
+                sourceSelectorElement.setSources(rehydratedSources);
+            });
+        }
+    }
+
+    /**
+     * Mount the image-attach manager into the Ask row. Hidden for tiers
+     * that don't support image input (Free).
+     */
+    #mountImageAttachmentManager()
+    {
+        const questionRow          = this.querySelector(".bottom-panel-question-row");
+        const questionInputElement = this.querySelector(".bottom-panel-question-input");
+        if (!questionRow || !questionInputElement)
+        {
+            return;
+        }
+        this.#imageAttachmentManager = new AskAiImageAttachmentManager(questionRow, questionInputElement);
+        this.#imageAttachmentManager.mount();
+    }
+
+    /**
+     * Show / hide grounding controls + image-attach surface based on
+     * the current tier. Free is local-only and doesn't ground or take
+     * image input in this round.
+     */
+    #applyTierAwareVisibility()
+    {
+        const groundingControlsElement = this.querySelector('[data-role="grounding-controls"]');
+        const tierSelect               = this.querySelector("llm-tier-select");
+        const currentTier              = tierSelect?.getCurrentTier() ?? modelTiers.BASIC;
+
+        if (groundingControlsElement)
+        {
+            const bShowGrounding = StudySessionBottomPanel.#TIERS_THAT_SUPPORT_GROUNDING.has(currentTier);
+            groundingControlsElement.hidden = !bShowGrounding;
+        }
+
+        if (this.#imageAttachmentManager)
+        {
+            const tierKeyName        = StudySessionBottomPanel.#tierKeyFor(currentTier);
+            const tierMeta           = tierKeyName ? ModelTierMetadata[tierKeyName] : null;
+            const bSupportsImageInput = Boolean(tierMeta?.supportsImageInput);
+            this.#imageAttachmentManager.setVisible(bSupportsImageInput);
+        }
+    }
+
+    static #tierKeyFor(tierValue)
+    {
+        for (const [tierKeyName, candidateValue] of Object.entries(modelTiers))
+        {
+            if (candidateValue === tierValue)
+            {
+                return tierKeyName;
+            }
+        }
+        return null;
+    }
+
     async #handleSendQuestion()
     {
         const questionInput = this.querySelector(".bottom-panel-question-input");
-        const rawHtml       = questionInput?.innerHTML || "";
         const trimmedText   = (questionInput?.textContent || "").trim();
 
         if (trimmedText.length === 0)
         {
             await DialogBox.alert("Ask a question", "Type your question first, then press Send.");
+            questionInput?.focus();
             return;
         }
 
-        await this.#showPlaceholderAlertWithBody(
-            "Ask",
-            `Your question:<div class="bottom-panel-placeholder-echo">${rawHtml}</div>`
-        );
-    }
-
-    async #showPlaceholderAlert(actionLabel)
-    {
-        const tierLabel = this.#readCurrentTierLabel();
-        await DialogBox.alert(
-            StudySessionBottomPanel.AI_PLACEHOLDER_TITLE,
-            `${actionLabel} (${tierLabel}) — ${StudySessionBottomPanel.AI_PLACEHOLDER_MESSAGE}`
-        );
-    }
-
-    async #showPlaceholderAlertWithBody(actionLabel, htmlBody)
-    {
-        // Reuses DialogBox.alert; the message is plain text but
-        // DialogBox.alert sets it via textContent, so any HTML is
-        // shown verbatim. That's intentional for a placeholder — the
-        // user sees exactly what would have gone to the backend.
-        const tierLabel = this.#readCurrentTierLabel();
-        await DialogBox.alert(
-            StudySessionBottomPanel.AI_PLACEHOLDER_TITLE,
-            `${actionLabel} (${tierLabel}). ${StudySessionBottomPanel.AI_PLACEHOLDER_MESSAGE}\n\n` +
-            this.#stripHtmlForPlaintext(htmlBody)
-        );
+        await this.#dispatchWholeEntitySession(askAiPromptModes.ASK, trimmedText);
     }
 
     /**
-     * Reads the currently-selected tier from the select mounted at
-     * the top of the panel. Falls back to the BASIC tier label when
-     * the select isn't yet mounted (defensive — shouldn't happen
-     * once connectedCallback has run).
+     * Hand off to AskAiSession with no selectedText — the prompt
+     * builder treats empty selection as "act on the whole entity" and
+     * picks the WHOLE-variant template (or the SUMMARIZE template
+     * directly). All four bottom-panel actions (Explain, Summarize,
+     * Ask Send) route through here.
      */
-    #readCurrentTierLabel()
+    async #dispatchWholeEntitySession(promptMode, userQuery)
     {
-        const tierSelect = this.querySelector("llm-tier-select");
-        const chosenTier = tierSelect?.getCurrentTier() ?? modelTiers.BASIC;
-        for (const [tierKeyName, candidateValue] of Object.entries(modelTiers))
+        const tierSelect    = this.querySelector("llm-tier-select");
+        const chosenTier    = tierSelect?.getCurrentTier() ?? modelTiers.BASIC;
+
+        if (chosenTier === modelTiers.FREE)
         {
-            if (candidateValue === chosenTier)
-            {
-                const meta = ModelTierMetadata[tierKeyName];
-                return meta?.label || tierKeyName;
-            }
+            await DialogBox.alert(
+                StudySessionBottomPanel.AI_FREE_TIER_TITLE,
+                StudySessionBottomPanel.AI_FREE_TIER_MESSAGE
+            );
+            return;
         }
-        return "Basic";
+
+        if (!await this.#validateGroundingBeforeProceeding(chosenTier))
+        {
+            return;
+        }
+
+        const contextEntity = this.#mode === StudySessionBottomPanel.MODE_CARD
+            ? this.#currentCard
+            : this.#currentStudyMaterial;
+
+        if (!contextEntity)
+        {
+            await DialogBox.alert(
+                "No content in view",
+                "Open a deck and start a study session before using the assistant."
+            );
+            return;
+        }
+
+        const preferences             = this.#readAskAiPreferences();
+        const sourceSelectorElement   = this.querySelector("information-source-selector");
+        const liveSources             = sourceSelectorElement?.getSources?.() ?? [];
+
+        const askAiSession = new AskAiSession
+        ({
+            promptMode:            promptMode,
+            chosenTier:            chosenTier,
+            contextEntity:         contextEntity,
+            selectedText:          "",
+            userQuery:             userQuery,
+            attachedImages:        this.#imageAttachmentManager?.getAttachedImages() ?? [],
+            informationSources:    liveSources,
+            useInformationSources: preferences.documentGroundingEnabled,
+        });
+
+        await askAiSession.run();
     }
 
-    #stripHtmlForPlaintext(htmlString)
+    /**
+     * Pre-flight check before firing AskAiSession. Mirrors the
+     * TextSelectionContextMenu's #validateBeforeProceeding logic so the
+     * user gets the same "Add a source" prompt on either surface.
+     */
+    async #validateGroundingBeforeProceeding(tier)
     {
-        const sandbox = document.createElement("div");
-        sandbox.innerHTML = htmlString;
-        return (sandbox.textContent || "").trim();
+        if (!StudySessionBottomPanel.#TIERS_THAT_SUPPORT_GROUNDING.has(tier))
+        {
+            return true;
+        }
+
+        const preferences = this.#readAskAiPreferences();
+        if (!preferences.documentGroundingEnabled)
+        {
+            return true;
+        }
+
+        if (preferences.informationSources.length === 0)
+        {
+            await DialogBox.alert(
+                "Add an information source",
+                "Use Information Sources is on but no sources are configured. Add at least one source — or turn off Use Information Sources — to proceed."
+            );
+            return false;
+        }
+
+        return true;
+    }
+
+    #readAskAiPreferences()
+    {
+        const additionalData = this.#studyDeck?.getAdditionalData?.() ?? {};
+        const persisted      = additionalData[StudySessionBottomPanel.#ADDITIONAL_DATA_KEY] ?? {};
+        return {
+            documentGroundingEnabled: persisted.documentGroundingEnabled === true,
+            includeImagesEnabled:     persisted.includeImagesEnabled     === true,
+            informationSources:       Array.isArray(persisted.informationSources)
+                ? persisted.informationSources
+                : [],
+        };
+    }
+
+    async #persistPartialPreferences(partialUpdate)
+    {
+        if (!this.#studyDeck)
+        {
+            return;
+        }
+        const current = this.#readAskAiPreferences();
+        const merged =
+        {
+            documentGroundingEnabled: current.documentGroundingEnabled,
+            includeImagesEnabled:     current.includeImagesEnabled,
+            informationSources:       current.informationSources,
+            ...partialUpdate,
+        };
+        this.#studyDeck.setAdditionalDataField(StudySessionBottomPanel.#ADDITIONAL_DATA_KEY, merged);
+        try
+        {
+            await this.#studyDeck.save();
+        }
+        catch (saveError)
+        {
+            console.warn(`[StudySessionBottomPanel] Failed to persist ask-AI prefs: ${saveError?.message || saveError}`);
+        }
     }
 
     async #openEnhanceDialog()
@@ -283,37 +579,41 @@ class StudySessionBottomPanel extends HTMLElement
                 </div>
             `);
 
-            const finalize = (chosenTool, additionalInstructions) =>
+            dialog.querySelector(".bottom-panel-enhance-cancel").addEventListener("click", () =>
             {
                 dialog.close();
                 resolve();
-
-                if (chosenTool === null)
-                {
-                    return;
-                }
-
-                this.#showPlaceholderAlertWithBody(
-                    `Enhance · ${chosenTool.label}`,
-                    additionalInstructions.length > 0
-                        ? `Instructions: ${additionalInstructions}`
-                        : "(no additional instructions)"
-                );
-            };
-
-            dialog.querySelector(".bottom-panel-enhance-cancel").addEventListener("click", () =>
-            {
-                finalize(null, "");
             });
 
-            dialog.querySelector(".bottom-panel-enhance-apply").addEventListener("click", () =>
+            dialog.querySelector(".bottom-panel-enhance-apply").addEventListener("click", async () =>
             {
                 const selectedRadio = dialog.querySelector("input[name=\"bottom-panel-enhance-tool\"]:checked");
                 const selectedKey   = selectedRadio?.value || StudySessionBottomPanel.ENHANCEMENT_TOOLS[0].key;
                 const selectedTool  = StudySessionBottomPanel.ENHANCEMENT_TOOLS.find(tool => tool.key === selectedKey)
                     || StudySessionBottomPanel.ENHANCEMENT_TOOLS[0];
                 const instructions  = (dialog.querySelector(".bottom-panel-enhance-instructions")?.value || "").trim();
-                finalize(selectedTool, instructions);
+
+                dialog.close();
+
+                // The promptModeKey is a string ("FORMAT" / "MAKE_MNEMONIC")
+                // that resolves to the numeric askAiPromptModes value.
+                // Bouncing through askAiPromptModes keeps the wire-format
+                // contract enum-typed end-to-end.
+                const promptModeValue = askAiPromptModes[selectedTool.promptModeKey];
+                if (typeof promptModeValue !== "number")
+                {
+                    console.warn(`[StudySessionBottomPanel] Unknown Enhance tool '${selectedKey}'`);
+                    resolve();
+                    return;
+                }
+
+                // The instructions textarea feeds the AskAi worker as
+                // the `userQuery` field — the FORMAT / MAKE_MNEMONIC
+                // prompts substitute it into their {user_query}
+                // placeholder so users can nudge the output without
+                // needing a separate prompt template.
+                await this.#dispatchWholeEntitySession(promptModeValue, instructions.length > 0 ? instructions : null);
+                resolve();
             });
         });
     }

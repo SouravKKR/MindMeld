@@ -1,0 +1,6 @@
+Flashcard question: "{question}"
+Flashcard answer: "{answer}"
+
+Explain this flashcard so the learner walks away with a working understanding of the concept it tests — what the question is really asking, why the answer is what it is, and any background a student needs to actually grasp the idea (not just memorise the wording). A short paragraph or two is usually the right length: enough to teach, not just paraphrase.
+
+{information_source_block}{html_style_block}

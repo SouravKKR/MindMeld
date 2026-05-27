@@ -2,12 +2,16 @@ import ContextMenu from "../../../CommonComponents/ContextMenu.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import LlmTierSelect from "../../../CommonComponents/LlmTierSelect.js";
 import { modelTiers } from "../../../Globals/Enumerations/ModelTiers.js";
+import { askAiPromptModes } from "../../../Globals/Enumerations/AskAiPromptModes.js";
 import ModelTierMetadata from "../../../Globals/Constants/ModelTierMetadata.js";
 import InformationSourceSelector from "../../AutomaticGeneration/Components/InformationSourceSelector.js";
 import ExtractableInformationSource from "../../../Globals/Classes/Decorators/ExtractableInformationSource.js";
 import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
 import BrowserLlmDownloadConstants from "../../../Globals/Constants/BrowserLlmDownloadConstants.js";
 import Deck from "../../../Globals/Model/Deck.js";
+import StudySessionEvents from "../Events/StudySessionEvents.js";
+import AskAiSession from "../Classes/AskAiSession.js";
+import AskAiImageAttachmentManager from "../Classes/AskAiImageAttachmentManager.js";
 
 /**
  * TextSelectionContextMenu
@@ -19,12 +23,14 @@ import Deck from "../../../Globals/Model/Deck.js";
  *     scoped to the selected text.
  *
  * For non-Free tiers, two additional opt-ins are surfaced:
- *   - "Document grounded" — when checked, the LLM call is grounded
- *     against information sources the user attaches inline (reusing
- *     the AutomaticGeneration page's <information-source-selector>,
+ *   - "Use Information Sources" — when checked, the LLM prompt is
+ *     grounded against information sources the user attaches inline
+ *     (reusing the AutomaticGeneration page's <information-source-selector>,
  *     filtered to hide CURRICULUM_OR_SYLLABUS which is irrelevant to
  *     a per-selection ask). Disables Explain/Send until at least one
- *     source is present.
+ *     source is present. The Python worker runs a top-k vector search
+ *     over chunks indexed by PrepareForSimilaritySearch and inlines
+ *     them into the prompt as TEXT — the sources are never uploaded.
  *   - "Include images from sources" — uses the same source list, but
  *     opts the response into multimodal grounding. Image sources are
  *     not chosen separately because per-image picking would overwhelm
@@ -33,11 +39,12 @@ import Deck from "../../../Globals/Model/Deck.js";
  * Both grounding state and the source list are persisted on the deck
  * being studied via `Deck.additionalData.askAiPreferences`, so the
  * configuration sticks across selections and rides the standard deck
- * sync pipeline. Unchecking "Document grounded" hides the source UI
- * but retains the sources on disk — re-checking later restores them.
+ * sync pipeline. Unchecking the toggle hides the source UI but retains
+ * the sources on disk — re-checking later restores them.
  *
- * All Explain / Send actions are placeholder-stubbed via DialogBox.alert
- * until the backend wiring pass.
+ * Image attachments (the "+" button + paste-image interception) are
+ * per-prompt and never persisted — see AskAiImageAttachmentManager.
+ * They go directly to Gemini as multimodal parts.
  *
  * The menu is dismissed by:
  *   - Any pointerdown outside the menu (installed by `create`).
@@ -54,8 +61,8 @@ class TextSelectionContextMenu extends ContextMenu
 {
     static tagName = "text-selection-context-menu";
 
-    static AI_PLACEHOLDER_TITLE   = "AI feature placeholder";
-    static AI_PLACEHOLDER_MESSAGE = "This action will be wired up in a later pass — backend not connected yet.";
+    static AI_FREE_TIER_TITLE   = "Free tier unavailable";
+    static AI_FREE_TIER_MESSAGE = "The Free tier is offline-only and not wired for streaming yet. Pick Basic, Pro, or Pro Plus.";
 
     static #ANCHOR_GAP_PX = 8;
     static #VIEWPORT_MARGIN_PX = 8;
@@ -75,6 +82,22 @@ class TextSelectionContextMenu extends ContextMenu
         modelTiers.PRO_PLUS,
     ]);
 
+    // Tracks the currently-displayed Card / StudyMaterial via the
+    // StudySessionEvents the session dispatches. The menu uses these
+    // when building the AskAi request payload. Stored as class statics
+    // so the window listeners (installed once at module-load time,
+    // below customElements.define) can update them without holding a
+    // reference to a specific menu instance — the menu reads them on
+    // the click path.
+    //
+    // Module-load install is critical: the menu only mounts when the
+    // user selects text, but the StudySession that dispatches
+    // CARD_CHANGED / STUDY_MATERIAL_CHANGED has already started by
+    // then. A connectedCallback-time listener would miss those events
+    // and the menu would never know which entity is in view.
+    static #currentCard = null;
+    static #currentStudyMaterial = null;
+
     #selectedText = "";
     #selectionRect = null;
     #outsidePointerdownHandler = null;
@@ -83,6 +106,7 @@ class TextSelectionContextMenu extends ContextMenu
     #studyDeck = null;
     #boundTierSelectedHandler = null;
     #boundSourcesChangedHandler = null;
+    #imageAttachmentManager = null;
 
     static create(selectionRect, selectedText = "")
     {
@@ -150,7 +174,7 @@ class TextSelectionContextMenu extends ContextMenu
             <div class="text-selection-grounding-controls context-menu-item" data-role="grounding-controls" hidden>
                 <label class="text-selection-grounding-checkbox-row">
                     <input type="checkbox" data-role="document-grounded-checkbox">
-                    <span class="text-selection-grounding-label">Document grounded</span>
+                    <span class="text-selection-grounding-label">Use Information Sources</span>
                     <span class="text-selection-grounding-hint">slight extra cost</span>
                 </label>
                 <div class="text-selection-grounding-sources" data-role="grounding-sources" hidden>
@@ -181,6 +205,7 @@ class TextSelectionContextMenu extends ContextMenu
         this.#bindLocalEvents();
         this.#bindGroundingEvents();
         this.#hydrateGroundingFromDeck();
+        this.#mountImageAttachmentManager();
         this.#applyTierAwareVisibility();
         this.#bindOutsideDismissHandlers();
 
@@ -227,6 +252,50 @@ class TextSelectionContextMenu extends ContextMenu
             sourceSelectorElement?.removeEventListener(AutomaticGenerationEvents.ON_SOURCES_CHANGED, this.#boundSourcesChangedHandler);
             this.#boundSourcesChangedHandler = null;
         }
+        if (this.#imageAttachmentManager)
+        {
+            this.#imageAttachmentManager.detach();
+            this.#imageAttachmentManager = null;
+        }
+    }
+
+    /**
+     * Public setters used by the module-level listener bootstrap below.
+     * Kept on the class so a future caller (e.g. the bottom panel) can
+     * push the active entity in if it ever needs to. Pairing the
+     * setters means the listener block at module bottom doesn't need
+     * to reach into private static state.
+     */
+    static setCurrentCard(card)
+    {
+        TextSelectionContextMenu.#currentCard = card;
+        // Switching to a card means we're no longer on a study
+        // material — clear the other slot so a stale reference can't
+        // leak into a subsequent CARD-mode payload.
+        TextSelectionContextMenu.#currentStudyMaterial = null;
+    }
+
+    static setCurrentStudyMaterial(studyMaterial)
+    {
+        TextSelectionContextMenu.#currentStudyMaterial = studyMaterial;
+        TextSelectionContextMenu.#currentCard = null;
+    }
+
+    /**
+     * Mount the image-attach manager into the Ask row. The "+" button
+     * and thumbnail strip stay hidden for tiers without image-input
+     * support — gated below in #applyTierAwareVisibility.
+     */
+    #mountImageAttachmentManager()
+    {
+        const questionRow = this.querySelector(".text-selection-question-row");
+        const questionInputElement = this.querySelector(".text-selection-question-input");
+        if (!questionRow || !questionInputElement)
+        {
+            return;
+        }
+        this.#imageAttachmentManager = new AskAiImageAttachmentManager(questionRow, questionInputElement);
+        this.#imageAttachmentManager.mount();
     }
 
     /**
@@ -384,7 +453,7 @@ class TextSelectionContextMenu extends ContextMenu
             {
                 return;
             }
-            await this.#showPlaceholderAlertForAction("Explain", "", chosenTier);
+            await this.#dispatchAskAiSession(askAiPromptModes.EXPLAIN, null, chosenTier);
             this.remove();
         });
 
@@ -402,7 +471,7 @@ class TextSelectionContextMenu extends ContextMenu
             {
                 return;
             }
-            await this.#showPlaceholderAlertForAction("Ask", userQuery, chosenTier);
+            await this.#dispatchAskAiSession(askAiPromptModes.ASK, userQuery, chosenTier);
             this.remove();
         });
 
@@ -593,20 +662,40 @@ class TextSelectionContextMenu extends ContextMenu
      * Show or hide the grounding controls block based on the current
      * tier. Free is a local model and doesn't ground against the
      * user's documents in this round, so the block is hidden for it.
+     * Also flips the image-attach UI per the tier's
+     * supportsImageInput flag (Free can't take images either).
      */
     #applyTierAwareVisibility()
     {
         const groundingControlsElement = this.querySelector('[data-role="grounding-controls"]');
-        if (!groundingControlsElement)
-        {
-            return;
-        }
-
         const tierSelect = this.querySelector("llm-tier-select");
         const currentTier = tierSelect?.getCurrentTier() ?? modelTiers.BASIC;
-        const bShow = TextSelectionContextMenu.#TIERS_THAT_SUPPORT_GROUNDING.has(currentTier);
 
-        groundingControlsElement.hidden = !bShow;
+        if (groundingControlsElement)
+        {
+            const bShowGrounding = TextSelectionContextMenu.#TIERS_THAT_SUPPORT_GROUNDING.has(currentTier);
+            groundingControlsElement.hidden = !bShowGrounding;
+        }
+
+        if (this.#imageAttachmentManager)
+        {
+            const tierKeyName = TextSelectionContextMenu.#tierKeyFor(currentTier);
+            const tierMeta = tierKeyName ? ModelTierMetadata[tierKeyName] : null;
+            const bSupportsImageInput = Boolean(tierMeta?.supportsImageInput);
+            this.#imageAttachmentManager.setVisible(bSupportsImageInput);
+        }
+    }
+
+    static #tierKeyFor(tierValue)
+    {
+        for (const [tierKeyName, candidateValue] of Object.entries(modelTiers))
+        {
+            if (candidateValue === tierValue)
+            {
+                return tierKeyName;
+            }
+        }
+        return null;
     }
 
     /**
@@ -684,7 +773,7 @@ class TextSelectionContextMenu extends ContextMenu
         {
             await DialogBox.alert(
                 "Add an information source",
-                "Document grounding is on but no information sources are configured. Add at least one source — or turn off Document grounded — to proceed."
+                "Use Information Sources is on but no sources are configured. Add at least one source — or turn off Use Information Sources — to proceed."
             );
             return false;
         }
@@ -692,53 +781,72 @@ class TextSelectionContextMenu extends ContextMenu
         return true;
     }
 
-    async #showPlaceholderAlertForAction(actionLabel, userQuery, tier)
+    /**
+     * Hand off to the AskAi streaming session — admin gate, dialog
+     * open, fetch + chunked NDJSON read all happen inside
+     * AskAiSession.run(). The menu's responsibility ends here.
+     */
+    async #dispatchAskAiSession(promptMode, userQuery, chosenTier)
     {
-        const truncatedSelection = this.#selectedText.length > 200
-            ? this.#selectedText.substring(0, 200) + "…"
-            : this.#selectedText;
+        const contextEntity = TextSelectionContextMenu.#currentCard
+            ?? TextSelectionContextMenu.#currentStudyMaterial
+            ?? null;
 
-        const tierLabel = TextSelectionContextMenu.#tierLabelFor(tier);
+        if (contextEntity === null)
+        {
+            await DialogBox.alert(
+                "No content in view",
+                "Open a deck and start a study session before using the AI selection actions."
+            );
+            return;
+        }
+
+        // The Free tier is not wired this pass — surface the same
+        // dialog the session itself would, but skip the dialog churn
+        // by failing fast at the menu layer.
+        if (chosenTier === modelTiers.FREE)
+        {
+            await DialogBox.alert(
+                TextSelectionContextMenu.AI_FREE_TIER_TITLE,
+                TextSelectionContextMenu.AI_FREE_TIER_MESSAGE
+            );
+            return;
+        }
+
         const preferences = this.#readAskAiPreferences();
+        const sourceSelectorElement = this.querySelector("information-source-selector");
+        const liveSources = sourceSelectorElement?.getSources?.() ?? [];
 
-        const bodyLines = [
-            `${actionLabel} (${tierLabel}) — ${TextSelectionContextMenu.AI_PLACEHOLDER_MESSAGE}`,
-            "",
-            `Selected text: "${truncatedSelection}"`,
-        ];
+        const askAiSession = new AskAiSession
+        ({
+            promptMode:             promptMode,
+            chosenTier:             chosenTier,
+            contextEntity:          contextEntity,
+            selectedText:           this.#selectedText,
+            userQuery:              userQuery,
+            attachedImages:         this.#imageAttachmentManager?.getAttachedImages() ?? [],
+            informationSources:     liveSources,
+            useInformationSources:  preferences.documentGroundingEnabled,
+        });
 
-        if (userQuery.length > 0)
-        {
-            bodyLines.push(`Your question: ${userQuery}`);
-        }
-
-        if (TextSelectionContextMenu.#TIERS_THAT_SUPPORT_GROUNDING.has(tier))
-        {
-            bodyLines.push(`Grounded: ${preferences.documentGroundingEnabled ? "yes" : "no"}`);
-            if (preferences.documentGroundingEnabled)
-            {
-                bodyLines.push(`Sources: ${preferences.informationSources.length}`);
-                bodyLines.push(`Images from sources: ${preferences.includeImagesEnabled ? "yes" : "no"}`);
-            }
-        }
-
-        console.warn(`[TextSelectionContextMenu] Tier ${tierLabel} action "${actionLabel}" is not wired yet — backend stub.`);
-        await DialogBox.alert(TextSelectionContextMenu.AI_PLACEHOLDER_TITLE, bodyLines.join("\n"));
-    }
-
-    static #tierLabelFor(tierValue)
-    {
-        for (const [tierKeyName, candidateValue] of Object.entries(modelTiers))
-        {
-            if (candidateValue === tierValue)
-            {
-                const meta = ModelTierMetadata[tierKeyName];
-                return meta?.label || tierKeyName;
-            }
-        }
-        return "Basic";
+        await askAiSession.run();
     }
 }
 
 customElements.define(TextSelectionContextMenu.tagName, TextSelectionContextMenu);
+
+// Module-load listener install — see the comment on #currentCard for why
+// this can't live inside connectedCallback. As soon as StudyPage.js
+// imports this module the listeners are armed, so CARD_CHANGED /
+// STUDY_MATERIAL_CHANGED dispatches from the session reach us even
+// though the menu itself hasn't mounted yet.
+window.addEventListener(StudySessionEvents.CARD_CHANGED, (cardEvent) =>
+{
+    TextSelectionContextMenu.setCurrentCard(cardEvent.detail?.card || null);
+});
+window.addEventListener(StudySessionEvents.STUDY_MATERIAL_CHANGED, (materialEvent) =>
+{
+    TextSelectionContextMenu.setCurrentStudyMaterial(materialEvent.detail?.studyMaterial || null);
+});
+
 export default TextSelectionContextMenu;

@@ -1,0 +1,7 @@
+Study material lesson:
+{material_excerpt}
+Additional instructions (optional): {user_query}
+
+Re-render this lesson with stronger visual structure so it's easier to scan and remember. Pick whichever layout actually serves the information — sub-headings, ordered / unordered lists, a comparison table, or a grid of grouped cards (use <div class="ask-ai-grid"> with <div class="ask-ai-grid-item"> children when items group naturally and benefit from side-by-side display). Use whatever combination genuinely improves the content; do not impose structure on prose that's already linear and clear. Keep the meaning intact: rearrange and clarify, do not add new facts or remove existing ones.
+
+{information_source_block}{html_style_block_rich}

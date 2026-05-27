@@ -98,6 +98,10 @@ class MapTopicsWithContent(Workflow):
 
     async def run(self):
         from sentence_transformers import SentenceTransformer, CrossEncoder
+        # ExtractText (called below via __pdf_text_for_source) reaches into
+        # fitz. Silence MuPDF before the first PDF touches the parser.
+        from Globals.Classes.Generic.MuPdfBootstrap import MuPdfBootstrap
+        MuPdfBootstrap.silence_parser_warnings()
 
         main_task_id = os.getenv("MAIN_TASK_ID")
 

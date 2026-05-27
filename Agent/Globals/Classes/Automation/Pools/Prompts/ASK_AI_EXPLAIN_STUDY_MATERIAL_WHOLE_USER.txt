@@ -1,0 +1,6 @@
+Study material lesson:
+{material_excerpt}
+
+Explain this lesson so the learner walks away with a working understanding of its main ideas and how they fit together — not a section-by-section recap. Cover the core concept, the key terms, and the why behind any claims the lesson makes. A few short paragraphs is the right length: enough to teach, not just paraphrase.
+
+{information_source_block}{html_style_block}

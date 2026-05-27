@@ -12,6 +12,7 @@ from Globals.Classes.Generic.RedisSemaphore import RedisSemaphore
 from Globals.Classes.WebScraping.WebContentFetcher import WebContentFetcher
 from Globals.Constants.ApiConcurrencyLimits import ApiConcurrencyLimits
 
+import httpx
 from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
@@ -39,8 +40,40 @@ class GeminiProvider(AutomationProvider):
     DEFAULT_RETRY_SLEEP_SECONDS = 8.0
     MAX_RETRY_SLEEP_SECONDS = 60.0
 
+    # Connecting to generativelanguage.googleapis.com via plain httpx on
+    # Windows runs into a brutal IPv6 happy-eyeballs miss: the resolver
+    # hands back AAAA records first, the connect to those addresses sits
+    # for ~80s before timing out, and only THEN does httpx fall back to
+    # IPv4. Curl and the browser don't see this because they connect to
+    # the v4/v6 candidates in parallel. We sidestep the whole thing by
+    # binding the outbound socket to 0.0.0.0, which forces the connect
+    # path to IPv4-only. Same trick applied to the async transport so
+    # batch / streaming paths benefit too.
+    __HTTPX_REQUEST_TIMEOUT_SECONDS = 60.0
+
+    @staticmethod
+    def __build_ipv4_httpx_clients() -> tuple[httpx.Client, httpx.AsyncClient]:
+        timeout_config = httpx.Timeout(GeminiProvider.__HTTPX_REQUEST_TIMEOUT_SECONDS)
+        sync_client    = httpx.Client(
+            transport = httpx.HTTPTransport(local_address = "0.0.0.0"),
+            timeout   = timeout_config,
+        )
+        async_client = httpx.AsyncClient(
+            transport = httpx.AsyncHTTPTransport(local_address = "0.0.0.0"),
+            timeout   = timeout_config,
+        )
+        return sync_client, async_client
+
     def __init__(self):
-        self.__client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        sync_client, async_client = GeminiProvider.__build_ipv4_httpx_clients()
+        http_options = types.HttpOptions(
+            httpx_client       = sync_client,
+            httpx_async_client = async_client,
+        )
+        self.__client = genai.Client(
+            api_key      = os.getenv("GEMINI_API_KEY"),
+            http_options = http_options,
+        )
 
     async def __fetch_url_content(self, url: str) -> str:
         try:
@@ -178,6 +211,164 @@ class GeminiProvider(AutomationProvider):
                                 ))
 
         return AutomationResponse(outputs)
+
+    async def stream_text(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        attached_image_parts: list,
+        b_enable_google_search: bool,
+    ):
+        """
+        Async generator that streams a Gemini text response chunk-by-chunk.
+        Designed for the AskAi feature on the Study page — the caller forwards
+        each yielded event straight to the browser as one NDJSON line.
+
+        Yielded events (each a JSON-serialisable dict):
+            { "type": "text", "value": "..." }                  - 0 or more
+            { "type": "citations", "sources": [...] }           - 0 or 1, only when google-search grounding fires
+            { "type": "error", "message": "..." }               - 0 or 1, on non-transient failure
+            (The "done" sentinel is the caller's responsibility — this
+             generator simply returns when the stream ends.)
+
+        Retry semantics: transient failures (429 / 5xx / DEADLINE_EXCEEDED)
+        that occur BEFORE the first token is yielded retry the whole stream
+        up to MAX_TRANSIENT_RETRIES, mirroring the __generate_content_with_retry
+        path. Failures that occur AFTER any text has been emitted surface
+        as an error event and terminate the stream — we can't replay tokens
+        we've already shipped to the browser.
+
+        The Redis semaphore is held for the lifetime of the stream so per-
+        model concurrency caps apply to streaming calls too.
+        """
+        user_text_part = types.Part.from_text(text=user_prompt)
+        contents = [user_text_part, *attached_image_parts]
+
+        # AskAi is real-time — the user is watching tokens stream in.
+        # Without an explicit thinking_budget, gemini-2.5-flash-lite spends
+        # tens of seconds in its thinking phase before emitting any output,
+        # which presents as a stuck "Thinking…" dialog on the client.
+        # Using thinking_budget=0 disables the thinking phase entirely (the
+        # SDK docstring: "0 is DISABLED. -1 is AUTOMATIC."), which keeps
+        # first-chunk latency at the usual few hundred ms. The AI Studio
+        # sample uses thinking_level=MINIMAL, but that enum value is
+        # silently ignored by 2.5-flash-lite — only thinking_budget takes
+        # effect on this model family.
+        config_args = {
+            "system_instruction":   system_prompt,
+            "response_mime_type":   "text/plain",
+            "thinking_config":      types.ThinkingConfig(thinking_budget=0),
+        }
+        if b_enable_google_search:
+            config_args["tools"] = [types.Tool(google_search=types.GoogleSearch())]
+
+        config = types.GenerateContentConfig(**config_args)
+
+        attempt_index = 0
+        while True:
+            sleep_seconds = None
+            b_yielded_any_text = False
+            last_seen_chunk = None
+
+            try:
+                async with RedisSemaphore.slot(
+                    bucket = model,
+                    max_concurrent = GeminiProvider.__resolve_concurrent_limit(model),
+                    hold_timeout_seconds = ApiConcurrencyLimits.SLOT_HOLD_TIMEOUT_SECONDS,
+                    poll_interval_seconds = ApiConcurrencyLimits.ACQUIRE_POLL_INTERVAL_SECONDS,
+                ):
+                    stream_iterator = await asyncio.to_thread(
+                        self.__client.models.generate_content_stream,
+                        model = model,
+                        contents = contents,
+                        config = config,
+                    )
+
+                    sentinel = object()
+                    while True:
+                        next_chunk = await asyncio.to_thread(next, stream_iterator, sentinel)
+                        if next_chunk is sentinel:
+                            break
+                        last_seen_chunk = next_chunk
+
+                        chunk_text = getattr(next_chunk, "text", None)
+                        if chunk_text:
+                            b_yielded_any_text = True
+                            yield { "type": "text", "value": chunk_text }
+
+                    citation_sources = GeminiProvider.__extract_citation_sources(last_seen_chunk)
+                    if citation_sources:
+                        yield { "type": "citations", "sources": citation_sources }
+
+                    return
+
+            except (genai_errors.ClientError, genai_errors.ServerError) as api_error:
+                if not GeminiProvider.__is_transient_error(api_error):
+                    yield { "type": "error", "message": str(api_error) }
+                    return
+
+                if b_yielded_any_text:
+                    # Mid-stream transient failure — we've already shipped
+                    # tokens to the browser; replaying would duplicate
+                    # content. Surface the failure and stop.
+                    yield { "type": "error", "message": f"Stream interrupted: {api_error}" }
+                    return
+
+                error_label = GeminiProvider.__describe_transient_error(api_error)
+                if attempt_index >= GeminiProvider.MAX_TRANSIENT_RETRIES:
+                    print(
+                        f"[GeminiProvider] stream_text {error_label} after "
+                        f"{attempt_index} retries on model {model} — giving up."
+                    )
+                    yield { "type": "error", "message": str(api_error) }
+                    return
+
+                sleep_seconds = GeminiProvider.__resolve_retry_delay_seconds(api_error, attempt_index)
+                print(
+                    f"[GeminiProvider] stream_text {error_label} on model {model} "
+                    f"(attempt {attempt_index + 1}/{GeminiProvider.MAX_TRANSIENT_RETRIES}). "
+                    f"Sleeping {sleep_seconds:.1f}s then retrying."
+                )
+
+            except Exception as unexpected_error:
+                yield { "type": "error", "message": str(unexpected_error) }
+                return
+
+            if sleep_seconds is not None:
+                await asyncio.sleep(sleep_seconds)
+            attempt_index += 1
+
+    @staticmethod
+    def __extract_citation_sources(final_chunk) -> list[dict]:
+        """
+        Pulls the {uri, title} list out of the final stream chunk's
+        grounding metadata when google-search grounding fired. Returns
+        an empty list when the chunk has no grounding info or the call
+        wasn't grounded.
+        """
+        if final_chunk is None:
+            return []
+
+        candidates = getattr(final_chunk, "candidates", None) or []
+        for candidate in candidates:
+            grounding_metadata = getattr(candidate, "grounding_metadata", None)
+            if grounding_metadata is None:
+                continue
+            grounding_chunks = getattr(grounding_metadata, "grounding_chunks", None) or []
+            collected_sources = []
+            for grounding_chunk in grounding_chunks:
+                web_info = getattr(grounding_chunk, "web", None)
+                if web_info is None:
+                    continue
+                source_uri   = getattr(web_info, "uri", None)
+                source_title = getattr(web_info, "title", None)
+                if source_uri:
+                    collected_sources.append({ "uri": source_uri, "title": source_title or source_uri })
+            if collected_sources:
+                return collected_sources
+        return []
 
     async def __generate_content_with_retry(self, model: str, contents, config):
         """

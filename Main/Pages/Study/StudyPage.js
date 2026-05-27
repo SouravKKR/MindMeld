@@ -9,6 +9,7 @@ import PageNavigator from "../../Globals/Classes/PageNavigator.js";
 import StudySessionBottomPanel from "./Components/StudySessionBottomPanel.js";
 import StudyZoomControls from "./Components/StudyZoomControls.js";
 import TextSelectionContextMenu from "./Components/TextSelectionContextMenu.js";
+import StudyContextMenu from "./Components/StudyContextMenu.js";
 
 class StudyPage extends HTMLElement
 {
@@ -21,6 +22,7 @@ class StudyPage extends HTMLElement
     #pointerUpHandler = null;
     #touchEndHandler = null;
     #bPointerSelectionInProgress = false;
+    #contextMenuHandler = null;
 
     // ── Initialisation ─────────────────────────────────────────────────────────
 
@@ -247,6 +249,7 @@ class StudyPage extends HTMLElement
 
         this.#mountBottomPanel();
         this.#installTextSelectionWatcher();
+        this.#installStudyContextMenuWatcher();
     }
 
     /**
@@ -283,6 +286,12 @@ class StudyPage extends HTMLElement
         }
         this.#bPointerSelectionInProgress = false;
         TextSelectionContextMenu.removeAll();
+        if (this.#contextMenuHandler)
+        {
+            this.removeEventListener("contextmenu", this.#contextMenuHandler);
+            this.#contextMenuHandler = null;
+        }
+        StudyContextMenu.removeAll();
     }
 
     /**
@@ -375,6 +384,59 @@ class StudyPage extends HTMLElement
         document.addEventListener("pointerdown", this.#pointerDownHandler, true);
         document.addEventListener("pointerup", this.#pointerUpHandler, true);
         document.addEventListener("touchend", this.#touchEndHandler, true);
+    }
+
+    /**
+     * Hooks the page's `contextmenu` event so a right-click anywhere
+     * inside the study surface opens a StudyContextMenu — but only
+     * when there is no active text selection (TextSelectionContextMenu
+     * owns that flow via the selection watcher above). Editable
+     * targets (inputs, textareas, contenteditables — the bottom panel
+     * has these for AskAI) keep the native menu so paste / spellcheck
+     * remain reachable. Mock-test sessions are skipped because the
+     * runner owns its own UX.
+     */
+    #installStudyContextMenuWatcher()
+    {
+        if (this.#session instanceof MockTestSession)
+        {
+            return;
+        }
+
+        this.#contextMenuHandler = (contextMenuEvent) =>
+        {
+            const targetElement = contextMenuEvent.target;
+            if (targetElement?.closest?.("input, textarea, [contenteditable=\"true\"]"))
+            {
+                return;
+            }
+            // Right-clicks inside an already-open menu shouldn't spawn
+            // a second one on top of themselves.
+            if (targetElement?.closest?.(`${StudyContextMenu.tagName}, ${TextSelectionContextMenu.tagName}`))
+            {
+                return;
+            }
+
+            contextMenuEvent.preventDefault();
+
+            // If the user has an active text selection, leave it alone —
+            // the TextSelectionContextMenu either is already mounted or
+            // will mount via the selection watcher.
+            const selection = window.getSelection();
+            if (selection && selection.rangeCount > 0 && !selection.isCollapsed
+                && selection.toString().trim().length > 0)
+            {
+                return;
+            }
+
+            const activeEntity = this.#session?._current ?? null;
+            StudyContextMenu.create(
+                { x: contextMenuEvent.clientX, y: contextMenuEvent.clientY },
+                activeEntity
+            );
+        };
+
+        this.addEventListener("contextmenu", this.#contextMenuHandler);
     }
 
     #evaluateSelection()

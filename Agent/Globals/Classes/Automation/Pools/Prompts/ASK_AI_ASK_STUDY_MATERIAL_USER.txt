@@ -1,0 +1,9 @@
+Study material lesson:
+{material_excerpt}
+
+Highlighted fragment: "{selected_text}"
+User question: {user_query}
+
+Answer directly, grounded in the lesson above.
+
+{information_source_block}{html_style_block}

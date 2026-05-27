@@ -1,0 +1,6 @@
+Study material lesson:
+{material_excerpt}
+
+Summarise this lesson in the shortest form that still captures what the learner needs to take away — the main idea, the key terms, and any critical sub-points. Bullet points or a single tight paragraph are both fine; pick whichever fits the content better. No preamble, no padding.
+
+{information_source_block}{html_style_block}

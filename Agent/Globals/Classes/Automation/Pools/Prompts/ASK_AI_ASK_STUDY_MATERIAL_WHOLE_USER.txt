@@ -1,0 +1,8 @@
+Study material lesson:
+{material_excerpt}
+
+User question: {user_query}
+
+Answer the user's question directly, grounded in the lesson above. Quote or reference specific parts of the lesson where it helps; don't introduce unrelated material.
+
+{information_source_block}{html_style_block}

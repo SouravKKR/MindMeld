@@ -1,5 +1,4 @@
 import re
-import fitz
 from sentence_transformers import SentenceTransformer
 
 
@@ -47,6 +46,12 @@ def embed_pages(pdf_bytes: bytes, page_numbers: list[int], model: SentenceTransf
         embedding_documents : list of { pageNumber, content, embedding }
         empty_pages         : list of page numbers that had no extractable text
     """
+    # fitz (PyMuPDF) is a heavy native binding (~hundreds of ms cold).
+    # Importing it lazily here means callers that only want load_model
+    # (e.g. the AskAi streaming worker doing query-time embedding) don't
+    # drag mupdf into the process.
+    import fitz
+
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
     all_chunks      = []

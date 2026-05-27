@@ -1,0 +1,6 @@
+Flashcard question: "{question}"
+Flashcard answer: "{answer}"
+
+Summarise this flashcard in the shortest form that still captures what the learner needs to remember — the question's intent and the core of the answer, stripped of restating the wording. Bullet points or a single tight paragraph are both fine; pick whichever fits the content better. No preamble, no padding.
+
+{information_source_block}{html_style_block}

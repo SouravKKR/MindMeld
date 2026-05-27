@@ -2,6 +2,7 @@ const PacketronResponse = require("@gamiumgamers/packetron/PacketronResponse");
 const {authenticationProviders }= require("../../Globals/Enumerations/AuthenticationProviders");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
 const User = require("../../Globals/Model/User");
+const UserSession = require("../../Globals/Model/UserSession");
 const App = require("../../Globals/Classes/App");
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
 const SyncQueryEngine = require("../../Globals/Classes/Database/SyncQueryEngine");
@@ -139,7 +140,22 @@ async function handleLoginCallback(request, response)
 
     const session = await AuthenticationQueryEngine.createSession(user.getId(), authenticationProviders[provider]);
 
-    response.setCookie("sessionId", session.getId());
+    // Without an explicit Max-Age the browser treats the cookie as
+    // session-only and wipes it the next time the webview / browser
+    // restarts — which on Tauri happens every time the dock server
+    // restarts. Pin the cookie lifetime to the session row's TTL so
+    // the browser keeps the cookie for as long as the server-side
+    // row is valid.
+    const sessionLifetimeSeconds = Math.floor(UserSession.getExpirationTime() / 1000);
+
+    response.setCookie("sessionId", session.getId(),
+    {
+        maxAge: sessionLifetimeSeconds,
+        path: "/",
+        httpOnly: true,
+        secure: true,
+        sameSite: "lax"
+    });
     response.clearCookie("provider");
     
     response.setHeader("Location", App.getOrigin());

@@ -1,0 +1,8 @@
+Flashcard question: "{question}"
+Flashcard answer: "{answer}"
+
+User question: {user_query}
+
+Answer the user's question directly. Stay scoped to the flashcard — what it teaches and the concept it tests. Don't wander into adjacent topics unless the question explicitly calls for them.
+
+{information_source_block}{html_style_block}

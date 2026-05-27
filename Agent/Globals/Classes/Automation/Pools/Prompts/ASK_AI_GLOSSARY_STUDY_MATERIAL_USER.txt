@@ -1,0 +1,16 @@
+Study material lesson:
+{material_excerpt}
+Additional instructions (optional): {user_query}
+
+Extract every meaningful technical term from this lesson and produce a tight glossary. Skip everyday words — only include terms a learner would actually need to look up. Order by importance (most central terms first), not alphabetically.
+
+Output the glossary as a single &lt;ul&gt; with one &lt;li&gt; per entry. Each &lt;li&gt; contains the term wrapped in &lt;strong&gt;, an em-dash separator, and a single-sentence plain-language definition. Example:
+
+<ul>
+  <li><strong>Mitochondrion</strong> — the organelle that produces most of a cell's ATP through oxidative phosphorylation.</li>
+  <li><strong>ATP</strong> — adenosine triphosphate, the energy-carrying molecule cells use to power chemical reactions.</li>
+</ul>
+
+If the lesson has no specialised vocabulary worth glossing, output a single &lt;p&gt; saying so plainly — do not pad with trivial entries.
+
+{information_source_block}{html_style_block}

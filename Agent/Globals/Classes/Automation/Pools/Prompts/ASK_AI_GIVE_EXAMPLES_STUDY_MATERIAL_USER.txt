@@ -1,0 +1,18 @@
+Study material lesson:
+{material_excerpt}
+Additional instructions (optional): {user_query}
+
+Give a couple of concrete examples that bring this lesson to life. Match the example style to whatever the content actually is — if it's a problem-solving procedure or a calculation, work one or two examples end-to-end with each step labelled; if it's conceptual, illustrate with real-world cases or short scenarios that show the idea in action; if it's a classification or rule, show instances and counter-instances. Don't force worked solutions onto pure-concept content, and don't keep examples abstract when the topic is procedural. Keep each example tight — quality over quantity.
+
+Output ONLY the examples — no preamble, no summary of the lesson, no closing remark. Start directly with the first example.
+
+CRITICAL: each example MUST be wrapped in its own <div class="ask-ai-block">. The wrapper is non-negotiable even if you only produce one example — it's how the app distinguishes individual examples so the learner can pick which ones to keep. Output structure for each example:
+
+<div class="ask-ai-block">
+<h3>Example for &lt;subject or topic the example illustrates&gt;</h3>
+&lt;example content — paragraphs, lists, or worked steps as appropriate&gt;
+</div>
+
+The <h3> heading must literally begin with "Example for " followed by a short, specific phrase naming what the example illustrates (the underlying concept, the rule being applied, or the procedure being demonstrated — not a section title verbatim).
+
+{information_source_block}{html_style_block}

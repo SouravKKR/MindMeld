@@ -8,33 +8,19 @@ from Globals.Utility.AgentLogger import initialize as initialize_agent_logger
 # and the flushing `print` in debug mode.
 initialize_agent_logger()
 
-from Globals.Classes.Generic.MuPdfBootstrap import MuPdfBootstrap
+# MuPDF parser-warning silencing used to live here unconditionally, which
+# paid the ~0.5s fitz native-binding cost on every agent subprocess launch
+# even for tasks that never touch a PDF (analysis, embedding-only,
+# curated-study, etc.). Each fitz-using workflow now calls
+# MuPdfBootstrap.silence_parser_warnings() at the start of its run() —
+# the call is idempotent and lazy-imports fitz on first invocation, so
+# the cost is only paid where it's needed.
 
-# Silence MuPDF's C-level parser warnings process-wide before any workflow
-# touches fitz. The toggle is global state inside the MuPDF library, so one
-# call here covers PROCESS_SYLLABUS, PREPARE_IMAGES, MAP_TOPICS_WITH_CONTENT,
-# and PREPARE_FOR_SIMILARITY_SEARCH uniformly.
-MuPdfBootstrap.silence_parser_warnings()
 
-from Globals.Classes.Automation.Providers.OpenAiProvider import OpenAiProvider
-from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
-from Globals.Classes.Automation.Providers.DocumentProcessingProvider import DocumentProcessingProvider
-
-from Globals.Classes.Automation.AutomationRequest import AutomationRequest
-from Globals.Classes.Automation.AutomationCaller import AutomationCaller
-from Globals.Classes.Automation.AutomationContent import AutomationContent
-from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
-from Globals.Classes.WebScraping.WebScraper import WebScraper
-from Globals.Classes.WebScraping.ScrapeFilter import ScrapeFilter
-from Globals.Enumerations.ScrapeFilterTypes import ScrapeFilterTypes
 from Globals.Enumerations.TaskStatus import TaskStatus
-from Globals.Classes.Automation.Pools.PromptPool import PromptPool
-from Globals.Classes.Automation.Pools.ModelPool import ModelPool
 from Globals.Classes.Task.TaskDescriptor import TaskDescriptor
-from Globals.Classes.Task.TaskSettings import TaskSettings
 from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Enumerations.TaskTypes import TaskTypes
-from Globals.Enumerations.TaskExecutionTargets import TaskExecutionTargets
 from Workflows.Workflow import Workflow
 
 from Globals.Utility.ArgumentParser import argument_parser

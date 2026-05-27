@@ -731,6 +731,12 @@ class PrepareImages(Workflow):
         return self.__compute_figure_scratch_path(figure["perceptualImageHash"])
 
     async def run(self, args={}):
+        # PrepareImages always reaches fitz via ImageExtractor — pay the
+        # MuPDF silence cost once at the top so log noise stays out of
+        # the worker pipe.
+        from Globals.Classes.Generic.MuPdfBootstrap import MuPdfBootstrap
+        MuPdfBootstrap.silence_parser_warnings()
+
         # ── 1. Extract figures from every image source PDF ─────────────────────
         figures_by_source: list[tuple[str, list[dict]]] = []
 

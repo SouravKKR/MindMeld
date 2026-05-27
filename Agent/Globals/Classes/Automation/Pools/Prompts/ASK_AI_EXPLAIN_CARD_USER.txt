@@ -1,0 +1,7 @@
+Flashcard question: "{question}"
+Flashcard answer: "{answer}"
+Highlighted fragment: "{selected_text}"
+
+Explain the highlighted fragment so the learner walks away with a working understanding — what it means, and briefly how it fits the flashcard's question and answer. A short paragraph or two is the right length: enough to actually teach the idea, not just rephrase it, but no filler.
+
+{information_source_block}{html_style_block}

@@ -1,0 +1,8 @@
+Flashcard question: "{question}"
+Flashcard answer: "{answer}"
+Highlighted fragment: "{selected_text}"
+User question: {user_query}
+
+Answer directly. Stay scoped to the fragment.
+
+{information_source_block}{html_style_block}

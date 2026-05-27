@@ -1,0 +1,798 @@
+/*
+ * Styles for the AskAi streaming dialog opened by the Study page's
+ * TextSelectionContextMenu. The LLM emits structural HTML only —
+ * <h2>, <h3>, <p>, <ul>, <ol>, <li>, <pre>, <code>, <strong>,
+ * <em>, <blockquote>, <br>. Everything visual (colour, font weight,
+ * spacing, borders) lives here so a future theme change cascades
+ * automatically.
+ *
+ * The body element carries both `.ask-ai-streaming-body` (layout +
+ * dialog hooks) and `.generated-content` (shared with the existing
+ * agent-emitted content surface) so future shared rules can target
+ * either class.
+ */
+
+.ask-ai-dialog
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 8px 22px 24px 22px;
+    min-width: 360px;
+    max-width: 720px;
+    max-height: 75dvh;
+    box-sizing: border-box;
+}
+
+/*
+ * The result view is a structural wrapper only — its job is to encapsulate
+ * the dialog's children (title, streaming body, citations, status, actions)
+ * behind one public API. Layout, however, is owned by `.ask-ai-dialog` and
+ * relies on a flex column with `max-height: 75dvh` so the streaming body
+ * can claim flex:1 1 auto + overflow-y:auto and scroll once content
+ * exceeds the dialog's height. A normal block-level custom element would
+ * sit between the dialog and the streaming body and break that chain —
+ * the body would size to its natural content, the result view would size
+ * to its child, and the dialog's max-height + the body's overflow would
+ * never engage. `display: contents` flattens the wrapper out of the box
+ * tree, so the children become direct flex items of `.ask-ai-dialog`.
+ */
+ask-ai-result-view
+{
+    display: contents;
+}
+
+.ask-ai-dialog-title
+{
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--primary-text-color);
+    margin: 0 0 4px 0;
+    padding-right: 32px; /* leave room for DialogBox.modal's close button */
+}
+
+.ask-ai-streaming-body
+{
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 16px 18px;
+    background-color: var(--primary-background-color);
+    border: 1px solid var(--outline-color-subtle);
+    border-radius: 8px;
+    color: var(--primary-text-color);
+    line-height: 1.55;
+    font-size: 15px;
+    /* preserve newlines emitted by the LLM between block tags during a
+       partial parse — prevents the "everything in one paragraph" look
+       while the stream is still arriving. */
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+}
+
+.ask-ai-streaming-body.ask-ai-pending
+{
+    color: var(--secondary-text-color);
+    font-style: italic;
+}
+
+.ask-ai-pending-indicator
+{
+    margin: 0;
+    color: var(--secondary-text-color);
+}
+
+/* ── Structural element treatment ─────────────────────────────────
+   Every tag the LLM is allowed to emit gets its own rule. No colours
+   are hard-coded — everything pulls from --primary-text-color /
+   --secondary-text-color / --accent-color so the dialog stays in
+   theme. */
+
+.ask-ai-streaming-body h2
+{
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--content-accent-color);
+    margin: 16px 0 8px 0;
+}
+
+.ask-ai-streaming-body h2:first-child
+{
+    margin-top: 0;
+}
+
+.ask-ai-streaming-body h3
+{
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--primary-text-color);
+    margin: 14px 0 6px 0;
+}
+
+.ask-ai-streaming-body p
+{
+    margin: 0 0 10px 0;
+}
+
+.ask-ai-streaming-body p:last-child
+{
+    margin-bottom: 0;
+}
+
+.ask-ai-streaming-body ul,
+.ask-ai-streaming-body ol
+{
+    margin: 6px 0 12px 0;
+    padding-left: 24px;
+}
+
+.ask-ai-streaming-body li
+{
+    margin: 4px 0;
+}
+
+.ask-ai-streaming-body strong
+{
+    font-weight: 600;
+    color: var(--primary-text-color);
+}
+
+.ask-ai-streaming-body em
+{
+    font-style: italic;
+}
+
+.ask-ai-streaming-body code
+{
+    font-family: "Courier New", Courier, monospace;
+    font-size: 0.92em;
+    background-color: var(--tertiary-background-color);
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+
+.ask-ai-streaming-body pre
+{
+    font-family: "Courier New", Courier, monospace;
+    font-size: 0.92em;
+    background-color: var(--tertiary-background-color);
+    padding: 10px 12px;
+    border-radius: 6px;
+    margin: 10px 0;
+    overflow-x: auto;
+}
+
+.ask-ai-streaming-body pre code
+{
+    background: none;
+    padding: 0;
+}
+
+.ask-ai-streaming-body blockquote
+{
+    margin: 10px 0;
+    padding: 6px 14px;
+    border-left: 3px solid var(--content-callout-border-color);
+    background-color: var(--content-callout-background-color);
+    border-radius: var(--content-callout-border-radius);
+    color: var(--content-muted-text-color);
+}
+
+.ask-ai-streaming-body a
+{
+    color: var(--accent-color);
+    text-decoration: underline;
+}
+
+/* ── Tables (used by FORMAT mode) ─────────────────────────────────
+   FORMAT can emit tables for comparison / lookup content. Other
+   modes are constrained by their prompt's allow-list and won't
+   produce these, but the styling tolerates them anywhere. */
+
+.ask-ai-streaming-body table
+{
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+    font-size: 14px;
+}
+
+.ask-ai-streaming-body thead
+{
+    background-color: var(--secondary-background-color);
+}
+
+.ask-ai-streaming-body th,
+.ask-ai-streaming-body td
+{
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--outline-color-subtle);
+    vertical-align: top;
+}
+
+.ask-ai-streaming-body th
+{
+    font-weight: 600;
+    color: var(--content-accent-color);
+    border-bottom-color: var(--outline-color);
+}
+
+.ask-ai-streaming-body tbody tr:last-child td
+{
+    border-bottom: none;
+}
+
+/* ── Card-grid layout (used by FORMAT mode) ───────────────────────
+   The two recognised class names: <div class="ask-ai-grid"> wraps
+   <div class="ask-ai-grid-item"> children. Used when grouped sub-
+   items benefit from side-by-side display (e.g. enumerated
+   principles, sibling concepts). Responsive: collapses to a single
+   column under ~400px so narrow dialogs don't overflow. */
+
+.ask-ai-streaming-body .ask-ai-grid
+{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin: 12px 0;
+}
+
+.ask-ai-streaming-body .ask-ai-grid-item
+{
+    padding: 12px 14px;
+    background-color: var(--secondary-background-color);
+    border-radius: 8px;
+    outline: 1px solid var(--outline-color-subtle);
+    outline-offset: -1px;
+}
+
+.ask-ai-streaming-body .ask-ai-grid-item > :first-child
+{
+    margin-top: 0;
+}
+
+.ask-ai-streaming-body .ask-ai-grid-item > :last-child
+{
+    margin-bottom: 0;
+}
+
+.ask-ai-streaming-body figure
+{
+    margin: 12px 0;
+}
+
+.ask-ai-streaming-body figcaption
+{
+    margin-top: 4px;
+    font-size: 12.5px;
+    color: var(--content-muted-text-color);
+}
+
+/* ── Citations footer ─────────────────────────────────────────────
+   Rendered after the body once Google Search grounding fires on
+   Pro / Pro Plus. Subtler than the body so it reads as "sources",
+   not "more content". */
+
+.ask-ai-citations
+{
+    padding: 10px 14px;
+    background-color: var(--secondary-background-color);
+    border-radius: 6px;
+}
+
+.ask-ai-citations-title
+{
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--content-muted-text-color);
+    margin: 0 0 8px 0;
+}
+
+.ask-ai-citations-list
+{
+    margin: 0;
+    padding-left: 22px;
+    font-size: 13px;
+}
+
+.ask-ai-citations-list li
+{
+    margin: 3px 0;
+}
+
+.ask-ai-citations-list a
+{
+    color: var(--accent-color);
+    text-decoration: none;
+}
+
+.ask-ai-citations-list a:hover
+{
+    text-decoration: underline;
+}
+
+/* ── Status footer + errors ───────────────────────────────────────
+   Used for mid-stream failures that we want to surface without
+   wiping the partial output the user has already seen. */
+
+.ask-ai-status
+{
+    font-size: 13px;
+}
+
+.ask-ai-error-footer
+{
+    margin: 0;
+    padding: 8px 12px;
+    background-color: var(--danger-background-color);
+    color: var(--danger-text-color);
+    border-radius: 6px;
+}
+
+.ask-ai-error
+{
+    color: var(--danger-text-color);
+    margin: 0;
+}
+
+/* Reserved for the future actions bar (Copy, Insert into card). Left
+   in the markup so the layout doesn't shift when it ships. The slot
+   stays hidden until AskAiResultView.populateActions(...) is called
+   with a non-empty list — that hook lands when the per-mode action
+   buttons (Insert into card, Copy as HTML, Regenerate, …) ship. */
+.ask-ai-actions
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+    padding-top: 6px;
+}
+
+.ask-ai-action-button
+{
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: none;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    outline: 1px solid var(--outline-color-subtle);
+    outline-offset: -1px;
+    transition: background-color 0.15s ease, outline-color 0.15s ease;
+}
+
+.ask-ai-action-button:hover
+{
+    background-color: var(--quaternary-background-color);
+    outline-color: var(--accent-color);
+}
+
+.ask-ai-action-button:disabled
+{
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.ask-ai-action-button:disabled:hover
+{
+    background-color: var(--tertiary-background-color);
+    outline-color: var(--outline-color-subtle);
+}
+
+/* Primary call-to-action variant used by the "Insert selected"
+   confirm button. Stands out from the secondary actions so the
+   user knows which button commits their selection. */
+.ask-ai-action-button-primary
+{
+    background-color: var(--accent-color);
+    color: var(--primary-background-color);
+    outline-color: var(--accent-color);
+}
+
+.ask-ai-action-button-primary:hover
+{
+    background-color: var(--accent-color);
+    filter: brightness(1.1);
+    outline-color: var(--accent-color);
+}
+
+.ask-ai-action-button-primary:disabled:hover
+{
+    background-color: var(--accent-color);
+    filter: none;
+}
+
+/* ── LLM block wrappers (.ask-ai-block) ───────────────────────────
+   The mnemonic + examples prompts ask the LLM to wrap each logical
+   block in <div class="ask-ai-block">. Styling them as discrete
+   cards is what lets the learner SEE that the response is composed
+   of multiple units — without this they read as one wall of text.
+
+   No left-side accent stripe — visual separation comes from the
+   background fill, padding, and rounded corners alone. Selection
+   uses the CSS `outline` property so the highlight sits outside the
+   layout box and doesn't shift the card geometry when toggled. */
+
+.ask-ai-block
+{
+    position: relative;
+    margin: 12px 0;
+    padding: 12px 14px;
+    background-color: var(--tertiary-background-color);
+    border-radius: 8px;
+}
+
+.ask-ai-block:first-child
+{
+    margin-top: 0;
+}
+
+.ask-ai-block:last-child
+{
+    margin-bottom: 0;
+}
+
+.ask-ai-block > :first-child
+{
+    margin-top: 0;
+}
+
+.ask-ai-block > :last-child
+{
+    margin-bottom: 0;
+}
+
+/* ── Inline block selection ────────────────────────────────────────
+   When the dispatcher detects 2+ blocks, it calls
+   resultView.activateBlockSelection(...) which adds the body class
+   below. From that point every .ask-ai-block in the popup is a
+   click-to-toggle card; the .selected class adds a bright outline
+   highlight. The user picks blocks first, then clicks "Insert
+   selected" to commit — no separate selection mode, no
+   confirmation toolbar, no swap. */
+
+.ask-ai-streaming-body.ask-ai-body-selecting .ask-ai-block
+{
+    cursor: pointer;
+    user-select: none;
+    transition: outline 0.12s ease, background-color 0.12s ease;
+}
+
+.ask-ai-streaming-body.ask-ai-body-selecting .ask-ai-block:hover
+{
+    background-color: var(--quaternary-background-color);
+    outline: 2px dashed var(--outline-color);
+    outline-offset: -2px;
+}
+
+.ask-ai-streaming-body.ask-ai-body-selecting .ask-ai-block.selected
+{
+    outline: 3px solid var(--accent-color);
+    outline-offset: -1px;
+    background-color: var(--quaternary-background-color);
+}
+
+.ask-ai-streaming-body.ask-ai-body-selecting .ask-ai-block.selected:hover
+{
+    /* Keep the solid accent outline on hover when already selected
+       — don't downgrade to the dashed hover style. */
+    outline: 3px solid var(--accent-color);
+    outline-offset: -1px;
+}
+
+/* ── Image attachment UI ──────────────────────────────────────────
+   Used by AskAiImageAttachmentManager wherever it's mounted (the
+   TextSelectionContextMenu's question row and the
+   StudySessionBottomPanel's question row both delegate to the same
+   class, so one set of rules covers both surfaces). The manager
+   injects the "+" attach button at the start of the question row
+   and the thumbnail strip as a sibling immediately after. */
+
+.ask-ai-image-attach-button
+{
+    flex-shrink: 0;
+    width: 36px;
+    min-height: 36px;
+    border: none;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-size: 1.1rem;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    outline: 1px solid rgba(255, 255, 255, 0.08);
+    outline-offset: -1px;
+    transition: background-color 0.15s ease, outline-color 0.15s ease;
+}
+
+.ask-ai-image-attach-button:hover
+{
+    background-color: var(--quaternary-background-color);
+    outline-color: var(--accent-color);
+}
+
+.ask-ai-image-attach-button[hidden]
+{
+    display: none;
+}
+
+.ask-ai-image-thumbnail-strip
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 4px 0 0 0;
+    margin: 0;
+}
+
+.ask-ai-image-thumbnail-strip[hidden]
+{
+    display: none;
+}
+
+.ask-ai-image-thumbnail
+{
+    position: relative;
+    width: 44px;
+    height: 44px;
+    border-radius: 6px;
+    overflow: hidden;
+    background-color: var(--tertiary-background-color);
+    outline: 1px solid rgba(255, 255, 255, 0.1);
+    outline-offset: -1px;
+}
+
+.ask-ai-image-thumbnail img
+{
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.ask-ai-image-thumbnail-remove
+{
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background-color: rgba(0, 0, 0, 0.7);
+    color: #ffffff;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ask-ai-image-thumbnail-remove:hover
+{
+    background-color: var(--danger-text-color);
+    color: var(--primary-background-color);
+}
+
+/* ── Popup-link button (Insert action) ────────────────────────────
+   The Insert action emits a plain <button class="ask-ai-popup-link">
+   marker inside Card.answer or StudyMaterial.content. The button has
+   two inner hotspots — a label span (clicking it opens the saved
+   response) and a delete span (small X on the right that removes
+   both the marker and the saved record).
+
+   We use a plain button (rather than a custom element) so the markup
+   round-trips cleanly through any raw-HTML editor / sanitiser layer.
+   The leading speech-balloon glyph is drawn with a CSS pseudo-element
+   so there's no asset dependency. */
+
+button.ask-ai-popup-link
+{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px 4px 12px;
+    margin: 4px 0;
+    border: none;
+    border-radius: 999px;
+    background-color: var(--tertiary-background-color);
+    color: var(--accent-color);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    outline: 1px solid var(--outline-color-subtle);
+    outline-offset: -1px;
+    transition: background-color 0.15s ease, outline-color 0.15s ease, color 0.15s ease;
+}
+
+button.ask-ai-popup-link::before
+{
+    content: "\1F4AC"; /* speech-balloon glyph — pure CSS, no asset dependency */
+    font-size: 12px;
+    line-height: 1;
+}
+
+button.ask-ai-popup-link:hover
+{
+    background-color: var(--quaternary-background-color);
+    outline-color: var(--accent-color);
+}
+
+.ask-ai-popup-link-label
+{
+    /* The label span exists mainly as an event-delegation hotspot;
+       no extra styling needed beyond inheriting the button's. */
+}
+
+.ask-ai-popup-link-delete
+{
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-left: 2px;
+    border-radius: 50%;
+    background-color: rgba(0, 0, 0, 0.18);
+    color: var(--primary-text-color);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.ask-ai-popup-link-delete:hover
+{
+    background-color: var(--danger-text-color);
+    color: var(--primary-background-color);
+}
+
+/* Reveal the delete affordance on hover for pointer devices. */
+button.ask-ai-popup-link:hover .ask-ai-popup-link-delete,
+button.ask-ai-popup-link:focus-within .ask-ai-popup-link-delete
+{
+    display: inline-flex;
+}
+
+/* Touch devices have no hover, so the delete affordance has to be
+   visible by default — otherwise it would be impossible to reach.
+   The button looks slightly busier on mobile but stays functional. */
+@media (hover: none)
+{
+    .ask-ai-popup-link-delete
+    {
+        display: inline-flex;
+    }
+}
+
+/* ── Inline injected block (Append + Append after relevant section)
+   The full popup body gets dumped into the entity wrapped in this
+   container so it stands apart from the original content. Keep the
+   visual hint subtle — it's still part of the card / material now,
+   not a separate AI artefact, so a tinted background + accent rule
+   on the left is enough. */
+
+.ask-ai-injected
+{
+    margin: 14px 0;
+    padding: 12px 14px;
+    background-color: var(--secondary-background-color);
+    border-left: 3px solid var(--accent-color);
+    border-radius: 6px;
+}
+
+.ask-ai-injected > :first-child
+{
+    margin-top: 0;
+}
+
+.ask-ai-injected > :last-child
+{
+    margin-bottom: 0;
+}
+
+/* ── Narrow-viewport adjustments ────────────────────────────────────
+   The dialog defaults to a comfortable desktop layout (min-width 360px,
+   max-width 720px, action bar in a single row). Phones in portrait
+   orientation are routinely 360px-or-less wide AFTER the dialog-box
+   element's own 85% width cap kicks in (see DialogBox.css), so the
+   defaults push content off-screen and the 4-button action bar wraps
+   into 4 stacked rows. These rules collapse the dialog into a tighter
+   form that fits comfortably on phones without sacrificing the desktop
+   experience. */
+
+@media (max-width: 640px)
+{
+    .ask-ai-dialog
+    {
+        min-width: 0;
+        max-width: 100%;
+        padding: 8px 14px 18px 14px;
+        gap: 10px;
+    }
+
+    .ask-ai-dialog-title
+    {
+        font-size: 16px;
+        padding-right: 36px;
+    }
+
+    .ask-ai-streaming-body
+    {
+        padding: 12px 14px;
+        font-size: 14px;
+    }
+
+    .ask-ai-streaming-body h2 { font-size: 16px; }
+    .ask-ai-streaming-body h3 { font-size: 14.5px; }
+
+    .ask-ai-actions
+    {
+        /* Stack the action buttons full-width on phones — wrapping in
+           a single row leaves "Append after relevant section" cut off
+           at the right edge, and stacking is the friendlier touch
+           target anyway. */
+        justify-content: stretch;
+    }
+
+    .ask-ai-action-button
+    {
+        flex: 1 1 100%;
+        padding: 9px 12px;
+        font-size: 13.5px;
+    }
+
+    .ask-ai-block
+    {
+        padding: 10px 12px;
+        margin: 10px 0;
+    }
+
+    .ask-ai-streaming-body.ask-ai-body-selecting .ask-ai-block
+    {
+        /* Bigger touch target on mobile — the visual hint matters more
+           than the desktop compactness here. */
+        padding: 14px 14px;
+    }
+
+    /* Popup-link markers (inside cards/materials) — keep the touch
+       target generous and the X always visible (no hover on touch). */
+    button.ask-ai-popup-link
+    {
+        padding: 6px 8px 6px 12px;
+        font-size: 13px;
+    }
+
+    .ask-ai-popup-link-delete
+    {
+        width: 20px;
+        height: 20px;
+        font-size: 15px;
+    }
+
+    /* Tables can blow out the dialog width on phones — let them
+       scroll horizontally inside the streaming body rather than
+       widening the dialog. */
+    .ask-ai-streaming-body table
+    {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+    }
+
+    .ask-ai-streaming-body .ask-ai-grid
+    {
+        /* Single column on phones; the auto-fit minmax(180px, 1fr)
+           default still works but the gap eats into the readable
+           area. Force one column for clarity. */
+        grid-template-columns: 1fr;
+    }
+}

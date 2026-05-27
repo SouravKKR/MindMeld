@@ -137,7 +137,20 @@ class LlmTierSelect extends HTMLElement
 
             const label = tierMeta.label || tierKeyName;
             const tagline = tierMeta.tagline || "";
-            const optionText = tagline.length > 0 ? `${label} (${tagline})` : label;
+            const baseOptionText = tagline.length > 0 ? `${label} (${tagline})` : label;
+            // Data-driven capability hint. Each flag the tier opts in to
+            // contributes one phrase to a cumulative "supports: …" suffix
+            // so the user can see at a glance what each tier adds on top
+            // of the cheaper one. Order matters — capabilities accumulate
+            // up the tier ladder (file input → web search → reasoning).
+            const capabilityPhrases = [];
+            if (tierMeta.supportsImageInput)          capabilityPhrases.push("file input");
+            if (tierMeta.enableGoogleSearchGrounding) capabilityPhrases.push("web search");
+            if (tierMeta.supportsAdvancedReasoning)   capabilityPhrases.push("reasoning");
+            const capabilitySuffix = capabilityPhrases.length > 0
+                ? ` — supports: ${capabilityPhrases.join(" + ")}`
+                : "";
+            const optionText = baseOptionText + capabilitySuffix;
 
             return `
                 <option
