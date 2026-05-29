@@ -24,8 +24,11 @@ class MockTestGenerationSettings extends AutoGenerationSettings
     #sectionStructure;
     #showSolvingSteps;
     #durationMinutes;
+    #mockTestName;
+    #recursive;
+    #skipRootDeck;
 
-    constructor({type = null, additionalInstructions = '', description = '', informationSources = [], enhanceImages = false, imageSources = [], subjectName = '', examName = '', numTestsMethod = 0, numberOfTests = 2, difficultyMethod = 0, veryEasyQuestions = 1, easyQuestions = 1, mediumQuestions = 1, hardQuestions = 1, veryHardQuestions = 1, questionTypesMethod = 0, questionTypesWithWeights = {}, numQuestionsMethod = 0, numQuestionsPerTest = 30, correctMarks = 4, wrongMarks = -1, unattemptedMarks = 0, partialMarks = 0, perTypeMarkingOverrides = {}, sectionStructure = [], showSolvingSteps = true, durationMinutes = 0} = {})
+    constructor({type = null, additionalInstructions = '', description = '', informationSources = [], enhanceImages = false, imageSources = [], subjectName = '', examName = '', numTestsMethod = 0, numberOfTests = 2, difficultyMethod = 0, veryEasyQuestions = 1, easyQuestions = 1, mediumQuestions = 1, hardQuestions = 1, veryHardQuestions = 1, questionTypesMethod = 0, questionTypesWithWeights = {}, numQuestionsMethod = 0, numQuestionsPerTest = 30, correctMarks = 4, wrongMarks = -1, unattemptedMarks = 0, partialMarks = 0, perTypeMarkingOverrides = {}, sectionStructure = [], showSolvingSteps = true, durationMinutes = 0, mockTestName = '', recursive = false, skipRootDeck = false} = {})
     {
         super({type, additionalInstructions, description, informationSources, enhanceImages, imageSources, subjectName, examName});
         this.setNumTestsMethod(numTestsMethod);
@@ -48,6 +51,9 @@ class MockTestGenerationSettings extends AutoGenerationSettings
         this.setSectionStructure(sectionStructure);
         this.setShowSolvingSteps(showSolvingSteps);
         this.setDurationMinutes(durationMinutes);
+        this.setMockTestName(mockTestName);
+        this.setRecursive(recursive);
+        this.setSkipRootDeck(skipRootDeck);
     }
 
     getNumTestsMethod()
@@ -389,6 +395,48 @@ class MockTestGenerationSettings extends AutoGenerationSettings
         this.#durationMinutes = value;
     }
 
+    getMockTestName()
+    {
+        return this.#mockTestName;
+    }
+
+    setMockTestName(value)
+    {
+        if (value !== null)
+        {
+            value = String(value);
+        }
+        this.#mockTestName = value;
+    }
+
+    getRecursive()
+    {
+        return this.#recursive;
+    }
+
+    setRecursive(value)
+    {
+        if (value !== null)
+        {
+            value = Boolean(value);
+        }
+        this.#recursive = value;
+    }
+
+    getSkipRootDeck()
+    {
+        return this.#skipRootDeck;
+    }
+
+    setSkipRootDeck(value)
+    {
+        if (value !== null)
+        {
+            value = Boolean(value);
+        }
+        this.#skipRootDeck = value;
+    }
+
     toJson()
     {
         return {
@@ -413,6 +461,9 @@ class MockTestGenerationSettings extends AutoGenerationSettings
             sectionStructure: this.getSectionStructure(),
             showSolvingSteps: this.getShowSolvingSteps(),
             durationMinutes: this.getDurationMinutes(),
+            mockTestName: this.getMockTestName(),
+            recursive: this.getRecursive(),
+            skipRootDeck: this.getSkipRootDeck(),
         };
     }
 
@@ -446,7 +497,10 @@ class MockTestGenerationSettings extends AutoGenerationSettings
             perTypeMarkingOverrides: json.perTypeMarkingOverrides ?? null,
             sectionStructure: json.sectionStructure ?? null,
             showSolvingSteps: json.showSolvingSteps ?? null,
-            durationMinutes: json.durationMinutes ?? null
+            durationMinutes: json.durationMinutes ?? null,
+            mockTestName: json.mockTestName ?? null,
+            recursive: json.recursive ?? null,
+            skipRootDeck: json.skipRootDeck ?? null
         });
         instance._restoreId_id(json.id);
         return instance;

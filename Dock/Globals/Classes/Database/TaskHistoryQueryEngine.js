@@ -192,6 +192,31 @@ class TaskHistoryQueryEngine
         return { rows, totalCount };
     }
 
+    /**
+     * Looks up a single historical row by id, returning it only if the
+     * requesting user owns it. Returns null when the row is missing or
+     * belongs to someone else — the Activity progress endpoint uses this
+     * after a Redis miss to render the "completed" view for tasks whose
+     * live descriptor has already expired.
+     * @param {string} taskId
+     * @param {string} userId
+     * @returns {Promise<object|null>}
+     */
+    static async getByIdForUser(taskId, userId)
+    {
+        if (!taskId || !userId)
+        {
+            return null;
+        }
+        const collection = await TaskHistoryQueryEngine.#getCollection();
+        if (!collection)
+        {
+            return null;
+        }
+        const row = await collection.findOne({ id: taskId, userId: userId }, { projection: { _id: 0 } });
+        return row || null;
+    }
+
     static #buildMongoQuery(userId, filterValuesByKey)
     {
         const queryFragments = [{ userId: userId }];

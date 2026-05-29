@@ -57,31 +57,44 @@ async function handleLoginCallback(request, response)
             });
 
             const userJson = await userResponse.json();
+            const normalisedEmail = typeof userJson.email === "string" ? userJson.email.trim().toLowerCase() : "";
             const additionalData =
             {
                 "displayPicture": userJson.picture,
-                "email": userJson.email,
+                "email": normalisedEmail,
                 "credits": 5
             }
 
-            // Join date will be obtained from the database later on... defaulted to now    
+            // Join date will be obtained from the database later on... defaulted to now
             user = new User
             ({
-                id: userJson.sub, 
-                displayName: userJson.name, 
-                provider:authenticationProviders.GOOGLE, 
-                joinDate: new Date(), 
-                preferences:{}, 
+                id: userJson.sub,
+                displayName: userJson.name,
+                provider:authenticationProviders.GOOGLE,
+                joinDate: new Date(),
+                preferences:{},
                 additionalData: additionalData
             });
 
             break;
-            
+
         }
 
     }
-    
-    const existingUser = await AuthenticationQueryEngine.getUserById(user?.getId() || "");
+
+    // Look up by Google sub first; if absent, fall back to email match so
+    // a user who first signed up via email-OTP lands on the same record
+    // when they later use Google with the same address. Keeps "one
+    // identity per email" symmetric across both providers.
+    let existingUser = await AuthenticationQueryEngine.getUserById(user?.getId() || "");
+    if (!existingUser && user?.getAdditionalData()?.email)
+    {
+        existingUser = await AuthenticationQueryEngine.getUserByEmail(user.getAdditionalData().email);
+        if (existingUser)
+        {
+            user.setId(existingUser.getId());
+        }
+    }
 
     if(existingUser)
     {

@@ -68,11 +68,12 @@ async function handleSync(request, response)
 
     const byType =
     {
-        [entityTypes.DECK]:           [],
-        [entityTypes.CARD]:           [],
-        [entityTypes.STUDY_MATERIAL]: [],
-        [entityTypes.MOCK_TEST]:      [],
-        deletions:                    []
+        [entityTypes.DECK]:               [],
+        [entityTypes.CARD]:               [],
+        [entityTypes.STUDY_MATERIAL]:     [],
+        [entityTypes.MOCK_TEST]:          [],
+        [entityTypes.ASK_AI_POPUP_LINK]:  [],
+        deletions:                        []
     };
 
     for (const change of changes)
@@ -100,14 +101,36 @@ async function handleSync(request, response)
 
     await Promise.all(
     [
-        SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.DECKS_COLLECTION),           byType[entityTypes.DECK],           pushWriteTimestamp),
-        SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.CARDS_COLLECTION),           byType[entityTypes.CARD],           pushWriteTimestamp),
-        SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.STUDY_MATERIALS_COLLECTION), byType[entityTypes.STUDY_MATERIAL], pushWriteTimestamp),
-        SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.MOCK_TESTS_COLLECTION),      byType[entityTypes.MOCK_TEST],      pushWriteTimestamp),
+        SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.DECKS_COLLECTION),             byType[entityTypes.DECK],              pushWriteTimestamp),
+        SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.CARDS_COLLECTION),             byType[entityTypes.CARD],              pushWriteTimestamp),
+        SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.STUDY_MATERIALS_COLLECTION),   byType[entityTypes.STUDY_MATERIAL],    pushWriteTimestamp),
+        SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.MOCK_TESTS_COLLECTION),        byType[entityTypes.MOCK_TEST],         pushWriteTimestamp),
+        SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION), byType[entityTypes.ASK_AI_POPUP_LINK], pushWriteTimestamp),
         SyncQueryEngine.bulkRecordDeletions(userId, db, byType.deletions)
     ]);
 
-    console.log(`[Sync] PUSH complete — decks:${byType[entityTypes.DECK].length} cards:${byType[entityTypes.CARD].length} studyMaterials:${byType[entityTypes.STUDY_MATERIAL].length} mockTests:${byType[entityTypes.MOCK_TEST].length} deletions:${byType.deletions.length}`);
+    console.log(`[Sync] PUSH complete — decks:${byType[entityTypes.DECK].length} cards:${byType[entityTypes.CARD].length} studyMaterials:${byType[entityTypes.STUDY_MATERIAL].length} mockTests:${byType[entityTypes.MOCK_TEST].length} popupLinks:${byType[entityTypes.ASK_AI_POPUP_LINK].length} deletions:${byType.deletions.length}`);
+
+    // Best-effort cleanup of the two legacy fields the client no
+    // longer ships (studyMaterials embedded in the deck doc, and the
+    // old additionalData.askAiPopupLinks map). The filter targets only
+    // docs that still carry them — already-clean decks are a no-op.
+    // Skipped when this push touched no decks because the cleanup is
+    // tied to "this cycle modified some deck doc" semantics; a pure
+    // card / popup push leaves deck docs untouched.
+    if (byType[entityTypes.DECK].length > 0)
+    {
+        try
+        {
+            await SyncQueryEngine.pruneLegacyDeckFields(userId);
+        }
+        catch (pruneError)
+        {
+            // Don't fail the sync over a cleanup; the legacy fields
+            // are just bloat, not correctness-affecting.
+            console.warn(`[Sync] pruneLegacyDeckFields skipped: ${pruneError?.message || pruneError}`);
+        }
+    }
 
     // ===================== INTERMEDIATE CHUNK — skip pull =====================
     if (!isLastChunk)
@@ -154,10 +177,11 @@ async function handleSync(request, response)
 
         const pullConfig =
         [
-            { collection: DatabaseConstants.DECKS_COLLECTION,           entityType: entityTypes.DECK,           name: "Deck",          maxPull: MAX_PULL_DECKS          },
-            { collection: DatabaseConstants.CARDS_COLLECTION,           entityType: entityTypes.CARD,           name: "Card",          maxPull: MAX_PULL_PER_COLLECTION },
-            { collection: DatabaseConstants.STUDY_MATERIALS_COLLECTION, entityType: entityTypes.STUDY_MATERIAL, name: "StudyMaterial", maxPull: MAX_PULL_PER_COLLECTION },
-            { collection: DatabaseConstants.MOCK_TESTS_COLLECTION,      entityType: entityTypes.MOCK_TEST,      name: "MockTest",      maxPull: MAX_PULL_PER_COLLECTION }
+            { collection: DatabaseConstants.DECKS_COLLECTION,             entityType: entityTypes.DECK,              name: "Deck",          maxPull: MAX_PULL_DECKS          },
+            { collection: DatabaseConstants.CARDS_COLLECTION,             entityType: entityTypes.CARD,              name: "Card",          maxPull: MAX_PULL_PER_COLLECTION },
+            { collection: DatabaseConstants.STUDY_MATERIALS_COLLECTION,   entityType: entityTypes.STUDY_MATERIAL,    name: "StudyMaterial", maxPull: MAX_PULL_PER_COLLECTION },
+            { collection: DatabaseConstants.MOCK_TESTS_COLLECTION,        entityType: entityTypes.MOCK_TEST,         name: "MockTest",      maxPull: MAX_PULL_PER_COLLECTION },
+            { collection: DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION, entityType: entityTypes.ASK_AI_POPUP_LINK, name: "PopupLink",     maxPull: MAX_PULL_PER_COLLECTION }
         ];
 
         const lastSyncDate = new Date(lastSync);

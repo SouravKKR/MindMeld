@@ -1,0 +1,61 @@
+{
+    "name": "ReleaseNote",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "version":
+        {
+            "datatype": "string",
+            "defaultValue": "",
+            "maxLength": 32
+        },
+        "versionSortKey":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "title":
+        {
+            "datatype": "string",
+            "minLength": 1,
+            "maxLength": 256
+        },
+        "contentHtml":
+        {
+            "datatype": "string",
+            "defaultValue": "",
+            "maxLength": 200000
+        },
+        "releaseDate":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "createdAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "updatedAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "createdBy":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "test":
+        {
+            "datatype": "boolean",
+            "defaultValue": false
+        }
+    }
+}

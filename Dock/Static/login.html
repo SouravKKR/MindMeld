@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MindMeld — Sign in</title>
+
+    <link rel="stylesheet" href="./CommonStyles/Theme.css">
+    <link rel="stylesheet" href="./Pages/Login/Styles/LoginPage.css">
+
+    <!-- jsPDF is loaded as a plain (non-module) script so the bundler
+         leaves it alone. LegalDocumentPdfRenderer reads window.jspdf.jsPDF
+         at the moment the user clicks a legal link, so it only matters
+         that the global is present by then. -->
+    <script src="./ThirdParty/JsPdf/jspdf.umd.min.js"></script>
+
+    <script src="./CommonComponents/CopyrightNotice.js" type="module"></script>
+    <script src="./Pages/Login/LoginPage.js" type="module"></script>
+</head>
+<body>
+    <login-page></login-page>
+</body>
+</html>

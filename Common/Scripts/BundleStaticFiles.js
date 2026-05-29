@@ -4,19 +4,29 @@ const esbuild = require('esbuild');
 
 class StaticBundler
 {
-    static JAVASCRIPT_BUNDLE_FILENAME = 'Bundle.js';
-    static CSS_BUNDLE_FILENAME = 'Bundle.css';
     static ENTRY_FILENAME = '.bundle-entry.js';
     static SKIPPED_TOP_LEVEL_DIRECTORIES = new Set(['ThirdParty']);
     static DELETABLE_EXTENSIONS = new Set(['.js', '.css']);
 
+    // Each HTML entry point gets its own pair of bundles. The login shell
+    // lives outside the SPA so unauthenticated visitors download only the
+    // tiny LoginBundle.* pair instead of the full Bundle.* SPA. Add a
+    // future shell by appending another { htmlFileName, javascriptBundleName,
+    // cssBundleName } entry here.
+    static HTML_ENTRY_POINTS = [
+        { htmlFileName: 'index.html', javascriptBundleName: 'Bundle.js',      cssBundleName: 'Bundle.css' },
+        { htmlFileName: 'login.html', javascriptBundleName: 'LoginBundle.js', cssBundleName: 'LoginBundle.css' },
+    ];
+
     constructor(staticDirectory)
     {
         this.staticDirectory = staticDirectory;
-        this.indexHtmlPath = path.join(staticDirectory, 'index.html');
-        this.javascriptBundlePath = path.join(staticDirectory, StaticBundler.JAVASCRIPT_BUNDLE_FILENAME);
-        this.cssBundlePath = path.join(staticDirectory, StaticBundler.CSS_BUNDLE_FILENAME);
         this.entryPath = path.join(staticDirectory, StaticBundler.ENTRY_FILENAME);
+
+        // Absolute paths of every bundle file produced this run. The
+        // post-bundle source-sweep skips these so we don't delete our
+        // own outputs.
+        this.preservedBundlePaths = new Set();
     }
 
     async run()
@@ -27,22 +37,57 @@ class StaticBundler
             process.exit(1);
         }
 
-        if (!fs.existsSync(this.indexHtmlPath))
+        const startTime = Date.now();
+
+        let totalScriptEntryCount = 0;
+        let totalStylesheetEntryCount = 0;
+        let processedEntryCount = 0;
+
+        for (const entry of StaticBundler.HTML_ENTRY_POINTS)
         {
-            console.error(`index.html not found at ${this.indexHtmlPath}`);
+            const htmlPath = path.join(this.staticDirectory, entry.htmlFileName);
+
+            if (!fs.existsSync(htmlPath))
+            {
+                // Each shell is optional — skip silently so adding a new
+                // shell only to Common/ (without yet writing the html in
+                // Main/) doesn't fail the build.
+                continue;
+            }
+
+            console.log(`Bundling ${entry.htmlFileName}...`);
+
+            const counts = await this.bundleEntryPoint(htmlPath, entry);
+            totalScriptEntryCount     += counts.scriptCount;
+            totalStylesheetEntryCount += counts.stylesheetCount;
+            processedEntryCount++;
+        }
+
+        if (processedEntryCount === 0)
+        {
+            console.error('No HTML entry points were found to bundle.');
             process.exit(1);
         }
 
-        const startTime = Date.now();
-        console.log('Bundling Dock/Static/ entry-point modules...');
+        const deletedCount = this.deleteEntryPointSources();
+        const removedDirectoryCount = this.removeEmptyDirectories();
 
-        const originalHtml = fs.readFileSync(this.indexHtmlPath, 'utf8');
+        const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log(`Done. Bundled ${processedEntryCount} entry point(s): ${totalScriptEntryCount} JS entry(ies) + ${totalStylesheetEntryCount} CSS file(s), deleted ${deletedCount} now-unused source file(s), pruned ${removedDirectoryCount} empty director(ies) in ${elapsedSeconds}s.`);
+    }
+
+    async bundleEntryPoint(htmlPath, entry)
+    {
+        const javascriptBundlePath = path.join(this.staticDirectory, entry.javascriptBundleName);
+        const cssBundlePath        = path.join(this.staticDirectory, entry.cssBundleName);
+
+        const originalHtml = fs.readFileSync(htmlPath, 'utf8');
         const moduleScriptSources = this.extractRelativeModuleScriptSources(originalHtml);
-        const stylesheetSources = this.extractRelativeStylesheetSources(originalHtml);
+        const stylesheetSources   = this.extractRelativeStylesheetSources(originalHtml);
 
         if (moduleScriptSources.length === 0)
         {
-            console.error('No relative type="module" scripts found in index.html to bundle.');
+            console.error(`No relative type="module" scripts found in ${entry.htmlFileName} to bundle.`);
             process.exit(1);
         }
 
@@ -50,7 +95,7 @@ class StaticBundler
 
         try
         {
-            await this.buildJavascriptBundle();
+            await this.buildJavascriptBundle(javascriptBundlePath);
         }
         finally
         {
@@ -60,20 +105,25 @@ class StaticBundler
             }
         }
 
+        this.preservedBundlePaths.add(javascriptBundlePath);
+
         if (stylesheetSources.length > 0)
         {
             const bundledCss = this.buildCssBundle(stylesheetSources);
-            fs.writeFileSync(this.cssBundlePath, bundledCss, 'utf8');
+            fs.writeFileSync(cssBundlePath, bundledCss, 'utf8');
+            this.preservedBundlePaths.add(cssBundlePath);
         }
 
-        const rewrittenHtml = this.rewriteIndexHtml(originalHtml, moduleScriptSources, stylesheetSources);
-        fs.writeFileSync(this.indexHtmlPath, rewrittenHtml, 'utf8');
+        const rewrittenHtml = this.rewriteHtml(
+            originalHtml,
+            moduleScriptSources,
+            stylesheetSources,
+            entry.javascriptBundleName,
+            entry.cssBundleName
+        );
+        fs.writeFileSync(htmlPath, rewrittenHtml, 'utf8');
 
-        const deletedCount = this.deleteEntryPointSources();
-        const removedDirectoryCount = this.removeEmptyDirectories();
-
-        const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log(`Done. Bundled ${moduleScriptSources.length} JS entry(ies) + ${stylesheetSources.length} CSS file(s), deleted ${deletedCount} now-unused source file(s), pruned ${removedDirectoryCount} empty director(ies) in ${elapsedSeconds}s.`);
+        return { scriptCount: moduleScriptSources.length, stylesheetCount: stylesheetSources.length };
     }
 
     extractRelativeModuleScriptSources(html)
@@ -121,14 +171,14 @@ class StaticBundler
         return './' + sourceUrl;
     }
 
-    async buildJavascriptBundle()
+    async buildJavascriptBundle(javascriptBundlePath)
     {
         await esbuild.build({
             entryPoints: [this.entryPath],
             bundle: true,
             format: 'esm',
             target: 'es2022',
-            outfile: this.javascriptBundlePath,
+            outfile: javascriptBundlePath,
             sourcemap: false,
             minify: true,
             legalComments: 'none',
@@ -247,7 +297,7 @@ class StaticBundler
         return resolved.join('/');
     }
 
-    rewriteIndexHtml(originalHtml, moduleScriptSources, stylesheetSources)
+    rewriteHtml(originalHtml, moduleScriptSources, stylesheetSources, javascriptBundleName, cssBundleName)
     {
         const escapedScriptSources = moduleScriptSources.map(source => this.escapeRegex(source));
         const moduleTagRegex = new RegExp(
@@ -270,15 +320,15 @@ class StaticBundler
         const headCloseIndex = stripped.search(/<\/head>/i);
         if (headCloseIndex === -1)
         {
-            throw new Error('Could not locate </head> in index.html to inject bundle tag.');
+            throw new Error('Could not locate </head> to inject bundle tag.');
         }
 
         const bundleTags = [];
         if (stylesheetSources.length > 0)
         {
-            bundleTags.push(`    <link rel="stylesheet" href="./${StaticBundler.CSS_BUNDLE_FILENAME}">`);
+            bundleTags.push(`    <link rel="stylesheet" href="./${cssBundleName}">`);
         }
-        bundleTags.push(`    <script src="./${StaticBundler.JAVASCRIPT_BUNDLE_FILENAME}" type="module"></script>`);
+        bundleTags.push(`    <script src="./${javascriptBundleName}" type="module"></script>`);
         const injection = '\n' + bundleTags.join('\n') + '\n';
 
         return stripped.slice(0, headCloseIndex) + injection + stripped.slice(headCloseIndex);
@@ -313,7 +363,7 @@ class StaticBundler
                     {
                         continue;
                     }
-                    if (entryPath === this.javascriptBundlePath || entryPath === this.cssBundlePath)
+                    if (this.preservedBundlePaths.has(entryPath))
                     {
                         continue;
                     }

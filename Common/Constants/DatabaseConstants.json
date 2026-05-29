@@ -11,6 +11,7 @@
     "DELETIONS_TTL_DAYS": 90,
     "STUDY_MATERIALS_COLLECTION": "studyMaterials",
     "MOCK_TESTS_COLLECTION": "mockTests",
+    "ASK_AI_POPUP_LINKS_COLLECTION": "askAiPopupLinks",
     "FIGURES_COLLECTION": "figures",
     "GENERATION_TEMPLATES_COLLECTION": "generationTemplates",
     "LEGAL_DOCUMENTS_COLLECTION": "legalDocuments",
@@ -23,5 +24,7 @@
     "BUNDLE_DISCOUNTS_COLLECTION": "bundleDiscounts",
     "SCREENSHOT_EVENTS_COLLECTION": "screenshotEvents",
     "TASK_HISTORY_COLLECTION": "taskHistory",
-    "ADMIN_EMAILS_COLLECTION": "adminEmails"
+    "ADMIN_EMAILS_COLLECTION": "adminEmails",
+    "OTP_REQUESTS_COLLECTION": "otpRequests",
+    "RELEASE_NOTES_COLLECTION": "releaseNotes"
 }

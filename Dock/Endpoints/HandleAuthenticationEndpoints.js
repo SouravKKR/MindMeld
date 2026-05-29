@@ -9,6 +9,8 @@ const { handleListDevices } = require("./Authentication/HandleListDevices");
 const { handleSignOutDevice } = require("./Authentication/HandleSignOutDevice");
 const { handleDeviceHeartbeat } = require("./Authentication/HandleDeviceHeartbeat");
 const { handleRegisterDevice } = require("./Authentication/HandleRegisterDevice");
+const { handleRequestOtp } = require("./Authentication/HandleRequestOtp");
+const { handleVerifyOtp } = require("./Authentication/HandleVerifyOtp");
 const { ensureLogin } = require("./Plugins/EnsureLogin");
 
 function handleAuthenticationEndpoints(server)
@@ -94,6 +96,22 @@ function handleAuthenticationEndpoints(server)
         handler: wrap(handleDeviceHeartbeat),
         method: PacketronRequestMethod.POST,
         plugins: [ensureLogin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Auth/RequestOtp`,
+        handler: wrap(handleRequestOtp),
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST
+    });
+
+    server.handle
+    ({
+        routePath: `/Auth/VerifyOtp`,
+        handler: wrap(handleVerifyOtp),
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST
     });
 }
 

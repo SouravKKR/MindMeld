@@ -5,3 +5,4 @@ class EntityTypes(IntEnum):
     CARD = 1
     STUDY_MATERIAL = 2
     MOCK_TEST = 3
+    ASK_AI_POPUP_LINK = 4

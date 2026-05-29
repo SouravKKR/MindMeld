@@ -1,8 +1,9 @@
 Study material lesson:
 {material_excerpt}
-Additional instructions (optional): {user_query}
+Highlighted fragment: "{selected_text}"
+{user_query_block}
 
-Extract every meaningful technical term from this lesson and produce a tight glossary. Skip everyday words — only include terms a learner would actually need to look up. Order by importance (most central terms first), not alphabetically.
+Produce a tight glossary scoped to the HIGHLIGHTED FRAGMENT. Define every meaningful technical term that appears INSIDE the fragment, plus any closely-related vocabulary the learner would need to actually understand the fragment. Skip everyday words. Skip terms from the wider lesson that are not directly relevant to the fragment. Order by importance (most central terms first), not alphabetically.
 
 Output the glossary as a single &lt;ul&gt; with one &lt;li&gt; per entry. Each &lt;li&gt; contains the term wrapped in &lt;strong&gt;, an em-dash separator, and a single-sentence plain-language definition. Example:
 
@@ -11,6 +12,6 @@ Output the glossary as a single &lt;ul&gt; with one &lt;li&gt; per entry. Each &
   <li><strong>ATP</strong> — adenosine triphosphate, the energy-carrying molecule cells use to power chemical reactions.</li>
 </ul>
 
-If the lesson has no specialised vocabulary worth glossing, output a single &lt;p&gt; saying so plainly — do not pad with trivial entries.
+If the highlighted fragment has no specialised vocabulary worth glossing, output a single &lt;p&gt; saying so plainly — do not pad with trivial entries.
 
 {information_source_block}{html_style_block}

@@ -1,3 +1,4 @@
+import math
 import os
 import json
 import httpx
@@ -578,44 +579,22 @@ class GenerateMockTests(Workflow):
             print(f"[GenerateMockTests] Using configured duration {configured_duration} min (settings override).")
         await self.__update_progress(0.30)
 
-        # ── 3. Calculate total questions and write Blueprint.json ──────────────
-        #       Written BEFORE topic loading — MoveToDatabase handles empty pools.
-        num_tests         = self.__settings.get_number_of_tests()
-        total_questions   = blueprint["totalQuestions"]
-        repeat_chance     = blueprint["questionsRepeatChance"]
-        raw_total_to_generate = total_questions + round(
+        # ── 3. Compute baseline per-test totals (Blueprint.json is written
+        #       AFTER per-deck pool sizing in step 5, so the recursive flag
+        #       and the final pool size land on disk together).
+        num_tests             = self.__settings.get_number_of_tests()
+        total_questions       = blueprint["totalQuestions"]
+        repeat_chance         = blueprint["questionsRepeatChance"]
+        required_per_deck     = total_questions + round(
             total_questions * (num_tests - 1) * (1.0 - repeat_chance)
         )
-        pool_ceiling      = max(total_questions, total_questions * GenerateMockTests.MAX_POOL_TO_PER_TEST_RATIO)
-        total_to_generate = min(raw_total_to_generate, pool_ceiling)
-
-        if total_to_generate < raw_total_to_generate:
-            log(
-                f"[GenerateMockTests] Pool size capped: requested {raw_total_to_generate} unique "
-                f"questions, generating {total_to_generate} ({GenerateMockTests.MAX_POOL_TO_PER_TEST_RATIO}x "
-                f"per-test). Tests share questions via repeat-fill above this cap."
-            )
+        recursive             = bool(self.__settings.get_recursive())
+        skip_root             = bool(self.__settings.get_skip_root_deck())
 
         log(
             f"[GenerateMockTests] {num_tests} test(s), {total_questions} Q each, "
-            f"repeatChance={repeat_chance:.2f} -> generating {total_to_generate} total questions."
+            f"repeatChance={repeat_chance:.2f}, recursive={recursive}, skipRootDeck={skip_root}."
         )
-
-        blueprint_data = {
-            **blueprint,
-            "numberOfTests":            num_tests,
-            "totalQuestionsToGenerate": total_to_generate,
-            "examName":                 self.__exam_name,
-            "subjectName":              self.__subject_name,
-            "instructions":             instructions,
-            "duration":                 duration,
-        }
-
-        blueprint_path = join_path(
-            "/", PersistenceConstants.TASKS_DIRECTORY, main_task_id, PersistenceConstants.BLUEPRINT_FILE_NAME
-        )
-        await Persistence.write(blueprint_path, json.dumps(blueprint_data, ensure_ascii=False))
-        log(f"[GenerateMockTests] Blueprint.json written to {blueprint_path}")
         await flush_log()
 
         await self.__update_progress(0.38)
@@ -665,7 +644,8 @@ class GenerateMockTests(Workflow):
                 log(f"[GenerateMockTests] Failed to read mapped topic '{topic_str}' at '{file_path}': {load_error}")
                 continue
 
-            topic_entries.append({"path": file_path, "weight": weight})
+            topic_chain = list(hierarchy) + [topic_str]
+            topic_entries.append({"path": file_path, "weight": weight, "chain": topic_chain})
 
         if skipped_missing_count > 0:
             log(f"[GenerateMockTests] Skipped {skipped_missing_count} leaf topic(s) with no mapped content (expected — content-less topics are not written by MapTopicsWithContent).")
@@ -688,21 +668,128 @@ class GenerateMockTests(Workflow):
 
         await self.__update_progress(0.45)
 
-        # ── 5. Allocate total questions evenly across topics ───────────────────
-        # Each topic gets an equal share of the question budget regardless
-        # of content length — small but important topics no longer starve.
-        # LRM handles the non-divisible remainder fairly.
+        # ── 5. Allocate per-leaf question counts ───────────────────────────────
+        # Non-recursive: distribute the standard pool evenly across all leaves
+        # (matches the prior behavior). Recursive: every target deck (parent +
+        # each subdeck in the generated tree, minus the root when skip-root is
+        # on) must end up with at least `required_per_deck` questions. For each
+        # leaf, take the max requirement across the decks that contain it so
+        # the smallest-leaf-count deck is satisfied.
         topic_paths_in_order = [entry["path"] for entry in topic_entries]
-        topic_equal_weights = [1.0] * len(topic_entries)
-        topic_question_counts = self.__largest_remainder_allocate(topic_equal_weights, total_to_generate)
+        topic_chains_in_order = [entry["chain"] for entry in topic_entries]
+
+        if recursive:
+            target_deck_prefixes = set()
+            target_deck_prefixes.add(())  # () represents the parent (root) deck
+
+            for chain in topic_chains_in_order:
+                for prefix_length in range(1, len(chain) + 1):
+                    target_deck_prefixes.add(tuple(chain[:prefix_length]))
+
+            if skip_root:
+                target_deck_prefixes.discard(())
+
+            leaves_under_count = {}
+            for deck_prefix in target_deck_prefixes:
+                prefix_length = len(deck_prefix)
+                if prefix_length == 0:
+                    leaves_under_count[deck_prefix] = len(topic_chains_in_order)
+                else:
+                    leaves_under_count[deck_prefix] = sum(
+                        1 for chain in topic_chains_in_order
+                        if len(chain) >= prefix_length and tuple(chain[:prefix_length]) == deck_prefix
+                    )
+
+            per_leaf_counts = []
+            for chain in topic_chains_in_order:
+                max_required = 0
+                for deck_prefix in target_deck_prefixes:
+                    prefix_length = len(deck_prefix)
+                    contains_leaf = (
+                        prefix_length == 0
+                        or (len(chain) >= prefix_length and tuple(chain[:prefix_length]) == deck_prefix)
+                    )
+                    if not contains_leaf:
+                        continue
+                    deck_leaf_count = leaves_under_count[deck_prefix]
+                    if deck_leaf_count == 0:
+                        continue
+                    needed_for_this_deck = math.ceil(required_per_deck / deck_leaf_count)
+                    if needed_for_this_deck > max_required:
+                        max_required = needed_for_this_deck
+                per_leaf_counts.append(max(1, max_required))
+
+            raw_total_to_generate = sum(per_leaf_counts)
+            num_target_decks = max(1, len(target_deck_prefixes))
+            pool_ceiling = max(
+                total_questions,
+                total_questions * GenerateMockTests.MAX_POOL_TO_PER_TEST_RATIO * num_target_decks,
+            )
+
+            if raw_total_to_generate > pool_ceiling:
+                scale_factor = pool_ceiling / raw_total_to_generate
+                per_leaf_counts = [max(1, int(count * scale_factor)) for count in per_leaf_counts]
+                log(
+                    f"[GenerateMockTests] Pool size capped (recursive): wanted {raw_total_to_generate} "
+                    f"unique questions to cover {num_target_decks} target deck(s), scaling down to fit "
+                    f"the {pool_ceiling}-question safety ceiling. Tests share questions via repeat-fill "
+                    f"above this cap."
+                )
+
+            total_to_generate = sum(per_leaf_counts)
+            topic_question_counts = per_leaf_counts
+
+            log(
+                f"[GenerateMockTests] Recursive allocation: {num_target_decks} target deck(s), "
+                f"requiredPerDeck={required_per_deck}, totalToGenerate={total_to_generate}, "
+                f"per-leaf min={min(per_leaf_counts) if per_leaf_counts else 0}, "
+                f"max={max(per_leaf_counts) if per_leaf_counts else 0}."
+            )
+        else:
+            raw_total_to_generate = required_per_deck
+            pool_ceiling = max(total_questions, total_questions * GenerateMockTests.MAX_POOL_TO_PER_TEST_RATIO)
+            total_to_generate = min(raw_total_to_generate, pool_ceiling)
+
+            if total_to_generate < raw_total_to_generate:
+                log(
+                    f"[GenerateMockTests] Pool size capped: requested {raw_total_to_generate} unique "
+                    f"questions, generating {total_to_generate} ({GenerateMockTests.MAX_POOL_TO_PER_TEST_RATIO}x "
+                    f"per-test). Tests share questions via repeat-fill above this cap."
+                )
+
+            topic_equal_weights = [1.0] * len(topic_entries)
+            topic_question_counts = self.__largest_remainder_allocate(topic_equal_weights, total_to_generate)
+
+            log(
+                f"[GenerateMockTests] Allocating {total_to_generate} question(s) evenly across "
+                f"{len(topic_entries)} topic(s) (LRM): "
+                f"min={min(topic_question_counts) if topic_question_counts else 0}, "
+                f"max={max(topic_question_counts) if topic_question_counts else 0}."
+            )
+
         topic_question_count_by_path = dict(zip(topic_paths_in_order, topic_question_counts))
 
-        log(
-            f"[GenerateMockTests] Allocating {total_to_generate} question(s) evenly across "
-            f"{len(topic_entries)} topic(s) (LRM): "
-            f"min={min(topic_question_counts) if topic_question_counts else 0}, "
-            f"max={max(topic_question_counts) if topic_question_counts else 0}."
+        # ── 5b. Persist Blueprint.json with the FINAL totals + recursive flags ─
+        # MoveToDatabase reads this to know how many tests to assemble per deck
+        # and whether to bucket questions across the deck subtree.
+        blueprint_data = {
+            **blueprint,
+            "numberOfTests":            num_tests,
+            "totalQuestionsToGenerate": total_to_generate,
+            "examName":                 self.__exam_name,
+            "subjectName":              self.__subject_name,
+            "instructions":             instructions,
+            "duration":                 duration,
+            "recursive":                recursive,
+            "skipRootDeck":             skip_root,
+        }
+
+        blueprint_path = join_path(
+            "/", PersistenceConstants.TASKS_DIRECTORY, main_task_id, PersistenceConstants.BLUEPRINT_FILE_NAME
         )
+        await Persistence.write(blueprint_path, json.dumps(blueprint_data, ensure_ascii=False))
+        log(f"[GenerateMockTests] Blueprint.json written to {blueprint_path}")
+        await flush_log()
 
         # ── 6. Balance topics into worker groups ───────────────────────────────
         groups           = self.__balance_into_groups(topic_entries, self.NUM_GROUPS)

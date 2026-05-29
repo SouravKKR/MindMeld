@@ -151,18 +151,46 @@ class PrivateMemberMangler
     }
 }
 
+function findBundleFiles(staticDirectory)
+{
+    // Every top-level *Bundle.js in Dock/Static/ is an entry-point bundle
+    // produced by BundleStaticFiles.js. Discovering them dynamically means
+    // adding a new HTML entry point (e.g. login.html → LoginBundle.js)
+    // only needs a single change in BundleStaticFiles.js — the mangler
+    // automatically picks the new bundle up.
+    if (!fs.existsSync(staticDirectory))
+    {
+        return [];
+    }
+
+    return fs.readdirSync(staticDirectory, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith('Bundle.js'))
+        .map((entry) => path.join(staticDirectory, entry.name));
+}
+
 (() =>
 {
-    const bundlePath = path.join(__dirname, '..', '..', 'Dock', 'Static', 'Bundle.js');
-    const mangler = new PrivateMemberMangler(bundlePath);
-    try
+    const staticDirectory = path.join(__dirname, '..', '..', 'Dock', 'Static');
+    const bundlePaths = findBundleFiles(staticDirectory);
+
+    if (bundlePaths.length === 0)
     {
-        mangler.run();
-    }
-    catch (error)
-    {
-        console.error('Private-member mangling failed:');
-        console.error(error);
+        console.error(`No *Bundle.js files found in ${staticDirectory} to mangle.`);
         process.exit(1);
+    }
+
+    for (const bundlePath of bundlePaths)
+    {
+        const mangler = new PrivateMemberMangler(bundlePath);
+        try
+        {
+            mangler.run();
+        }
+        catch (error)
+        {
+            console.error(`Private-member mangling failed for ${path.basename(bundlePath)}:`);
+            console.error(error);
+            process.exit(1);
+        }
     }
 })();

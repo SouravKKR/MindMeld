@@ -14,17 +14,25 @@ from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Classes.WebScraping.WebScraper import WebScraper
 from Globals.Constants.DatabaseConstants import DatabaseConstants
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
+from Globals.Enumerations.TopicStrength import TopicStrength
+from Globals.Enumerations.CuratedBatchReviewStates import CuratedBatchReviewStates
+from Globals.Classes.Analysis.CuratedStudyMaterialFields import CuratedStudyMaterialFields
 
 
 class GenerateCuratedStudyMaterial(Workflow):
     """
-    Per-weak-topic curated study material generator. Combines best-effort
-    vector search across the user's textbook embeddings with a live web
-    search, hands the merged context to Gemini 3.1-flash-lite (with
-    grounding enabled), and persists a new StudyMaterial under the deck
-    whose weakness triggered the run. The new material's id is appended
-    to the deck's additionalData.curatedStudyMaterialIds so the home page
-    can surface it as a "curated" item.
+    Per-topic curated study material generator. Runs as a child task
+    spawned by AnalyzeDeckPerformance for each WEAK or VOLATILE topic the
+    user needs help on. Combines best-effort vector search across the
+    user's textbook embeddings with a live web search, hands the merged
+    context to Gemini 3.1-flash-lite (with grounding enabled), and
+    persists a new StudyMaterial under the deck.
+
+    Each curated material self-describes via its `additionalData`:
+    `bCurated`, `topicName`, `topicStrength`, `generatedForAnalysisAt`
+    (the batch tag), and `batchReviewState`. The previous batch's
+    materials for this deck are demoted from LIVE to PENDING_REVIEW so
+    the on-login batch-review modal can surface them next time.
     """
 
     MODEL_NAME                                     = "gemini-3.1-flash-lite"
@@ -35,12 +43,9 @@ class GenerateCuratedStudyMaterial(Workflow):
     WEB_SEARCH_RESULT_LIMIT                        = 5
     WEB_CONTENT_SNIPPET_CHAR_LIMIT                 = 600
     MAX_CONTEXT_CHARACTERS                         = 14000
-    CURATED_STUDY_MATERIAL_IDS_FIELD               = "curatedStudyMaterialIds"
-    ARCHIVED_CURATED_STUDY_MATERIAL_IDS_FIELD      = "archivedCuratedStudyMaterialIds"
-    PENDING_BATCH_REVIEW_MATERIAL_IDS_FIELD        = "pendingBatchReviewMaterialIds"
     STUDY_MATERIAL_STANDARD_DETAIL_LEVEL           = 1
 
-    SYSTEM_PROMPT = (
+    SYSTEM_PROMPT_WEAK = (
         "You are a patient tutor writing a foundational study material on a topic the student is weak in. "
         "Start from the basics. Define every term. Walk through worked examples. If a formula matters, "
         "show it clearly and explain each symbol. If a diagram would help, describe it precisely in "
@@ -49,15 +54,40 @@ class GenerateCuratedStudyMaterial(Workflow):
         "<em>). Keep tone warm and encouraging."
     )
 
+    SYSTEM_PROMPT_VOLATILE = (
+        "You are a patient tutor writing a clarifying study material on a topic the student keeps flipping "
+        "on — they sometimes recall it correctly and sometimes don't, which means a prerequisite concept "
+        "or a confusable neighbouring concept is undermining their recall. Surface the cluster of related "
+        "ideas this topic sits in so the student can tell them apart, then re-derive the topic itself from "
+        "those building blocks. Be explicit about common confusions (e.g. 'this is NOT to be confused with "
+        "X — the difference is …'). Include at least one worked example whose solution depends on getting "
+        "this distinction right. Output a single self-contained HTML fragment (no <html> or <body> "
+        "wrappers) with semantic tags (<h2>, <h3>, <p>, <ul>, <ol>, <pre>, <strong>, <em>). Keep tone "
+        "warm and encouraging."
+    )
+
     def __init__(self, payload: dict = {}):
         super().__init__(payload)
-        self.__deck_id        = payload.get("deckId", "")
-        self.__user_id        = payload.get("userId", "")
-        self.__topic_name     = payload.get("topicName", "")
-        self.__weakness_index = int(payload.get("weaknessIndex", 0))
-        self.__reason         = payload.get("reason", "")
-        deck_chain_payload    = payload.get("deckChain", [])
-        self.__deck_chain     = [str(name) for name in deck_chain_payload if isinstance(name, str) and name.strip()] if isinstance(deck_chain_payload, list) else []
+        self.__deck_id     = payload.get("deckId", "")
+        self.__user_id     = payload.get("userId", "")
+        self.__topic_name  = payload.get("topicName", "")
+        # Accept either `topicIndex` (new) or `weaknessIndex` (legacy) so
+        # in-flight tasks queued before the rename still apply.
+        topic_index_value = payload.get("topicIndex", payload.get("weaknessIndex", 0))
+        try:
+            self.__topic_index = int(topic_index_value)
+        except (TypeError, ValueError):
+            self.__topic_index = 0
+        self.__reason      = payload.get("reason", "")
+        deck_chain_payload = payload.get("deckChain", [])
+        self.__deck_chain  = [str(name) for name in deck_chain_payload if isinstance(name, str) and name.strip()] if isinstance(deck_chain_payload, list) else []
+        self.__generated_for_analysis_at = payload.get("generatedForAnalysisAt", "") or ""
+
+        topic_strength_raw = payload.get("topicStrength", TopicStrength.WEAK.name)
+        try:
+            self.__topic_strength = TopicStrength[topic_strength_raw] if isinstance(topic_strength_raw, str) else TopicStrength.WEAK
+        except KeyError:
+            self.__topic_strength = TopicStrength.WEAK
 
     async def run(self, args: dict = {}):
         if not self.__deck_id or not self.__user_id or not self.__topic_name:
@@ -73,7 +103,9 @@ class GenerateCuratedStudyMaterial(Workflow):
         study_materials_collection = database[DatabaseConstants.STUDY_MATERIALS_COLLECTION]
         text_embeddings_collection = database[DatabaseConstants.TEXT_EMBEDDINGS_COLLECTION]
 
-        target_deck = await asyncio.to_thread(deck_collection.find_one, {"id": self.__deck_id, "userId": self.__user_id}, {"_id": 0})
+        # Sync-collection docs are wrapped {userId, data: {...},
+        # serverUpdatedAt} — see Dock SyncQueryEngine.bulkUpsert.
+        target_deck = await asyncio.to_thread(deck_collection.find_one, {"data.id": self.__deck_id, "userId": self.__user_id}, {"_id": 0})
         if target_deck is None:
             print(f"[GenerateCuratedStudyMaterial] Deck {self.__deck_id} not found for user {self.__user_id} — exiting.")
             return
@@ -92,26 +124,42 @@ class GenerateCuratedStudyMaterial(Workflow):
         now_iso           = datetime.now(timezone.utc).isoformat()
         now_datetime      = datetime.now(timezone.utc)
 
+        # Sync-collection inserts must be wrapped {userId, data: {...},
+        # serverUpdatedAt} — see Dock SyncQueryEngine.bulkUpsert. The
+        # nested `data` block carries the StudyMaterial payload that
+        # the sync pull will hand straight to the client.
         study_material_document = {
-            "id":               study_material_id,
-            "userId":           self.__user_id,
-            "deckId":           self.__deck_id,
-            "content":          html_content,
-            "syllabusPosition": 0,
-            "detailLevel":      GenerateCuratedStudyMaterial.STUDY_MATERIAL_STANDARD_DETAIL_LEVEL,
-            "lifecycle":
+            "userId":          self.__user_id,
+            "serverUpdatedAt": now_datetime,
+            "data":
             {
-                "creationDate":      now_datetime,
-                "lastModified":      now_datetime,
-                "views":             0,
-                "attempts":          0,
-                "timeSpentInSeconds": 0,
+                "id":               study_material_id,
+                "deckId":           self.__deck_id,
+                "content":          html_content,
+                "syllabusPosition": 0,
+                "detailLevel":      GenerateCuratedStudyMaterial.STUDY_MATERIAL_STANDARD_DETAIL_LEVEL,
+                "lifecycle":
+                {
+                    "creationDate":      now_datetime,
+                    "lastModified":      now_datetime,
+                    "views":             0,
+                    "attempts":          0,
+                    "timeSpentInSeconds": 0,
+                },
+                "additionalData":
+                {
+                    CuratedStudyMaterialFields.B_CURATED:                 True,
+                    CuratedStudyMaterialFields.TOPIC_NAME:                self.__topic_name,
+                    CuratedStudyMaterialFields.TOPIC_STRENGTH:            self.__topic_strength.name,
+                    CuratedStudyMaterialFields.GENERATED_FOR_ANALYSIS_AT: self.__generated_for_analysis_at,
+                    CuratedStudyMaterialFields.BATCH_REVIEW_STATE:        CuratedBatchReviewStates.LIVE.name,
+                },
             },
         }
 
         await asyncio.to_thread(study_materials_collection.insert_one, study_material_document)
 
-        await self.__update_deck_curated_ids(deck_collection, target_deck, study_material_id)
+        await self.__demote_previous_batch(study_materials_collection)
 
         current_task = await TaskManager.get_current_task()
         if current_task is not None:
@@ -226,8 +274,33 @@ class GenerateCuratedStudyMaterial(Workflow):
         assembled_text = "\n\n".join(assembled_blocks)
         return assembled_text[: GenerateCuratedStudyMaterial.MAX_CONTEXT_CHARACTERS]
 
+    @staticmethod
+    def __build_system_prompt(topic_strength: TopicStrength) -> str:
+        """
+        Returns the system prompt appropriate for the topic-strength
+        tier. WEAK topics (foundational gaps) get the patient-tutor
+        prompt; VOLATILE topics (the student keeps flipping on) get the
+        disambiguation-focused prompt that surfaces neighbouring
+        concepts the student confuses. Any unknown tier falls back to
+        the WEAK prompt.
+        """
+        if topic_strength == TopicStrength.VOLATILE:
+            return GenerateCuratedStudyMaterial.SYSTEM_PROMPT_VOLATILE
+        return GenerateCuratedStudyMaterial.SYSTEM_PROMPT_WEAK
+
+    @staticmethod
+    def __build_topic_framing(topic_strength: TopicStrength, topic_name: str) -> str:
+        """
+        Frames the topic line in the user prompt according to tier so the
+        LLM has both the system-level guidance and the per-prompt cue.
+        Keeps the wording aligned with the system prompt's framing.
+        """
+        if topic_strength == TopicStrength.VOLATILE:
+            return f"Topic the student keeps flipping on (volatile / confused): {topic_name}"
+        return f"Topic the student is weak in: {topic_name}"
+
     async def __synthesize_html_content(self, merged_context: str) -> str | None:
-        reason_clause = f"The student has been struggling with this topic — recent flashcard performance suggests: {self.__reason}\n\n" if self.__reason else ""
+        reason_clause = f"Recent flashcard performance suggests: {self.__reason}\n\n" if self.__reason else ""
 
         deck_context_clause = (
             f"This material is for a card in: {' → '.join(self.__deck_chain)}. Keep the topic name and "
@@ -236,9 +309,11 @@ class GenerateCuratedStudyMaterial(Workflow):
             else ""
         )
 
+        topic_framing = GenerateCuratedStudyMaterial.__build_topic_framing(self.__topic_strength, self.__topic_name)
+
         user_prompt = (
             f"{deck_context_clause}"
-            f"Topic the student is weak in: {self.__topic_name}\n\n"
+            f"{topic_framing}\n\n"
             f"{reason_clause}"
             "Write a foundational study material covering this topic. Audience: a student who has the "
             "topic on their syllabus but keeps getting questions wrong. Open with a one-paragraph "
@@ -251,7 +326,7 @@ class GenerateCuratedStudyMaterial(Workflow):
         request = AutomationRequest(
             GenerateCuratedStudyMaterial.MODEL_NAME,
             [
-                AutomationContent(AutomationContentTypes.SYSTEM, GenerateCuratedStudyMaterial.SYSTEM_PROMPT),
+                AutomationContent(AutomationContentTypes.SYSTEM, GenerateCuratedStudyMaterial.__build_system_prompt(self.__topic_strength)),
                 AutomationContent(
                     AutomationContentTypes.TEXT,
                     user_prompt,
@@ -277,39 +352,40 @@ class GenerateCuratedStudyMaterial(Workflow):
 
         return raw_output.strip()
 
-    async def __update_deck_curated_ids(self, deck_collection, target_deck: dict, study_material_id: str) -> None:
-        existing_additional_data = target_deck.get("additionalData") or {}
+    async def __demote_previous_batch(self, study_materials_collection) -> None:
+        """
+        Any curated material on this deck that is still marked LIVE and
+        belongs to an older analysis batch (different
+        `generatedForAnalysisAt`) is demoted to PENDING_REVIEW so the
+        client's on-login batch-review modal can surface it. Materials
+        belonging to the same batch as the one we just inserted are
+        left LIVE — sibling spawns from one analysis run share a batch
+        tag.
 
-        existing_live_ids = existing_additional_data.get(GenerateCuratedStudyMaterial.CURATED_STUDY_MATERIAL_IDS_FIELD)
-        if not isinstance(existing_live_ids, list):
-            existing_live_ids = []
+        Mongo docs are wrapped {userId, data: {...}, serverUpdatedAt}
+        by the sync layer (see SyncQueryEngine.bulkUpsert), so every
+        nested-entity selector needs the `data.` prefix.
+        """
+        b_curated_field      = f"data.additionalData.{CuratedStudyMaterialFields.B_CURATED}"
+        review_state_field   = f"data.additionalData.{CuratedStudyMaterialFields.BATCH_REVIEW_STATE}"
+        batch_tag_field      = f"data.additionalData.{CuratedStudyMaterialFields.GENERATED_FOR_ANALYSIS_AT}"
 
-        existing_pending_review_ids = existing_additional_data.get(GenerateCuratedStudyMaterial.PENDING_BATCH_REVIEW_MATERIAL_IDS_FIELD)
-        if not isinstance(existing_pending_review_ids, list):
-            existing_pending_review_ids = []
+        match_query = {
+            "userId":           self.__user_id,
+            "data.deckId":      self.__deck_id,
+            b_curated_field:    True,
+            review_state_field: CuratedBatchReviewStates.LIVE.name,
+            batch_tag_field:    {"$ne": self.__generated_for_analysis_at},
+        }
 
-        # When a fresh batch lands while a previous batch is still live, the
-        # previous batch is preserved in `pendingBatchReviewMaterialIds` so
-        # the client can prompt the user to archive / keep / delete them.
-        new_pending_review_ids = list(existing_pending_review_ids)
-        for previous_live_id in existing_live_ids:
-            if previous_live_id != study_material_id and previous_live_id not in new_pending_review_ids:
-                new_pending_review_ids.append(previous_live_id)
-
-        new_live_ids = list(existing_live_ids) if study_material_id in existing_live_ids else [*existing_live_ids, study_material_id]
-
-        # Drop the previous-batch ids out of the live list so the home page
-        # only highlights the freshest batch. They remain reachable via the
-        # pending-batch-review modal.
-        new_live_ids = [material_id for material_id in new_live_ids if material_id == study_material_id or material_id not in new_pending_review_ids]
-
+        now_datetime = datetime.now(timezone.utc)
         await asyncio.to_thread(
-            deck_collection.update_one,
-            {"id": self.__deck_id, "userId": self.__user_id},
+            study_materials_collection.update_many,
+            match_query,
             {"$set":
             {
-                f"additionalData.{GenerateCuratedStudyMaterial.CURATED_STUDY_MATERIAL_IDS_FIELD}":          new_live_ids,
-                f"additionalData.{GenerateCuratedStudyMaterial.PENDING_BATCH_REVIEW_MATERIAL_IDS_FIELD}":   new_pending_review_ids,
-                "lifecycle.lastModified":                                                                   datetime.now(timezone.utc),
-            }}
+                review_state_field:            CuratedBatchReviewStates.PENDING_REVIEW.name,
+                "data.lifecycle.lastModified": now_datetime,
+                "serverUpdatedAt":             now_datetime,
+            }},
         )

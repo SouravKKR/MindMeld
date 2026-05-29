@@ -1,1 +1,134 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5117647314462332" crossorigin="anonymous"></script><script src="./ThirdParty/Latex/katex/katex.min.js"></script><script src="./ThirdParty/Latex/katex/contrib/auto-render.min.js"></script><script src="./ThirdParty/JsPdf/jspdf.umd.min.js"></script><script src="https://checkout.razorpay.com/v1/checkout.js"></script><title>MindMeld</title><link rel="stylesheet" href="./Bundle.css"><script src="./Bundle.js" type="module"></script></head><body><initialization-overlay></initialization-overlay><sync-blocking-overlay></sync-blocking-overlay><tutorial-overlay></tutorial-overlay><copyright-notice></copyright-notice></body><script></script></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5117647314462332"
+     crossorigin="anonymous"></script>
+     
+    <!-- CSS Imports -->
+    <link rel="stylesheet" href="./CommonStyles/Theme.css">
+    <link rel="stylesheet" href="./CommonStyles/GeneratedContent.css">
+
+    <link rel="stylesheet" href="./CommonStyles/ContextMenu.css">
+    <link rel="stylesheet" href="./CommonStyles/DialogBox.css">
+    <link rel="stylesheet" href="./CommonStyles/ProgressDialog.css">
+    <link rel="stylesheet" href="./CommonStyles/SyncBlockingDialog.css">
+    <link rel="stylesheet" href="./CommonStyles/SearchableDropdown.css">
+    <link rel="stylesheet" href="./CommonStyles/TemplatePickerDialog.css">
+    <link rel="stylesheet" href="./CommonStyles/DetailLevelPickerDialog.css">
+    <link rel="stylesheet" href="./CommonStyles/EntityPicker.css">
+    <link rel="stylesheet" href="./CommonStyles/HeaderComponent.css">
+    <link rel="stylesheet" href="./CommonStyles/OptionsSidebar.css">
+    <link rel="stylesheet" href="./CommonStyles/TermsAndConditionsDialog.css">
+    <link rel="stylesheet" href="./CommonStyles/DeviceManagementDialog.css">
+    <link rel="stylesheet" href="./CommonStyles/CreateDeckChoiceModal.css">
+    <link rel="stylesheet" href="./CommonStyles/CuratedStudyMaterialBatchReviewDialog.css">
+    <link rel="stylesheet" href="./CommonStyles/TutorialOverlay.css">
+    <link rel="stylesheet" href="./CommonStyles/FullscreenImageViewer.css">
+    <link rel="stylesheet" href="./CommonStyles/LlmTierSelect.css">
+    <link rel="stylesheet" href="./CommonStyles/DrawingCanvasDialog.css">
+    <link rel="stylesheet" href="./CommonStyles/AskAiDialog.css">
+    <link rel="stylesheet" href="./CommonStyles/ReleaseNotesDialog.css">
+    <link rel="stylesheet" href="./Pages/Tutorials/Styles/TutorialsPage.css">
+
+
+    <link rel="stylesheet" href="./Pages/Browser/Styles/BrowserPage.css">
+    <link rel="stylesheet" href="./Pages/Browser/Styles/CardListItem.css">
+
+    <link rel="stylesheet" href="./Pages/CardEditor/Styles/CardEditorPage.css">
+    <link rel="stylesheet" href="./Pages/CardEditor/Styles/RichTextEditor.css">
+
+    <link rel="stylesheet" href="./Pages/StudyMaterialEditor/Styles/StudyMaterialEditorPage.css">
+
+    <link rel="stylesheet" href="./Pages/DeckEditor/Styles/DeckEditorPage.css">
+
+    <link rel="stylesheet" href="./Pages/Home/Styles/HomePage.css">
+    <link rel="stylesheet" href="./Pages/Home/Styles/DeckTile.css">
+    <link rel="stylesheet" href="./Pages/Home/Styles/ProfileComponent.css">
+    <link rel="stylesheet" href="./Pages/Home/Styles/SyncStatusComponent.css">
+    <link rel="stylesheet" href="./Pages/Home/Styles/SignInLegalNoticeComponent.css">
+    <link rel="stylesheet" href="./Pages/Home/Styles/HomeFooterComponent.css">
+    <link rel="stylesheet" href="./Pages/Home/Styles/ActivityPreviewComponent.css">
+
+    <link rel="stylesheet" href="./Pages/Study/Styles/StudyPage.css">
+    <link rel="stylesheet" href="./Pages/Study/Styles/QuestionAnswerSection.css">
+    <link rel="stylesheet" href="./Pages/Study/Styles/StudyMaterial.css">
+    <link rel="stylesheet" href="./Pages/Study/Styles/StudySessionBottomPanel.css">
+    <link rel="stylesheet" href="./Pages/Study/Styles/TextSelectionContextMenu.css">
+    <link rel="stylesheet" href="./Pages/Study/Styles/MockTestPickerModal.css">
+    <link rel="stylesheet" href="./Pages/Study/Styles/MockTestStartDialog.css">
+    <link rel="stylesheet" href="./Pages/Study/Styles/MockTestRunner.css">
+    <link rel="stylesheet" href="./Pages/MockTestAnswerKey/Styles/MockTestAnswerKeyPage.css">
+    <link rel="stylesheet" href="./Pages/MockTestEditor/Styles/MockTestEditorPage.css">
+
+
+    <link rel="stylesheet" href="./Pages/DeckInsights/Styles/MasteryReport.css">
+    <link rel="stylesheet" href="./Pages/DeckInsights/Styles/DeckInsightsPage.css">
+    <link rel="stylesheet" href="./Pages/DeckInsights/Styles/DeckInsights.css">
+    <link rel="stylesheet" href="./Pages/DeckInsights/Styles/TopicInsights.css">
+    <link rel="stylesheet" href="./Pages/DeckInsights/Styles/StudyActivityHeatmap.css">
+
+    <link rel="stylesheet" href="./Pages/AutomaticGeneration/Styles/AutomaticGenerationPage.css">
+    <link rel="stylesheet" href="./Pages/AutomaticGeneration/Styles/FlashcardGenerationFields.css">
+    <link rel="stylesheet" href="./Pages/AutomaticGeneration/Styles/StudyMaterialGenerationFields.css">
+    <link rel="stylesheet" href="./Pages/AutomaticGeneration/Styles/InformationSourceSelector.css">
+    <link rel="stylesheet" href="./Pages/AutomaticGeneration/Styles/InformationSourceCard.css">
+    <link rel="stylesheet" href="./Pages/AutomaticGeneration/Styles/GeneralGenerationFields.css">
+    <link rel="stylesheet" href="./Pages/AutomaticGeneration/Styles/MockTestSectionStructure.css">
+
+
+    <link rel="stylesheet" href="./Pages/About/Styles/MindmeldAboutComponent.css">
+    <link rel="stylesheet" href="./Pages/About/Styles/MindmeldAboutPage.css">
+
+    <link rel="stylesheet" href="./Pages/Progress/Styles/ProgressPage.css">
+    <link rel="stylesheet" href="./Pages/Progress/Styles/GenerationProgressComponent.css">
+
+    <link rel="stylesheet" href="./Pages/Settings/Styles/SettingsPage.css">
+    <link rel="stylesheet" href="./Pages/Settings/Styles/AppearanceSettingsPanel.css">
+    <link rel="stylesheet" href="./Pages/Login/Styles/LoginPage.css">
+    <link rel="stylesheet" href="./Pages/PaidDeckLibrary/Styles/PaidDeckLibraryPage.css">
+    <link rel="stylesheet" href="./Pages/AdminPanel/Styles/AdminPanelPage.css">
+    <link rel="stylesheet" href="./Pages/Activity/Styles/ActivityPage.css">
+    <link rel="stylesheet" href="./ThirdParty/Latex/katex/katex.min.css">
+
+
+    <!-- JS Imports -->
+    <script src="./ThirdParty/Latex/katex/katex.min.js"></script>
+    <script src="./ThirdParty/Latex/katex/contrib/auto-render.min.js"></script>
+    <script src="./ThirdParty/JsPdf/jspdf.umd.min.js"></script>
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <script src="./CommonComponents/InitializationOverlay.js" type="module"></script>
+    <script src="./CommonComponents/CopyrightNotice.js" type="module"></script>
+    <script src="./Globals/Classes/PageNavigator.js" type="module"></script>
+    <script src="./Globals/Events/KeyboardEvents.js" type="module"></script>
+    <script src="./CommonComponents/SyncBlockingOverlay.js" type="module"></script>
+    <script src="./CommonComponents/FullscreenImageViewer.js" type="module"></script>
+    <script src="./CommonComponents/TutorialOverlay.js" type="module"></script>
+    <script src="./Globals/Classes/TermsAndConditionsManager.js" type="module"></script>
+    <script src="./Globals/Classes/Appearance/AppearanceManager.js" type="module"></script>
+    <script src="./Globals/Classes/TutorialBootstrap.js" type="module"></script>
+    <script src="./Pages/PaidDeckLibrary/PaidDeckLibraryPage.js" type="module"></script>
+    <script src="./Pages/AdminPanel/AdminPanelPage.js" type="module"></script>
+    <script src="./Pages/Home/Components/HomeFooterComponent.js" type="module"></script>
+    <script src="./Pages/Home/Components/ActivityPreviewComponent.js" type="module"></script>
+    <script src="./Pages/Activity/ActivityPage.js" type="module"></script>
+    <script src="./Pages/Activity/Components/ActivityEntryComponent.js" type="module"></script>
+    <script src="./Globals/Classes/PaidDeckBootstrap.js" type="module"></script>
+    <script src="./Globals/Classes/Analysis/AutoAnalysisDispatcher.js" type="module"></script>
+    <script src="./Globals/Classes/BrowserLlm/BrowserLlmDownloadBootstrap.js" type="module"></script>
+    <script src="./Globals/Classes/ReleaseNotesBootstrap.js" type="module"></script>
+    <script src="./Pages/Study/Classes/AskAiPopupLink.js" type="module"></script>
+    <script src="./Pages/Study/Classes/AskAiInjectedBlock.js" type="module"></script>
+    <title>MindMeld</title>
+</head>
+<body>
+    <initialization-overlay></initialization-overlay>
+    <sync-blocking-overlay></sync-blocking-overlay>
+    <tutorial-overlay></tutorial-overlay>
+    <copyright-notice></copyright-notice>
+</body>
+<script>
+
+</script>
+</html>

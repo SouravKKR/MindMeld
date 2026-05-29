@@ -102,6 +102,21 @@
         {
             "datatype": "int",
             "defaultValue": 0
+        },
+        "mockTestName":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "recursive":
+        {
+            "datatype": "boolean",
+            "defaultValue": false
+        },
+        "skipRootDeck":
+        {
+            "datatype": "boolean",
+            "defaultValue": false
         }
     },
     "extends": 

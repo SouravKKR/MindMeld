@@ -1,0 +1,42 @@
+Flashcard question: "{question}"
+Flashcard answer: "{answer}"
+{user_query_block}
+
+WHAT A MNEMONIC IS
+A mnemonic is a short silly family-friendly SENTENCE — invented from scratch — whose word INITIALS line up with the first letters of the items in a list, in order. The mnemonic sentence uses everyday vocabulary that has nothing to do with the topic; it works because the silly imagery is easy to remember.
+
+WORKED EXAMPLE
+List to remember: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune.
+Initials: M, V, E, M, J, S, U, N.
+Good mnemonic: "My Very Educated Mother Just Served Us Nuts."
+   M-y → M (Mercury), V-ery → V (Venus), E-ducated → E (Earth),
+   M-other → M (Mars), J-ust → J (Jupiter), S-erved → S (Saturn),
+   U-s → U (Uranus), N-uts → N (Neptune).
+
+WRONG EXAMPLES — DO NOT PRODUCE OUTPUT LIKE THIS
+- "Mercury Venus Earth Mars Jupiter Saturn Uranus Neptune" — that's the list itself, not a mnemonic.
+- "Mercury Vehicle Earth Money Jupiter Salmon Uranus Nuts" — letters match but the words are gibberish, not a real sentence.
+- "Many Very Eager Mountains Jump Slowly Under Night" — words are coherent but the result is meaningless prose with no imagery.
+
+A good mnemonic reads as a real (silly) sentence and conjures a tiny absurd image. The words you pick must be COMMON EVERYDAY WORDS that are NOT the item names themselves and NOT obvious paraphrases of them.
+
+WHEN TO MAKE A MNEMONIC
+- Only for lists with between 3 and 10 NAMED items.
+- Items must have clear short labels (single word or short phrase) — proper names, terms, factor names, step names, principle names, element names, taxonomic ranks, layer / part / type / category names.
+- DO NOT mnemonicise: descriptive adjectives, property values (small/large, slow/fast, high/low, many/few), comparison points between two things, descriptions of when something applies, paraphrased restatements, items that lack clear names (only descriptions).
+- Lists shorter than 3 don't need a mnemonic. Lists longer than 10 won't fit memorably into one sentence — skip them.
+
+OUTPUT FORMAT
+Output ONLY mnemonics. No teaching, no summary, no preamble. Each mnemonic MUST be wrapped in its own <div class="ask-ai-block"> (the wrapper is non-negotiable, even for a single mnemonic). Format:
+
+<div class="ask-ai-block">
+<h3>Short label naming what the list contains</h3>
+<p><strong>M</strong>y <strong>V</strong>ery <strong>E</strong>ducated <strong>M</strong>other <strong>J</strong>ust <strong>S</strong>erved <strong>U</strong>s <strong>N</strong>uts</p>
+<p>Maps to: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune.</p>
+</div>
+
+The first letter of EVERY word in your mnemonic sentence is wrapped in <strong>. The "Maps to:" line lists the original NAMES of the items in order, comma-separated.
+
+If the flashcard contains no list that qualifies (no clear named items, or all candidates fail the constraints above), output a single <p> saying so plainly in one sentence — no <div class="ask-ai-block"> wrapper in that case, and never invent items or substitute descriptions for names.
+
+{information_source_block}{html_style_block}

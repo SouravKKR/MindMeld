@@ -12,6 +12,7 @@ class DatabaseConstants
     static DELETIONS_TTL_DAYS = 90;
     static STUDY_MATERIALS_COLLECTION = 'studyMaterials';
     static MOCK_TESTS_COLLECTION = 'mockTests';
+    static ASK_AI_POPUP_LINKS_COLLECTION = 'askAiPopupLinks';
     static FIGURES_COLLECTION = 'figures';
     static GENERATION_TEMPLATES_COLLECTION = 'generationTemplates';
     static LEGAL_DOCUMENTS_COLLECTION = 'legalDocuments';
@@ -25,6 +26,8 @@ class DatabaseConstants
     static SCREENSHOT_EVENTS_COLLECTION = 'screenshotEvents';
     static TASK_HISTORY_COLLECTION = 'taskHistory';
     static ADMIN_EMAILS_COLLECTION = 'adminEmails';
+    static OTP_REQUESTS_COLLECTION = 'otpRequests';
+    static RELEASE_NOTES_COLLECTION = 'releaseNotes';
 }
 
 module.exports = DatabaseConstants;

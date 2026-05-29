@@ -276,6 +276,11 @@ class SyncQueryEngine
             const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.MOCK_TESTS_COLLECTION);
             await collection.deleteOne({ userId: userId, "data.id": entityId });
         }
+        else if (entityType === entityTypes.ASK_AI_POPUP_LINK)
+        {
+            const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION);
+            await collection.deleteOne({ userId: userId, "data.id": entityId });
+        }
     }
 
     /**
@@ -348,7 +353,14 @@ class SyncQueryEngine
                                     $cond:
                                     {
                                         if:   { $lt: [{ $toDate: { $ifNull: ["$data.lifecycle.lastModified", null] } }, incomingDate] },
-                                        then: data,
+                                        // $literal protects every nested string in `data` from
+                                        // being parsed as a field-path reference. Without it,
+                                        // any user-content string starting with `$` (currency
+                                        // values, LaTeX, regex snippets, etc.) is interpreted
+                                        // as a path; if that path ends with `.` the whole
+                                        // bulkWrite fails with "FieldPath must not end with a
+                                        // '.'." See the LLM-emitted option "$650,000... ." case.
+                                        then: { $literal: data },
                                         else: "$data"
                                     }
                                 },
@@ -369,7 +381,133 @@ class SyncQueryEngine
             };
         });
 
-        await collection.bulkWrite(ops, { ordered: false });
+        try
+        {
+            await collection.bulkWrite(ops, { ordered: false });
+        }
+        catch (bulkWriteError)
+        {
+            // Diagnostic: a single malformed key (trailing dot, empty
+            // string, or other field-name rule violation) anywhere in
+            // ONE incoming entity will fail the whole bulkWrite with
+            // code 40353. Walk every doc that was sent on this batch
+            // and surface the entity id + JSON path of the offending
+            // key so we can fix the source. Always re-throw — this is
+            // observation-only, the upstream behaviour is unchanged.
+            const isBadFieldNameError =
+                bulkWriteError?.code === 40353
+                || /FieldPath must not end with a/.test(bulkWriteError?.errorResponse?.message || "")
+                || /FieldPath must not end with a/.test(bulkWriteError?.message || "");
+
+            if (isBadFieldNameError)
+            {
+                console.error(`[SyncQueryEngine.bulkUpsert] bulkWrite failed with bad-field-name error for collection ${collection.collectionName}. Scanning ${dataArray.length} doc(s) for offending key(s)...`);
+
+                const offendingFindings = [];
+                for (const data of dataArray)
+                {
+                    SyncQueryEngine.#findBadFieldNames(data, "data", offendingFindings, data?.id);
+                }
+
+                if (offendingFindings.length === 0)
+                {
+                    console.error("[SyncQueryEngine.bulkUpsert] No bad keys found by surface scan. Dumping every doc in this batch to a sidecar file for offline inspection:");
+
+                    try
+                    {
+                        const fs = require("fs");
+                        const path = require("path");
+                        const dumpDir = path.join(__dirname, "..", "..", "..", "BadFieldNameDumps");
+                        if (!fs.existsSync(dumpDir))
+                        {
+                            fs.mkdirSync(dumpDir, { recursive: true });
+                        }
+                        const dumpPath = path.join(dumpDir, `${collection.collectionName}-${Date.now()}.json`);
+                        fs.writeFileSync(dumpPath, JSON.stringify(dataArray, null, 2));
+                        console.error(`[SyncQueryEngine.bulkUpsert] Sidecar dump written: ${dumpPath}`);
+                    }
+                    catch (dumpError)
+                    {
+                        console.error(`[SyncQueryEngine.bulkUpsert] Sidecar dump failed: ${dumpError.message}. Falling back to stdout (truncated):`);
+                        for (let docIndex = 0; docIndex < dataArray.length; docIndex++)
+                        {
+                            console.error(`  [doc ${docIndex}] id=${dataArray[docIndex]?.id}: ${JSON.stringify(dataArray[docIndex]).slice(0, 2000)}`);
+                        }
+                    }
+                }
+                else
+                {
+                    for (const finding of offendingFindings)
+                    {
+                        console.error(`  ⚠ entity id=${finding.entityId} path=${finding.path} key=${JSON.stringify(finding.key)} reason=${finding.reason}`);
+                    }
+                }
+            }
+
+            throw bulkWriteError;
+        }
+    }
+
+    /**
+     * Diagnostic walker for bulkUpsert. Recurses through a doc and
+     * collects any property keys that MongoDB will reject as field
+     * names: trailing dot, leading/embedded NUL, empty string, leading
+     * `$`. Logs each finding with a JSON path so the source of the
+     * offending key can be located in the client codebase.
+     *
+     * Plain bookkeeping — no mutation, no throw.
+     */
+    static #findBadFieldNames(value, currentPath, findings, entityId)
+    {
+        if (value === null || typeof value !== "object")
+        {
+            return;
+        }
+
+        if (Array.isArray(value))
+        {
+            for (let index = 0; index < value.length; index++)
+            {
+                SyncQueryEngine.#findBadFieldNames(value[index], `${currentPath}[${index}]`, findings, entityId);
+            }
+            return;
+        }
+
+        for (const key of Object.keys(value))
+        {
+            let reason = null;
+            if (key.length === 0)
+            {
+                reason = "empty-key";
+            }
+            else if (key.endsWith("."))
+            {
+                reason = "trailing-dot";
+            }
+            else if (key.startsWith("$"))
+            {
+                reason = "dollar-prefix";
+            }
+            else if (key.includes("\0"))
+            {
+                reason = "embedded-null";
+            }
+            else if (key.includes("."))
+            {
+                // A dot anywhere in a key turns it into a dotted path under
+                // aggregation-pipeline $set, which can synthesize a trailing
+                // dot if the path interpretation breaks (e.g. `foo..bar` →
+                // empty segment, `foo.` → trailing dot).
+                reason = "embedded-dot";
+            }
+
+            if (reason !== null)
+            {
+                findings.push({ entityId, path: `${currentPath}.${JSON.stringify(key)}`, key, reason });
+            }
+
+            SyncQueryEngine.#findBadFieldNames(value[key], `${currentPath}.${key}`, findings, entityId);
+        }
     }
 
     /**
@@ -403,7 +541,8 @@ class SyncQueryEngine
             [entityTypes.DECK]: DatabaseConstants.DECKS_COLLECTION,
             [entityTypes.CARD]: DatabaseConstants.CARDS_COLLECTION,
             [entityTypes.STUDY_MATERIAL]: DatabaseConstants.STUDY_MATERIALS_COLLECTION,
-            [entityTypes.MOCK_TEST]: DatabaseConstants.MOCK_TESTS_COLLECTION
+            [entityTypes.MOCK_TEST]: DatabaseConstants.MOCK_TESTS_COLLECTION,
+            [entityTypes.ASK_AI_POPUP_LINK]: DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION,
         };
 
         const buildDeletionKey = (entityId, entityType) => `${entityType}::${entityId}`;
@@ -555,7 +694,8 @@ class SyncQueryEngine
             DatabaseConstants.DECKS_COLLECTION,
             DatabaseConstants.CARDS_COLLECTION,
             DatabaseConstants.STUDY_MATERIALS_COLLECTION,
-            DatabaseConstants.MOCK_TESTS_COLLECTION
+            DatabaseConstants.MOCK_TESTS_COLLECTION,
+            DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION,
         ];
 
         for (const collectionName of collectionNames)
@@ -571,6 +711,52 @@ class SyncQueryEngine
         }
 
         return false;
+    }
+
+    /**
+     * Strips legacy fields that the client used to embed inside the
+     * deck doc but no longer ships in toSyncJson:
+     *
+     *   - `data.studyMaterials` — study materials sync via their own
+     *     collection now; embedding them was just dead weight that
+     *     could bloat a deck doc past Mongo's 16 MB limit.
+     *   - `data.additionalData.askAiPopupLinks` — popup records have
+     *     their own collection (askAiPopupLinks) now; leaving the
+     *     legacy map under additionalData would shadow the new
+     *     channel and re-bloat the deck doc on every roundtrip.
+     *
+     * Cheap when no docs match — the `$or`/`$exists` filter is the
+     * gate, and Mongo skips non-matching docs without rewriting them.
+     * Idempotent after the first successful pass on each deck.
+     *
+     * @param {string} userId
+     * @returns {Promise<number>} Count of docs touched.
+     */
+    static async pruneLegacyDeckFields(userId)
+    {
+        const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.DECKS_COLLECTION);
+        const result = await collection.updateMany(
+            {
+                userId: userId,
+                $or:
+                [
+                    { "data.studyMaterials":                 { $exists: true } },
+                    { "data.additionalData.askAiPopupLinks": { $exists: true } }
+                ]
+            },
+            {
+                $unset:
+                {
+                    "data.studyMaterials":                 "",
+                    "data.additionalData.askAiPopupLinks": ""
+                }
+            }
+        );
+        if (result.modifiedCount > 0)
+        {
+            console.log(`[SyncQueryEngine] pruneLegacyDeckFields — cleaned ${result.modifiedCount} deck doc(s) for user ${userId}.`);
+        }
+        return result.modifiedCount;
     }
 
     /**

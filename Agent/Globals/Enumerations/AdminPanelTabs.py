@@ -6,3 +6,4 @@ class AdminPanelTabs(IntEnum):
     BUNDLES = 2
     STATS = 3
     ADMINS = 4
+    RELEASE_NOTES = 5

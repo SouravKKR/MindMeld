@@ -12,6 +12,10 @@ const { bulkUpdatePaidDecks } = require("./Admin/BulkUpdatePaidDecks");
 const { listAdminEmails } = require("./Admin/AdminEmails/ListAdminEmails");
 const { addAdminEmail } = require("./Admin/AdminEmails/AddAdminEmail");
 const { removeAdminEmail } = require("./Admin/AdminEmails/RemoveAdminEmail");
+const { createReleaseNote } = require("./Admin/ReleaseNotes/CreateReleaseNote");
+const { updateReleaseNote } = require("./Admin/ReleaseNotes/UpdateReleaseNote");
+const { deleteReleaseNote } = require("./Admin/ReleaseNotes/DeleteReleaseNote");
+const { listReleaseNotesAdmin } = require("./Admin/ReleaseNotes/ListReleaseNotesAdmin");
 const { ensureAdmin } = require("./Plugins/EnsureAdmin");
 
 function handleAdminEndpoints(server)
@@ -124,6 +128,41 @@ function handleAdminEndpoints(server)
     ({
         routePath: `/Admin/AdminEmails/Remove`,
         handler: removeAdminEmail,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/ReleaseNotes/List`,
+        handler: listReleaseNotesAdmin,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/ReleaseNotes/Create`,
+        handler: createReleaseNote,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/ReleaseNotes/Update`,
+        handler: updateReleaseNote,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/ReleaseNotes/Delete`,
+        handler: deleteReleaseNote,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureAdmin]

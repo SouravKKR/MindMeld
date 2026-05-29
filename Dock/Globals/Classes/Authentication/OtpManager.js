@@ -1,0 +1,184 @@
+const crypto = require("crypto");
+const DatabaseConstants = require("../../Constants/DatabaseConstants");
+const DatabaseConnector = require("../Database/DatabaseConnector");
+const AuthenticationQueryEngine = require("../Database/AuthenticationQueryEngine");
+const EmailSender = require("../Email/EmailSender");
+const User = require("../../Model/User");
+const { authenticationProviders } = require("../../Enumerations/AuthenticationProviders");
+
+class OtpManager
+{
+    static OTP_EXPIRY_MINUTES = 10;
+    static MAX_ATTEMPTS = 5;
+    static RESEND_COOLDOWN_SECONDS = 60;
+    static DEFAULT_NEW_USER_CREDITS = 5;
+
+    static #normaliseEmail(rawEmail)
+    {
+        if (typeof rawEmail !== "string")
+        {
+            return "";
+        }
+        return rawEmail.trim().toLowerCase();
+    }
+
+    static #hashCode(plaintextCode)
+    {
+        return crypto.createHash("sha256").update(plaintextCode).digest("hex");
+    }
+
+    static #generateSixDigitCode()
+    {
+        const randomNumber = crypto.randomInt(0, 1000000);
+        return String(randomNumber).padStart(6, "0");
+    }
+
+    static async #getOtpCollection()
+    {
+        const database = await DatabaseConnector.getDatabase();
+        return database.collection(DatabaseConstants.OTP_REQUESTS_COLLECTION);
+    }
+
+    static async requestOtp(rawEmail)
+    {
+        const email = OtpManager.#normaliseEmail(rawEmail);
+        if (!email)
+        {
+            return { ok: false, reason: "INVALID_EMAIL" };
+        }
+
+        const collection = await OtpManager.#getOtpCollection();
+        const now = new Date();
+
+        const existingRequest = await collection.findOne({ email: email });
+        if (existingRequest)
+        {
+            const secondsSinceLastIssue = (now.getTime() - new Date(existingRequest.createdAt).getTime()) / 1000;
+            if (secondsSinceLastIssue < OtpManager.RESEND_COOLDOWN_SECONDS)
+            {
+                const retryAfterSeconds = Math.ceil(OtpManager.RESEND_COOLDOWN_SECONDS - secondsSinceLastIssue);
+                return { ok: false, reason: "RATE_LIMITED", retryAfterSeconds: retryAfterSeconds };
+            }
+        }
+
+        const sixDigitCode = OtpManager.#generateSixDigitCode();
+        const codeHash = OtpManager.#hashCode(sixDigitCode);
+        const expirationDate = new Date(now.getTime() + OtpManager.OTP_EXPIRY_MINUTES * 60 * 1000);
+
+        await collection.updateOne
+        (
+            { email: email },
+            {
+                $set:
+                {
+                    email: email,
+                    codeHash: codeHash,
+                    attempts: 0,
+                    createdAt: now,
+                    expirationDate: expirationDate
+                }
+            },
+            { upsert: true }
+        );
+
+        await EmailSender.sendOtpEmail(email, sixDigitCode);
+
+        const existingUser = await AuthenticationQueryEngine.getUserByEmail(email);
+
+        return {
+            ok: true,
+            isNewUser: !existingUser,
+            retryAfterSeconds: OtpManager.RESEND_COOLDOWN_SECONDS
+        };
+    }
+
+    static async verifyOtp(rawEmail, submittedCode, rawDisplayName)
+    {
+        const email = OtpManager.#normaliseEmail(rawEmail);
+        if (!email)
+        {
+            return { ok: false, reason: "INVALID_EMAIL" };
+        }
+
+        if (typeof submittedCode !== "string" || !/^\d{6}$/.test(submittedCode))
+        {
+            return { ok: false, reason: "INVALID_CODE" };
+        }
+
+        const collection = await OtpManager.#getOtpCollection();
+        const now = new Date();
+
+        const otpDocument = await collection.findOne({ email: email });
+        if (!otpDocument)
+        {
+            return { ok: false, reason: "EXPIRED" };
+        }
+
+        if (new Date(otpDocument.expirationDate) <= now)
+        {
+            await collection.deleteOne({ email: email });
+            return { ok: false, reason: "EXPIRED" };
+        }
+
+        const incrementResult = await collection.findOneAndUpdate
+        (
+            { email: email },
+            { $inc: { attempts: 1 } },
+            { returnDocument: "after" }
+        );
+        const updatedDocument = incrementResult?.value || incrementResult;
+        const currentAttempts = updatedDocument?.attempts ?? (otpDocument.attempts + 1);
+
+        if (currentAttempts > OtpManager.MAX_ATTEMPTS)
+        {
+            await collection.deleteOne({ email: email });
+            return { ok: false, reason: "TOO_MANY_ATTEMPTS" };
+        }
+
+        const submittedHash = OtpManager.#hashCode(submittedCode);
+        const storedHash = otpDocument.codeHash;
+
+        const submittedBuffer = Buffer.from(submittedHash, "hex");
+        const storedBuffer = Buffer.from(storedHash, "hex");
+        const hashesMatch = submittedBuffer.length === storedBuffer.length
+            && crypto.timingSafeEqual(submittedBuffer, storedBuffer);
+
+        if (!hashesMatch)
+        {
+            return { ok: false, reason: "INVALID_CODE", attemptsRemaining: Math.max(0, OtpManager.MAX_ATTEMPTS - currentAttempts) };
+        }
+
+        let user = await AuthenticationQueryEngine.getUserByEmail(email);
+
+        if (!user)
+        {
+            const trimmedDisplayName = typeof rawDisplayName === "string" ? rawDisplayName.trim() : "";
+            if (!trimmedDisplayName)
+            {
+                return { ok: false, reason: "NAME_REQUIRED" };
+            }
+
+            user = new User
+            ({
+                id: email,
+                displayName: trimmedDisplayName.slice(0, 256),
+                provider: authenticationProviders.EMAIL_OTP,
+                joinDate: new Date(),
+                preferences: {},
+                additionalData:
+                {
+                    email: email,
+                    credits: OtpManager.DEFAULT_NEW_USER_CREDITS
+                }
+            });
+
+            await AuthenticationQueryEngine.createUser(user);
+        }
+
+        await collection.deleteOne({ email: email });
+
+        return { ok: true, userId: user.getId() };
+    }
+}
+
+module.exports = OtpManager;

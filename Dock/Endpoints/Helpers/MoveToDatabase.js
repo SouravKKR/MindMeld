@@ -198,6 +198,45 @@ async function loadStudyMaterialFiles(mainTaskId)
     return files;
 }
 
+// Mock test workers write one file per leaf topic at MockTestQuestions/<unit>/<topic>.json,
+// each carrying its topicChain. We need those chains in the shared deck hierarchy so that
+// recursive mock test generation can route questions to the correct subdeck even when the
+// user has flashcards/study materials switched off (mock-test-only generation).
+async function loadMockTestTopicChains(mainTaskId)
+{
+    const prefix = `${PersistenceConstants.TASKS_DIRECTORY}/${mainTaskId}/${PersistenceConstants.MOCK_TEST_QUESTIONS_DIRECTORY}/`;
+
+    let filePaths;
+    try
+    {
+        filePaths = await Persistence.list(prefix);
+    }
+    catch (listError)
+    {
+        return [];
+    }
+
+    const chains = [];
+    for (const filePath of filePaths)
+    {
+        try
+        {
+            const buffer = await Persistence.read(filePath);
+            const file = JSON.parse(buffer.toString("utf-8"));
+            if (Array.isArray(file.topicChain) && file.topicChain.length > 0)
+            {
+                chains.push(file.topicChain);
+            }
+        }
+        catch (readError)
+        {
+            // Malformed file — already logged downstream in upsertMockTests
+        }
+    }
+
+    return chains;
+}
+
 async function loadSyllabus(mainTaskId)
 {
     const syllabusPath = `${PersistenceConstants.TASKS_DIRECTORY}/${mainTaskId}/${PersistenceConstants.SYLLABUS_FILE_NAME}`;
@@ -419,19 +458,43 @@ async function upsertStudyMaterials(userId, studyMaterialFiles, resolveLeafDeckI
  */
 function extractMarkingScheme(mockTestGenerationSettings)
 {
-    const settings = mockTestGenerationSettings || {};
+    // The argument is a MockTestGenerationSettings class instance — its
+    // members live behind private fields (`#correctMarks` etc.) reachable
+    // only through getters. Direct property reads on the instance return
+    // undefined, which previously short-circuited every typeof check and
+    // fed the user the hardcoded `4 / -1 / 0 / 0` defaults regardless of
+    // what they configured in the UI. Route through the generated
+    // getters so the user's actual marking rule lands on the document.
+    const readNumber = (getterName, fallback) =>
+    {
+        if (mockTestGenerationSettings && typeof mockTestGenerationSettings[getterName] === "function")
+        {
+            const value = mockTestGenerationSettings[getterName]();
+            if (typeof value === "number" && Number.isFinite(value))
+            {
+                return value;
+            }
+        }
+        return fallback;
+    };
 
-    const correctMarks = typeof settings.correctMarks === "number" ? settings.correctMarks : 4;
-    const wrongMarks = typeof settings.wrongMarks === "number" ? settings.wrongMarks : -1;
-    const unattemptedMarks = typeof settings.unattemptedMarks === "number" ? settings.unattemptedMarks : 0;
-    const partialMarks = typeof settings.partialMarks === "number" ? settings.partialMarks : 0;
+    const correctMarks = readNumber("getCorrectMarks", 4);
+    const wrongMarks = readNumber("getWrongMarks", -1);
+    const unattemptedMarks = readNumber("getUnattemptedMarks", 0);
+    const partialMarks = readNumber("getPartialMarks", 0);
 
-    const perTypeMarkingOverrides = settings.perTypeMarkingOverrides && typeof settings.perTypeMarkingOverrides === "object"
-        ? settings.perTypeMarkingOverrides
+    const rawPerTypeOverrides = (mockTestGenerationSettings && typeof mockTestGenerationSettings.getPerTypeMarkingOverrides === "function")
+        ? mockTestGenerationSettings.getPerTypeMarkingOverrides()
+        : null;
+    const perTypeMarkingOverrides = rawPerTypeOverrides && typeof rawPerTypeOverrides === "object"
+        ? rawPerTypeOverrides
         : {};
 
-    const sectionStructure = Array.isArray(settings.sectionStructure)
-        ? settings.sectionStructure
+    const rawSectionStructure = (mockTestGenerationSettings && typeof mockTestGenerationSettings.getSectionStructure === "function")
+        ? mockTestGenerationSettings.getSectionStructure()
+        : null;
+    const sectionStructure = Array.isArray(rawSectionStructure)
+        ? rawSectionStructure
         : [];
 
     return {
@@ -722,66 +785,29 @@ function buildQuestionItem(generatedQuestion)
     };
 }
 
-async function upsertMockTests(userId, deckId, mainTaskId, now, mockTestGenerationSettings = null)
+async function assembleAndUpsertTestsForDeck(userId, targetDeckId, questionsForDeck, blueprint, markingScheme, typeKeyByValue, now)
 {
-    // Load Blueprint.json written by GenerateMockTests.py — contains exam metadata,
-    // numberOfTests, totalQuestions, questionsRepeatChance, instructions, duration.
-    let blueprint;
-    try
+    if (!Array.isArray(questionsForDeck) || questionsForDeck.length === 0)
     {
-        const blueprintBuffer = await Persistence.read(
-            `${PersistenceConstants.TASKS_DIRECTORY}/${mainTaskId}/${PersistenceConstants.BLUEPRINT_FILE_NAME}`
-        );
-        blueprint = JSON.parse(blueprintBuffer.toString("utf-8"));
-    }
-    catch (e)
-    {
-        console.error(`[MoveToDatabase] Blueprint.json not found for task ${mainTaskId} — mock test assembly skipped. This usually means the GENERATE_MOCK_TESTS workflow did not complete successfully.`);
-        return;
-    }
-
-    // Collect all questions from every MockTestQuestions file into a flat pool
-    const questionPrefix = `${PersistenceConstants.TASKS_DIRECTORY}/${mainTaskId}/${PersistenceConstants.MOCK_TEST_QUESTIONS_DIRECTORY}/`;
-    const questionFilePaths = await Persistence.list(questionPrefix);
-
-    const allQuestions = [];
-    for (const filePath of questionFilePaths)
-    {
-        try
-        {
-            const buf  = await Persistence.read(filePath);
-            const file = JSON.parse(buf.toString("utf-8"));
-            if (Array.isArray(file.questions)) allQuestions.push(...file.questions);
-        }
-        catch (e)
-        {
-            console.log(`[MoveToDatabase] Skipping malformed question file: ${filePath}`);
-        }
-    }
-
-    if (allQuestions.length === 0)
-    {
-        console.log(`[MoveToDatabase] No mock test questions found — skipping assembly.`);
-        return;
+        console.log(`[MoveToDatabase] No questions bucketed for deck ${targetDeckId} — skipping.`);
+        return 0;
     }
 
     const { numberOfTests, totalQuestions, questionsRepeatChance, examName, subjectName, instructions, duration } = blueprint;
 
-    // ── Marking scheme: frozen at generation time so scoring is stable even
-    //    if the template is later edited. Each SECTION item gets its own
-    //    `markingSchemeOverride` when a per-section rule matches the section's
-    //    question type, so the rule travels with the question grouping.
-    const markingScheme = extractMarkingScheme(mockTestGenerationSettings);
+    // Resolve the title's base form. The user can type a title in the
+    // generation page (settings.mockTestName); when blank we fall back
+    // to the historical auto-formatted string so legacy flows still
+    // produce a meaningful title.
+    const userSuppliedTitle = (mockTestGenerationSettings && typeof mockTestGenerationSettings.getMockTestName === "function")
+        ? (mockTestGenerationSettings.getMockTestName() || "").trim()
+        : "";
 
-    const { questionTypes: questionTypesEnum } = require("../../Globals/Enumerations/QuestionTypes");
-    const typeKeyByValue = {};
-    for (const [typeKey, typeValue] of Object.entries(questionTypesEnum))
-    {
-        typeKeyByValue[typeValue] = typeKey;
-    }
+    const baseTitle = userSuppliedTitle.length > 0
+        ? userSuppliedTitle
+        : (examName ? `${examName} — ${subjectName} Mock Test` : `${subjectName} Practice Test`);
 
-    // Shuffle the full pool once
-    const pool = [...allQuestions].sort(() => Math.random() - 0.5);
+    const pool = [...questionsForDeck].sort(() => Math.random() - 0.5);
 
     // freshPerSubsequent = questions drawn fresh from the pool for each test after the first.
     // The rest of each subsequent test is filled from questions already used in prior tests.
@@ -789,6 +815,8 @@ async function upsertMockTests(userId, deckId, mainTaskId, now, mockTestGenerati
 
     let   freshCursor = 0;
     const repeatPool  = [];
+
+    let testsUpserted = 0;
 
     for (let testIndex = 0; testIndex < numberOfTests; testIndex++)
     {
@@ -821,9 +849,9 @@ async function upsertMockTests(userId, deckId, mainTaskId, now, mockTestGenerati
 
         // ── Build items[] ──────────────────────────────────────────────────────
         // mockTestItemTypes: SECTION=0, INSTRUCTIONS=1, TITLE=2, QUESTION=3
-        const title = examName
-            ? `${examName} — ${subjectName} Mock Test ${testIndex + 1}`
-            : `${subjectName} Practice Test ${testIndex + 1}`;
+        // Suffix is per-deck — tests in different decks share testIndex but
+        // live under different deckIds, so cross-deck collisions don't matter.
+        const title = `${baseTitle} ${testIndex + 1}`;
 
         const items = [];
 
@@ -851,7 +879,7 @@ async function upsertMockTests(userId, deckId, mainTaskId, now, mockTestGenerati
         const mockTestData =
         {
             id: getRandomUuid(),
-            deckId: deckId,
+            deckId: targetDeckId,
             title,
             duration, // 0 for unknown exams — user configures before starting the test
             items,
@@ -868,7 +896,158 @@ async function upsertMockTests(userId, deckId, mainTaskId, now, mockTestGenerati
         };
 
         await SyncQueryEngine.upsertMockTest(userId, mockTestData);
+        testsUpserted++;
     }
+
+    return testsUpserted;
+}
+
+async function upsertMockTests(userId, deckId, mainTaskId, now, mockTestGenerationSettings = null, resolveLeafDeckId = null, deckKeyToDataMap = null)
+{
+    // Load Blueprint.json written by GenerateMockTests.py — contains exam metadata,
+    // numberOfTests, totalQuestions, questionsRepeatChance, instructions, duration,
+    // plus the recursive / skipRootDeck flags that drive per-deck bucketing.
+    let blueprint;
+    try
+    {
+        const blueprintBuffer = await Persistence.read(
+            `${PersistenceConstants.TASKS_DIRECTORY}/${mainTaskId}/${PersistenceConstants.BLUEPRINT_FILE_NAME}`
+        );
+        blueprint = JSON.parse(blueprintBuffer.toString("utf-8"));
+    }
+    catch (e)
+    {
+        console.error(`[MoveToDatabase] Blueprint.json not found for task ${mainTaskId} — mock test assembly skipped. This usually means the GENERATE_MOCK_TESTS workflow did not complete successfully.`);
+        return;
+    }
+
+    // Collect every question, but keep its source topicChain so recursive
+    // bucketing can route it to each ancestor deck in the generated tree.
+    const questionPrefix = `${PersistenceConstants.TASKS_DIRECTORY}/${mainTaskId}/${PersistenceConstants.MOCK_TEST_QUESTIONS_DIRECTORY}/`;
+    const questionFilePaths = await Persistence.list(questionPrefix);
+
+    const allQuestions = [];
+    for (const filePath of questionFilePaths)
+    {
+        try
+        {
+            const buf  = await Persistence.read(filePath);
+            const file = JSON.parse(buf.toString("utf-8"));
+            if (!Array.isArray(file.questions))
+            {
+                continue;
+            }
+            const topicChain = Array.isArray(file.topicChain) ? file.topicChain : [];
+            for (const question of file.questions)
+            {
+                allQuestions.push({ ...question, topicChain });
+            }
+        }
+        catch (e)
+        {
+            console.log(`[MoveToDatabase] Skipping malformed question file: ${filePath}`);
+        }
+    }
+
+    if (allQuestions.length === 0)
+    {
+        console.log(`[MoveToDatabase] No mock test questions found — skipping assembly.`);
+        return;
+    }
+
+    // ── Marking scheme: frozen at generation time so scoring is stable even
+    //    if the template is later edited. Each SECTION item gets its own
+    //    `markingSchemeOverride` when a per-section rule matches the section's
+    //    question type, so the rule travels with the question grouping.
+    const markingScheme = extractMarkingScheme(mockTestGenerationSettings);
+
+    const { questionTypes: questionTypesEnum } = require("../../Globals/Enumerations/QuestionTypes");
+    const typeKeyByValue = {};
+    for (const [typeKey, typeValue] of Object.entries(questionTypesEnum))
+    {
+        typeKeyByValue[typeValue] = typeKey;
+    }
+
+    const recursive = blueprint.recursive === true;
+    const skipRootDeck = blueprint.skipRootDeck === true;
+
+    if (!recursive)
+    {
+        await assembleAndUpsertTestsForDeck(userId, deckId, allQuestions, blueprint, markingScheme, typeKeyByValue, now);
+        return;
+    }
+
+    // ── Recursive: bucket questions across every deck in the generated subtree ─
+    if (typeof resolveLeafDeckId !== "function" || !(deckKeyToDataMap instanceof Map))
+    {
+        console.warn(`[MoveToDatabase] Recursive mock test mode requested but deck hierarchy was not provided — falling back to single-deck bundle on ${deckId}.`);
+        await assembleAndUpsertTestsForDeck(userId, deckId, allQuestions, blueprint, markingScheme, typeKeyByValue, now);
+        return;
+    }
+
+    // Index decks by id so we can walk leaf → root via the `parent` link
+    const deckDataById = new Map();
+    for (const deckData of deckKeyToDataMap.values())
+    {
+        deckDataById.set(deckData.id, deckData);
+    }
+
+    const bucketsByDeckId = new Map();
+    if (!skipRootDeck)
+    {
+        bucketsByDeckId.set(deckId, []);
+    }
+
+    let unroutedCount = 0;
+
+    for (const question of allQuestions)
+    {
+        const topicChain = question.topicChain;
+        if (!Array.isArray(topicChain) || topicChain.length === 0)
+        {
+            unroutedCount++;
+            continue;
+        }
+
+        const leafDeckId = resolveLeafDeckId(topicChain);
+        if (!leafDeckId)
+        {
+            unroutedCount++;
+            continue;
+        }
+
+        let cursorDeckId = leafDeckId;
+        while (cursorDeckId && cursorDeckId !== deckId)
+        {
+            if (!bucketsByDeckId.has(cursorDeckId))
+            {
+                bucketsByDeckId.set(cursorDeckId, []);
+            }
+            bucketsByDeckId.get(cursorDeckId).push(question);
+
+            const cursorDeckData = deckDataById.get(cursorDeckId);
+            cursorDeckId = cursorDeckData ? cursorDeckData.parent : null;
+        }
+
+        if (!skipRootDeck)
+        {
+            bucketsByDeckId.get(deckId).push(question);
+        }
+    }
+
+    if (unroutedCount > 0)
+    {
+        console.warn(`[MoveToDatabase] ${unroutedCount} mock-test question(s) had no resolvable topicChain — dropped from recursive distribution.`);
+    }
+
+    let totalTestsUpserted = 0;
+    for (const [targetDeckId, bucket] of bucketsByDeckId.entries())
+    {
+        const upserted = await assembleAndUpsertTestsForDeck(userId, targetDeckId, bucket, blueprint, markingScheme, typeKeyByValue, now);
+        totalTestsUpserted += upserted;
+    }
+
+    console.log(`[MoveToDatabase] Recursive mock tests: upserted ${totalTestsUpserted} test(s) across ${bucketsByDeckId.size} deck(s) (skipRootDeck=${skipRootDeck}).`);
 }
 
 // ── Main entry point ───────────────────────────────────────────────────────────
@@ -912,9 +1091,25 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
     // ── 3. Build ONE shared deck hierarchy across all topic chains ─────────────
     //       Files are processed in syllabus order so the subDecks arrays of every
     //       parent deck reflect the original syllabus sequence.
+    //       Mock test chains are folded in so recursive mock test generation works
+    //       even when no flashcards / study materials are being produced (the deck
+    //       tree must exist before per-deck bucketing in upsertMockTests).
+    // Only fold mock test chains into the shared hierarchy when recursive
+    // mode is requested — otherwise non-recursive mock-test-only generation
+    // would create empty subdecks (no cards / study materials attached) just
+    // because buildDeckHierarchy saw chains for them.
+    const mockTestRecursiveActive = mockTestGenerationSettings !== null
+        && typeof mockTestGenerationSettings.getRecursive === "function"
+        && mockTestGenerationSettings.getRecursive() === true;
+
+    const mockTestTopicChains = mockTestRecursiveActive
+        ? await loadMockTestTopicChains(mainTaskId)
+        : [];
+
     const allTopicChains = [
         ...orderedFlashcardFiles.map(f => f.topicChain),
         ...orderedStudyMaterialFiles.map(f => f.topicChain),
+        ...mockTestTopicChains,
     ];
 
     const beautifiedShortNamesByDeckKey = await loadBeautifiedShortNames(mainTaskId);
@@ -954,11 +1149,14 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
     }
 
     // ── 6. Assemble and upsert mock tests ──────────────────────────────────────
-    //       Mock tests live directly on deckId — they are a single entity on the
-    //       deck where the user initiated generation, not distributed across sub-decks.
+    //       Default behaviour: mock tests live directly on deckId — one bundle on
+    //       the deck where the user initiated generation. When the user enabled
+    //       recursive mode (Blueprint.recursive === true), questions are bucketed
+    //       across every deck in the generated subtree, so resolveLeafDeckId +
+    //       deckKeyToDataMap are forwarded to allow per-deck distribution.
     if (mockTestGenerationSettings !== null)
     {
-        await upsertMockTests(userId, deckId, mainTaskId, now, mockTestGenerationSettings);
+        await upsertMockTests(userId, deckId, mainTaskId, now, mockTestGenerationSettings, resolveLeafDeckId, deckKeyToDataMap);
         console.log(`[MoveToDatabase] Upserted mock tests for task ${mainTaskId}.`);
     }
 

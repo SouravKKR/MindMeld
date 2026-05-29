@@ -49,6 +49,7 @@ class BulkSnapshotEndpoint
         const cardsCollection          = database.collection(DatabaseConstants.CARDS_COLLECTION);
         const studyMaterialsCollection = database.collection(DatabaseConstants.STUDY_MATERIALS_COLLECTION);
         const mockTestsCollection      = database.collection(DatabaseConstants.MOCK_TESTS_COLLECTION);
+        const popupLinksCollection     = database.collection(DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION);
 
         // Snapshot the server clock at request start. Both countDocuments
         // and the streaming cursor are gated on serverUpdatedAt <= this
@@ -64,9 +65,10 @@ class BulkSnapshotEndpoint
         const cardCount          = await cardsCollection.countDocuments(userFilter);
         const studyMaterialCount = await studyMaterialsCollection.countDocuments(userFilter);
         const mockTestCount      = await mockTestsCollection.countDocuments(userFilter);
-        const totalCount         = deckCount + cardCount + studyMaterialCount + mockTestCount;
+        const popupLinkCount     = await popupLinksCollection.countDocuments(userFilter);
+        const totalCount         = deckCount + cardCount + studyMaterialCount + mockTestCount + popupLinkCount;
 
-        console.log(`[Sync/BulkSnapshot] user=${userId} — streaming decks:${deckCount} cards:${cardCount} studyMaterials:${studyMaterialCount} mockTests:${mockTestCount} totalCount:${totalCount} ceiling:${snapshotCeiling.toISOString()}`);
+        console.log(`[Sync/BulkSnapshot] user=${userId} — streaming decks:${deckCount} cards:${cardCount} studyMaterials:${studyMaterialCount} mockTests:${mockTestCount} popupLinks:${popupLinkCount} totalCount:${totalCount} ceiling:${snapshotCeiling.toISOString()}`);
 
         response.setHeader("Content-Type", "application/x-ndjson");
         response.setHeader("Cache-Control", "no-store");
@@ -80,6 +82,7 @@ class BulkSnapshotEndpoint
                 cardCount:          cardCount,
                 studyMaterialCount: studyMaterialCount,
                 mockTestCount:      mockTestCount,
+                popupLinkCount:     popupLinkCount,
                 serverTime:         snapshotCeiling.getTime(),
             });
 
@@ -87,6 +90,7 @@ class BulkSnapshotEndpoint
             await BulkSnapshotEndpoint.#streamCollection(response, cardsCollection,          userFilter, entityTypes.CARD);
             await BulkSnapshotEndpoint.#streamCollection(response, studyMaterialsCollection, userFilter, entityTypes.STUDY_MATERIAL);
             await BulkSnapshotEndpoint.#streamCollection(response, mockTestsCollection,      userFilter, entityTypes.MOCK_TEST);
+            await BulkSnapshotEndpoint.#streamCollection(response, popupLinksCollection,     userFilter, entityTypes.ASK_AI_POPUP_LINK);
 
             response.end();
 
@@ -124,6 +128,7 @@ class BulkSnapshotEndpoint
             cardCount:          counts.cardCount,
             studyMaterialCount: counts.studyMaterialCount,
             mockTestCount:      counts.mockTestCount,
+            popupLinkCount:     counts.popupLinkCount,
             serverTime:         counts.serverTime,
         };
         await BulkSnapshotEndpoint.#writeLine(response, JSON.stringify(headerObject));

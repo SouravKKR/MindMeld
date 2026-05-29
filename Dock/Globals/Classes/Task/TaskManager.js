@@ -41,15 +41,23 @@ class TaskManager
     }
 
     /**
-     * Returns a task given by its ID.
+     * Returns a task given by its ID, or null if the underlying Redis
+     * blob is missing (key never existed OR TTL expired — once a task
+     * completes its data lives in the long-term taskHistory collection
+     * instead of Redis).
      * Also merges the atomic completion key written by Python's increment_completion,
      * which is stored separately from the main BSON blob.
      * @param {string} taskId
-     * @return {TaskDescriptor}
+     * @return {Promise<TaskDescriptor|null>}
      */
     static async getTask(taskId)
     {
         const buffer = await TaskManager.#redisClient.get(TaskManager.#TASK_PREFIX + taskId);
+
+        if (buffer === null || buffer === undefined)
+        {
+            return null;
+        }
 
         const deserialized = BSON.deserialize(buffer);
         const task = TaskDescriptor.fromJson(deserialized);

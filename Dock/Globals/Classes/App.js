@@ -85,7 +85,31 @@ class App
         return process.env.MONGODB_DATABASE_NAME;
     }
 
-    
+    static getSmtpHost()
+    {
+        return process.env.SMTP_HOST || "";
+    }
+
+    static getSmtpPort()
+    {
+        const parsedPort = Number(process.env.SMTP_PORT);
+        return Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 0;
+    }
+
+    static getSmtpUser()
+    {
+        return process.env.SMTP_USER || "";
+    }
+
+    static getSmtpPassword()
+    {
+        return process.env.SMTP_PASSWORD || "";
+    }
+
+    static getSmtpSourceEmail()
+    {
+        return process.env.SMTP_SOURCE_EMAIL || "";
+    }
 
 }
 

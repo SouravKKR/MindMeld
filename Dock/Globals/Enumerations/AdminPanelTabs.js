@@ -5,6 +5,7 @@ const adminPanelTabs =
   BUNDLES: 2,
   STATS: 3,
   ADMINS: 4,
+  RELEASE_NOTES: 5,
 }
 
 module.exports = { adminPanelTabs };

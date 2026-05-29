@@ -1,13 +1,29 @@
 const TaskManager = require("../../Globals/Classes/Task/TaskManager");
+const TaskHistoryQueryEngine = require("../../Globals/Classes/Database/TaskHistoryQueryEngine");
 
 
 /**
  * GET /Activity/Tasks/Progress?taskid={id}
  *
- * Returns the recursive task tree (same shape as /Generate/Progress)
- * with an explicit ownership check — the requester must be the user
- * who originated the task. Without this guard, any logged-in user with
- * a known task id could read another user's progress + payload.
+ * Returns one of two payload shapes for the same task id:
+ *
+ *   1. Live tree (task still in Redis) — recursive
+ *      { id, type, status, completion, parentTaskId, children: [...] }
+ *      Same shape as /Generate/Progress; the frontend polls until the
+ *      root status is terminal.
+ *
+ *   2. Historical record (task has rolled off Redis into the long-term
+ *      taskHistory collection) — flat
+ *      { historical: true, id, type, status, completion,
+ *        completedAt, startDate, durationMillis, payloadSummary,
+ *        additionalData, parentTaskId }
+ *      The frontend renders a "completed" view with metadata and does
+ *      NOT poll. Without this fallback, clicking "View" on a finished
+ *      Activity entry produced a 500 because BSON.deserialize choked on
+ *      the missing Redis blob.
+ *
+ * Both branches enforce that the requester owns the task before any
+ * payload is returned.
  */
 class GetActiveTaskProgressEndpoint
 {
@@ -29,22 +45,33 @@ class GetActiveTaskProgressEndpoint
             return;
         }
 
+        const userId = session.getUserId();
+
         const rootTask = await TaskManager.getTask(taskId);
-        if (!rootTask)
+        if (rootTask)
+        {
+            const ownerUserId = GetActiveTaskProgressEndpoint.#readUserId(rootTask);
+            if (ownerUserId !== userId)
+            {
+                response.sendStatusCode(403);
+                return;
+            }
+
+            const tree = await GetActiveTaskProgressEndpoint.#buildTaskTree(taskId);
+            response.sendJson(tree);
+            return;
+        }
+
+        // Live descriptor has expired from Redis. The task either
+        // finished and was archived to taskHistory, or it never existed.
+        const historyRow = await TaskHistoryQueryEngine.getByIdForUser(taskId, userId);
+        if (!historyRow)
         {
             response.sendStatusCode(404);
             return;
         }
 
-        const ownerUserId = GetActiveTaskProgressEndpoint.#readUserId(rootTask);
-        if (ownerUserId !== session.getUserId())
-        {
-            response.sendStatusCode(403);
-            return;
-        }
-
-        const tree = await GetActiveTaskProgressEndpoint.#buildTaskTree(taskId);
-        response.sendJson(tree);
+        response.sendJson(GetActiveTaskProgressEndpoint.#buildHistoricalPayload(historyRow));
     }
 
     static #readUserId(taskDescriptor)
@@ -76,6 +103,32 @@ class GetActiveTaskProgressEndpoint
             completion: typeof task.getCompletion === "function" ? task.getCompletion() : 0,
             parentTaskId: task.getParentTaskId() || null,
             children: children
+        };
+    }
+
+    static #buildHistoricalPayload(historyRow)
+    {
+        const completedAtIso = historyRow.completedAt instanceof Date
+            ? historyRow.completedAt.toISOString()
+            : (historyRow.completedAt || null);
+        const startDateIso = historyRow.startDate instanceof Date
+            ? historyRow.startDate.toISOString()
+            : (historyRow.startDate || null);
+
+        return {
+            historical: true,
+            id: historyRow.id,
+            type: historyRow.type,
+            status: historyRow.status,
+            completion: typeof historyRow.completion === "number" ? historyRow.completion : 0,
+            completedAt: completedAtIso,
+            startDate: startDateIso,
+            durationMillis: typeof historyRow.durationMillis === "number" ? historyRow.durationMillis : 0,
+            payloadSummary: historyRow.payloadSummary || "",
+            parentTaskId: historyRow.parentTaskId || null,
+            additionalData: (historyRow.additionalData && typeof historyRow.additionalData === "object")
+                ? historyRow.additionalData
+                : {}
         };
     }
 }

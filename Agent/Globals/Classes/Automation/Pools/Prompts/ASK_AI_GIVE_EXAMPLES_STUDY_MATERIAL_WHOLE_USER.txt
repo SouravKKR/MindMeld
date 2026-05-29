@@ -1,0 +1,30 @@
+Study material lesson:
+{material_excerpt}
+{user_query_block}
+
+Generate concrete examples that bring this lesson to life.
+
+CHOOSE THE EXAMPLE STYLE based on what kind of thing the lesson's topic is. Decide once before writing anything; do not mix styles.
+
+  - If the topic is a CATEGORY of named instances — a class, type, family, or kind whose members are commonly referred to by their own names in the field — produce ONE BLOCK PER NAMED INSTANCE, 3–5 instances total. Each block's body is one or two sentences naming the instance and stating what distinguishes it from the others. Do NOT walk through a fabricated multi-step scenario for an instance; the learner wants to see the instances themselves, not invented narratives around them.
+
+  - If the topic is a PROCEDURE, ALGORITHM, or CALCULATION — a series of steps applied to inputs to produce an output — work one or two examples end-to-end. State the input, label each step as you go, give the result. One worked example is enough when it cleanly demonstrates the procedure; offer a second only when an edge case or contrasting input is genuinely informative.
+
+  - If the topic is a CONCEPT, PRINCIPLE, or MECHANISM — an idea or relationship that explains why or how something occurs — illustrate with one or two short scenarios that show the idea in operation. Keep each scenario tight: a few sentences at most.
+
+  - If the topic is a RULE, CLASSIFICATION, or DEFINITION — criteria for membership or behaviour — give 2–3 instances that satisfy it. Add a single counter-instance only when the contrast genuinely sharpens the rule.
+
+Quality over quantity. If the topic's category has four obvious instances, four is the right count — don't pad to fill a quota. If one worked example fully demonstrates a procedure, one is enough.
+
+Output ONLY the examples — no preamble, no summary of the lesson, no closing remark. Start directly with the first example.
+
+CRITICAL: each example MUST be wrapped in its own <div class="ask-ai-block">. The wrapper is non-negotiable even if you only produce one example — it's how the app distinguishes individual examples so the learner can pick which ones to keep. Output structure for each example:
+
+<div class="ask-ai-block">
+<h3>Example for &lt;subject or topic the example illustrates&gt;</h3>
+&lt;example content — paragraphs, lists, or worked steps as appropriate&gt;
+</div>
+
+The <h3> heading must literally begin with "Example for " followed by a short, specific phrase identifying this particular example. For a category topic the phrase is the instance's own name. For a procedure, concept, or rule the phrase is a short label naming the worked example, scenario, or instance being shown. Derive the phrase from the example's content — not a section title verbatim.
+
+{information_source_block}{html_style_block}

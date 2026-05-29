@@ -1,6 +1,7 @@
 const TaskDescriptor = require("../../Globals/Classes/Task/TaskDescriptor");
 const TaskManager = require("../../Globals/Classes/Task/TaskManager");
 const { taskTypes } = require("../../Globals/Enumerations/TaskTypes");
+const { taskStatus } = require("../../Globals/Enumerations/TaskStatus");
 const { taskExecutionTargets } = require("../../Globals/Enumerations/TaskExecutionTargets");
 const TaskHistoryQueryEngine = require("../../Globals/Classes/Database/TaskHistoryQueryEngine");
 const { getUser } = require("../Helpers/GetUser");
@@ -10,10 +11,17 @@ const { userRoles } = require("../../Globals/Enumerations/UserRoles");
 /**
  * POST /Analysis/QueueDeckAnalysis
  *
- * Lazy on-login trigger for the per-deck weekly analysis. The client
- * sends a deckId and an optional autoGenerateCuratedStudy flag. The
- * server queues an ANALYZE_DECK_PERFORMANCE task and returns the task
- * id immediately so the client never blocks on it.
+ * Trigger an ANALYZE_DECK_PERFORMANCE task for the given deck. Used by
+ * both the lazy on-login dispatcher and the explicit "Run analysis
+ * now" button on the Insights page. The response is always
+ * `{ taskId, bAlreadyRunning }`: the client polls /Generate/Progress
+ * the same way whether it joined an existing run or kicked a new one.
+ *
+ * Duplicate-detection: if the user already has a non-terminal
+ * ANALYZE_DECK_PERFORMANCE task in their active-tasks set with the
+ * same deckId, that task's id is returned instead of starting a new
+ * one. Prevents racing LLM calls against the same deck (which would
+ * also race writes to the same `lastAnalysisTopics` field on Mongo).
  *
  * Eligibility checks (>=10 progress points, last-analysed > 7 days,
  * studied-since-last-analysis) are performed CLIENT-side inside
@@ -55,6 +63,19 @@ async function handleQueueDeckAnalysis(request, response)
 
     const autoGenerateCuratedStudy = body?.autoGenerateCuratedStudy === true;
 
+    // Duplicate detection — find any non-terminal ANALYZE_DECK_PERFORMANCE
+    // task this user already has running against this same deck. Two
+    // concurrent runs would race the LLM call AND the final write to
+    // `deck.additionalData.lastAnalysisTopics`, so we route the
+    // caller onto the existing run instead.
+    const existingActiveTask = await findExistingAnalysisTask(user.getId(), deckId);
+    if (existingActiveTask !== null)
+    {
+        response.statusCode = 200;
+        response.sendJson({ taskId: existingActiveTask.getId(), bAlreadyRunning: true });
+        return;
+    }
+
     const analyzeDeckPerformanceTask = new TaskDescriptor({
         type: taskTypes.ANALYZE_DECK_PERFORMANCE,
         executionTarget: taskExecutionTargets.LOCAL,
@@ -73,7 +94,7 @@ async function handleQueueDeckAnalysis(request, response)
     const taskId = analyzeDeckPerformanceTask.getId();
 
     response.statusCode = 202;
-    response.sendJson({ taskId: taskId });
+    response.sendJson({ taskId: taskId, bAlreadyRunning: false });
 
     TaskManager.execute(analyzeDeckPerformanceTask)
         .then(async () =>
@@ -103,6 +124,38 @@ async function handleQueueDeckAnalysis(request, response)
             }
             await TaskManager.untrackForUser(user.getId(), taskId);
         });
+}
+
+/**
+ * Returns the TaskDescriptor of the user's currently-running ANALYZE_DECK_PERFORMANCE
+ * task for the given deckId, or null if none is running. Reuses
+ * TaskManager.listActiveForUser (which auto-heals stale ids).
+ */
+async function findExistingAnalysisTask(userId, deckId)
+{
+    const activeTasks = await TaskManager.listActiveForUser(userId);
+    for (const activeTask of activeTasks)
+    {
+        if (activeTask.getType() !== taskTypes.ANALYZE_DECK_PERFORMANCE)
+        {
+            continue;
+        }
+
+        const taskPayload = activeTask.getPayload() || {};
+        if (taskPayload.deckId !== deckId)
+        {
+            continue;
+        }
+
+        const currentStatus = activeTask.getStatus();
+        if (currentStatus === taskStatus.COMPLETED || currentStatus === taskStatus.FAILED)
+        {
+            continue;
+        }
+
+        return activeTask;
+    }
+    return null;
 }
 
 module.exports = { handleQueueDeckAnalysis };

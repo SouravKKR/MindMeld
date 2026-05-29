@@ -42,15 +42,29 @@ class AskAiPromptBuilder:
     QUESTION_CHAR_LIMIT         = 4000
     ANSWER_CHAR_LIMIT           = 4000
 
+    # The "OUTPUT IS HTML, NOT MARKDOWN" clause is load-bearing — the
+    # model otherwise mixes markdown syntax (**bold**, `code`, leading
+    # # / - / *) into its HTML wrapper, which the sanitiser passes
+    # through as literal text. The learner then sees raw asterisks and
+    # backticks on screen.
     HTML_STYLE_BLOCK = (
-        "Output a single self-contained HTML fragment. Do not include "
-        "<html>, <head>, <body>, <style>, or <script> tags. Use only the "
-        "following semantic structural tags: h2, h3, p, ul, ol, li, pre, "
-        "code, strong, em, blockquote. Do not emit any color-related "
-        "attributes or inline styles (no color, background, background-color, "
-        "border-color, fill, or stroke). Do not emit class or id attributes. "
-        "Keep paragraphs short and well-structured. Begin output with the "
-        "first content tag — no preamble."
+        "Output is HTML, NOT markdown. Output a single self-contained "
+        "HTML fragment. Do not include <html>, <head>, <body>, <style>, "
+        "or <script> tags. Use only the following semantic structural "
+        "tags: h2, h3, p, ul, ol, li, pre, code, strong, em, blockquote. "
+        "NEVER emit markdown syntax — no **bold**, no *italic*, no _italic_, "
+        "no `backticks`, no leading # for headings, no leading -, *, or +, "
+        "for bullets, no leading 1. for numbered lists. Use the HTML tag "
+        "instead: <strong>...</strong> for bold, <em>...</em> for italic, "
+        "<code>...</code> for inline code, <h2>/<h3> for headings, "
+        "<ul><li>...</li></ul> for bullets, <ol><li>...</li></ol> for "
+        "numbered lists. Literal asterisks or underscores in your output "
+        "render as visible characters to the learner — never emit them as "
+        "formatting markers. Do not emit any color-related attributes or "
+        "inline styles (no color, background, background-color, border-color, "
+        "fill, or stroke). Do not emit class or id attributes. Keep "
+        "paragraphs short and well-structured. Begin output with the first "
+        "content tag — no preamble."
     )
 
     # Richer allow-list used by FORMAT mode, which is explicitly about
@@ -58,32 +72,41 @@ class AskAiPromptBuilder:
     # AskAiStreamRenderer recognises these tags and the two layout
     # classes; anything else still gets stripped by the sanitiser.
     HTML_STYLE_BLOCK_RICH = (
-        "Output a single self-contained HTML fragment. Do not include "
-        "<html>, <head>, <body>, <style>, or <script> tags. Allowed tags: "
-        "h2, h3, p, ul, ol, li, pre, code, strong, em, blockquote, br, "
-        "table, thead, tbody, tr, th, td, figure, figcaption, div. Do not "
-        "emit any color-related attributes or inline styles (no color, "
-        "background, background-color, border-color, fill, or stroke). "
-        "The only class attributes permitted are \"ask-ai-grid\" on an "
-        "outer <div> and \"ask-ai-grid-item\" on each child <div> for a "
-        "card-grid layout — no other classes, no ids. Begin output with "
-        "the first content tag — no preamble."
+        "Output is HTML, NOT markdown. Output a single self-contained "
+        "HTML fragment. Do not include <html>, <head>, <body>, <style>, "
+        "or <script> tags. Allowed tags: h2, h3, p, ul, ol, li, pre, code, "
+        "strong, em, blockquote, br, table, thead, tbody, tr, th, td, "
+        "figure, figcaption, div. NEVER emit markdown syntax — no **bold**, "
+        "no *italic*, no _italic_, no `backticks`, no leading # for "
+        "headings, no leading -, *, or + for bullets, no leading 1. for "
+        "numbered lists. Use the HTML tag instead: <strong>...</strong>, "
+        "<em>...</em>, <code>...</code>, <h2>/<h3>, <ul><li>, <ol><li>. "
+        "Literal asterisks or underscores in your output render as visible "
+        "characters to the learner. Do not emit any color-related attributes "
+        "or inline styles (no color, background, background-color, "
+        "border-color, fill, or stroke). The only class attributes permitted "
+        "are \"ask-ai-grid\" on an outer <div> and \"ask-ai-grid-item\" on "
+        "each child <div> for a card-grid layout — no other classes, no "
+        "ids. Begin output with the first content tag — no preamble."
     )
 
     @staticmethod
     def build(prompt_mode: int, context_kind: int, context_payload: dict, selected_text: str, user_query: str, retrieved_chunks: list[dict]) -> tuple[str, str]:
         information_source_block = AskAiPromptBuilder.__build_information_source_block(retrieved_chunks)
         safe_selected_text       = AskAiPromptBuilder.__sanitise_for_prompt(selected_text)
-        # SUMMARIZE / FORMAT / MAKE_MNEMONIC / GIVE_EXAMPLES / GLOSSARY are
-        # inherently whole-entity — operating on a single highlighted
-        # phrase doesn't make sense for them, so any selectedText passed
-        # in is ignored.
+        # SUMMARIZE and FORMAT genuinely need the whole entity in view
+        # — summarising or reformatting a lone phrase is meaningless.
+        # GIVE_EXAMPLES / GLOSSARY / MAKE_MNEMONIC used to be in this
+        # list too, but they DO benefit from a highlighted fragment:
+        # the learner usually wants examples / definitions / mnemonics
+        # scoped to the specific term they selected, not the whole
+        # card / lesson. Routing them through the selection-aware
+        # templates when `selected_text` is non-empty fixes the
+        # "asked about X, got an answer about something else that
+        # happens to also appear in this card" class of bug.
         b_whole_entity_only_mode = prompt_mode in (
             AskAiPromptModes.SUMMARIZE,
             AskAiPromptModes.FORMAT,
-            AskAiPromptModes.MAKE_MNEMONIC,
-            AskAiPromptModes.GIVE_EXAMPLES,
-            AskAiPromptModes.GLOSSARY,
         )
         b_whole_entity = len(safe_selected_text) == 0 or b_whole_entity_only_mode
 
@@ -120,7 +143,8 @@ class AskAiPromptBuilder:
 
     @staticmethod
     def __build_card_user_prompt(prompt_mode, b_whole_entity, question_text, answer_text, safe_selected_text, user_query, information_source_block) -> str:
-        safe_user_query = AskAiPromptBuilder.__sanitise_for_prompt(user_query or "")
+        safe_user_query  = AskAiPromptBuilder.__sanitise_for_prompt(user_query or "")
+        user_query_block = AskAiPromptBuilder.__build_user_query_block(user_query)
 
         if prompt_mode == AskAiPromptModes.SUMMARIZE:
             template = PromptPool.ASK_AI_SUMMARIZE_CARD_USER
@@ -144,34 +168,49 @@ class AskAiPromptBuilder:
             )
 
         if prompt_mode == AskAiPromptModes.MAKE_MNEMONIC:
-            template = PromptPool.ASK_AI_MAKE_MNEMONIC_CARD_USER
+            template = (
+                PromptPool.ASK_AI_MAKE_MNEMONIC_CARD_WHOLE_USER
+                if b_whole_entity
+                else PromptPool.ASK_AI_MAKE_MNEMONIC_CARD_USER
+            )
             return (
                 template
                 .replace("{question}",                 question_text)
                 .replace("{answer}",                   answer_text)
-                .replace("{user_query}",               safe_user_query)
+                .replace("{selected_text}",            safe_selected_text)
+                .replace("{user_query_block}",         user_query_block)
                 .replace("{information_source_block}", information_source_block)
                 .replace("{html_style_block}",         AskAiPromptBuilder.HTML_STYLE_BLOCK)
             )
 
         if prompt_mode == AskAiPromptModes.GIVE_EXAMPLES:
-            template = PromptPool.ASK_AI_GIVE_EXAMPLES_CARD_USER
+            template = (
+                PromptPool.ASK_AI_GIVE_EXAMPLES_CARD_WHOLE_USER
+                if b_whole_entity
+                else PromptPool.ASK_AI_GIVE_EXAMPLES_CARD_USER
+            )
             return (
                 template
                 .replace("{question}",                 question_text)
                 .replace("{answer}",                   answer_text)
-                .replace("{user_query}",               safe_user_query)
+                .replace("{selected_text}",            safe_selected_text)
+                .replace("{user_query_block}",         user_query_block)
                 .replace("{information_source_block}", information_source_block)
                 .replace("{html_style_block}",         AskAiPromptBuilder.HTML_STYLE_BLOCK)
             )
 
         if prompt_mode == AskAiPromptModes.GLOSSARY:
-            template = PromptPool.ASK_AI_GLOSSARY_CARD_USER
+            template = (
+                PromptPool.ASK_AI_GLOSSARY_CARD_WHOLE_USER
+                if b_whole_entity
+                else PromptPool.ASK_AI_GLOSSARY_CARD_USER
+            )
             return (
                 template
                 .replace("{question}",                 question_text)
                 .replace("{answer}",                   answer_text)
-                .replace("{user_query}",               safe_user_query)
+                .replace("{selected_text}",            safe_selected_text)
+                .replace("{user_query_block}",         user_query_block)
                 .replace("{information_source_block}", information_source_block)
                 .replace("{html_style_block}",         AskAiPromptBuilder.HTML_STYLE_BLOCK)
             )
@@ -201,7 +240,8 @@ class AskAiPromptBuilder:
 
     @staticmethod
     def __build_study_material_user_prompt(prompt_mode, b_whole_entity, material_excerpt, safe_selected_text, user_query, information_source_block) -> str:
-        safe_user_query = AskAiPromptBuilder.__sanitise_for_prompt(user_query or "")
+        safe_user_query  = AskAiPromptBuilder.__sanitise_for_prompt(user_query or "")
+        user_query_block = AskAiPromptBuilder.__build_user_query_block(user_query)
 
         if prompt_mode == AskAiPromptModes.SUMMARIZE:
             template = PromptPool.ASK_AI_SUMMARIZE_STUDY_MATERIAL_USER
@@ -223,31 +263,46 @@ class AskAiPromptBuilder:
             )
 
         if prompt_mode == AskAiPromptModes.MAKE_MNEMONIC:
-            template = PromptPool.ASK_AI_MAKE_MNEMONIC_STUDY_MATERIAL_USER
+            template = (
+                PromptPool.ASK_AI_MAKE_MNEMONIC_STUDY_MATERIAL_WHOLE_USER
+                if b_whole_entity
+                else PromptPool.ASK_AI_MAKE_MNEMONIC_STUDY_MATERIAL_USER
+            )
             return (
                 template
                 .replace("{material_excerpt}",         material_excerpt)
-                .replace("{user_query}",               safe_user_query)
+                .replace("{selected_text}",            safe_selected_text)
+                .replace("{user_query_block}",         user_query_block)
                 .replace("{information_source_block}", information_source_block)
                 .replace("{html_style_block}",         AskAiPromptBuilder.HTML_STYLE_BLOCK)
             )
 
         if prompt_mode == AskAiPromptModes.GIVE_EXAMPLES:
-            template = PromptPool.ASK_AI_GIVE_EXAMPLES_STUDY_MATERIAL_USER
+            template = (
+                PromptPool.ASK_AI_GIVE_EXAMPLES_STUDY_MATERIAL_WHOLE_USER
+                if b_whole_entity
+                else PromptPool.ASK_AI_GIVE_EXAMPLES_STUDY_MATERIAL_USER
+            )
             return (
                 template
                 .replace("{material_excerpt}",         material_excerpt)
-                .replace("{user_query}",               safe_user_query)
+                .replace("{selected_text}",            safe_selected_text)
+                .replace("{user_query_block}",         user_query_block)
                 .replace("{information_source_block}", information_source_block)
                 .replace("{html_style_block}",         AskAiPromptBuilder.HTML_STYLE_BLOCK)
             )
 
         if prompt_mode == AskAiPromptModes.GLOSSARY:
-            template = PromptPool.ASK_AI_GLOSSARY_STUDY_MATERIAL_USER
+            template = (
+                PromptPool.ASK_AI_GLOSSARY_STUDY_MATERIAL_WHOLE_USER
+                if b_whole_entity
+                else PromptPool.ASK_AI_GLOSSARY_STUDY_MATERIAL_USER
+            )
             return (
                 template
                 .replace("{material_excerpt}",         material_excerpt)
-                .replace("{user_query}",               safe_user_query)
+                .replace("{selected_text}",            safe_selected_text)
+                .replace("{user_query_block}",         user_query_block)
                 .replace("{information_source_block}", information_source_block)
                 .replace("{html_style_block}",         AskAiPromptBuilder.HTML_STYLE_BLOCK)
             )
@@ -295,6 +350,32 @@ class AskAiPromptBuilder:
             "--- BEGIN SOURCE EXCERPTS ---\n"
             f"{joined_chunks}\n"
             "--- END SOURCE EXCERPTS ---\n\n"
+        )
+
+    @staticmethod
+    def __build_user_query_block(user_query: str) -> str:
+        """
+        Build the {user_query_block} substitution. Empty when the user
+        typed nothing — the placeholder line collapses out of the
+        rendered prompt so absence is invisible to the LLM. Otherwise
+        emit a strong steer that elevates whatever the user typed to
+        the PRIMARY subject of the output. The previous "Additional
+        instructions (optional): {user_query}" line was treated by the
+        LLM as a side hint, which let the wider entity body dominate
+        and produced examples / definitions / mnemonics about whatever
+        concept happened to be most prominent in the card instead of
+        the topic the learner actually asked about.
+        """
+        safe = AskAiPromptBuilder.__sanitise_for_prompt(user_query or "")
+        if not safe:
+            return ""
+        return (
+            f"TOPIC FOCUS: {safe}\n"
+            "Treat the topic above as the PRIMARY subject of the output. "
+            "Examples / definitions / mnemonics must illustrate this "
+            "specifically, even if it is only one part of the wider "
+            "content. Use the surrounding flashcard or lesson only as "
+            "background context — never as the subject of the output."
         )
 
     @staticmethod

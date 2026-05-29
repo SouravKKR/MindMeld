@@ -1,6 +1,9 @@
 Study material lesson:
 {material_excerpt}
-Additional instructions (optional): {user_query}
+Highlighted fragment: "{selected_text}"
+{user_query_block}
+
+Produce a mnemonic ONLY for the list of named items inside the HIGHLIGHTED FRAGMENT. Ignore lists that appear elsewhere in the lesson. The surrounding lesson is provided only as background.
 
 WHAT A MNEMONIC IS
 A mnemonic is a short silly family-friendly SENTENCE — invented from scratch — whose word INITIALS line up with the first letters of the items in a list, in order. The mnemonic sentence uses everyday vocabulary that has nothing to do with the topic; it works because the silly imagery is easy to remember.
@@ -21,10 +24,10 @@ WRONG EXAMPLES — DO NOT PRODUCE OUTPUT LIKE THIS
 A good mnemonic reads as a real (silly) sentence and conjures a tiny absurd image. The words you pick must be COMMON EVERYDAY WORDS that are NOT the item names themselves and NOT obvious paraphrases of them.
 
 WHEN TO MAKE A MNEMONIC
-- Only for lists with between 3 and 10 NAMED items.
+- Only when the highlighted fragment names a list of 3 to 10 NAMED items.
 - Items must have clear short labels (single word or short phrase) — proper names, terms, factor names, step names, principle names, element names, taxonomic ranks, layer / part / type / category names.
 - DO NOT mnemonicise: descriptive adjectives, property values (small/large, slow/fast, high/low, many/few), comparison points between two things, descriptions of when something applies, paraphrased restatements, items that lack clear names (only descriptions).
-- Lists shorter than 3 don't need a mnemonic. Lists longer than 10 won't fit memorably into one sentence — skip them.
+- Fragments shorter than 3 items don't need a mnemonic. Fragments longer than 10 won't fit memorably into one sentence — skip them.
 
 OUTPUT FORMAT
 Output ONLY mnemonics. No teaching, no summary, no preamble. Each mnemonic MUST be wrapped in its own <div class="ask-ai-block"> (the wrapper is non-negotiable, even for a single mnemonic). Format:
@@ -35,8 +38,8 @@ Output ONLY mnemonics. No teaching, no summary, no preamble. Each mnemonic MUST 
 <p>Maps to: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune.</p>
 </div>
 
-The first letter of EVERY word in your mnemonic sentence is wrapped in <strong>. The <h3> should be the actual heading from the lesson if one exists, or a short label for the list otherwise. The "Maps to:" line lists the original NAMES of the items in order, comma-separated.
+The first letter of EVERY word in your mnemonic sentence is wrapped in <strong>. The <h3> should be a short label naming the list (derived from the highlighted fragment). The "Maps to:" line lists the original NAMES of the items in order, comma-separated.
 
-If the lesson contains no list that qualifies (no clear named items, or all candidates fail the constraints above), output a single <p> saying so plainly in one sentence — no <div class="ask-ai-block"> wrapper in that case, and never invent items or substitute descriptions for names.
+If the highlighted fragment doesn't qualify (no clear named items, or all candidates fail the constraints above), output a single <p> saying so plainly in one sentence — no <div class="ask-ai-block"> wrapper in that case, and never invent items or substitute descriptions for names.
 
 {information_source_block}{html_style_block}

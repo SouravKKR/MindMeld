@@ -25,6 +25,33 @@ class AuthenticationQueryEngine
         return userJson ? User.fromJson(userJson) : null;
     }
 
+    static async getUserByEmail(email)
+    {
+        if (typeof email !== "string" || email.length === 0)
+        {
+            return null;
+        }
+
+        const normalisedEmail = email.trim().toLowerCase();
+        if (normalisedEmail.length === 0)
+        {
+            return null;
+        }
+
+        // Case-insensitive match — existing Google-flow users may have
+        // stored their email with whatever casing Google returned (the
+        // OAuth payload is not guaranteed lowercase), while OTP-flow
+        // users are always lowercased on write. Anchor + escape to
+        // prevent any regex injection from the caller's input.
+        const escapedEmail = normalisedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const emailRegex = new RegExp(`^${escapedEmail}$`, "i");
+
+        const userJson = await (await DatabaseConnector.getDatabase())
+            .collection(DatabaseConstants.USERS_COLLECTION)
+            .findOne({ "additionalData.email": emailRegex });
+        return userJson ? User.fromJson(userJson) : null;
+    }
+
     static async updateUserAdditionalData(userId, partialAdditionalData)
     {
         if (!userId || !partialAdditionalData || typeof partialAdditionalData !== "object")

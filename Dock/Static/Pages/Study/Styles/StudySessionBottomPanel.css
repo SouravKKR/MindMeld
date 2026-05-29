@@ -1,0 +1,392 @@
+/* Drawer-style assistant panel mounted at the bottom of the Study page
+   for card / study-material sessions. Always lives inside the
+   .study-page-container (last child) — see StudyPage.#mountBottomPanel.
+   Never mounted in mock-test mode. */
+
+study-session-bottom-panel
+{
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    background-color: var(--secondary-background-color);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px 12px 0 0;
+    overflow: hidden;
+    flex-shrink: 0;
+    transition: max-height 0.22s ease, transform 0.22s ease;
+    max-height: 280px;
+    box-shadow: 0 -4px 18px rgba(0, 0, 0, 0.25);
+    margin-top: 4px;
+}
+
+study-session-bottom-panel.study-session-bottom-panel--collapsed
+{
+    /* Collapsed state is fully hidden — the assistant-toggle-button in the
+       study-action-row is the only affordance for re-opening the panel. */
+    max-height: 0;
+    margin-top: 0;
+    border-top-width: 0;
+}
+
+study-session-bottom-panel .bottom-panel-body
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px 12px 12px;
+    opacity: 1;
+    transition: opacity 0.18s ease;
+}
+
+study-session-bottom-panel.study-session-bottom-panel--collapsed .bottom-panel-body
+{
+    /* Hidden via parent clipping — pointer-events off so the collapsed
+       state doesn't intercept clicks meant for the underlying study UI. */
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* ── Tier picker row ─────────────────────────────────────────────── */
+
+study-session-bottom-panel .bottom-panel-tier-row
+{
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    /* Tighter than the question row — the dropdown is a small chip,
+       not a full-width control. */
+    margin-bottom: 2px;
+}
+
+/* ── Grounding controls ───────────────────────────────────────────
+   Mirrors the TextSelectionContextMenu's grounding block — same
+   persistence key per deck, same UX, just styled to sit in the
+   wider bottom-panel column instead of the narrow popup. Hidden
+   for tiers that don't ground (Free). */
+
+study-session-bottom-panel .bottom-panel-grounding-controls
+{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+study-session-bottom-panel .bottom-panel-grounding-controls[hidden]
+{
+    display: none;
+}
+
+study-session-bottom-panel .bottom-panel-grounding-checkbox-row
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    line-height: 1.3;
+    cursor: pointer;
+    user-select: none;
+}
+
+study-session-bottom-panel .bottom-panel-grounding-label
+{
+    color: var(--primary-text-color);
+    font-weight: 500;
+}
+
+study-session-bottom-panel .bottom-panel-grounding-hint
+{
+    color: var(--secondary-text-color);
+    font-size: 0.75rem;
+    margin-left: auto;
+}
+
+study-session-bottom-panel .bottom-panel-grounding-sources
+{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 6px;
+    background-color: var(--tertiary-background-color);
+    border-radius: 6px;
+    outline: 1px solid var(--outline-color-subtle);
+    outline-offset: -1px;
+}
+
+study-session-bottom-panel .bottom-panel-grounding-sources[hidden]
+{
+    display: none;
+}
+
+study-session-bottom-panel .bottom-panel-grounding-sources information-source-selector
+{
+    display: block;
+    width: 100%;
+}
+
+/* ── Question row ─────────────────────────────────────────────────── */
+
+study-session-bottom-panel .bottom-panel-question-row
+{
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+}
+
+/* Both rows share the same button height + radius so the Send button
+   sits at the same vertical scale as the Ask input AND the four
+   secondary actions below it look like one consistent row instead of
+   three disparate widgets. */
+
+study-session-bottom-panel .bottom-panel-question-input
+{
+    flex: 1;
+    min-height: 36px;
+    max-height: 140px;
+    overflow-y: auto;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    outline: 1px solid var(--outline-color-subtle);
+    outline-offset: -1px;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    transition: outline-color 0.15s ease;
+    white-space: pre-wrap;
+    word-break: break-word;
+    box-sizing: border-box;
+}
+
+study-session-bottom-panel .bottom-panel-question-input:focus
+{
+    outline-color: var(--highlight-color);
+}
+
+study-session-bottom-panel .bottom-panel-question-input:empty::before
+{
+    content: attr(data-placeholder);
+    color: var(--secondary-text-color);
+    opacity: 0.55;
+    pointer-events: none;
+}
+
+study-session-bottom-panel .bottom-panel-send-button
+{
+    min-height: 36px;
+    padding: 0 18px;
+    border-radius: 6px;
+    border: none;
+    background-color: var(--highlight-color);
+    color: var(--highlight-text-color);
+    font-weight: 600;
+    font-size: 0.88rem;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    box-sizing: border-box;
+}
+
+study-session-bottom-panel .bottom-panel-send-button:hover
+{
+    /* Manual darken of var(--highlight-color) — CSS doesn't have a
+       built-in darken() so the hover shade is hard-coded. Sourced
+       from #F5B838 → ~12% darker. */
+    background-color: #d99c1f;
+    color: var(--highlight-text-color);
+}
+
+/* ── Action row ───────────────────────────────────────────────────── */
+
+study-session-bottom-panel .bottom-panel-action-row
+{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 8px;
+}
+
+study-session-bottom-panel .bottom-panel-action-row > button
+{
+    /* Identical metrics to the Send button so the bottom-panel-question-row
+       and bottom-panel-action-row read as one button family. The
+       backgrounds differ (secondary gray vs highlight amber) to keep the
+       primary action distinct without breaking shape. */
+    min-height: 36px;
+    padding: 0 14px;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    border: none;
+    outline: 1px solid var(--outline-color-subtle);
+    outline-offset: -1px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.15s ease, outline-color 0.15s ease, color 0.15s ease;
+    box-sizing: border-box;
+}
+
+study-session-bottom-panel .bottom-panel-action-row > button:hover
+{
+    background-color: var(--quaternary-background-color);
+    outline-color: var(--highlight-color);
+}
+
+study-session-bottom-panel .bottom-panel-mark-review-toggle.bottom-panel-mark-review-toggle--active
+{
+    background-color: var(--highlight-background-soft);
+    outline-color: var(--highlight-color);
+    color: var(--highlight-color);
+}
+
+study-session-bottom-panel[data-mode="study-material"] .bottom-panel-mark-review-toggle
+{
+    /* Mark-for-Review is meaningful only for cards. The button is left
+       in the DOM but hidden when the panel is rendered in study-material
+       mode so the same component handles both shapes without forking. */
+    display: none;
+}
+
+/* ── Enhance sub-dialog (rendered inside DialogBox.modal) ─────────── */
+
+.bottom-panel-enhance-dialog
+{
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 4px 0;
+    min-width: min(420px, 90vw);
+}
+
+.bottom-panel-enhance-dialog h2
+{
+    margin: 0;
+    text-align: center;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--primary-text-color);
+}
+
+.bottom-panel-enhance-dialog p
+{
+    margin: 0;
+    color: var(--secondary-text-color);
+    font-size: 0.9rem;
+}
+
+.bottom-panel-enhance-options
+{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.bottom-panel-enhance-option
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    font-size: 0.9rem;
+    color: var(--primary-text-color);
+}
+
+.bottom-panel-enhance-option:hover
+{
+    background-color: var(--quaternary-background-color);
+}
+
+.bottom-panel-enhance-instructions-label
+{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--primary-text-color);
+    font-size: 0.85rem;
+}
+
+.bottom-panel-enhance-instructions
+{
+    padding: 8px 10px;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    border: none;
+    outline: 1px solid rgba(255, 255, 255, 0.08);
+    outline-offset: -1px;
+    font-family: inherit;
+    font-size: 0.9rem;
+    resize: vertical;
+    min-height: 64px;
+}
+
+.bottom-panel-enhance-instructions:focus
+{
+    outline-color: var(--accent-color);
+}
+
+.bottom-panel-enhance-actions
+{
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.bottom-panel-enhance-cancel,
+.bottom-panel-enhance-apply
+{
+    padding: 8px 18px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid rgba(255, 255, 255, 0.08);
+    outline-offset: -1px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.bottom-panel-enhance-cancel
+{
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+}
+
+.bottom-panel-enhance-cancel:hover
+{
+    background-color: var(--quaternary-background-color);
+}
+
+.bottom-panel-enhance-apply
+{
+    background-color: var(--accent-color);
+    color: #ffffff;
+    outline-color: var(--accent-color);
+}
+
+.bottom-panel-enhance-apply:hover
+{
+    background-color: #0084ab;
+}
+
+/* ── Narrow viewport ──────────────────────────────────────────────── */
+
+@media (max-width: 600px)
+{
+    study-session-bottom-panel
+    {
+        max-height: 360px;
+    }
+
+    study-session-bottom-panel .bottom-panel-action-row > button
+    {
+        padding: 8px 12px;
+        font-size: 0.82rem;
+    }
+}

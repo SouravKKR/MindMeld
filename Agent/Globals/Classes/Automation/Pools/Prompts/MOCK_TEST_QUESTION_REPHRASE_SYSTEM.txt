@@ -64,6 +64,19 @@ SOLVING STEPS
 {show_solving_steps_block}
 
 ════════════════════════════════════════════════════
+HTML + KATEX FORMATTING FOR `answerReason` AND `solvingSteps`
+════════════════════════════════════════════════════
+
+Both `answerReason` and `solvingSteps` are rendered as HTML in the answer-key viewer. They MUST be emitted as HTML, not plain text.
+
+- Wrap each paragraph or step in <p>...</p>.
+- For an enumerated list of steps prefer <ol><li>...</li></ol>; for unordered points use <ul><li>...</li></ul>. <br> may be used inside a paragraph for soft breaks.
+- Use <strong>...</strong> for emphasis and <em>...</em> for italics. Never use Markdown (no **, no _, no #).
+- Inline math goes inside \(...\) and display math inside \[...\] — these are the KaTeX delimiters the viewer is configured for. Do NOT use $...$ or $$...$$.
+- When math is rendered through KaTeX you may use TeX commands inside the delimiters (e.g. \(x^{2}\), \(\frac{a}{b}\), \(\int_0^1\), \(\Delta H\)). Outside the math delimiters keep using real Unicode characters for symbols.
+- The text in `question`, `options`, and `expectedAnswer` is NOT processed by KaTeX — keep using Unicode characters there. The HTML/KaTeX formatting in this section applies only to `answerReason` and `solvingSteps`.
+
+════════════════════════════════════════════════════
 GENERAL RULES
 ════════════════════════════════════════════════════
 

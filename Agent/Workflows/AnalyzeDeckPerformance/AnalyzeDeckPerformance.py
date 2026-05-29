@@ -39,7 +39,14 @@ class AnalyzeDeckPerformance(Workflow):
 
     MODEL_NAME                                = "gemini-2.5-flash-lite"
     TOP_CARDS_PER_TIER                        = 8
-    TOP_TOPICS_PER_TIER                       = 3
+    TOP_TOPICS_PER_TIER                       = 5
+    # The user's actual study evidence lives in `progress.progressPoints`
+    # — a ring buffer that grows by one entry every time `Card.attempt`
+    # runs. A single attempt is enough to count as evidence; we treat
+    # 0-point cards as "never studied" and skip them. The FSRS engine
+    # provides per-point stability + Glicko RD downstream in the
+    # weakness / volatility scoring formulae, so we don't need a
+    # separate stability floor at the eligibility stage.
     MIN_PROGRESS_POINTS_FOR_CARD_ELIGIBILITY  = 1
     MIN_PROGRESS_POINTS_FOR_VOLATILITY        = 3
     VOLATILITY_RECENT_CORRECTNESS_WINDOW      = 5
@@ -60,9 +67,10 @@ class AnalyzeDeckPerformance(Workflow):
         "topic names appropriate to the user's syllabus level.\n\n"
         "Return STRICT compact JSON with exactly one key 'topics' — an array of objects with "
         "'name' (string), 'strength' (one of 'WEAK', 'STRONG', 'VOLATILE'), and 'reason' (one short "
-        "sentence explaining the classification). Use thresholds: return at most 3 entries per strength "
-        "tier, and return fewer if the card evidence does not justify a full tier (e.g. zero VOLATILE "
-        "if no cards show a real confusion pattern). No prose outside the JSON."
+        "sentence explaining the classification). Return only a small handful of entries per strength "
+        "tier — fewer is better when the card evidence is thin, and skip a tier entirely if it is not "
+        "supported (e.g. zero VOLATILE when no card shows a real confusion pattern). No prose outside "
+        "the JSON."
     )
 
     def __init__(self, payload: dict = {}):
@@ -83,7 +91,11 @@ class AnalyzeDeckPerformance(Workflow):
         deck_collection = database[DatabaseConstants.DECKS_COLLECTION]
         card_collection = database[DatabaseConstants.CARDS_COLLECTION]
 
-        root_deck = await asyncio.to_thread(deck_collection.find_one, {"id": self.__deck_id}, {"_id": 0})
+        # Sync-collection docs are wrapped as {userId, data: {<entity>},
+        # serverUpdatedAt} — see Dock/Globals/Classes/Database/
+        # SyncQueryEngine.bulkUpsert. Every field selector and field
+        # access on a deck / card doc therefore goes through `data.*`.
+        root_deck = await asyncio.to_thread(deck_collection.find_one, {"data.id": self.__deck_id}, {"_id": 0})
         if root_deck is None:
             print(f"[AnalyzeDeckPerformance] Deck {self.__deck_id} not found — exiting.")
             return
@@ -93,9 +105,11 @@ class AnalyzeDeckPerformance(Workflow):
             print(f"[AnalyzeDeckPerformance] Deck {self.__deck_id} has no userId — exiting.")
             return
 
+        root_deck_data = root_deck.get("data") or {}
+
         # Re-check the opt-in flag server-side so a stale client request
         # cannot drive an LLM call after the user has un-checked the toggle.
-        additional_data = root_deck.get("additionalData") or {}
+        additional_data = root_deck_data.get("additionalData") or {}
         if additional_data.get(AnalyzeDeckPerformance.AUTO_PERFORMANCE_ANALYSIS_ENABLED_FIELD) is not True:
             print(f"[AnalyzeDeckPerformance] Deck {self.__deck_id} no longer opted in — exiting.")
             return
@@ -103,7 +117,20 @@ class AnalyzeDeckPerformance(Workflow):
         descendant_deck_ids = await self.__collect_descendant_deck_ids(deck_collection, user_id, self.__deck_id)
         deck_ids_in_scope = [self.__deck_id, *descendant_deck_ids]
 
+        # Diagnostic — surface the tree walk so a quiet "no cards" exit
+        # below isn't a black box. Logs the deck scope size + first few
+        # ids; on light decks the truncation is a no-op.
+        preview_deck_ids = deck_ids_in_scope[:6]
+        print(f"[AnalyzeDeckPerformance] Scope userId={user_id} descendants={len(descendant_deck_ids)} totalDecks={len(deck_ids_in_scope)} sample={preview_deck_ids}")
+
+        total_card_count = await asyncio.to_thread(
+            card_collection.count_documents,
+            {"userId": user_id, "data.deckId": {"$in": deck_ids_in_scope}},
+        )
+        print(f"[AnalyzeDeckPerformance] Card collection matched {total_card_count} document(s) for the deck scope.")
+
         scored_cards = await self.__score_cards_for_decks(card_collection, user_id, deck_ids_in_scope)
+        print(f"[AnalyzeDeckPerformance] {len(scored_cards)} card(s) cleared the eligibility floor (progressPoints>={AnalyzeDeckPerformance.MIN_PROGRESS_POINTS_FOR_CARD_ELIGIBILITY}).")
         if not scored_cards:
             print(f"[AnalyzeDeckPerformance] No studied cards found under deck {self.__deck_id} — exiting.")
             return
@@ -132,12 +159,13 @@ class AnalyzeDeckPerformance(Workflow):
 
         await asyncio.to_thread(
             deck_collection.update_one,
-            {"id": self.__deck_id},
+            {"data.id": self.__deck_id},
             {"$set":
             {
-                f"additionalData.{AnalyzeDeckPerformance.LAST_ANALYSIS_TOPICS_FIELD}": analysis_summary,
-                f"additionalData.{AnalyzeDeckPerformance.LAST_ANALYZED_AT_FIELD}":     generated_at,
-                "lifecycle.lastModified":                                              datetime.now(timezone.utc),
+                f"data.additionalData.{AnalyzeDeckPerformance.LAST_ANALYSIS_TOPICS_FIELD}": analysis_summary,
+                f"data.additionalData.{AnalyzeDeckPerformance.LAST_ANALYZED_AT_FIELD}":     generated_at,
+                "data.lifecycle.lastModified":                                              datetime.now(timezone.utc),
+                "serverUpdatedAt":                                                          datetime.now(timezone.utc),
             }}
         )
 
@@ -149,8 +177,11 @@ class AnalyzeDeckPerformance(Workflow):
         print(f"[AnalyzeDeckPerformance] Stored analysis for deck {self.__deck_id}: {tier_counts['WEAK']} weak / {tier_counts['STRONG']} strong / {tier_counts['VOLATILE']} volatile topic(s).")
 
         if self.__auto_generate_curated_study and additional_data.get(AnalyzeDeckPerformance.AUTO_GENERATE_CURATED_STUDY_ENABLED_FIELD) is True:
-            weak_topics = [entry for entry in topics if entry["strength"] == TopicStrength.WEAK.name]
-            await self.__spawn_curated_study_children(user_id, weak_topics, deck_chain)
+            spawnable_topics = [
+                entry for entry in topics
+                if entry["strength"] in (TopicStrength.WEAK.name, TopicStrength.VOLATILE.name)
+            ]
+            await self.__spawn_curated_study_children(user_id, spawnable_topics, deck_chain, generated_at)
 
         current_task = await TaskManager.get_current_task()
         if current_task is not None:
@@ -168,13 +199,14 @@ class AnalyzeDeckPerformance(Workflow):
                 children = await asyncio.to_thread(
                     list,
                     deck_collection.find(
-                        {"userId": user_id, "parent": parent_id},
-                        {"_id": 0, "id": 1},
+                        {"userId": user_id, "data.parent": parent_id},
+                        {"_id": 0, "data.id": 1},
                     ),
                 )
 
                 for child in children:
-                    child_id = child.get("id")
+                    child_data = child.get("data") or {}
+                    child_id   = child_data.get("id")
                     if child_id and child_id not in visited:
                         visited.add(child_id)
                         descendant_ids.append(child_id)
@@ -198,17 +230,18 @@ class AnalyzeDeckPerformance(Workflow):
             visited_ids.add(current_deck_id)
             current_doc = await asyncio.to_thread(
                 deck_collection.find_one,
-                {"userId": user_id, "id": current_deck_id},
-                {"_id": 0, "id": 1, "parent": 1, "name": 1},
+                {"userId": user_id, "data.id": current_deck_id},
+                {"_id": 0, "data.id": 1, "data.parent": 1, "data.name": 1},
             )
             if current_doc is None:
                 break
 
-            deck_name = current_doc.get("name") or ""
+            current_doc_data = current_doc.get("data") or {}
+            deck_name        = current_doc_data.get("name") or ""
             if deck_name:
                 chain_names.insert(0, deck_name)
 
-            current_deck_id = current_doc.get("parent") or ""
+            current_deck_id = current_doc_data.get("parent") or ""
 
         return chain_names
 
@@ -219,32 +252,42 @@ class AnalyzeDeckPerformance(Workflow):
         cards = await asyncio.to_thread(
             list,
             card_collection.find(
-                {"userId": user_id, "deckId": {"$in": deck_ids}},
+                {"userId": user_id, "data.deckId": {"$in": deck_ids}},
                 {"_id": 0},
             ),
         )
 
         scored: list[dict] = []
 
+        diagnostic_counts = {"never_studied": 0, "kept": 0}
+
         for card in cards:
-            progress_block = card.get("progress") or {}
+            # Card docs are wrapped {userId, data: <Card>, serverUpdatedAt}
+            # by the sync layer — see SyncQueryEngine.bulkUpsert.
+            card_data       = card.get("data") or {}
+            progress_block  = card_data.get("progress") or {}
             progress_points = progress_block.get("progressPoints") or []
 
+            # Eligibility floor — the user must have attempted this card
+            # at least once. Cards with an empty progress history have
+            # nothing to score off, so we drop them quietly.
             if len(progress_points) < AnalyzeDeckPerformance.MIN_PROGRESS_POINTS_FOR_CARD_ELIGIBILITY:
+                diagnostic_counts["never_studied"] += 1
                 continue
 
-            latest_point   = progress_points[-1]
-            fsrs_state     = latest_point.get("fsrs") or {}
-            glicko_state   = latest_point.get("glicko") or {}
+            latest_point = progress_points[-1]
+            fsrs_state   = latest_point.get("fsrs") or {}
+            glicko_state = latest_point.get("glicko") or {}
+            stability    = AnalyzeDeckPerformance.__coerce_float(fsrs_state.get("stability"), default=0.0)
+            diagnostic_counts["kept"] += 1
 
-            stability = AnalyzeDeckPerformance.__coerce_float(fsrs_state.get("stability"), default=0.1)
             r30_value = AnalyzeDeckPerformance.__compute_r30(stability)
 
             rating_deviation = AnalyzeDeckPerformance.__coerce_float(glicko_state.get("ratingDeviation"), default=350.0)
             confidence_factor = max(0.0, min(1.0, 1.0 - (rating_deviation / 350.0)))
 
             current_rating = AnalyzeDeckPerformance.__coerce_float(glicko_state.get("rating"), default=1500.0)
-            base_difficulty = AnalyzeDeckPerformance.__coerce_float(card.get("baseDifficulty"), default=1500.0)
+            base_difficulty = AnalyzeDeckPerformance.__coerce_float(card_data.get("baseDifficulty"), default=1500.0)
             rating_deficit = max(0.0, base_difficulty - current_rating)
             rating_deficit_signal = min(1.0, rating_deficit / 500.0)
 
@@ -256,9 +299,9 @@ class AnalyzeDeckPerformance(Workflow):
             volatility_score = AnalyzeDeckPerformance.__compute_volatility_score(correctness_history, rating_deviation, total_attempts)
 
             scored.append({
-                "id":               card.get("id"),
-                "question":         AnalyzeDeckPerformance.__strip_html(card.get("question") or ""),
-                "answer":           AnalyzeDeckPerformance.__strip_html(card.get("answer") or ""),
+                "id":               card_data.get("id"),
+                "question":         AnalyzeDeckPerformance.__strip_html(card_data.get("question") or ""),
+                "answer":           AnalyzeDeckPerformance.__strip_html(card_data.get("answer") or ""),
                 "weaknessScore":    weakness_score,
                 "volatilityScore":  volatility_score,
                 "r30":              r30_value,
@@ -266,6 +309,8 @@ class AnalyzeDeckPerformance(Workflow):
                 "ratingDeviation":  rating_deviation,
                 "totalAttempts":    total_attempts,
             })
+
+        print(f"[AnalyzeDeckPerformance] Eligibility breakdown — never_studied={diagnostic_counts['never_studied']}, kept={diagnostic_counts['kept']}")
 
         return scored
 
@@ -367,9 +412,9 @@ class AnalyzeDeckPerformance(Workflow):
             f"{AnalyzeDeckPerformance.__format_card_block('WEAK — lowest retention / lowest win rate', weakest_cards)}\n\n"
             f"{AnalyzeDeckPerformance.__format_card_block('STRONG — highest retention / steady wins', strongest_cards)}\n\n"
             f"{AnalyzeDeckPerformance.__format_card_block('VOLATILE — user keeps flipping (high Glicko RD + mixed recent correctness)', volatile_cards)}\n\n"
-            "Identify up to 3 conceptual topics per tier. A weak topic may be a foundational gap rather "
-            "than the literal card subject — name what the student is missing. Skip a tier entirely if "
-            "the cards do not justify it. Return JSON only."
+            "Identify a small number of conceptual topics per tier. A weak topic may be a foundational gap "
+            "rather than the literal card subject — name what the student is missing. Skip a tier entirely "
+            "if the cards do not justify it. Return JSON only."
         )
 
         request = AutomationRequest(
@@ -440,8 +485,19 @@ class AnalyzeDeckPerformance(Workflow):
 
         return sanitized
 
-    async def __spawn_curated_study_children(self, user_id: str, weak_topics: list[dict], deck_chain: list[str]) -> None:
-        if not weak_topics:
+    async def __spawn_curated_study_children(self, user_id: str, topics_to_cover: list[dict], deck_chain: list[str], generated_for_analysis_at: str) -> None:
+        """
+        Spawns one GENERATE_CURATED_STUDY_MATERIAL child task per topic
+        the user needs help on (WEAK foundational gaps and VOLATILE
+        confusion patterns). The `generated_for_analysis_at` timestamp
+        flows into each child so every sibling spawn shares the same
+        batch tag — that lets the frontend's "Current Batch" filter
+        recognise the cohort without any deck-side bookkeeping.
+
+        Per-tier topics are capped by TOP_TOPICS_PER_TIER, so the upper
+        bound on children is `TOP_TOPICS_PER_TIER * 2` (WEAK + VOLATILE).
+        """
+        if not topics_to_cover:
             return
 
         current_task = await TaskManager.get_current_task()
@@ -450,7 +506,7 @@ class AnalyzeDeckPerformance(Workflow):
 
         spawned_task_ids: list[str] = []
 
-        for weakness_index, topic_entry in enumerate(weak_topics[: AnalyzeDeckPerformance.TOP_TOPICS_PER_TIER]):
+        for topic_index, topic_entry in enumerate(topics_to_cover):
             topic_name = topic_entry.get("name", "")
             if not topic_name:
                 continue
@@ -460,12 +516,14 @@ class AnalyzeDeckPerformance(Workflow):
                 execution_target=TaskExecutionTargets.LOCAL,
                 user_id=user_id,
                 payload={
-                    "deckId":         self.__deck_id,
-                    "userId":         user_id,
-                    "topicName":      topic_name,
-                    "weaknessIndex":  weakness_index,
-                    "reason":         topic_entry.get("reason", ""),
-                    "deckChain":      deck_chain,
+                    "deckId":                 self.__deck_id,
+                    "userId":                 user_id,
+                    "topicName":              topic_name,
+                    "topicIndex":             topic_index,
+                    "topicStrength":          topic_entry.get("strength", TopicStrength.WEAK.name),
+                    "reason":                 topic_entry.get("reason", ""),
+                    "deckChain":              deck_chain,
+                    "generatedForAnalysisAt": generated_for_analysis_at,
                 },
                 next_task_ids=[],
                 parent_task_id=current_task.get_id(),

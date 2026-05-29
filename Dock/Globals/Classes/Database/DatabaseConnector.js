@@ -356,6 +356,25 @@ class DatabaseConnector
 
         const AdminEmailSeeder = require('./AdminEmailSeeder');
         await AdminEmailSeeder.seedFromJsonFile();
+
+        // ── OTP requests ───────────────────────────────────────────────────────
+        // One active OTP per email; the absolute-expiry TTL mirrors the
+        // sessions collection so the cleanup pattern is consistent.
+        const otpRequestsCollection = database.collection(DatabaseConstants.OTP_REQUESTS_COLLECTION);
+        await otpRequestsCollection.createIndex({ email: 1 }, { unique: true });
+        await otpRequestsCollection.createIndex({ expirationDate: 1 }, { expireAfterSeconds: 0 });
+
+        // ── Release notes ──────────────────────────────────────────────────────
+        // Versioned changelog the admin publishes; clients filter on
+        // versionSortKey > user.additionalData.lastSeenReleaseNoteVersionSortKey
+        // to find unseen entries. version + versionSortKey are unique so a
+        // concurrent admin race fails E11000 and the create handler retries
+        // with a freshly-computed sort key.
+        const releaseNotesCollection = database.collection(DatabaseConstants.RELEASE_NOTES_COLLECTION);
+        await releaseNotesCollection.createIndex({ id: 1 }, { unique: true });
+        await releaseNotesCollection.createIndex({ version: 1 }, { unique: true });
+        await releaseNotesCollection.createIndex({ versionSortKey: -1 }, { unique: true });
+        await releaseNotesCollection.createIndex({ releaseDate: -1 });
     }
 }
 
