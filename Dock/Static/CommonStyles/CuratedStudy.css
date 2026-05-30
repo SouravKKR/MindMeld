@@ -1,0 +1,962 @@
+/*
+ * CuratedStudy.css
+ *
+ * Styles for every surface in the curated-study rebuild:
+ *   - CuratedStudyEntryDialog
+ *   - CuratedStudyContentTypeFilterDialog
+ *   - CuratedStudyArchiveDialog (+ material viewer)
+ *   - CuratedStudyCompletionDialog
+ *   - CuratedStudyProgressOverlay
+ *   - CuratedStudySession in-page chrome (topic badge, Easy/Hard,
+ *     "I've read this") that lives inside StudyPage when
+ *     .study-page--curated-mode is on the page root.
+ *
+ * Layout strategy: mobile-first base styles, with landscape /
+ * wider-screen overrides via @media (orientation: landscape) — matches
+ * the existing pattern in StudyPage.css. Dialog widths clamp via
+ * `min(target, NNvw)` so portrait phones get full-width usable
+ * surfaces without horizontal scrolling. Tap targets stay above ~44px
+ * on touch where the action is non-trivial.
+ *
+ * Colour tokens reuse Theme.css dark-theme variables; selectors are
+ * scoped with `dialog-box` for everything that lives inside a modal
+ * so the rules never leak into other surfaces.
+ */
+
+
+/* ── Entry dialog ──────────────────────────────────────────────── */
+
+dialog-box .curated-entry-deck-name
+{
+    color: var(--secondary-text-color);
+    font-size: 0.9rem;
+    margin: -0.4em 0 0.9em;
+    text-align: center;
+}
+
+dialog-box .curated-entry-skipped-banner
+{
+    background: var(--highlight-background-soft);
+    border: 1px solid var(--highlight-color);
+    border-radius: 6px;
+    padding: 0.7em 0.9em;
+    margin-bottom: 0.9em;
+    color: var(--primary-text-color);
+    font-size: 0.88rem;
+    line-height: 1.4;
+}
+
+dialog-box .curated-entry-skipped-banner strong
+{
+    display: block;
+    margin-bottom: 0.3em;
+    color: var(--highlight-color);
+}
+
+dialog-box .curated-entry-actions
+{
+    display: flex;
+    flex-direction: column;
+    gap: 0.6em;
+    margin-bottom: 0.9em;
+    min-width: min(380px, 80vw);
+}
+
+dialog-box .curated-entry-actions button
+{
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 0.9em 1em;
+    background: var(--tertiary-background-color);
+    border: 1px solid var(--outline-color);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    text-align: left;
+    color: var(--primary-text-color);
+    min-height: 56px;
+    width: 100%;
+}
+
+dialog-box .curated-entry-actions button:hover:not([disabled])
+{
+    background: var(--quaternary-background-color);
+    border-color: var(--accent-color);
+}
+
+dialog-box .curated-entry-actions button[disabled]
+{
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+dialog-box .curated-entry-action-label
+{
+    font-weight: 600;
+    font-size: 0.98rem;
+}
+
+dialog-box .curated-entry-action-description
+{
+    color: var(--secondary-text-color);
+    font-size: 0.82rem;
+    margin-top: 0.25em;
+    line-height: 1.3;
+}
+
+dialog-box .curated-entry-cancel-row
+{
+    display: flex;
+    justify-content: center;
+}
+
+dialog-box .curated-entry-cancel
+{
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--secondary-text-color);
+    padding: 0.5em 1em;
+    font-size: 0.9rem;
+}
+
+dialog-box .curated-entry-cancel:hover
+{
+    color: var(--primary-text-color);
+}
+
+
+/* ── Content-type filter dialog ────────────────────────────────── */
+
+dialog-box .curated-content-filter-list
+{
+    display: flex;
+    flex-direction: column;
+    gap: 0.6em;
+    margin: 0.6em 0;
+    min-width: min(380px, 80vw);
+}
+
+dialog-box .curated-content-filter-row
+{
+    display: flex;
+    align-items: flex-start;
+    gap: 0.7em;
+    padding: 0.7em 0.85em;
+    background: var(--tertiary-background-color);
+    border: 1px solid var(--outline-color);
+    border-radius: 8px;
+    cursor: pointer;
+    min-height: 52px;
+}
+
+dialog-box .curated-content-filter-row:hover
+{
+    background: var(--quaternary-background-color);
+    border-color: var(--accent-color);
+}
+
+dialog-box .curated-content-filter-row:has(.curated-content-filter-radio:checked)
+{
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 1px var(--accent-background-color);
+}
+
+dialog-box .curated-content-filter-radio
+{
+    margin-top: 0.2em;
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent-color);
+    flex-shrink: 0;
+}
+
+dialog-box .curated-content-filter-row label
+{
+    flex: 1;
+    cursor: pointer;
+}
+
+dialog-box .curated-content-filter-label
+{
+    font-weight: 600;
+    display: block;
+    color: var(--primary-text-color);
+    font-size: 0.95rem;
+}
+
+dialog-box .curated-content-filter-description
+{
+    color: var(--secondary-text-color);
+    font-size: 0.82rem;
+    display: block;
+    margin-top: 0.2em;
+    line-height: 1.3;
+}
+
+dialog-box .curated-content-filter-actions
+{
+    display: flex;
+    justify-content: center;
+    gap: 0.7em;
+    margin-top: 0.7em;
+    flex-wrap: wrap;
+}
+
+dialog-box .curated-content-filter-actions button
+{
+    padding: 0.7em 1.4em;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    color: var(--primary-text-color);
+    min-height: 44px;
+}
+
+dialog-box .curated-content-filter-confirm
+{
+    background-color: green;
+}
+
+dialog-box .curated-content-filter-cancel
+{
+    background-color: red;
+}
+
+
+/* ── Archive dialog ────────────────────────────────────────────── */
+
+dialog-box .curated-archive-deck-name
+{
+    color: var(--secondary-text-color);
+    font-size: 0.9rem;
+    margin: -0.4em 0 0.9em;
+    text-align: center;
+}
+
+dialog-box .curated-archive-list
+{
+    display: flex;
+    flex-direction: column;
+    gap: 0.7em;
+    max-height: 60vh;
+    overflow-y: auto;
+    min-width: min(520px, 85vw);
+    max-width: 85vw;
+}
+
+dialog-box .curated-archive-batch
+{
+    border: 1px solid var(--outline-color);
+    border-radius: 8px;
+    padding: 0.7em 0.85em;
+    background: var(--tertiary-background-color);
+}
+
+dialog-box .curated-archive-batch-summary
+{
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.5em;
+    cursor: pointer;
+    list-style: none;
+    align-items: center;
+}
+
+dialog-box .curated-archive-batch-summary::-webkit-details-marker
+{
+    display: none;
+}
+
+dialog-box .curated-archive-batch-date
+{
+    font-weight: 600;
+    color: var(--primary-text-color);
+    font-size: 0.92rem;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+dialog-box .curated-archive-batch-outcome
+{
+    font-size: 0.72rem;
+    padding: 0.2em 0.6em;
+    border-radius: 12px;
+    background: var(--quaternary-background-color);
+    color: var(--primary-text-color);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+}
+
+dialog-box .curated-archive-batch-outcome--completed_all_easy
+{
+    background: rgba(76, 175, 80, 0.22);
+    color: var(--success-color);
+}
+
+dialog-box .curated-archive-batch-outcome--ended_with_hards
+{
+    background: var(--highlight-background-soft);
+    color: var(--highlight-color);
+}
+
+dialog-box .curated-archive-batch-outcome--replaced_by_regen,
+dialog-box .curated-archive-batch-outcome--auto_replaced
+{
+    background: var(--accent-background-color);
+    color: var(--accent-color);
+}
+
+dialog-box .curated-archive-batch-topic-count
+{
+    color: var(--secondary-text-color);
+    font-size: 0.82rem;
+    flex-shrink: 0;
+}
+
+dialog-box .curated-archive-batch-body
+{
+    margin-top: 0.7em;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7em;
+}
+
+dialog-box .curated-archive-topic
+{
+    border-left: 3px solid var(--accent-color);
+    padding-left: 0.7em;
+}
+
+dialog-box .curated-archive-topic-header
+{
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5em;
+}
+
+dialog-box .curated-archive-topic-name
+{
+    font-weight: 600;
+    color: var(--primary-text-color);
+    font-size: 0.92rem;
+    word-break: break-word;
+}
+
+dialog-box .curated-archive-topic-strength
+{
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    color: var(--secondary-text-color);
+    letter-spacing: 0.06em;
+    flex-shrink: 0;
+}
+
+dialog-box .curated-archive-material
+{
+    margin-top: 0.45em;
+}
+
+dialog-box .curated-archive-material-heading,
+dialog-box .curated-archive-flashcards-heading
+{
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--secondary-text-color);
+    margin-bottom: 0.3em;
+}
+
+dialog-box .curated-archive-material-open,
+dialog-box .curated-archive-flashcard-question
+{
+    background: var(--secondary-background-color);
+    border: 1px solid var(--outline-color);
+    border-radius: 6px;
+    padding: 0.55em 0.75em;
+    cursor: pointer;
+    font-size: 0.88rem;
+    text-align: left;
+    width: 100%;
+    color: var(--primary-text-color);
+    min-height: 40px;
+}
+
+dialog-box .curated-archive-material-open:hover,
+dialog-box .curated-archive-flashcard-question:hover
+{
+    background: var(--quaternary-background-color);
+}
+
+dialog-box .curated-archive-flashcards-list
+{
+    padding-left: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35em;
+    margin: 0;
+    list-style: none;
+}
+
+dialog-box .curated-archive-flashcard
+{
+    list-style: none;
+}
+
+dialog-box .curated-archive-flashcard-question
+{
+    display: flex;
+    align-items: center;
+    gap: 0.55em;
+    word-break: break-word;
+}
+
+dialog-box .curated-archive-flashcard-grade-pill
+{
+    font-size: 0.66rem;
+    padding: 0.15em 0.5em;
+    border-radius: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+}
+
+dialog-box .curated-archive-flashcard-grade-pill--easy
+{
+    background: rgba(76, 175, 80, 0.25);
+    color: var(--success-color);
+}
+
+dialog-box .curated-archive-flashcard-grade-pill--hard
+{
+    background: var(--danger-background-color);
+    color: var(--danger-text-color);
+}
+
+dialog-box .curated-archive-flashcard-grade-pill--ungraded
+{
+    background: var(--quaternary-background-color);
+    color: var(--secondary-text-color);
+}
+
+dialog-box .curated-archive-flashcard-question-text
+{
+    flex: 1;
+    min-width: 0;
+    word-break: break-word;
+}
+
+dialog-box .curated-archive-flashcard-answer
+{
+    margin-top: 0.35em;
+    padding: 0.55em 0.75em;
+    background: var(--secondary-background-color);
+    border-left: 2px solid var(--accent-color);
+    color: var(--primary-text-color);
+    border-radius: 0 6px 6px 0;
+    font-size: 0.9rem;
+    word-break: break-word;
+}
+
+dialog-box .curated-archive-actions
+{
+    display: flex;
+    justify-content: center;
+    margin-top: 0.9em;
+}
+
+dialog-box .curated-archive-close
+{
+    padding: 0.6em 1.4em;
+    border-radius: 6px;
+    background: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    cursor: pointer;
+    font-weight: 600;
+    border: 1px solid var(--outline-color);
+    min-height: 44px;
+}
+
+dialog-box .curated-archive-material-viewer-title
+{
+    color: var(--primary-text-color);
+    margin: 0 0 0.5em;
+    font-size: 1.1rem;
+    word-break: break-word;
+}
+
+dialog-box .curated-archive-material-viewer-content
+{
+    max-height: 60vh;
+    min-width: min(560px, 85vw);
+    max-width: 85vw;
+    overflow-y: auto;
+    padding: 0.8em 0.9em;
+    background: var(--secondary-background-color);
+    border-radius: 6px;
+    color: var(--primary-text-color);
+    line-height: 1.5;
+}
+
+dialog-box .curated-archive-material-viewer-actions
+{
+    display: flex;
+    justify-content: center;
+    margin-top: 0.9em;
+}
+
+dialog-box .curated-archive-material-viewer-close
+{
+    padding: 0.6em 1.4em;
+    border-radius: 6px;
+    background: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    cursor: pointer;
+    font-weight: 600;
+    border: 1px solid var(--outline-color);
+    min-height: 44px;
+}
+
+
+/* ── Completion dialog (congrats / mixed-results) ──────────────── */
+
+dialog-box .curated-completion-heading
+{
+    text-align: center;
+    margin: 0 0 0.6em;
+    color: var(--primary-text-color);
+    font-size: 1.15rem;
+}
+
+dialog-box .curated-completion-heading--success
+{
+    color: var(--success-color);
+}
+
+dialog-box .curated-completion-message
+{
+    line-height: 1.5;
+    margin-bottom: 0.9em;
+    color: var(--primary-text-color);
+    font-size: 0.92rem;
+    min-width: min(420px, 80vw);
+    max-width: 80vw;
+}
+
+dialog-box .curated-completion-hard-topics
+{
+    background: var(--tertiary-background-color);
+    border-radius: 6px;
+    padding: 0.75em 0.9em;
+    margin-bottom: 0.9em;
+}
+
+dialog-box .curated-completion-hard-topics-heading
+{
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--secondary-text-color);
+    margin-bottom: 0.4em;
+}
+
+dialog-box .curated-completion-hard-topics-list
+{
+    margin: 0;
+    padding-left: 1.1em;
+    color: var(--primary-text-color);
+    font-size: 0.9rem;
+}
+
+dialog-box .curated-completion-hard-topics-list li
+{
+    margin-bottom: 0.3em;
+}
+
+dialog-box .curated-completion-actions
+{
+    display: flex;
+    justify-content: center;
+    gap: 0.7em;
+    flex-wrap: wrap;
+}
+
+dialog-box .curated-completion-continue,
+dialog-box .curated-completion-end,
+dialog-box .curated-completion-ok
+{
+    padding: 0.7em 1.4em;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    border: none;
+    font-size: 0.95rem;
+    min-height: 44px;
+    flex: 1 1 auto;
+    min-width: 130px;
+    max-width: 260px;
+}
+
+dialog-box .curated-completion-continue
+{
+    background: var(--accent-color);
+    color: var(--primary-background-color);
+}
+
+dialog-box .curated-completion-continue:hover
+{
+    background: var(--accent-color-hover);
+}
+
+dialog-box .curated-completion-end
+{
+    background: transparent;
+    border: 1px solid var(--outline-color);
+    color: var(--primary-text-color);
+}
+
+dialog-box .curated-completion-end:hover
+{
+    background: var(--tertiary-background-color);
+}
+
+dialog-box .curated-completion-ok
+{
+    background: var(--accent-color);
+    color: var(--primary-background-color);
+    flex: 0 1 auto;
+}
+
+dialog-box .curated-completion-ok:hover
+{
+    background: var(--accent-color-hover);
+}
+
+
+/* ── Progress overlay ──────────────────────────────────────────── */
+
+dialog-box .curated-progress-overlay
+{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.8em;
+    padding: 1.4em 1em 0.6em;
+    min-width: min(320px, 80vw);
+    max-width: 80vw;
+}
+
+dialog-box .curated-progress-title
+{
+    text-align: center;
+    margin: 0;
+    color: var(--primary-text-color);
+    font-size: 1.1rem;
+}
+
+dialog-box .curated-progress-status-line
+{
+    color: var(--secondary-text-color);
+    font-size: 0.9rem;
+    text-align: center;
+    min-height: 1.2em;
+    word-break: break-word;
+}
+
+dialog-box .curated-progress-bar-track
+{
+    width: 100%;
+    height: 8px;
+    background: var(--tertiary-background-color);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+dialog-box .curated-progress-bar-fill
+{
+    height: 100%;
+    background: var(--accent-color);
+    transition: width 0.3s ease;
+}
+
+dialog-box .curated-progress-bar-fill--failed
+{
+    background: var(--danger-text-color);
+}
+
+dialog-box .curated-progress-percent
+{
+    font-size: 0.85rem;
+    color: var(--secondary-text-color);
+}
+
+dialog-box .curated-progress-error
+{
+    margin-top: 0.4em;
+    padding: 0.7em 0.85em;
+    background: var(--danger-background-color);
+    color: var(--danger-text-color);
+    border-radius: 6px;
+    width: 100%;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+dialog-box .curated-progress-actions
+{
+    display: flex;
+    justify-content: center;
+    gap: 0.6em;
+    margin-top: 0.6em;
+    flex-wrap: wrap;
+}
+
+dialog-box .curated-progress-cancel,
+dialog-box .curated-progress-close
+{
+    padding: 0.6em 1.2em;
+    border-radius: 6px;
+    cursor: pointer;
+    background: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    border: 1px solid var(--outline-color);
+    font-weight: 600;
+    min-height: 44px;
+    font-size: 0.92rem;
+}
+
+dialog-box .curated-progress-cancel:hover,
+dialog-box .curated-progress-close:hover
+{
+    background: var(--quaternary-background-color);
+}
+
+
+/* ── Session in-page chrome (lives inside StudyPage) ───────────── */
+
+/*
+ * Hide-by-default + scope-by-parent strategy for every curated-only
+ * element mounted in StudyPage's template. They sit in the DOM for ALL
+ * study modes (the template is one shared block) but should only paint
+ * inside CuratedStudySession. Hard-coding the default to display:none
+ * means a future author CSS that beats [hidden] still can't leak the
+ * curated chrome into Spaced Repetition / Revise / Content Study. The
+ * .study-page--curated-mode parent class lifts the cap; the [hidden]
+ * attribute then drives per-phase show/hide inside that mode.
+ */
+.curated-topic-progress-badge,
+.curated-i-have-read-this-button,
+.curated-score-section
+{
+    display: none;
+}
+
+.study-page--curated-mode .curated-topic-progress-badge:not([hidden])
+{
+    display: block;
+}
+
+.study-page--curated-mode .curated-i-have-read-this-button:not([hidden])
+{
+    display: inline-block;
+}
+
+.study-page--curated-mode .curated-score-section:not([hidden])
+{
+    display: flex;
+}
+
+study-page.study-page--curated-mode .study-action-row
+{
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5em;
+    row-gap: 0.5em;
+}
+
+.curated-topic-progress-badge
+{
+    margin: 0.4em auto 0.3em;
+    padding: 0.4em 0.9em;
+    background: var(--accent-background-color);
+    border-radius: 14px;
+    font-size: 0.82rem;
+    color: var(--accent-color);
+    align-self: center;
+    text-align: center;
+    max-width: 92%;
+    word-break: break-word;
+    line-height: 1.3;
+}
+
+.curated-i-have-read-this-button
+{
+    background: var(--accent-color);
+    color: var(--primary-background-color);
+    border: none;
+    padding: 0.7em 1.4em;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.95rem;
+    min-height: 44px;
+    flex: 1 1 100%;
+    max-width: 320px;
+}
+
+.curated-i-have-read-this-button:hover
+{
+    background: var(--accent-color-hover);
+}
+
+.curated-i-have-read-this-button[disabled]
+{
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.curated-score-section
+{
+    gap: 0.6em;
+    flex: 1 1 100%;
+    justify-content: center;
+}
+
+.curated-easy-button,
+.curated-hard-button
+{
+    padding: 0.7em 1em;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--primary-text-color);
+    min-height: 44px;
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 240px;
+}
+
+.curated-easy-button
+{
+    background: var(--success-color);
+}
+
+.curated-easy-button:hover
+{
+    filter: brightness(0.92);
+}
+
+.curated-hard-button
+{
+    background: rgba(244, 67, 54, 0.88);
+}
+
+.curated-hard-button:hover
+{
+    filter: brightness(0.92);
+}
+
+.curated-easy-button[disabled],
+.curated-hard-button[disabled]
+{
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+
+/* ── Landscape / wider-screen refinements ─────────────────────── */
+
+@media (orientation: landscape)
+{
+    /* Easy/Hard sit alongside other action-row items in landscape
+       instead of stretching across the full row width. */
+    study-page.study-page--curated-mode .curated-score-section:not([hidden])
+    {
+        flex: 0 1 auto;
+    }
+
+    study-page.study-page--curated-mode .curated-easy-button,
+    study-page.study-page--curated-mode .curated-hard-button
+    {
+        flex: 0 0 auto;
+        padding: 0.6em 1.4em;
+        min-width: 110px;
+    }
+
+    /* The "I've read this" button doesn't need to span the entire
+       row on landscape — let it shrink to content. */
+    study-page.study-page--curated-mode .curated-i-have-read-this-button:not([hidden])
+    {
+        flex: 0 0 auto;
+        max-width: none;
+    }
+
+    /* Dialog completion actions can sit side-by-side comfortably. */
+    dialog-box .curated-completion-actions
+    {
+        flex-wrap: nowrap;
+    }
+}
+
+
+/* ── Narrow-portrait safety net (small phones) ────────────────── */
+
+@media (max-width: 420px)
+{
+    dialog-box .curated-entry-actions,
+    dialog-box .curated-content-filter-list
+    {
+        min-width: min(280px, 88vw);
+    }
+
+    dialog-box .curated-archive-list
+    {
+        min-width: min(280px, 88vw);
+        max-width: 88vw;
+    }
+
+    dialog-box .curated-archive-material-viewer-content
+    {
+        min-width: min(280px, 88vw);
+        max-width: 88vw;
+    }
+
+    dialog-box .curated-completion-message
+    {
+        min-width: min(280px, 88vw);
+        max-width: 88vw;
+    }
+
+    dialog-box .curated-archive-batch-summary
+    {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.3em;
+    }
+
+    dialog-box .curated-archive-topic-header
+    {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.2em;
+    }
+
+    /* Tighter padding on the in-page session chrome so the two
+       Easy/Hard buttons + topic badge fit comfortably on a 360px
+       viewport without horizontal overflow. */
+    .curated-topic-progress-badge
+    {
+        font-size: 0.78rem;
+        padding: 0.35em 0.7em;
+    }
+}

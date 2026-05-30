@@ -63,6 +63,25 @@ async function handleQueueDeckAnalysis(request, response)
 
     const autoGenerateCuratedStudy = body?.autoGenerateCuratedStudy === true;
 
+    // Curated-study control flags:
+    //   `force` — bypasses the LIVE-batch engagement check on the
+    //     agent side. Used by the entry-dialog Regenerate button and
+    //     by mid-session feedback-driven regen so an active batch
+    //     can be intentionally replaced.
+    //   `skipAnalysis` — instructs the agent to skip Gemini's
+    //     topic-detection pass and use `regenerateTopics` as the
+    //     authoritative topic list instead. Used by the Continue
+    //     branch (only-hard-topic regen) and the COMPLETED_ALL_EASY
+    //     auto-queue (same-topics refresh).
+    //   `regenerateTopics` — array of {name, strength, reason?,
+    //     topicIndex?, hardCards?} consumed when `skipAnalysis` is
+    //     true. `hardCards` carries question/answer pairs the
+    //     student just got wrong so the LLM addresses the
+    //     underlying confusion directly.
+    const force = body?.force === true;
+    const skipAnalysis = body?.skipAnalysis === true;
+    const regenerateTopics = Array.isArray(body?.regenerateTopics) ? body.regenerateTopics : [];
+
     // Duplicate detection — find any non-terminal ANALYZE_DECK_PERFORMANCE
     // task this user already has running against this same deck. Two
     // concurrent runs would race the LLM call AND the final write to
@@ -71,8 +90,18 @@ async function handleQueueDeckAnalysis(request, response)
     const existingActiveTask = await findExistingAnalysisTask(user.getId(), deckId);
     if (existingActiveTask !== null)
     {
-        response.statusCode = 200;
-        response.sendJson({ taskId: existingActiveTask.getId(), bAlreadyRunning: true });
+        // 409 surfaces the conflict so the frontend can decide between
+        // joining the running task or showing a "still running" prompt.
+        // The taskId is still returned so AnalysisTaskRunner can poll
+        // the existing run either way; `bAlreadyRunning` keeps the
+        // legacy contract for the dispatcher's silent join path.
+        const wasForcedAttempt = force;
+        response.statusCode = wasForcedAttempt ? 409 : 200;
+        response.sendJson({
+            taskId: existingActiveTask.getId(),
+            bAlreadyRunning: true,
+            reason: wasForcedAttempt ? "force_blocked_by_active_task" : "joined_existing_task",
+        });
         return;
     }
 
@@ -84,6 +113,9 @@ async function handleQueueDeckAnalysis(request, response)
         {
             deckId: deckId,
             autoGenerateCuratedStudy: autoGenerateCuratedStudy,
+            force: force,
+            skipAnalysis: skipAnalysis,
+            regenerateTopics: regenerateTopics,
         },
         nextTaskIds: [],
     });

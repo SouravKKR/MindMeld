@@ -7,6 +7,7 @@ import HomePageContextMenu from "./HomePageContextMenu.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import ReviseSession from "../../Study/Classes/ReviseSession.js";
 import ContentStudySession from "../../Study/Classes/ContentStudySession.js";
+import CuratedStudyEntryDialog from "../../Study/Components/CuratedStudyEntryDialog.js";
 import MockTestPickerModal from "../../Study/Components/MockTestPickerModal.js";
 import DetailLevelPickerDialog from "../../../CommonComponents/DetailLevelPickerDialog.js";
 import DeckMergeFlow from "./DeckMergeFlow.js";
@@ -140,12 +141,19 @@ class DeckTile extends HTMLElement
             const contentStudyButton     = studyModeSelectionPopup.querySelector(".content-study-button");
             const spacedRepetitionButton = studyModeSelectionPopup.querySelector(".spaced-repetition-button");
             const reviseButton           = studyModeSelectionPopup.querySelector(".revise-button");
+            const curatedStudyButton     = studyModeSelectionPopup.querySelector(".curated-study-button");
             const mockTestButton         = studyModeSelectionPopup.querySelector(".mock-test-button");
 
             spacedRepetitionButton.addEventListener("click", () =>
             {
                 studyModeSelectionPopup.close();
                 PageNavigator.open("study-page", SpacedRepetitonSession, this.#deck);
+            });
+
+            curatedStudyButton.addEventListener("click", () =>
+            {
+                studyModeSelectionPopup.close();
+                CuratedStudyEntryDialog.show(this.#deck);
             });
 
             contentStudyButton.addEventListener("click", async () =>

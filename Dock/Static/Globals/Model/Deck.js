@@ -20,6 +20,9 @@ import { entityTypes } from "../Enumerations/EntityTypes.js";
 import UserIdentityEvents from "../Events/UserIdentityEvents.js";
 import UserIdentityManager from "../Classes/UserIdentityManager.js";
 import AutoAnalysisDeckFields from "../Classes/Analysis/AutoAnalysisDeckFields.js";
+import CuratedFlashcardFields from "../Classes/Analysis/CuratedFlashcardFields.js";
+import CuratedStudyMaterialFields from "../Classes/Analysis/CuratedStudyMaterialFields.js";
+import CuratedStudyMaterialMigration from "../Classes/Analysis/CuratedStudyMaterialMigration.js";
 import BrowserLlmDownloadConstants from "../Constants/BrowserLlmDownloadConstants.js";
 import SearchableDropdown from "../../CommonComponents/SearchableDropdown.js";
 import InitializationEvents from "../Events/InitializationEvents.js";
@@ -144,6 +147,21 @@ class Deck
             }
 
             Deck.#current = Deck.#root;
+
+            // Run one-shot curated-study migrations before announcing
+            // boot-complete. Idempotent + gated by their own
+            // localStorage flags, so re-runs are no-ops. Doing it here
+            // means listeners reacting to InitializationEvents.COMPLETE
+            // (e.g. the auto-analysis dispatcher, the entry dialog)
+            // already see the migrated state.
+            try
+            {
+                await CuratedStudyMaterialMigration.runIfNeeded();
+            }
+            catch (migrationError)
+            {
+                console.warn("[Deck.boot] CuratedStudyMaterialMigration.runIfNeeded threw:", migrationError);
+            }
 
             window.dispatchEvent(new CustomEvent(DeckEvents.CREATE, { detail: { deck: Deck.#root } }));
             window.dispatchEvent(new CustomEvent(InitializationEvents.COMPLETE));
@@ -404,26 +422,35 @@ class Deck
     
     /**
      * Retrieves all cards in the deck, optionally including cards from subdecks.
+     * Curated flashcards (additionalData.bCurated === true) are excluded by
+     * default so the standard FSRS / Spaced Repetition / Mastery surfaces
+     * never accidentally consume them. Pass bIncludeCurated=true (or use
+     * getCuratedCards) when curated cards are actually wanted.
      * @param {boolean} bRecursive - Whether to include cards from subdecks.
-     * @returns {Card[]} An array of all cards in the deck.
+     * @param {boolean} bIncludeCurated - Whether curated flashcards are
+     *   returned alongside regular cards. Defaults to false.
+     * @returns {Card[]} An array of cards in the deck.
      */
-    getCards(bRecursive = true)
+    getCards(bRecursive = true, bIncludeCurated = false)
     {
-        const cards = bRecursive
-            ? Array.from(this.#cards.values()).concat(this.#subDecks.flatMap((subDeck) => subDeck.getCards(bRecursive)))
-            : Array.from(this.#cards.values());
+        const ownCards = Array.from(this.#cards.values());
+        const allCards = bRecursive
+            ? ownCards.concat(this.#subDecks.flatMap((subDeck) => subDeck.getCards(bRecursive, bIncludeCurated)))
+            : ownCards;
 
-        return cards.sort((a, b) =>
-            (a.getAdditionalData()?.syllabusPosition ?? Infinity) -
-            (b.getAdditionalData()?.syllabusPosition ?? Infinity)
+        const filteredCards = bIncludeCurated
+            ? allCards
+            : allCards.filter((card) => card.getAdditionalData()?.[CuratedFlashcardFields.B_CURATED] !== true);
+
+        return filteredCards.sort((firstCard, secondCard) =>
+            (firstCard.getAdditionalData()?.syllabusPosition ?? Infinity) -
+            (secondCard.getAdditionalData()?.syllabusPosition ?? Infinity)
         );
     }
-    
-    getCardCount(bRecursive = true)
-    {
-        if(bRecursive) return this.getCards().length;
 
-        return this.#cards.size;
+    getCardCount(bRecursive = true, bIncludeCurated = false)
+    {
+        return this.getCards(bRecursive, bIncludeCurated).length;
     }
 
     hasCard(card)
@@ -436,11 +463,41 @@ class Deck
         return this.#cards.has(id);
     }
 
-    getDueCardCount(bRecursive = true)
+    getDueCardCount(bRecursive = true, bIncludeCurated = false)
     {
-        if(bRecursive) return this.getCards().filter(card => card.isDue()).length;
+        return this.getCards(bRecursive, bIncludeCurated).filter(card => card.isDue()).length;
+    }
 
-        return Array.from(this.#cards.values()).filter(card => card.isDue()).length;
+    /**
+     * Retrieves only curated flashcards (those carrying
+     * additionalData.bCurated === true). Optionally narrows to a single
+     * batch via batchTag (matched against
+     * additionalData.generatedForAnalysisAt). Used by CuratedStudySession
+     * and the archive view.
+     */
+    getCuratedCards(batchTag = null, bRecursive = true)
+    {
+        const allCuratedCards = this.getCards(bRecursive, true).filter((card) => card.getAdditionalData()?.[CuratedFlashcardFields.B_CURATED] === true);
+        if (batchTag === null)
+        {
+            return allCuratedCards;
+        }
+        return allCuratedCards.filter((card) => card.getAdditionalData()?.[CuratedFlashcardFields.GENERATED_FOR_ANALYSIS_AT] === batchTag);
+    }
+
+    /**
+     * Retrieves only curated study materials (those for which
+     * StudyMaterial.isCurated() is true). Optionally narrows to a single
+     * batch via batchTag.
+     */
+    getCuratedStudyMaterials(batchTag = null, bRecursive = true)
+    {
+        const allCuratedMaterials = this.getStudyMaterials(bRecursive, true).filter((material) => material.isCurated());
+        if (batchTag === null)
+        {
+            return allCuratedMaterials;
+        }
+        return allCuratedMaterials.filter((material) => material.getAdditionalData()?.[CuratedStudyMaterialFields.GENERATED_FOR_ANALYSIS_AT] === batchTag);
     }
 
     addStudyMaterial(studyMaterial)
@@ -464,10 +521,16 @@ class Deck
      * from each subdeck (in deck-tree order via getSubDecks()) recursively.
      * Mirrors getCards() so the Browser page shows the same tree-traversal
      * order regardless of which entity type is being viewed.
+     *
+     * Curated study materials (StudyMaterial.isCurated() === true) are
+     * excluded by default so generic surfaces (Content Study, Browser,
+     * detail-level picker, AskAi context) never accidentally consume
+     * them. Pass bIncludeCurated=true (or use getCuratedStudyMaterials)
+     * when curated materials are actually wanted.
      */
-    getStudyMaterials(bRecursive = true)
+    getStudyMaterials(bRecursive = true, bIncludeCurated = false)
     {
-        const ownMaterials = Array.from(this.#studyMaterials.values()).sort((firstMaterial, secondMaterial) =>
+        const ownMaterialsAll = Array.from(this.#studyMaterials.values()).sort((firstMaterial, secondMaterial) =>
         {
             const firstPosition = firstMaterial.getSyllabusPosition() ?? Infinity;
             const secondPosition = secondMaterial.getSyllabusPosition() ?? Infinity;
@@ -482,13 +545,17 @@ class Deck
             return firstCreatedAt - secondCreatedAt;
         });
 
+        const ownMaterials = bIncludeCurated
+            ? ownMaterialsAll
+            : ownMaterialsAll.filter((material) => !material.isCurated());
+
         if (!bRecursive)
         {
             return ownMaterials;
         }
 
         return ownMaterials.concat(
-            this.getSubDecks().flatMap((subDeck) => subDeck.getStudyMaterials(true))
+            this.getSubDecks().flatMap((subDeck) => subDeck.getStudyMaterials(true, bIncludeCurated))
         );
     }
 
@@ -937,6 +1004,29 @@ class Deck
     getExportData(options = { bRecursive: true, bRetainProgress: true, bRetainAutoAnalysisSettings: false }, decks = [], onDeckCollected = null)
     {
         const deckJson = this.toJson();
+
+        // Curated study materials + curated flashcards are generated
+        // per-user per-analysis. They reflect one user's gap-filling
+        // pipeline and would be meaningless (or confusing) to anyone
+        // importing the deck. Strip them unconditionally — there's no
+        // valid case where exporting them helps. The repair pass on the
+        // importing side would archive them anyway, but stripping at
+        // export time also avoids leaking generation context (deck
+        // chain, topic strength, etc.) to a third party.
+        if (Array.isArray(deckJson.studyMaterials))
+        {
+            deckJson.studyMaterials = deckJson.studyMaterials.filter((material) =>
+            {
+                return material?.additionalData?.[CuratedStudyMaterialFields.B_CURATED] !== true;
+            });
+        }
+        if (Array.isArray(deckJson.cards))
+        {
+            deckJson.cards = deckJson.cards.filter((card) =>
+            {
+                return card?.additionalData?.[CuratedFlashcardFields.B_CURATED] !== true;
+            });
+        }
 
         if(!options.bRetainProgress)
         {

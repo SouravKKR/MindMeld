@@ -2,11 +2,8 @@ import AuthenticationEvents from "../../Events/AuthenticationEvents.js";
 import InitializationEvents from "../../Events/InitializationEvents.js";
 import Deck from "../../Model/Deck.js";
 import AutoAnalysisDeckFields from "./AutoAnalysisDeckFields.js";
-import CuratedStudyMaterialFields from "./CuratedStudyMaterialFields.js";
 import AnalysisTaskRunner from "./AnalysisTaskRunner.js";
-import CuratedStudyMaterialBatchReviewDialog from "../../../CommonComponents/CuratedStudyMaterialBatchReviewDialog.js";
 import AiFeatureGate from "../AiFeatureGate.js";
-import { curatedBatchReviewStates } from "../../Enumerations/CuratedBatchReviewStates.js";
 
 
 /**
@@ -162,150 +159,15 @@ class AutoAnalysisDispatcher
             }
         }
 
-        await AutoAnalysisDispatcher.#presentPendingBatchReviewsIfAny(rootDeck);
-    }
-
-    static async #presentPendingBatchReviewsIfAny(rootDeck)
-    {
-        const decksWithPendingMaterials = [];
-
-        const visit = (deck) =>
-        {
-            const pendingMaterials = AutoAnalysisDispatcher.#collectPendingReviewMaterials(deck);
-            if (pendingMaterials.length > 0)
-            {
-                decksWithPendingMaterials.push({ deck: deck, materials: pendingMaterials });
-            }
-
-            for (const subDeck of deck.getSubDecks())
-            {
-                visit(subDeck);
-            }
-        };
-
-        visit(rootDeck);
-
-        for (const pendingDeckEntry of decksWithPendingMaterials)
-        {
-            try
-            {
-                await AutoAnalysisDispatcher.#presentBatchReviewForDeck(pendingDeckEntry.deck, pendingDeckEntry.materials);
-            }
-            catch (presentError)
-            {
-                console.warn(`[AutoAnalysisDispatcher] Failed to present batch review for deck ${pendingDeckEntry.deck.getId()}:`, presentError);
-            }
-        }
-    }
-
-    /**
-     * Returns every curated StudyMaterial directly owned by this deck
-     * whose batch-review state is PENDING_REVIEW. Sub-decks are walked
-     * separately by the caller's recursion — each deck owns its own
-     * pending list so the modal can be staged per deck.
-     */
-    static #collectPendingReviewMaterials(deck)
-    {
-        const directMaterials = deck.getStudyMaterials(false);
-        const pendingState = curatedBatchReviewStates.PENDING_REVIEW;
-        const pendingStateName = Object.keys(curatedBatchReviewStates).find(stateName => curatedBatchReviewStates[stateName] === pendingState);
-
-        return directMaterials.filter((material) =>
-        {
-            if (!material.isCurated())
-            {
-                return false;
-            }
-            const reviewState = material.getAdditionalData()[CuratedStudyMaterialFields.BATCH_REVIEW_STATE];
-            return reviewState === pendingStateName;
-        });
-    }
-
-    static async #presentBatchReviewForDeck(deck, pendingMaterials)
-    {
-        const entries = pendingMaterials.map((material) =>
-        {
-            const materialAdditionalData = material.getAdditionalData();
-            const topicName = materialAdditionalData[CuratedStudyMaterialFields.TOPIC_NAME] || "";
-
-            return {
-                id:        material.getId(),
-                title:     topicName ? `Previously curated: ${topicName}` : "Previous curated material",
-                topicName: topicName,
-                preview:   AutoAnalysisDispatcher.#extractPreview(material.getContent()),
-            };
-        });
-
-        if (entries.length === 0)
-        {
-            return;
-        }
-
-        const decisions = await CuratedStudyMaterialBatchReviewDialog.present(entries);
-        if (decisions.size === 0)
-        {
-            return;
-        }
-
-        const archivedAction = CuratedStudyMaterialBatchReviewDialog.getArchiveAction();
-        const keepAction     = CuratedStudyMaterialBatchReviewDialog.getKeepAction();
-        const deleteAction   = CuratedStudyMaterialBatchReviewDialog.getDeleteAction();
-
-        const archivedStateName = AutoAnalysisDispatcher.#stateName(curatedBatchReviewStates.ARCHIVED);
-        const liveStateName     = AutoAnalysisDispatcher.#stateName(curatedBatchReviewStates.LIVE);
-
-        const materialsById = new Map(pendingMaterials.map(material => [material.getId(), material]));
-
-        for (const [materialId, actionValue] of decisions.entries())
-        {
-            const material = materialsById.get(materialId);
-            if (!material)
-            {
-                continue;
-            }
-
-            try
-            {
-                if (actionValue === deleteAction)
-                {
-                    await material.delete();
-                }
-                else if (actionValue === archivedAction)
-                {
-                    material.setAdditionalDataField(CuratedStudyMaterialFields.BATCH_REVIEW_STATE, archivedStateName);
-                    await material.save();
-                }
-                else if (actionValue === keepAction)
-                {
-                    material.setAdditionalDataField(CuratedStudyMaterialFields.BATCH_REVIEW_STATE, liveStateName);
-                    await material.save();
-                }
-            }
-            catch (applyError)
-            {
-                console.warn(`[AutoAnalysisDispatcher] Failed to apply batch-review decision ${actionValue} on material ${materialId}:`, applyError);
-            }
-        }
-    }
-
-    /**
-     * Returns the name string for a numeric curatedBatchReviewStates
-     * value. The persisted format is the enum name (e.g. "LIVE") rather
-     * than the integer, mirroring how TopicStrength is stored.
-     */
-    static #stateName(stateValue)
-    {
-        return Object.keys(curatedBatchReviewStates).find(stateName => curatedBatchReviewStates[stateName] === stateValue);
-    }
-
-    static #extractPreview(htmlContent)
-    {
-        if (typeof htmlContent !== "string")
-        {
-            return "";
-        }
-        const withoutTags = htmlContent.replace(/<[^>]+>/g, " ");
-        return withoutTags.replace(/\s+/g, " ").trim().substring(0, 220);
+        // Post-analysis result lands on the deck via
+        // AnalysisTaskRunner.triggerSync() (called inside queueAndTrack
+        // on COMPLETED). The new curated batch — materials + flashcards
+        // + lastCuratedBatchTag — appears on the next time the user
+        // opens Curated Study from the deck. The legacy
+        // CuratedStudyMaterialBatchReviewDialog flow that used to fire
+        // here has been removed; LIVE → ARCHIVED / SUPERSEDED transitions
+        // are owned by the agent (auto-supersede on untouched) and by
+        // CuratedStudyController.archiveBatch (frontend session terminals).
     }
 
     static #collectEligibleDecks(rootDeck)

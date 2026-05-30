@@ -22,9 +22,9 @@ study-page .study-page-container
    Text selection itself stays enabled via user-select:text — only the
    default link / image action sheet is suppressed. The Android action-
    mode toolbar is OS-owned and can't be fully hidden from a web page,
-   but on Android our menu still appears alongside it; the touchend
-   backstop in StudyPage ensures the JS path runs even when the OS
-   hijacks pointer events. */
+   but on Android our menu still appears alongside it; the
+   selectionchange-debounce in StudyPage ensures the JS path runs even
+   when the OS hijacks pointer events. */
 study-page .question-section,
 study-page .answer-section,
 study-page .study-material-content-section

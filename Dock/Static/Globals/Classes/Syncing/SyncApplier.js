@@ -102,7 +102,7 @@ class SyncApplier
             }
         };
 
-        const allLocalCards = Deck.getRoot()?.getCards(true) || [];
+        const allLocalCards = Deck.getRoot()?.getCards(true, true) || [];
         const cardLookup = new Map();
         for (let cardIndex = 0; cardIndex < allLocalCards.length; cardIndex++)
         {
@@ -217,7 +217,7 @@ class SyncApplier
         if (cardDeletionIds.length > 0)
         {
             const cardIdToOwningDeck = new Map();
-            const allLocalCards      = Deck.getRoot()?.getCards(true) || [];
+            const allLocalCards      = Deck.getRoot()?.getCards(true, true) || [];
 
             for (let cardIndex = 0; cardIndex < allLocalCards.length; cardIndex++)
             {
@@ -246,7 +246,7 @@ class SyncApplier
             for (let deckIndex = 0; deckIndex < allDecks.length; deckIndex++)
             {
                 const deck      = allDecks[deckIndex];
-                const materials = deck.getStudyMaterials(false);
+                const materials = deck.getStudyMaterials(false, true);
 
                 for (let materialIndex = 0; materialIndex < materials.length; materialIndex++)
                 {
@@ -724,7 +724,7 @@ class SyncApplier
                 deleted:    false,
             };
 
-            const directCards = deck.getCards(false);
+            const directCards = deck.getCards(false, true);
             totalCards += directCards.length;
             for (let cardIndex = 0; cardIndex < directCards.length; cardIndex++)
             {
@@ -738,7 +738,7 @@ class SyncApplier
                 };
             }
 
-            const studyMaterials = deck.getStudyMaterials(false);
+            const studyMaterials = deck.getStudyMaterials(false, true);
             totalStudyMaterials += studyMaterials.length;
             for (let materialIndex = 0; materialIndex < studyMaterials.length; materialIndex++)
             {
@@ -1068,7 +1068,7 @@ class SyncApplier
             return;
         }
 
-        const existingMaterials = targetDeck.getStudyMaterials(false);
+        const existingMaterials = targetDeck.getStudyMaterials(false, true);
         const existing = existingMaterials.find(material => material.getId() === studyMaterialData.id);
 
         if (existing)

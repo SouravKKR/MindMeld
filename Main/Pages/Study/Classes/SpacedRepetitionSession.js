@@ -3,6 +3,7 @@ import Deck from "../../../Globals/Model/Deck.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import PriorityQueue from "../../../Globals/Classes/PriorityQueue.js";
 import StudySession from "./StudySession.js";
+import CuratedFlashcardFields from "../../../Globals/Classes/Analysis/CuratedFlashcardFields.js";
 
 class SpacedRepetitonSession extends StudySession
 {
@@ -56,6 +57,18 @@ class SpacedRepetitonSession extends StudySession
         }
 
         const card = this.#priorityQueue.peek();
+
+        // Defence in depth: getCards() already excludes curated cards by
+        // default, so the priority queue should never contain one. If
+        // anyone constructs the session against a queue that did leak a
+        // curated card through, skip it loudly rather than burn an FSRS
+        // attempt on it.
+        if (card.getAdditionalData()?.[CuratedFlashcardFields.B_CURATED] === true)
+        {
+            console.error("SpacedRepetitionSession received a curated card (" + card.getId() + ") — skipping. This indicates a getCards() call somewhere passed bIncludeCurated=true into a non-curated session.");
+            this.#priorityQueue.pop();
+            return this.next();
+        }
 
         // Use the same isDue() predicate that getDueCardCount filters
         // on. Previously this site used `card.getDueDate() > now+2min`

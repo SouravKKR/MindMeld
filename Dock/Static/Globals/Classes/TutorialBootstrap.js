@@ -1,58 +1,95 @@
 import TutorialEngine from "./TutorialEngine.js";
 import DeckEvents from "../Events/DeckEvents.js";
-import TermsAndConditionsManager from "./TermsAndConditionsManager.js";
 
 /**
  * TutorialBootstrap
  *
- * Decides when to call TutorialEngine.maybeAutoPlay() on app boot.
+ * Step 2 of `LoginPopupSequence`. Invoked once the legal modal (step 1)
+ * has been agreed to and the deck tree has finished booting.
  *
  * Highlight-style tutorial steps target real DOM elements (deck tiles,
- * etc.) — so we need to wait until the home page has actually rendered
- * those tiles before attempting auto-play. The Home page emits
- * DeckEvents.EXPAND once decks are loaded; we listen for the first such
- * event with a short delay to allow the tile render to complete.
+ * etc.) so before kicking off `TutorialEngine.maybeAutoPlay()` we wait
+ * for evidence that the home page has actually rendered those tiles.
+ * The Home page emits `DeckEvents.EXPAND` once decks are loaded; we hook
+ * either that or a short post-window-load fallback to know it is safe
+ * to play. Both paths are capped by an absolute timeout so the welcome
+ * chain never deadlocks waiting for a render signal that, for some
+ * exotic reason, never fires (zero decks in an offline-only session, a
+ * navigation away from Home before render, etc.).
  *
- * Before kicking off the tutorial we also wait for any pending T&C
- * dialog to resolve, so the tour doesn't open behind the legal modal.
- *
- * As a safety net, we also fall back to a delayed probe after window
- * load in case the DeckEvents.EXPAND event has already fired before this
- * module registered its listener (e.g. fresh login with no decks).
- *
- * Auto-play is once per device — TutorialEngine itself short-circuits if
- * the tutorial is already marked completed in the local tracker.
+ * Auto-play is once per device — `TutorialEngine.#autoPlayAttempted`
+ * short-circuits subsequent calls within the same page lifecycle, and
+ * `TutorialCompletionTracker` skips tutorials already marked completed.
  */
 class TutorialBootstrap
 {
-    static #AUTO_PLAY_RENDER_DELAY_MILLISECONDS   = 400;
-    static #AUTO_PLAY_FALLBACK_DELAY_MILLISECONDS = 1500;
+    static #RENDER_DELAY_MILLISECONDS         = 400;
+    static #RENDER_WAIT_TIMEOUT_MILLISECONDS  = 8000;
+
+    // Track DeckEvents.EXPAND from module load time, not from runForLogin,
+    // because the home page mounts in parallel with the legal modal —
+    // by the time runForLogin is called Terms has usually been accepted,
+    // and EXPAND has long since fired. A listener registered at that
+    // point would miss the event and have to fall back to the 8s
+    // timeout, leaving the tutorial sitting on a 'loading' state for
+    // several seconds after Terms disappears.
+    static #bExpandFired = false;
 
     static
     {
         window.addEventListener(DeckEvents.EXPAND, () =>
         {
-            setTimeout(() =>
-            {
-                TutorialBootstrap.#probeAutoPlay();
-            }, TutorialBootstrap.#AUTO_PLAY_RENDER_DELAY_MILLISECONDS);
-        }, { once: true });
-
-        // Fallback in case DeckEvents.EXPAND never fires (e.g. zero decks).
-        window.addEventListener("load", () =>
-        {
-            setTimeout(() =>
-            {
-                TutorialBootstrap.#probeAutoPlay();
-            }, TutorialBootstrap.#AUTO_PLAY_FALLBACK_DELAY_MILLISECONDS);
+            TutorialBootstrap.#bExpandFired = true;
         }, { once: true });
     }
 
-    static async #probeAutoPlay()
+    /**
+     * Public entry point invoked by LoginPopupSequence. Resolves only
+     * after the auto-played tutorial has exited (Finish or Skip), or
+     * immediately when no tutorial needs to play on this device.
+     */
+    static async runForLogin()
     {
-        // Hold the tutorial until the T&C dialog (if any) is dismissed.
-        await TermsAndConditionsManager.getPendingPromise();
-        TutorialEngine.maybeAutoPlay();
+        await TutorialBootstrap.#waitForHomePageRender();
+        await TutorialEngine.maybeAutoPlay();
+    }
+
+    /**
+     * Resolves when either `DeckEvents.EXPAND` has fired (so the deck
+     * tile grid is mounted) plus a short settle delay, or after a hard
+     * timeout — whichever comes first. The 400 ms settle delay matches
+     * the legacy two-listener bootstrap; it gives the home-page tiles
+     * time to actually paint before the tutorial highlight measures
+     * them.
+     */
+    static #waitForHomePageRender()
+    {
+        return new Promise((resolve) =>
+        {
+            let bResolved = false;
+            const finish = () =>
+            {
+                if (bResolved) return;
+                bResolved = true;
+                resolve();
+            };
+
+            if (TutorialBootstrap.#bExpandFired)
+            {
+                setTimeout(finish, TutorialBootstrap.#RENDER_DELAY_MILLISECONDS);
+                return;
+            }
+
+            window.addEventListener(DeckEvents.EXPAND, () =>
+            {
+                setTimeout(finish, TutorialBootstrap.#RENDER_DELAY_MILLISECONDS);
+            }, { once: true });
+
+            // Belt-and-braces: don't hang the welcome chain forever if
+            // the EXPAND event never arrives (offline session with zero
+            // decks, navigation away from Home before tiles paint, ...).
+            setTimeout(finish, TutorialBootstrap.#RENDER_WAIT_TIMEOUT_MILLISECONDS);
+        });
     }
 }
 

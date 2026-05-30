@@ -14,14 +14,12 @@ import StudyContextMenu from "./Components/StudyContextMenu.js";
 class StudyPage extends HTMLElement
 {
     static #TEXT_SELECTION_SCOPE_SELECTOR = ".question-section, .answer-section, .study-material-content-section";
+    static #SELECTION_SETTLE_MILLISECONDS = 200;
 
     #session = new StudySession();
     #selectionChangeHandler = null;
-    #selectionDebounceFrameId = null;
+    #selectionDebounceTimeoutId = null;
     #pointerDownHandler = null;
-    #pointerUpHandler = null;
-    #touchEndHandler = null;
-    #bPointerSelectionInProgress = false;
     #contextMenuHandler = null;
 
     // ── Initialisation ─────────────────────────────────────────────────────────
@@ -151,11 +149,24 @@ class StudyPage extends HTMLElement
         {
             studyMaterialContentSection?.remove();
         }
-        else if (this.#session instanceof ContentStudySession || this.#session instanceof CuratedStudySession)
+        else if (this.#session instanceof ContentStudySession)
         {
             questionSection?.remove();
             answerSection?.remove();
             showAnswerButton?.remove();
+            userScoreSection?.remove();
+            editCardButton?.remove();
+        }
+        else if (this.#session instanceof CuratedStudySession)
+        {
+            // CuratedStudySession needs BOTH the material layout and
+            // the card layout — material → flashcards → next topic.
+            // Keep every section mounted; the session toggles
+            // visibility per phase via a study-page--curated-mode class
+            // on the page root. Standard FSRS score row and edit button
+            // do not apply to curated cards (Easy/Hard only), so those
+            // get removed up front.
+            this.classList.add("study-page--curated-mode");
             userScoreSection?.remove();
             editCardButton?.remove();
         }
@@ -216,6 +227,8 @@ class StudyPage extends HTMLElement
         `
             <header-component title="${headerTitle}"></header-component>
             <div class="study-page-container">
+                <div class="curated-topic-progress-badge" hidden></div>
+
                 <div class="question-section"></div>
                 <div class="resize-handle"></div>
                 <div class="answer-section"></div>
@@ -230,6 +243,11 @@ class StudyPage extends HTMLElement
                         <button class="neutral-button" score="0.66">Medium</button>
                         <button class="easy-button" score="1">Easy</button>
                     </div>
+                    <div class="curated-score-section" hidden>
+                        <button class="curated-easy-button">Easy</button>
+                        <button class="curated-hard-button">Hard</button>
+                    </div>
+                    <button class="curated-i-have-read-this-button" hidden>I've read this</button>
                     <div class="previous-next-button-container">
                         <button class="previous-card-button">Previous</button>
                         <div class="card-progression-container">0/0</div>
@@ -269,22 +287,11 @@ class StudyPage extends HTMLElement
             document.removeEventListener("pointerdown", this.#pointerDownHandler, true);
             this.#pointerDownHandler = null;
         }
-        if (this.#pointerUpHandler)
+        if (this.#selectionDebounceTimeoutId !== null)
         {
-            document.removeEventListener("pointerup", this.#pointerUpHandler, true);
-            this.#pointerUpHandler = null;
+            clearTimeout(this.#selectionDebounceTimeoutId);
+            this.#selectionDebounceTimeoutId = null;
         }
-        if (this.#touchEndHandler)
-        {
-            document.removeEventListener("touchend", this.#touchEndHandler, true);
-            this.#touchEndHandler = null;
-        }
-        if (this.#selectionDebounceFrameId)
-        {
-            cancelAnimationFrame(this.#selectionDebounceFrameId);
-            this.#selectionDebounceFrameId = null;
-        }
-        this.#bPointerSelectionInProgress = false;
         TextSelectionContextMenu.removeAll();
         if (this.#contextMenuHandler)
         {
@@ -309,81 +316,57 @@ class StudyPage extends HTMLElement
             return;
         }
 
-        // selectionchange fires on every range update during a pointer drag
-        // (multiple times per frame on a fast machine), and even with rAF
-        // debouncing the menu was being recreated dozens of times during a
-        // single drag — visually flickering and stealing focus from the
-        // ongoing selection. So we gate creation behind pointerup: while a
-        // drag is in progress the selectionchange handler is a no-op, and
-        // when the user releases the pointer we run the evaluator once.
-        // selectionchange still runs for keyboard-driven selection (shift+
-        // arrow etc) because no pointer flag is set in that path.
+        // selectionchange fires on every range update — many times per
+        // frame on a desktop drag, and intermittently while the OS
+        // commits a touch selection. We use a time-based debounce that
+        // RESETS on every change: the evaluator runs only once the
+        // selection has been stable for #SELECTION_SETTLE_MILLISECONDS.
+        //
+        // This is uniform across input types — desktop mouse drag,
+        // mobile OS-driven selection-handle drag, and keyboard
+        // (shift+arrow). Pointer-event gating doesn't work on mobile
+        // because the OS owns the selection UI: pointerdown fires when
+        // the user first touches text, but a matching pointerup often
+        // never reaches us when the user releases a selection handle,
+        // so any flag set on pointerdown would stay armed forever and
+        // selectionchange would be permanently suppressed (the "system
+        // copy/paste menu shows but ours never does" symptom).
+        //
+        // The "same text already shown" check inside #evaluateSelection
+        // is what prevents flicker: if the debounce fires and the menu
+        // is already displaying the current selection, it stays put.
         this.#selectionChangeHandler = () =>
         {
-            if (this.#bPointerSelectionInProgress)
+            if (this.#selectionDebounceTimeoutId !== null)
             {
-                return;
+                clearTimeout(this.#selectionDebounceTimeoutId);
             }
-            if (this.#selectionDebounceFrameId !== null)
+            this.#selectionDebounceTimeoutId = setTimeout(() =>
             {
-                return;
-            }
-            this.#selectionDebounceFrameId = requestAnimationFrame(() =>
-            {
-                this.#selectionDebounceFrameId = null;
+                this.#selectionDebounceTimeoutId = null;
                 this.#evaluateSelection();
-            });
+            }, StudyPage.#SELECTION_SETTLE_MILLISECONDS);
         };
 
         this.#pointerDownHandler = (pointerEvent) =>
         {
-            // Interactions inside the menu itself don't count as starting
-            // a new selection. Without this, clicking Send / Explain / the
-            // Ask contenteditable would arm the in-progress flag and the
-            // menu would be torn down on pointerup.
+            // Interactions inside the menu itself must not dismiss it —
+            // tapping Send / Explain / the Ask contenteditable would
+            // otherwise tear the menu down out from under the user.
             if (pointerEvent.target?.closest?.(TextSelectionContextMenu.tagName))
             {
                 return;
             }
-            this.#bPointerSelectionInProgress = true;
-            // Any pointerdown outside the menu means the user is starting a
-            // fresh interaction — drop the stale menu immediately so it
-            // doesn't sit on screen while they're dragging out a new range.
+            // Any pointerdown outside the menu means the user is
+            // starting a fresh interaction — drop the stale menu
+            // immediately so it doesn't sit on screen while a new
+            // selection is being made. The selectionchange debounce
+            // will rebuild it once the new selection settles.
             TextSelectionContextMenu.removeAll();
-        };
-
-        this.#pointerUpHandler = () =>
-        {
-            if (!this.#bPointerSelectionInProgress)
-            {
-                return;
-            }
-            this.#bPointerSelectionInProgress = false;
-            // Defer one tick so window.getSelection() reflects the final
-            // range after the browser commits it on pointerup.
-            setTimeout(() => this.#evaluateSelection(), 0);
-        };
-
-        // Touch backstop. On Android (and iOS to a lesser degree) the
-        // OS owns the selection-handle drag — pointerdown fires when
-        // the user first touches, but no matching pointerup fires when
-        // they release a selection handle. The in-progress flag would
-        // stay true forever and selectionchange would be permanently
-        // gated off, which is the "system copy/paste menu shows but
-        // ours never does" symptom on mobile. touchend always fires
-        // on release, so we clear the flag here and re-run the
-        // evaluator after a short delay (the system commits the
-        // selection asynchronously on touch).
-        this.#touchEndHandler = () =>
-        {
-            this.#bPointerSelectionInProgress = false;
-            setTimeout(() => this.#evaluateSelection(), 80);
         };
 
         document.addEventListener("selectionchange", this.#selectionChangeHandler);
         document.addEventListener("pointerdown", this.#pointerDownHandler, true);
-        document.addEventListener("pointerup", this.#pointerUpHandler, true);
-        document.addEventListener("touchend", this.#touchEndHandler, true);
     }
 
     /**

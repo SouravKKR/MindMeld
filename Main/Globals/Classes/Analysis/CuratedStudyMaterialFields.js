@@ -13,6 +13,10 @@ class CuratedStudyMaterialFields
     static TOPIC_STRENGTH             = "topicStrength";
     static GENERATED_FOR_ANALYSIS_AT  = "generatedForAnalysisAt";
     static BATCH_REVIEW_STATE         = "batchReviewState";
+    static TOPIC_INDEX                = "topicIndex";
+    static READ_STATE                 = "readState";
+    static READ_AT                    = "readAt";
+    static SESSION_OUTCOME            = "sessionOutcome";
 
     /**
      * Returns every key this class owns. Useful for any future export
@@ -26,6 +30,10 @@ class CuratedStudyMaterialFields
             CuratedStudyMaterialFields.TOPIC_STRENGTH,
             CuratedStudyMaterialFields.GENERATED_FOR_ANALYSIS_AT,
             CuratedStudyMaterialFields.BATCH_REVIEW_STATE,
+            CuratedStudyMaterialFields.TOPIC_INDEX,
+            CuratedStudyMaterialFields.READ_STATE,
+            CuratedStudyMaterialFields.READ_AT,
+            CuratedStudyMaterialFields.SESSION_OUTCOME,
         ];
     }
 }

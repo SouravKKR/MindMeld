@@ -11,7 +11,10 @@
 
 .create-deck-choice-title
 {
-    margin: 0 24px 0 0;
+    /* 50px right margin clears the 45px-wide absolute-positioned close
+       button at the dialog's top-right so the heading text doesn't
+       crash under it on narrow viewports. */
+    margin: 0 50px 0 0;
     font-size: 20px;
     font-weight: 700;
     color: var(--primary-text-color);
@@ -38,7 +41,10 @@
 .create-deck-choice-option
 {
     display: flex;
-    align-items: center;
+    /* align-items: flex-start keeps the icon pinned to the top of the
+       text block so a description that wraps to a second line doesn't
+       leave the icon floating awkwardly in the middle of the button. */
+    align-items: flex-start;
     gap: 14px;
     padding: 14px 16px;
     border: none;
@@ -128,33 +134,60 @@
     {
         min-width: 0;
         width: 100%;
+        gap: 4px;
     }
 
     .create-deck-choice-title
     {
-        font-size: 18px;
+        font-size: 17px;
+        line-height: 1.25;
+        margin-bottom: 2px;
+    }
+
+    .create-deck-choice-subtitle
+    {
+        font-size: 12.5px;
+        line-height: 1.4;
+        margin-bottom: 12px;
+    }
+
+    /* The previous mobile rules shrank padding to 12 and gap to 12,
+       which compounded with the wrapping descriptions and made the
+       three buttons feel cramped. Larger padding + a small body gap
+       gives the icon-title-description trio room to breathe at small
+       widths. */
+    .create-deck-choice-buttons
+    {
+        gap: 10px;
     }
 
     .create-deck-choice-option
     {
-        padding: 12px;
-        gap: 12px;
+        padding: 14px;
+        gap: 14px;
     }
 
     .create-deck-choice-option-icon
     {
-        width: 36px;
-        height: 36px;
-        font-size: 19px;
+        width: 40px;
+        height: 40px;
+        font-size: 20px;
+    }
+
+    .create-deck-choice-option-body
+    {
+        gap: 4px;
     }
 
     .create-deck-choice-option-title
     {
-        font-size: 14px;
+        font-size: 14.5px;
+        line-height: 1.25;
     }
 
     .create-deck-choice-option-description
     {
         font-size: 12px;
+        line-height: 1.4;
     }
 }

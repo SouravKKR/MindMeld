@@ -1,10 +1,13 @@
 import asyncio
+import json
 import math
 import os
 import uuid
 from datetime import datetime, timezone
 
 from Workflows.Workflow import Workflow
+from Globals.Classes.Analysis.CuratedFlashcardFields import CuratedFlashcardFields
+from Globals.Classes.Analysis.CuratedStudyMaterialFields import CuratedStudyMaterialFields
 from Globals.Classes.Automation.AutomationCaller import AutomationCaller
 from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Automation.AutomationRequest import AutomationRequest
@@ -14,9 +17,10 @@ from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Classes.WebScraping.WebScraper import WebScraper
 from Globals.Constants.DatabaseConstants import DatabaseConstants
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
-from Globals.Enumerations.TopicStrength import TopicStrength
 from Globals.Enumerations.CuratedBatchReviewStates import CuratedBatchReviewStates
-from Globals.Classes.Analysis.CuratedStudyMaterialFields import CuratedStudyMaterialFields
+from Globals.Enumerations.CuratedFlashcardGrade import CuratedFlashcardGrade
+from Globals.Enumerations.TopicStrength import TopicStrength
+from Globals.Utility.StripJsonMarkdown import strip_json_markdown
 
 
 class GenerateCuratedStudyMaterial(Workflow):
@@ -26,13 +30,19 @@ class GenerateCuratedStudyMaterial(Workflow):
     user needs help on. Combines best-effort vector search across the
     user's textbook embeddings with a live web search, hands the merged
     context to Gemini 3.1-flash-lite (with grounding enabled), and
-    persists a new StudyMaterial under the deck.
+    persists a new StudyMaterial under the deck — then generates a set
+    of curated flashcards reinforcing that material in the same task.
 
     Each curated material self-describes via its `additionalData`:
     `bCurated`, `topicName`, `topicStrength`, `generatedForAnalysisAt`
-    (the batch tag), and `batchReviewState`. The previous batch's
-    materials for this deck are demoted from LIVE to PENDING_REVIEW so
-    the on-login batch-review modal can surface them next time.
+    (the batch tag), `batchReviewState=LIVE`, and `topicIndex`. The
+    accompanying flashcards carry their own `bCurated` flag plus a
+    `studyMaterialId` link back to their parent.
+
+    Previous-batch demotion is NOT done here — AnalyzeDeckPerformance
+    owns the batch lifecycle (archive on force, supersede on
+    untouched-auto). Sibling spawns from the same analysis run share a
+    `generatedForAnalysisAt` tag and all sit LIVE together.
     """
 
     MODEL_NAME                                     = "gemini-3.1-flash-lite"
@@ -44,26 +54,54 @@ class GenerateCuratedStudyMaterial(Workflow):
     WEB_CONTENT_SNIPPET_CHAR_LIMIT                 = 600
     MAX_CONTEXT_CHARACTERS                         = 14000
     STUDY_MATERIAL_STANDARD_DETAIL_LEVEL           = 1
+    MAX_FLASHCARDS_PER_TOPIC                       = 8
+    MIN_FLASHCARDS_PER_TOPIC                       = 3
+    HARD_CARD_FEEDBACK_CHAR_LIMIT                  = 1200
+    DEFAULT_BASE_DIFFICULTY                        = 1500
+
+    # Simpler-language framing: curated materials exist to fill a gap
+    # the student's standard explanation could not. The prompts below
+    # therefore lead with intuition, define every term in plain English
+    # even when it sounds redundant, and treat comprehension as more
+    # important than rigour. WEAK tier gets the foundational variant;
+    # VOLATILE tier gets the disambiguation variant. Both share the
+    # simpler-language baseline.
 
     SYSTEM_PROMPT_WEAK = (
         "You are a patient tutor writing a foundational study material on a topic the student is weak in. "
-        "Start from the basics. Define every term. Walk through worked examples. If a formula matters, "
-        "show it clearly and explain each symbol. If a diagram would help, describe it precisely in "
-        "words or with an inline SVG snippet. Output a single self-contained HTML fragment (no <html> "
-        "or <body> wrappers) with semantic tags (<h2>, <h3>, <p>, <ul>, <ol>, <pre>, <strong>, "
-        "<em>). Keep tone warm and encouraging."
+        "Use the simplest possible language — assume the student was confused by the standard explanation "
+        "in their syllabus. Lead with intuition before formalism. Define every technical term in plain "
+        "English even if it sounds redundant. Walk through the idea concretely before any symbol or "
+        "formula appears. When a formula matters, present it clearly and explain each symbol in one short "
+        "sentence. Include at least one worked example that a struggling student can actually follow. The "
+        "goal is comprehension over rigour — better that the student leaves understanding the core idea "
+        "than dazzled by terminology. Output a single self-contained HTML fragment (no <html> or <body> "
+        "wrappers) with semantic tags (<h2>, <h3>, <p>, <ul>, <ol>, <pre>, <strong>, <em>). Keep tone "
+        "warm and encouraging."
     )
 
     SYSTEM_PROMPT_VOLATILE = (
         "You are a patient tutor writing a clarifying study material on a topic the student keeps flipping "
         "on — they sometimes recall it correctly and sometimes don't, which means a prerequisite concept "
-        "or a confusable neighbouring concept is undermining their recall. Surface the cluster of related "
-        "ideas this topic sits in so the student can tell them apart, then re-derive the topic itself from "
-        "those building blocks. Be explicit about common confusions (e.g. 'this is NOT to be confused with "
-        "X — the difference is …'). Include at least one worked example whose solution depends on getting "
-        "this distinction right. Output a single self-contained HTML fragment (no <html> or <body> "
-        "wrappers) with semantic tags (<h2>, <h3>, <p>, <ul>, <ol>, <pre>, <strong>, <em>). Keep tone "
-        "warm and encouraging."
+        "or a confusable neighbouring concept is undermining their recall. Use the simplest possible "
+        "language — re-explain the cluster of related ideas in plain English, then re-derive the topic "
+        "itself from those building blocks. Be explicit about common confusions ('this is NOT to be "
+        "confused with X — the difference is …'). Include at least one worked example whose solution "
+        "depends on getting this distinction right. Comprehension over rigour. Output a single "
+        "self-contained HTML fragment (no <html> or <body> wrappers) with semantic tags (<h2>, <h3>, "
+        "<p>, <ul>, <ol>, <pre>, <strong>, <em>). Keep tone warm and encouraging."
+    )
+
+    SYSTEM_PROMPT_FLASHCARDS = (
+        "You are generating flashcards to reinforce a study material you just authored. The student is "
+        "weak in this topic and just read a simpler-language explanation. Produce flashcards that test "
+        "the core ideas of that explanation — NOT obscure trivia, NOT prerequisite material the student "
+        "should already know. Each card should test a single idea cleanly. Choose the card count "
+        "yourself between " + str(MIN_FLASHCARDS_PER_TOPIC) + " and " + str(MAX_FLASHCARDS_PER_TOPIC) +
+        " — fewer high-quality cards beat many shallow ones. Return STRICT compact JSON with exactly "
+        "one key 'flashcards' whose value is an array of objects with 'question' (short plain-text "
+        "string) and 'answer' (semantic HTML fragment, no <html>/<body> wrappers). No prose outside the "
+        "JSON."
     )
 
     def __init__(self, payload: dict = {}):
@@ -89,6 +127,14 @@ class GenerateCuratedStudyMaterial(Workflow):
         except KeyError:
             self.__topic_strength = TopicStrength.WEAK
 
+        # Continue-branch payload carries hard cards (question/answer
+        # pairs) the student just struggled with. The LLM uses these as
+        # explicit "the student got these wrong last round" context so
+        # the new material and new flashcards address the same confusion
+        # from a different angle.
+        hard_cards_payload = payload.get("hardCards", [])
+        self.__hard_cards  = [entry for entry in hard_cards_payload if isinstance(entry, dict)] if isinstance(hard_cards_payload, list) else []
+
     async def run(self, args: dict = {}):
         if not self.__deck_id or not self.__user_id or not self.__topic_name:
             print("[GenerateCuratedStudyMaterial] Missing deckId, userId, or topicName — exiting.")
@@ -101,6 +147,7 @@ class GenerateCuratedStudyMaterial(Workflow):
 
         deck_collection            = database[DatabaseConstants.DECKS_COLLECTION]
         study_materials_collection = database[DatabaseConstants.STUDY_MATERIALS_COLLECTION]
+        cards_collection           = database[DatabaseConstants.CARDS_COLLECTION]
         text_embeddings_collection = database[DatabaseConstants.TEXT_EMBEDDINGS_COLLECTION]
 
         # Sync-collection docs are wrapped {userId, data: {...},
@@ -125,9 +172,7 @@ class GenerateCuratedStudyMaterial(Workflow):
         now_datetime      = datetime.now(timezone.utc)
 
         # Sync-collection inserts must be wrapped {userId, data: {...},
-        # serverUpdatedAt} — see Dock SyncQueryEngine.bulkUpsert. The
-        # nested `data` block carries the StudyMaterial payload that
-        # the sync pull will hand straight to the client.
+        # serverUpdatedAt} — see Dock SyncQueryEngine.bulkUpsert.
         study_material_document = {
             "userId":          self.__user_id,
             "serverUpdatedAt": now_datetime,
@@ -146,6 +191,13 @@ class GenerateCuratedStudyMaterial(Workflow):
                     "attempts":          0,
                     "timeSpentInSeconds": 0,
                 },
+                # SESSION_OUTCOME is intentionally left unset at creation
+                # time — its absence implies the batch is IN_PROGRESS.
+                # The frontend's controller writes one of the terminal
+                # outcomes (COMPLETED_ALL_EASY / ENDED_WITH_HARDS /
+                # REPLACED_BY_REGEN) when archiving the batch, and
+                # AnalyzeDeckPerformance writes AUTO_REPLACED on auto-
+                # supersede.
                 "additionalData":
                 {
                     CuratedStudyMaterialFields.B_CURATED:                 True,
@@ -153,20 +205,26 @@ class GenerateCuratedStudyMaterial(Workflow):
                     CuratedStudyMaterialFields.TOPIC_STRENGTH:            self.__topic_strength.name,
                     CuratedStudyMaterialFields.GENERATED_FOR_ANALYSIS_AT: self.__generated_for_analysis_at,
                     CuratedStudyMaterialFields.BATCH_REVIEW_STATE:        CuratedBatchReviewStates.LIVE.name,
+                    CuratedStudyMaterialFields.TOPIC_INDEX:               self.__topic_index,
+                    CuratedStudyMaterialFields.READ_STATE:                "UNREAD",
                 },
             },
         }
 
         await asyncio.to_thread(study_materials_collection.insert_one, study_material_document)
+        print(f"[GenerateCuratedStudyMaterial] Persisted curated study material {study_material_id} for topic '{self.__topic_name}'.")
 
-        await self.__demote_previous_batch(study_materials_collection)
+        # Eager flashcard generation. The flashcards reference the
+        # material's id (`studyMaterialId`), so the material must be
+        # persisted first. Failures here log but do not roll back the
+        # material — a topic with no flashcards is still useful to read
+        # and the user can manually Regenerate later.
+        await self.__generate_flashcards(cards_collection, study_material_id, html_content, merged_context)
 
         current_task = await TaskManager.get_current_task()
         if current_task is not None:
             current_task.set_completion(1.0)
             await TaskManager.set_task(current_task)
-
-        print(f"[GenerateCuratedStudyMaterial] Persisted curated study material {study_material_id} for topic '{self.__topic_name}'.")
 
     async def __collect_textbook_snippets(self, text_embeddings_collection) -> list[str]:
         try:
@@ -220,8 +278,8 @@ class GenerateCuratedStudyMaterial(Workflow):
         if not first_vector or not second_vector or len(first_vector) != len(second_vector):
             return 0.0
 
-        dot_product = 0.0
-        first_magnitude = 0.0
+        dot_product      = 0.0
+        first_magnitude  = 0.0
         second_magnitude = 0.0
         for first_value, second_value in zip(first_vector, second_vector):
             dot_product      += first_value * second_value
@@ -246,9 +304,9 @@ class GenerateCuratedStudyMaterial(Workflow):
 
         snippets: list[str] = []
         for result in search_results or []:
-            title = (result.get("title") or "").strip()
+            title   = (result.get("title") or "").strip()
             snippet = (result.get("snippet") or "").strip()
-            url = (result.get("url") or "").strip()
+            url     = (result.get("url") or "").strip()
 
             if not snippet:
                 continue
@@ -274,6 +332,35 @@ class GenerateCuratedStudyMaterial(Workflow):
         assembled_text = "\n\n".join(assembled_blocks)
         return assembled_text[: GenerateCuratedStudyMaterial.MAX_CONTEXT_CHARACTERS]
 
+    def __build_hard_cards_clause(self) -> str:
+        """
+        Turns the Continue-branch hardCards payload into a prompt block
+        the LLM treats as 'the student just got these wrong'. Capped at
+        HARD_CARD_FEEDBACK_CHAR_LIMIT so a pathological payload cannot
+        crowd out the textbook/web context.
+        """
+        if not self.__hard_cards:
+            return ""
+
+        formatted_entries: list[str] = []
+        for entry in self.__hard_cards:
+            question = (entry.get("question") or "").strip()
+            answer   = (entry.get("answer") or "").strip()
+            if not question:
+                continue
+            formatted_entries.append(f"- Q: {question}\n  A: {answer}")
+
+        if not formatted_entries:
+            return ""
+
+        block = "\n".join(formatted_entries)
+        trimmed_block = block[: GenerateCuratedStudyMaterial.HARD_CARD_FEEDBACK_CHAR_LIMIT]
+        return (
+            "\n\nThe student JUST attempted the following flashcards on this topic and got them wrong. "
+            "Address the underlying confusion these questions reveal — do NOT simply restate the same "
+            "answer; explain the gap that led to the wrong response:\n" + trimmed_block + "\n\n"
+        )
+
     @staticmethod
     def __build_system_prompt(topic_strength: TopicStrength) -> str:
         """
@@ -293,7 +380,6 @@ class GenerateCuratedStudyMaterial(Workflow):
         """
         Frames the topic line in the user prompt according to tier so the
         LLM has both the system-level guidance and the per-prompt cue.
-        Keeps the wording aligned with the system prompt's framing.
         """
         if topic_strength == TopicStrength.VOLATILE:
             return f"Topic the student keeps flipping on (volatile / confused): {topic_name}"
@@ -309,16 +395,18 @@ class GenerateCuratedStudyMaterial(Workflow):
             else ""
         )
 
-        topic_framing = GenerateCuratedStudyMaterial.__build_topic_framing(self.__topic_strength, self.__topic_name)
+        topic_framing    = GenerateCuratedStudyMaterial.__build_topic_framing(self.__topic_strength, self.__topic_name)
+        hard_cards_clause = self.__build_hard_cards_clause()
 
         user_prompt = (
             f"{deck_context_clause}"
             f"{topic_framing}\n\n"
             f"{reason_clause}"
-            "Write a foundational study material covering this topic. Audience: a student who has the "
-            "topic on their syllabus but keeps getting questions wrong. Open with a one-paragraph "
-            "definition, then walk through the foundational ideas before the harder ones. Include at "
-            "least one worked example. Use semantic HTML.\n\n"
+            f"{hard_cards_clause}"
+            "Write a foundational, simpler-language study material covering this topic. Audience: a "
+            "student who has the topic on their syllabus but keeps getting questions wrong. Open with a "
+            "one-paragraph plain-English overview, then walk through the foundational ideas before the "
+            "harder ones. Include at least one worked example. Use semantic HTML.\n\n"
             f"Context drawn from the student's own material and the public web (cite-by-paraphrasing where "
             f"useful, never quote verbatim):\n\n{merged_context if merged_context else '(no additional context available — rely on general knowledge)'}"
         )
@@ -335,7 +423,7 @@ class GenerateCuratedStudyMaterial(Workflow):
             ]
         )
 
-        caller = AutomationCaller(GeminiProvider())
+        caller   = AutomationCaller(GeminiProvider())
         response = await caller.call(request, None, retries=2)
 
         if response is None:
@@ -352,40 +440,156 @@ class GenerateCuratedStudyMaterial(Workflow):
 
         return raw_output.strip()
 
-    async def __demote_previous_batch(self, study_materials_collection) -> None:
+    async def __generate_flashcards(self, cards_collection, study_material_id: str, material_html: str, merged_context: str) -> None:
         """
-        Any curated material on this deck that is still marked LIVE and
-        belongs to an older analysis batch (different
-        `generatedForAnalysisAt`) is demoted to PENDING_REVIEW so the
-        client's on-login batch-review modal can surface it. Materials
-        belonging to the same batch as the one we just inserted are
-        left LIVE — sibling spawns from one analysis run share a batch
-        tag.
-
-        Mongo docs are wrapped {userId, data: {...}, serverUpdatedAt}
-        by the sync layer (see SyncQueryEngine.bulkUpsert), so every
-        nested-entity selector needs the `data.` prefix.
+        Asks Gemini to author a small set of flashcards reinforcing the
+        material just written. The LLM picks the count (between
+        MIN_FLASHCARDS_PER_TOPIC and MAX_FLASHCARDS_PER_TOPIC); the
+        server caps and trims defensively. Failures here are logged
+        but do not roll back the parent material — a topic with no
+        flashcards is still useful as a read-only review.
         """
-        b_curated_field      = f"data.additionalData.{CuratedStudyMaterialFields.B_CURATED}"
-        review_state_field   = f"data.additionalData.{CuratedStudyMaterialFields.BATCH_REVIEW_STATE}"
-        batch_tag_field      = f"data.additionalData.{CuratedStudyMaterialFields.GENERATED_FOR_ANALYSIS_AT}"
-
-        match_query = {
-            "userId":           self.__user_id,
-            "data.deckId":      self.__deck_id,
-            b_curated_field:    True,
-            review_state_field: CuratedBatchReviewStates.LIVE.name,
-            batch_tag_field:    {"$ne": self.__generated_for_analysis_at},
-        }
+        parsed_cards = await self.__call_gemini_for_flashcards(material_html, merged_context)
+        if not parsed_cards:
+            print(f"[GenerateCuratedStudyMaterial] Flashcard generation produced no cards for topic '{self.__topic_name}'.")
+            return
 
         now_datetime = datetime.now(timezone.utc)
-        await asyncio.to_thread(
-            study_materials_collection.update_many,
-            match_query,
-            {"$set":
-            {
-                review_state_field:            CuratedBatchReviewStates.PENDING_REVIEW.name,
-                "data.lifecycle.lastModified": now_datetime,
-                "serverUpdatedAt":             now_datetime,
-            }},
+        card_documents: list[dict] = []
+
+        for syllabus_position_in_topic, parsed_card in enumerate(parsed_cards):
+            question_text = (parsed_card.get("question") or "").strip()
+            answer_text   = (parsed_card.get("answer") or "").strip()
+
+            if not question_text or not answer_text:
+                continue
+
+            card_documents.append(self.__build_empty_curated_card_document(
+                study_material_id=study_material_id,
+                question_text=question_text,
+                answer_text=answer_text,
+                syllabus_position_in_topic=syllabus_position_in_topic,
+                now_datetime=now_datetime,
+            ))
+
+        if not card_documents:
+            return
+
+        await asyncio.to_thread(cards_collection.insert_many, card_documents)
+        print(f"[GenerateCuratedStudyMaterial] Inserted {len(card_documents)} curated flashcard(s) for topic '{self.__topic_name}'.")
+
+    async def __call_gemini_for_flashcards(self, material_html: str, merged_context: str) -> list[dict]:
+        """
+        Issues the flashcard-generation LLM call. Returns a list of
+        {question, answer} dicts capped at MAX_FLASHCARDS_PER_TOPIC.
+        Malformed JSON or empty arrays return [].
+        """
+        hard_cards_clause = self.__build_hard_cards_clause()
+
+        user_prompt = (
+            f"Topic: {self.__topic_name}\n"
+            f"Topic strength tier: {self.__topic_strength.name}\n\n"
+            f"{hard_cards_clause}"
+            f"The study material you just authored for this topic (use this as the source of truth for the "
+            f"flashcards):\n\n{material_html}\n\n"
+            f"Additional context for reference (do NOT pull obscure trivia from here):\n\n"
+            f"{merged_context if merged_context else '(no additional context available)'}\n\n"
+            f"Generate the flashcards now."
         )
+
+        request = AutomationRequest(
+            GenerateCuratedStudyMaterial.MODEL_NAME,
+            [
+                AutomationContent(AutomationContentTypes.SYSTEM, GenerateCuratedStudyMaterial.SYSTEM_PROMPT_FLASHCARDS),
+                AutomationContent(
+                    AutomationContentTypes.TEXT,
+                    user_prompt,
+                    metadata={"response_as_text": True},
+                ),
+            ]
+        )
+
+        caller   = AutomationCaller(GeminiProvider())
+        response = await caller.call(request, None, retries=2)
+
+        if response is None:
+            return []
+
+        try:
+            raw_output = response.get_output().get_data()
+        except Exception as response_error:
+            print(f"[GenerateCuratedStudyMaterial] Failed to read flashcard LLM response: {response_error}")
+            return []
+
+        if not isinstance(raw_output, str) or not raw_output.strip():
+            return []
+
+        # `strip_json_markdown` already runs json.loads internally —
+        # the function name is misleading; it returns the PARSED
+        # dict/list (or None on parse failure), NOT a stripped string.
+        # The previous version of this site mistakenly called
+        # json.loads on the parsed result, which silently raised
+        # TypeError and made every flashcard generation return [].
+        # See other call sites in Agent/Workflows for the correct
+        # pattern.
+        parsed_payload = strip_json_markdown(raw_output.strip())
+        if parsed_payload is None:
+            print(f"[GenerateCuratedStudyMaterial] Flashcard JSON parse failed for topic '{self.__topic_name}' — raw LLM output was not valid JSON.")
+            return []
+
+        if not isinstance(parsed_payload, dict):
+            print(f"[GenerateCuratedStudyMaterial] Flashcard LLM returned a non-object payload for topic '{self.__topic_name}' (type={type(parsed_payload).__name__}).")
+            return []
+
+        raw_cards = parsed_payload.get("flashcards", [])
+        if not isinstance(raw_cards, list):
+            print(f"[GenerateCuratedStudyMaterial] Flashcard LLM payload missing 'flashcards' array for topic '{self.__topic_name}'.")
+            return []
+
+        return raw_cards[: GenerateCuratedStudyMaterial.MAX_FLASHCARDS_PER_TOPIC]
+
+    def __build_empty_curated_card_document(self, study_material_id: str, question_text: str, answer_text: str, syllabus_position_in_topic: int, now_datetime: datetime) -> dict:
+        """
+        Builds a Mongo card document for a curated flashcard. Mirrors
+        the wrapping the sync layer uses ({userId, data, serverUpdatedAt})
+        and matches the Card model's field shape (progress + lifecycle
+        sub-objects, additionalData with curated metadata). Progress
+        starts empty — curated cards never enter FSRS, so they never
+        accumulate progress points the way regular cards do.
+        """
+        card_id = str(uuid.uuid4())
+
+        return {
+            "userId":          self.__user_id,
+            "serverUpdatedAt": now_datetime,
+            "data":
+            {
+                "id":             card_id,
+                "deckId":         self.__deck_id,
+                "question":       question_text,
+                "answer":         answer_text,
+                "tags":           [],
+                "baseDifficulty": GenerateCuratedStudyMaterial.DEFAULT_BASE_DIFFICULTY,
+                "progress":
+                {
+                    "progressPoints": [],
+                },
+                "lifecycle":
+                {
+                    "creationDate":       now_datetime,
+                    "lastModified":       now_datetime,
+                    "views":              0,
+                    "attempts":           0,
+                    "timeSpentInSeconds": 0,
+                },
+                "additionalData":
+                {
+                    CuratedFlashcardFields.B_CURATED:                  True,
+                    CuratedFlashcardFields.STUDY_MATERIAL_ID:          study_material_id,
+                    CuratedFlashcardFields.TOPIC_NAME:                 self.__topic_name,
+                    CuratedFlashcardFields.GENERATED_FOR_ANALYSIS_AT:  self.__generated_for_analysis_at,
+                    CuratedFlashcardFields.LAST_CURATED_GRADE:         CuratedFlashcardGrade.UNGRADED.name,
+                    CuratedFlashcardFields.SYLLABUS_POSITION_IN_TOPIC: syllabus_position_in_topic,
+                },
+            },
+        }

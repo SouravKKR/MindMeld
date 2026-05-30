@@ -8,12 +8,18 @@ from Workflows.Workflow import Workflow
 from Globals.Classes.Automation.AutomationCaller import AutomationCaller
 from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Automation.AutomationRequest import AutomationRequest
+from Globals.Classes.Analysis.AutoAnalysisDeckFields import AutoAnalysisDeckFields
+from Globals.Classes.Analysis.CuratedFlashcardFields import CuratedFlashcardFields
+from Globals.Classes.Analysis.CuratedStudyMaterialFields import CuratedStudyMaterialFields
 from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
 from Globals.Classes.Database.DatabaseConnector import DatabaseConnector
 from Globals.Classes.Task.TaskDescriptor import TaskDescriptor
 from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Constants.DatabaseConstants import DatabaseConstants
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
+from Globals.Enumerations.CuratedBatchReviewStates import CuratedBatchReviewStates
+from Globals.Enumerations.CuratedSessionOutcomes import CuratedSessionOutcomes
+from Globals.Enumerations.CuratedFlashcardGrade import CuratedFlashcardGrade
 from Globals.Enumerations.TaskExecutionTargets import TaskExecutionTargets
 from Globals.Enumerations.TaskTypes import TaskTypes
 from Globals.Enumerations.TopicStrength import TopicStrength
@@ -51,10 +57,6 @@ class AnalyzeDeckPerformance(Workflow):
     MIN_PROGRESS_POINTS_FOR_VOLATILITY        = 3
     VOLATILITY_RECENT_CORRECTNESS_WINDOW      = 5
     VOLATILITY_GLICKO_RD_THRESHOLD            = 150.0
-    AUTO_PERFORMANCE_ANALYSIS_ENABLED_FIELD   = "autoPerformanceAnalysisEnabled"
-    AUTO_GENERATE_CURATED_STUDY_ENABLED_FIELD = "autoGenerateCuratedStudyEnabled"
-    LAST_ANALYZED_AT_FIELD                    = "lastAnalyzedAt"
-    LAST_ANALYSIS_TOPICS_FIELD                = "lastAnalysisTopics"
     ROOT_DECK_ID                              = "0"
 
     SYSTEM_PROMPT = (
@@ -77,6 +79,15 @@ class AnalyzeDeckPerformance(Workflow):
         super().__init__(payload)
         self.__deck_id                     = payload.get("deckId", "")
         self.__auto_generate_curated_study = bool(payload.get("autoGenerateCuratedStudy", False))
+        # `force` lets the entry-dialog Regenerate button and the
+        # mid-session feedback regen bypass the LIVE-batch engagement
+        # check. Used together with skipAnalysis + regenerateTopics for
+        # the COMPLETED_ALL_EASY auto-queue and the Continue branch so
+        # the LLM topic-detection pass is skipped and the caller-supplied
+        # topic list drives generation directly.
+        self.__force                       = bool(payload.get("force", False))
+        self.__skip_analysis               = bool(payload.get("skipAnalysis", False))
+        self.__regenerate_topics           = payload.get("regenerateTopics") or []
 
     async def run(self, args: dict = {}):
         if not self.__deck_id:
@@ -109,79 +120,173 @@ class AnalyzeDeckPerformance(Workflow):
 
         # Re-check the opt-in flag server-side so a stale client request
         # cannot drive an LLM call after the user has un-checked the toggle.
+        # Manual Regenerate (`force=True`) bypasses this gate — the
+        # autoPerformanceAnalysisEnabled flag governs UNATTENDED behavior
+        # only; an explicit user click is an explicit override.
         additional_data = root_deck_data.get("additionalData") or {}
-        if additional_data.get(AnalyzeDeckPerformance.AUTO_PERFORMANCE_ANALYSIS_ENABLED_FIELD) is not True:
+        if not self.__force and additional_data.get(AutoAnalysisDeckFields.AUTO_PERFORMANCE_ANALYSIS_ENABLED) is not True:
             print(f"[AnalyzeDeckPerformance] Deck {self.__deck_id} no longer opted in — exiting.")
             return
 
         descendant_deck_ids = await self.__collect_descendant_deck_ids(deck_collection, user_id, self.__deck_id)
         deck_ids_in_scope = [self.__deck_id, *descendant_deck_ids]
 
+        # LIVE-batch detection. Three forks:
+        #   1) force=False — if the user has already graded at least one
+        #      flashcard in the current LIVE batch, bail out entirely so
+        #      we don't churn lastAnalysisTopics underneath an active
+        #      session. If the batch is untouched, supersede it
+        #      (AUTO_REPLACED) and continue with a fresh generation.
+        #   2) force=True AND skipAnalysis=False — manual Regenerate
+        #      from the entry dialog. Archive the LIVE batch
+        #      (REPLACED_BY_REGEN) and re-analyse from scratch.
+        #   3) force=True AND skipAnalysis=True — Continue branch from a
+        #      mixed-results session, OR the COMPLETED_ALL_EASY
+        #      auto-queue. In both cases the frontend has already
+        #      managed per-topic archival; the agent must NOT touch the
+        #      LIVE batch (only-hard-topic case leaves other topics
+        #      LIVE under the same batch tag, all-easy-auto case has
+        #      already cleared LAST_CURATED_BATCH_TAG before queueing).
+        current_batch_tag = additional_data.get(AutoAnalysisDeckFields.LAST_CURATED_BATCH_TAG)
+
+        if current_batch_tag and not self.__force:
+            user_has_engaged = await self.__has_user_engaged_with_batch(card_collection, user_id, deck_ids_in_scope, current_batch_tag)
+            if user_has_engaged:
+                await self.__mark_skipped_due_to_in_progress(deck_collection)
+                print(f"[AnalyzeDeckPerformance] Skipped — user has engaged with active batch {current_batch_tag} on deck {self.__deck_id}.")
+                return
+            await self.__demote_previous_batch(
+                study_materials_collection=database[DatabaseConstants.STUDY_MATERIALS_COLLECTION],
+                user_id=user_id,
+                deck_ids_in_scope=deck_ids_in_scope,
+                batch_tag=current_batch_tag,
+                next_state=CuratedBatchReviewStates.SUPERSEDED.name,
+                outcome=CuratedSessionOutcomes.AUTO_REPLACED.name,
+            )
+        elif current_batch_tag and self.__force and not self.__skip_analysis:
+            await self.__demote_previous_batch(
+                study_materials_collection=database[DatabaseConstants.STUDY_MATERIALS_COLLECTION],
+                user_id=user_id,
+                deck_ids_in_scope=deck_ids_in_scope,
+                batch_tag=current_batch_tag,
+                next_state=CuratedBatchReviewStates.ARCHIVED.name,
+                outcome=CuratedSessionOutcomes.REPLACED_BY_REGEN.name,
+            )
+
         # Diagnostic — surface the tree walk so a quiet "no cards" exit
         # below isn't a black box. Logs the deck scope size + first few
         # ids; on light decks the truncation is a no-op.
         preview_deck_ids = deck_ids_in_scope[:6]
-        print(f"[AnalyzeDeckPerformance] Scope userId={user_id} descendants={len(descendant_deck_ids)} totalDecks={len(deck_ids_in_scope)} sample={preview_deck_ids}")
-
-        total_card_count = await asyncio.to_thread(
-            card_collection.count_documents,
-            {"userId": user_id, "data.deckId": {"$in": deck_ids_in_scope}},
-        )
-        print(f"[AnalyzeDeckPerformance] Card collection matched {total_card_count} document(s) for the deck scope.")
-
-        scored_cards = await self.__score_cards_for_decks(card_collection, user_id, deck_ids_in_scope)
-        print(f"[AnalyzeDeckPerformance] {len(scored_cards)} card(s) cleared the eligibility floor (progressPoints>={AnalyzeDeckPerformance.MIN_PROGRESS_POINTS_FOR_CARD_ELIGIBILITY}).")
-        if not scored_cards:
-            print(f"[AnalyzeDeckPerformance] No studied cards found under deck {self.__deck_id} — exiting.")
-            return
-
-        weakest = sorted(scored_cards, key=lambda entry: entry["weaknessScore"], reverse=True)[: AnalyzeDeckPerformance.TOP_CARDS_PER_TIER]
-        strongest = sorted(scored_cards, key=lambda entry: entry["weaknessScore"])[: AnalyzeDeckPerformance.TOP_CARDS_PER_TIER]
-        volatile = sorted(
-            (card for card in scored_cards if card["volatilityScore"] > 0.0),
-            key=lambda entry: entry["volatilityScore"],
-            reverse=True,
-        )[: AnalyzeDeckPerformance.TOP_CARDS_PER_TIER]
+        print(f"[AnalyzeDeckPerformance] Scope userId={user_id} descendants={len(descendant_deck_ids)} totalDecks={len(deck_ids_in_scope)} sample={preview_deck_ids} force={self.__force} skipAnalysis={self.__skip_analysis}")
 
         deck_chain = await self.__build_deck_chain(deck_collection, user_id, self.__deck_id)
 
-        topics = await self.__ask_gemini_for_topics(weakest, strongest, volatile, deck_chain)
-        if topics is None:
-            print(f"[AnalyzeDeckPerformance] LLM returned no usable topics for deck {self.__deck_id}.")
+        if self.__skip_analysis:
+            # Same-topics regen path. The caller already decided which
+            # topics to refresh — typically the Continue branch's hard
+            # topics, or the COMPLETED_ALL_EASY auto-queue's full topic
+            # list. Skip scoring and the LLM; trust the payload.
+            topics = self.__normalise_regenerate_topics(self.__regenerate_topics)
+            if not topics:
+                print(f"[AnalyzeDeckPerformance] skipAnalysis=True but regenerateTopics produced no valid entries — exiting.")
+                return
+            print(f"[AnalyzeDeckPerformance] skipAnalysis=True — using {len(topics)} caller-supplied topic(s); no LLM call.")
+        else:
+            total_card_count = await asyncio.to_thread(
+                card_collection.count_documents,
+                {
+                    "userId": user_id,
+                    "data.deckId": {"$in": deck_ids_in_scope},
+                    "data.additionalData." + CuratedFlashcardFields.B_CURATED: {"$ne": True},
+                },
+            )
+            print(f"[AnalyzeDeckPerformance] Card collection matched {total_card_count} non-curated document(s) for the deck scope.")
+
+            scored_cards = await self.__score_cards_for_decks(card_collection, user_id, deck_ids_in_scope)
+            print(f"[AnalyzeDeckPerformance] {len(scored_cards)} card(s) cleared the eligibility floor (progressPoints>={AnalyzeDeckPerformance.MIN_PROGRESS_POINTS_FOR_CARD_ELIGIBILITY}).")
+            if not scored_cards:
+                print(f"[AnalyzeDeckPerformance] No studied cards found under deck {self.__deck_id} — exiting.")
+                return
+
+            weakest = sorted(scored_cards, key=lambda entry: entry["weaknessScore"], reverse=True)[: AnalyzeDeckPerformance.TOP_CARDS_PER_TIER]
+            strongest = sorted(scored_cards, key=lambda entry: entry["weaknessScore"])[: AnalyzeDeckPerformance.TOP_CARDS_PER_TIER]
+            volatile = sorted(
+                (card for card in scored_cards if card["volatilityScore"] > 0.0),
+                key=lambda entry: entry["volatilityScore"],
+                reverse=True,
+            )[: AnalyzeDeckPerformance.TOP_CARDS_PER_TIER]
+
+            topics = await self.__ask_gemini_for_topics(weakest, strongest, volatile, deck_chain)
+            if topics is None:
+                print(f"[AnalyzeDeckPerformance] LLM returned no usable topics for deck {self.__deck_id}.")
+                return
+
+            # The Insights page reads lastAnalysisTopics and renders it
+            # regardless of the curated pipeline outcome — write it
+            # eagerly so the user always sees the latest topic snapshot
+            # even when curated generation later skips due to no
+            # weak/volatile topics.
+            analysis_generated_at = datetime.now(timezone.utc).isoformat()
+            analysis_summary = {
+                "topics":      topics,
+                "deckChain":   deck_chain,
+                "generatedAt": analysis_generated_at,
+            }
+            await asyncio.to_thread(
+                deck_collection.update_one,
+                {"data.id": self.__deck_id},
+                {"$set":
+                {
+                    f"data.additionalData.{AutoAnalysisDeckFields.LAST_ANALYSIS_TOPICS}": analysis_summary,
+                    f"data.additionalData.{AutoAnalysisDeckFields.LAST_ANALYZED_AT}":     analysis_generated_at,
+                    "data.lifecycle.lastModified":                                        datetime.now(timezone.utc),
+                    "serverUpdatedAt":                                                    datetime.now(timezone.utc),
+                }}
+            )
+
+            tier_counts = {
+                "WEAK":     sum(1 for entry in topics if entry["strength"] == TopicStrength.WEAK.name),
+                "STRONG":   sum(1 for entry in topics if entry["strength"] == TopicStrength.STRONG.name),
+                "VOLATILE": sum(1 for entry in topics if entry["strength"] == TopicStrength.VOLATILE.name),
+            }
+            print(f"[AnalyzeDeckPerformance] Stored analysis for deck {self.__deck_id}: {tier_counts['WEAK']} weak / {tier_counts['STRONG']} strong / {tier_counts['VOLATILE']} volatile topic(s).")
+
+        spawnable_topics = [
+            entry for entry in topics
+            if entry["strength"] in (TopicStrength.WEAK.name, TopicStrength.VOLATILE.name)
+        ]
+        if not spawnable_topics:
+            print(f"[AnalyzeDeckPerformance] No WEAK or VOLATILE topics — nothing to generate for deck {self.__deck_id}.")
             return
 
-        generated_at = datetime.now(timezone.utc).isoformat()
-        analysis_summary = {
-            "topics":      topics,
-            "deckChain":   deck_chain,
-            "generatedAt": generated_at,
-        }
+        # Two gates for curated child spawning:
+        #   1) the payload flag — set by the client (the dispatcher
+        #      reads the deck flag; manual Regenerate always sends true).
+        #   2) the deck flag — opts the deck IN to unattended curated
+        #      generation.
+        # Manual Regenerate (`force=True`) is an explicit user click; it
+        # overrides the deck-level opt-in the same way it overrides
+        # autoPerformanceAnalysisEnabled above. Otherwise both gates
+        # must agree before we burn LLM credits on children.
+        curated_enabled_on_deck = additional_data.get(AutoAnalysisDeckFields.AUTO_GENERATE_CURATED_STUDY_ENABLED) is True
+        curated_gate_satisfied = self.__auto_generate_curated_study and (curated_enabled_on_deck or self.__force)
+        if not curated_gate_satisfied:
+            print(f"[AnalyzeDeckPerformance] Curated generation not requested (payload={self.__auto_generate_curated_study} deck={curated_enabled_on_deck} force={self.__force}) — skipping child spawn.")
+            return
 
-        await asyncio.to_thread(
-            deck_collection.update_one,
-            {"data.id": self.__deck_id},
-            {"$set":
-            {
-                f"data.additionalData.{AnalyzeDeckPerformance.LAST_ANALYSIS_TOPICS_FIELD}": analysis_summary,
-                f"data.additionalData.{AnalyzeDeckPerformance.LAST_ANALYZED_AT_FIELD}":     generated_at,
-                "data.lifecycle.lastModified":                                              datetime.now(timezone.utc),
-                "serverUpdatedAt":                                                          datetime.now(timezone.utc),
-            }}
-        )
+        # Continue-branch reuses the same batch tag so newly generated
+        # materials slot back into the LIVE set the user is mid-session
+        # on. Every other path (auto-analysis, manual Regenerate,
+        # COMPLETED_ALL_EASY auto-queue) starts a fresh batch with a new
+        # tag — the frontend will already have cleared
+        # LAST_CURATED_BATCH_TAG before queueing those.
+        is_continue_branch = self.__skip_analysis and bool(current_batch_tag)
+        generated_for_analysis_at = current_batch_tag if is_continue_branch else datetime.now(timezone.utc).isoformat()
 
-        tier_counts = {
-            "WEAK":     sum(1 for entry in topics if entry["strength"] == TopicStrength.WEAK.name),
-            "STRONG":   sum(1 for entry in topics if entry["strength"] == TopicStrength.STRONG.name),
-            "VOLATILE": sum(1 for entry in topics if entry["strength"] == TopicStrength.VOLATILE.name),
-        }
-        print(f"[AnalyzeDeckPerformance] Stored analysis for deck {self.__deck_id}: {tier_counts['WEAK']} weak / {tier_counts['STRONG']} strong / {tier_counts['VOLATILE']} volatile topic(s).")
+        if not is_continue_branch:
+            await self.__set_live_batch_tag(deck_collection, generated_for_analysis_at, spawnable_topics)
 
-        if self.__auto_generate_curated_study and additional_data.get(AnalyzeDeckPerformance.AUTO_GENERATE_CURATED_STUDY_ENABLED_FIELD) is True:
-            spawnable_topics = [
-                entry for entry in topics
-                if entry["strength"] in (TopicStrength.WEAK.name, TopicStrength.VOLATILE.name)
-            ]
-            await self.__spawn_curated_study_children(user_id, spawnable_topics, deck_chain, generated_at)
+        await self.__spawn_curated_study_children(user_id, spawnable_topics, deck_chain, generated_for_analysis_at)
 
         current_task = await TaskManager.get_current_task()
         if current_task is not None:
@@ -249,10 +354,22 @@ class AnalyzeDeckPerformance(Workflow):
         if not deck_ids:
             return []
 
+        # Exclude curated flashcards from the scoring pool. Curated cards
+        # are generated by GenerateCuratedStudyMaterial as part of the
+        # consolidation loop; their progress (lastCuratedGrade) belongs
+        # to the curated session's own state machine, not the deck-wide
+        # FSRS / Glicko signal. If they fed back into analysis we would
+        # be scoring the user's mastery of their own generated content,
+        # which would inflate weakness/volatility readings and lead to
+        # runaway regen loops on hard topics.
         cards = await asyncio.to_thread(
             list,
             card_collection.find(
-                {"userId": user_id, "data.deckId": {"$in": deck_ids}},
+                {
+                    "userId": user_id,
+                    "data.deckId": {"$in": deck_ids},
+                    "data.additionalData." + CuratedFlashcardFields.B_CURATED: {"$ne": True},
+                },
                 {"_id": 0},
             ),
         )
@@ -496,6 +613,12 @@ class AnalyzeDeckPerformance(Workflow):
 
         Per-tier topics are capped by TOP_TOPICS_PER_TIER, so the upper
         bound on children is `TOP_TOPICS_PER_TIER * 2` (WEAK + VOLATILE).
+
+        Continue-branch entries carry an explicit `topicIndex` (from the
+        original batch) plus a `hardCards` array of {question, answer}
+        pairs the LLM should treat as "the student got these wrong last
+        round"; fresh entries enumerate naturally and have no hard-card
+        context.
         """
         if not topics_to_cover:
             return
@@ -506,10 +629,19 @@ class AnalyzeDeckPerformance(Workflow):
 
         spawned_task_ids: list[str] = []
 
-        for topic_index, topic_entry in enumerate(topics_to_cover):
+        for enumeration_index, topic_entry in enumerate(topics_to_cover):
             topic_name = topic_entry.get("name", "")
             if not topic_name:
                 continue
+
+            # When the entry carries an explicit topicIndex (Continue
+            # branch), use it so the regenerated material occupies the
+            # same slot in the LIVE batch as the archived one. Otherwise
+            # enumerate naturally.
+            explicit_topic_index = topic_entry.get("topicIndex")
+            effective_topic_index = explicit_topic_index if isinstance(explicit_topic_index, int) else enumeration_index
+
+            hard_cards = topic_entry.get("hardCards") or []
 
             curated_task = TaskDescriptor(
                 type=TaskTypes.GENERATE_CURATED_STUDY_MATERIAL,
@@ -519,11 +651,12 @@ class AnalyzeDeckPerformance(Workflow):
                     "deckId":                 self.__deck_id,
                     "userId":                 user_id,
                     "topicName":              topic_name,
-                    "topicIndex":             topic_index,
+                    "topicIndex":             effective_topic_index,
                     "topicStrength":          topic_entry.get("strength", TopicStrength.WEAK.name),
                     "reason":                 topic_entry.get("reason", ""),
                     "deckChain":              deck_chain,
                     "generatedForAnalysisAt": generated_for_analysis_at,
+                    "hardCards":              hard_cards,
                 },
                 next_task_ids=[],
                 parent_task_id=current_task.get_id(),
@@ -536,3 +669,158 @@ class AnalyzeDeckPerformance(Workflow):
             current_task.set_next_task_ids(spawned_task_ids)
             await TaskManager.set_task(current_task)
             print(f"[AnalyzeDeckPerformance] Spawned {len(spawned_task_ids)} curated study child task(s).")
+
+    async def __has_user_engaged_with_batch(self, card_collection, user_id: str, deck_ids_in_scope: list[str], batch_tag: str) -> bool:
+        """
+        One Mongo count_documents — does any curated card in this batch
+        carry a non-UNGRADED lastCuratedGrade? If so, the user has
+        graded at least one flashcard mid-session and a quiet supersede
+        would erase their progress; the outer flow bails instead.
+        """
+        if not batch_tag:
+            return False
+
+        graded_card_count = await asyncio.to_thread(
+            card_collection.count_documents,
+            {
+                "userId": user_id,
+                "data.deckId": {"$in": deck_ids_in_scope},
+                "data.additionalData." + CuratedFlashcardFields.B_CURATED: True,
+                "data.additionalData." + CuratedFlashcardFields.GENERATED_FOR_ANALYSIS_AT: batch_tag,
+                "data.additionalData." + CuratedFlashcardFields.LAST_CURATED_GRADE: {
+                    "$in": [CuratedFlashcardGrade.EASY.name, CuratedFlashcardGrade.HARD.name],
+                },
+            },
+        )
+        return graded_card_count > 0
+
+    async def __mark_skipped_due_to_in_progress(self, deck_collection) -> None:
+        """
+        Stamps the deck with the current timestamp so the entry dialog
+        can surface a 'analysis was skipped because you had not yet
+        finished the previous curated batch' banner. Cleared on the
+        next successful generation via __set_live_batch_tag.
+        """
+        now_iso  = datetime.now(timezone.utc).isoformat()
+        now_dt   = datetime.now(timezone.utc)
+
+        await asyncio.to_thread(
+            deck_collection.update_one,
+            {"data.id": self.__deck_id},
+            {"$set":
+            {
+                f"data.additionalData.{AutoAnalysisDeckFields.LAST_SKIPPED_DUE_TO_IN_PROGRESS_AT}": now_iso,
+                "data.lifecycle.lastModified":                                                      now_dt,
+                "serverUpdatedAt":                                                                  now_dt,
+            }}
+        )
+
+    async def __demote_previous_batch(self, study_materials_collection, user_id: str, deck_ids_in_scope: list[str], batch_tag: str, next_state: str, outcome: str) -> None:
+        """
+        Centralised batch demotion. Used by:
+          - the auto-supersede path (user never touched the prior batch)
+            with next_state=SUPERSEDED, outcome=AUTO_REPLACED, and
+          - the manual Regenerate path with next_state=ARCHIVED,
+            outcome=REPLACED_BY_REGEN.
+        Materials in the same batch share generatedForAnalysisAt by
+        definition, so one update_many sweeps the entire cohort. Only
+        LIVE materials are touched — already-demoted materials in the
+        same batch (Continue-branch leftovers) stay put.
+        """
+        now_dt = datetime.now(timezone.utc)
+
+        result = await asyncio.to_thread(
+            study_materials_collection.update_many,
+            {
+                "userId": user_id,
+                "data.deckId": {"$in": deck_ids_in_scope},
+                "data.additionalData." + CuratedStudyMaterialFields.B_CURATED: True,
+                "data.additionalData." + CuratedStudyMaterialFields.GENERATED_FOR_ANALYSIS_AT: batch_tag,
+                "data.additionalData." + CuratedStudyMaterialFields.BATCH_REVIEW_STATE: CuratedBatchReviewStates.LIVE.name,
+            },
+            {"$set":
+            {
+                f"data.additionalData.{CuratedStudyMaterialFields.BATCH_REVIEW_STATE}": next_state,
+                f"data.additionalData.{CuratedStudyMaterialFields.SESSION_OUTCOME}":    outcome,
+                "data.lifecycle.lastModified":                                          now_dt,
+                "serverUpdatedAt":                                                      now_dt,
+            }}
+        )
+        print(f"[AnalyzeDeckPerformance] Demoted {result.modified_count} previous-batch material(s) to {next_state}/{outcome} for batch_tag={batch_tag}.")
+
+    async def __set_live_batch_tag(self, deck_collection, batch_tag: str, spawnable_topics: list[dict]) -> None:
+        """
+        Stamps the deck with the fresh batch's tag + the topic summary
+        the entry dialog reads to figure out what the LIVE batch
+        contains. Also clears LAST_SKIPPED_DUE_TO_IN_PROGRESS_AT —
+        successful generation means the user is no longer in a skipped
+        state.
+        """
+        batch_topics_summary = [
+            {"name": entry["name"], "strength": entry["strength"]}
+            for entry in spawnable_topics
+        ]
+        now_dt = datetime.now(timezone.utc)
+
+        await asyncio.to_thread(
+            deck_collection.update_one,
+            {"data.id": self.__deck_id},
+            {
+                "$set":
+                {
+                    f"data.additionalData.{AutoAnalysisDeckFields.LAST_CURATED_BATCH_TAG}":    batch_tag,
+                    f"data.additionalData.{AutoAnalysisDeckFields.LAST_CURATED_BATCH_TOPICS}": batch_topics_summary,
+                    "data.lifecycle.lastModified":                                              now_dt,
+                    "serverUpdatedAt":                                                          now_dt,
+                },
+                "$unset":
+                {
+                    f"data.additionalData.{AutoAnalysisDeckFields.LAST_SKIPPED_DUE_TO_IN_PROGRESS_AT}": "",
+                },
+            },
+        )
+
+    def __normalise_regenerate_topics(self, raw_entries: list) -> list[dict]:
+        """
+        Validates and shapes caller-supplied topics for the skipAnalysis
+        branch. Drops malformed entries silently; trims fields to the
+        same caps used by the LLM-output sanitiser so downstream sites
+        can treat both paths identically. Carries `topicIndex` and
+        `hardCards` through unchanged for the Continue branch.
+        """
+        if not isinstance(raw_entries, list):
+            return []
+
+        valid_strength_names = {strength.name for strength in TopicStrength}
+        sanitized: list[dict] = []
+
+        for entry in raw_entries:
+            if not isinstance(entry, dict):
+                continue
+
+            name_value = entry.get("name")
+            if not isinstance(name_value, str) or not name_value.strip():
+                continue
+
+            strength_value = entry.get("strength")
+            if not isinstance(strength_value, str):
+                continue
+
+            normalized_strength = strength_value.strip().upper()
+            if normalized_strength not in valid_strength_names:
+                continue
+
+            reason_value = entry.get("reason")
+            hard_cards_value = entry.get("hardCards") or []
+            if not isinstance(hard_cards_value, list):
+                hard_cards_value = []
+
+            sanitized.append({
+                "name":       name_value.strip()[:120],
+                "strength":   normalized_strength,
+                "reason":     (reason_value.strip()[:240] if isinstance(reason_value, str) else ""),
+                "topicIndex": entry.get("topicIndex"),
+                "hardCards":  hard_cards_value,
+            })
+
+        return sanitized

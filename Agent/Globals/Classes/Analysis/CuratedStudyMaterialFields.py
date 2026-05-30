@@ -12,6 +12,10 @@ class CuratedStudyMaterialFields:
     TOPIC_STRENGTH            = "topicStrength"
     GENERATED_FOR_ANALYSIS_AT = "generatedForAnalysisAt"
     BATCH_REVIEW_STATE        = "batchReviewState"
+    TOPIC_INDEX               = "topicIndex"
+    READ_STATE                = "readState"
+    READ_AT                   = "readAt"
+    SESSION_OUTCOME           = "sessionOutcome"
 
     @staticmethod
     def get_all_keys():
@@ -21,4 +25,8 @@ class CuratedStudyMaterialFields:
             CuratedStudyMaterialFields.TOPIC_STRENGTH,
             CuratedStudyMaterialFields.GENERATED_FOR_ANALYSIS_AT,
             CuratedStudyMaterialFields.BATCH_REVIEW_STATE,
+            CuratedStudyMaterialFields.TOPIC_INDEX,
+            CuratedStudyMaterialFields.READ_STATE,
+            CuratedStudyMaterialFields.READ_AT,
+            CuratedStudyMaterialFields.SESSION_OUTCOME,
         ]

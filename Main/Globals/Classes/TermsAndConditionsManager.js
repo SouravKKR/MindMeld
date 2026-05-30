@@ -1,5 +1,4 @@
 import TermsAndConditionsConstants from "../Constants/TermsAndConditionsConstants.js";
-import AuthenticationEvents from "../Events/AuthenticationEvents.js";
 import UserIdentityManager from "./UserIdentityManager.js";
 import LegalDocumentPdfRenderer from "./LegalDocumentPdfRenderer.js";
 
@@ -7,8 +6,10 @@ import LegalDocumentPdfRenderer from "./LegalDocumentPdfRenderer.js";
  * TermsAndConditionsManager
  *
  * Owns the post-login legal-agreement flow for every legal document the
- * server exposes (today: Terms of Service + Privacy Policy). On every
- * ON_USER_LOGGED_IN event:
+ * server exposes (today: Terms of Service + Privacy Policy).
+ * `LoginPopupSequence` invokes `runForLogin(user)` as step 1 of its
+ * serial welcome-popup chain — this class is no longer subscribed to
+ * ON_USER_LOGGED_IN directly so it never races the other welcome popups.
  *
  *   1. Fetch `/LegalDocuments` (server-seeded array of { key, title,
  *      version, contentHtml }).
@@ -39,51 +40,16 @@ class TermsAndConditionsManager
     static #AGREED_VERSION_KEY_SUFFIX = "Version";
     static #AGREED_AT_KEY_SUFFIX      = "At";
 
-    static #bDialogVisible  = false;
-    static #pendingPromise  = null;
-    static #pendingResolver = null;
-
-    static
-    {
-        window.addEventListener(AuthenticationEvents.ON_USER_LOGGED_IN, (event) =>
-        {
-            TermsAndConditionsManager.#handleUserLoggedIn(event.detail?.user);
-        });
-    }
-
     /**
-     * Returns a Promise that resolves the moment no agreement dialog is
-     * on screen. Resolves immediately if none was ever needed. Used by
-     * the TutorialBootstrap so the auto-play tutorial waits behind any
-     * pending legal modal.
+     * Public entry point invoked by LoginPopupSequence. Resolves only
+     * after every required legal modal has been agreed to (or the
+     * decline path's logout-and-reload has been kicked off). Returns
+     * immediately for anonymous identities — they have no per-account
+     * additionalData to write the agreement into.
      */
-    static getPendingPromise()
+    static async runForLogin(user)
     {
-        if (!TermsAndConditionsManager.#bDialogVisible)
-        {
-            return Promise.resolve();
-        }
-
-        if (!TermsAndConditionsManager.#pendingPromise)
-        {
-            TermsAndConditionsManager.#pendingPromise = new Promise((resolve) =>
-            {
-                TermsAndConditionsManager.#pendingResolver = resolve;
-            });
-        }
-
-        return TermsAndConditionsManager.#pendingPromise;
-    }
-
-    static #resolvePending()
-    {
-        if (TermsAndConditionsManager.#pendingResolver)
-        {
-            const resolver = TermsAndConditionsManager.#pendingResolver;
-            TermsAndConditionsManager.#pendingResolver = null;
-            TermsAndConditionsManager.#pendingPromise  = null;
-            resolver();
-        }
+        await TermsAndConditionsManager.#handleUserLoggedIn(user);
     }
 
     static async #handleUserLoggedIn(user)
@@ -199,8 +165,6 @@ class TermsAndConditionsManager
     {
         return new Promise((resolve) =>
         {
-            TermsAndConditionsManager.#bDialogVisible = true;
-
             const dialog = document.createElement("dialog-box");
             dialog.classList.add("terms-conditions-dialog");
             document.body.appendChild(dialog);
@@ -296,8 +260,6 @@ class TermsAndConditionsManager
                 }
 
                 dialog.remove();
-                TermsAndConditionsManager.#bDialogVisible = false;
-                TermsAndConditionsManager.#resolvePending();
                 resolve();
             });
         });

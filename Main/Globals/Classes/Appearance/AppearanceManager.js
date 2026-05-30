@@ -24,6 +24,7 @@ import ThemeVariableRegistry from "./ThemeVariableRegistry.js";
 class AppearanceManager
 {
     static FONT_FAMILY_CSS_VARIABLE = "--app-font-family";
+    static ZOOM_CSS_VARIABLE = "--app-zoom";
     static SERVER_DEBOUNCE_MILLISECONDS = 500;
 
     static #appliedVariableNames = new Set();
@@ -129,12 +130,12 @@ class AppearanceManager
 
         if (typeof appearance.zoom === "number" && isFinite(appearance.zoom))
         {
-            rootElement.style.zoom = String(appearance.zoom);
+            rootElement.style.setProperty(AppearanceManager.ZOOM_CSS_VARIABLE, String(appearance.zoom));
             AppearanceManager.#appliedZoom = true;
         }
         else
         {
-            rootElement.style.zoom = "";
+            rootElement.style.removeProperty(AppearanceManager.ZOOM_CSS_VARIABLE);
             AppearanceManager.#appliedZoom = false;
         }
     }
@@ -157,7 +158,7 @@ class AppearanceManager
 
         if (AppearanceManager.#appliedZoom)
         {
-            rootElement.style.zoom = "";
+            rootElement.style.removeProperty(AppearanceManager.ZOOM_CSS_VARIABLE);
             AppearanceManager.#appliedZoom = false;
         }
 

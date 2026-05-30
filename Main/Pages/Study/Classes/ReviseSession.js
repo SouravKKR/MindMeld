@@ -1,6 +1,7 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import StudySession from "./StudySession.js";
+import CuratedFlashcardFields from "../../../Globals/Classes/Analysis/CuratedFlashcardFields.js";
 
 class ReviseSession extends StudySession
 {
@@ -10,7 +11,12 @@ class ReviseSession extends StudySession
     constructor(studyPage, deck = null)
     {
         super(studyPage, deck);
-        this.#cards = deck.getCards(true).filter((card) => { return card.isReview() });
+        // getCards() already excludes curated cards by default, but the
+        // explicit second filter here is defence in depth — anyone
+        // sneaking a curated card into the deck's review-flagged set
+        // shouldn't be able to short-circuit FSRS by routing through
+        // Revise.
+        this.#cards = deck.getCards(true).filter((card) => card.isReview() && card.getAdditionalData()?.[CuratedFlashcardFields.B_CURATED] !== true);
         this.#index = -1;
         this._current = null;
 

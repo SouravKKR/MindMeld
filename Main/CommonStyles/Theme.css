@@ -59,6 +59,11 @@
     /* Customisable font family. Overridden at runtime by AppearanceManager
        when the user picks a font in Settings → Appearance. */
     --app-font-family: "GoogleSans";
+
+    /* Page zoom multiplier. Overridden at runtime by AppearanceManager.
+       body uses zoom: var(--app-zoom) AND inverse-scales its own width /
+       height so the rendered box still fills the viewport at any zoom. */
+    --app-zoom: 1;
 }
 
 * > *
@@ -66,7 +71,7 @@
     font-family: var(--app-font-family, "GoogleSans");
 }
 
-body, html
+html
 {
     display: flex;
     flex-direction: column;
@@ -79,6 +84,21 @@ body, html
     overflow-x: hidden;
     overflow-y: hidden;
     color: var(--primary-text-color);
+}
+
+body
+{
+    display: flex;
+    flex-direction: column;
+    width: calc(100vw / var(--app-zoom, 1));
+    height: calc(100dvh / var(--app-zoom, 1));
+    padding: 0;
+    margin: 0;
+    background-color: var(--primary-background-color);
+    overflow-x: hidden;
+    overflow-y: hidden;
+    color: var(--primary-text-color);
+    zoom: var(--app-zoom, 1);
 }
 
 [page]

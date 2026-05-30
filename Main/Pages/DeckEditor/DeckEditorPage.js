@@ -90,7 +90,9 @@ class DeckEditorPage extends HTMLElement
      */
     async #removeCuratedStudyMaterials()
     {
-        const materials = this.#deck.getStudyMaterials(true);
+        // bIncludeCurated=true — the whole point of this method is to
+        // delete curated materials, which the new default would hide.
+        const materials = this.#deck.getStudyMaterials(true, true);
         const deletions = [];
         for (const material of materials)
         {

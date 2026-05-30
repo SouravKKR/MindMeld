@@ -16,6 +16,9 @@ class AutoAnalysisDeckFields
     static AUTO_GENERATE_CURATED_STUDY_ENABLED     = "autoGenerateCuratedStudyEnabled";
     static LAST_ANALYZED_AT                        = "lastAnalyzedAt";
     static LAST_ANALYSIS_TOPICS                    = "lastAnalysisTopics";
+    static LAST_CURATED_BATCH_TAG                  = "lastCuratedBatchTag";
+    static LAST_CURATED_BATCH_TOPICS               = "lastCuratedBatchTopics";
+    static LAST_SKIPPED_DUE_TO_IN_PROGRESS_AT      = "lastSkippedDueToInProgressAt";
 
     /**
      * Returns every key this class owns. Used by the export filter so a
@@ -29,6 +32,9 @@ class AutoAnalysisDeckFields
             AutoAnalysisDeckFields.AUTO_GENERATE_CURATED_STUDY_ENABLED,
             AutoAnalysisDeckFields.LAST_ANALYZED_AT,
             AutoAnalysisDeckFields.LAST_ANALYSIS_TOPICS,
+            AutoAnalysisDeckFields.LAST_CURATED_BATCH_TAG,
+            AutoAnalysisDeckFields.LAST_CURATED_BATCH_TOPICS,
+            AutoAnalysisDeckFields.LAST_SKIPPED_DUE_TO_IN_PROGRESS_AT,
         ];
     }
 }

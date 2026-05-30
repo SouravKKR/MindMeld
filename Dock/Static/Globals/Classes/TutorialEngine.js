@@ -46,6 +46,10 @@ class TutorialEngine
     static #bSuppressNavigationGuard     = false;
     static #pendingStepSetupAction       = null;
     static #bHoldingCoordinatorSlot      = false;
+    // Resolves when the currently-active tutorial exits (finish or
+    // skip). Held while a tutorial is running so LoginPopupSequence can
+    // await it before opening the next welcome popup.
+    static #activeTutorialExitResolver   = null;
 
     static getOverlayElement()
     {
@@ -224,6 +228,11 @@ class TutorialEngine
      * Auto-play on first device launch — only fires once per device, only
      * for tutorials flagged bAutoPlayOnFirstLaunch. Independent of login
      * state. If another tutorial is already running this call is a no-op.
+     *
+     * Returns a Promise that resolves once the auto-played tutorial has
+     * exited (Finish or Skip). Resolves immediately when no tutorial
+     * needs to play. LoginPopupSequence awaits it so the model-download
+     * dialog only opens after the user has finished the tour.
      */
     static async maybeAutoPlay()
     {
@@ -247,7 +256,30 @@ class TutorialEngine
 
             if (!bAlreadyCompleted)
             {
-                TutorialEngine.play(tutorial.id);
+                // Set the exit resolver BEFORE play() so #requestExit
+                // (which can fire synchronously inside play in degenerate
+                // cases — e.g. a tutorial with zero steps) always sees a
+                // resolver to call.
+                const exitPromise = new Promise((resolveExit) =>
+                {
+                    TutorialEngine.#activeTutorialExitResolver = resolveExit;
+                });
+
+                const bStarted = TutorialEngine.play(tutorial.id);
+
+                if (!bStarted)
+                {
+                    // play() bailed (unknown id, no steps, ...). Resolve
+                    // immediately so callers don't hang.
+                    if (TutorialEngine.#activeTutorialExitResolver)
+                    {
+                        TutorialEngine.#activeTutorialExitResolver();
+                        TutorialEngine.#activeTutorialExitResolver = null;
+                    }
+                    return;
+                }
+
+                await exitPromise;
                 return;
             }
         }
@@ -413,6 +445,17 @@ class TutorialEngine
         // state is cleared so the navigation guard installed at play()
         // time doesn't interpret the pops as unexpected.
         await TutorialEngine.#resetViewToHomeRoot();
+
+        // Signal LoginPopupSequence (or anyone else awaiting the
+        // currently-active tutorial) that we're done. Done last so any
+        // queued welcome popup arrives only after the home page has
+        // settled back at the root deck.
+        if (TutorialEngine.#activeTutorialExitResolver)
+        {
+            const resolver = TutorialEngine.#activeTutorialExitResolver;
+            TutorialEngine.#activeTutorialExitResolver = null;
+            resolver();
+        }
     }
 
     static async #resetViewToHomeRoot()

@@ -922,13 +922,13 @@ class SyncOrchestrator
             return false;
         }
 
-        const cards = typeof rootDeck.getCards === "function" ? rootDeck.getCards(true) : [];
+        const cards = typeof rootDeck.getCards === "function" ? rootDeck.getCards(true, true) : [];
         if (cards.length > 0)
         {
             return false;
         }
 
-        const studyMaterials = typeof rootDeck.getStudyMaterials === "function" ? rootDeck.getStudyMaterials(true) : [];
+        const studyMaterials = typeof rootDeck.getStudyMaterials === "function" ? rootDeck.getStudyMaterials(true, true) : [];
         if (studyMaterials.length > 0)
         {
             return false;

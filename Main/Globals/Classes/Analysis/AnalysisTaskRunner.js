@@ -46,6 +46,9 @@ class AnalysisTaskRunner
      * @param {{
      *     bClearPreviousFirst?: boolean,   // wipe lastAnalysisTopics + curated materials before queueing
      *     bTriggerSync?: boolean,          // run SyncOrchestrator.sync on COMPLETED (default true)
+     *     force?: boolean,                 // bypass the agent's LIVE-batch engagement check (manual Regenerate path)
+     *     skipAnalysis?: boolean,          // skip the LLM topic-detection pass and use regenerateTopics directly
+     *     regenerateTopics?: object[],     // [{name, strength, reason?, topicIndex?, hardCards?}] — used when skipAnalysis is true
      *     onStatusChange?: function|null   // called with {phase, taskTree?, error?, bAlreadyRunning?}
      * }} options
      * @returns {Promise<{taskTree: object, status: number, bAlreadyRunning: boolean}>}
@@ -54,6 +57,18 @@ class AnalysisTaskRunner
     {
         const bClearPreviousFirst = options.bClearPreviousFirst === true;
         const bTriggerSync        = options.bTriggerSync !== false;
+        const force               = options.force === true;
+        const skipAnalysis        = options.skipAnalysis === true;
+        const regenerateTopics    = Array.isArray(options.regenerateTopics) ? options.regenerateTopics : [];
+        // Allow callers to override the autoGenerateCuratedStudy
+        // payload flag. The auto dispatcher passes nothing → we fall
+        // through to the deck's persisted toggle (existing behaviour).
+        // Manual / Continue / all-easy paths pass `true` so the agent
+        // spawns curated children even when the deck's auto-toggle is
+        // disabled (that toggle only governs unattended runs).
+        const autoGenerateCuratedStudyOverride = typeof options.autoGenerateCuratedStudy === "boolean"
+            ? options.autoGenerateCuratedStudy
+            : null;
         const onStatusChange      = typeof options.onStatusChange === "function" ? options.onStatusChange : null;
 
         if (bClearPreviousFirst)
@@ -61,13 +76,19 @@ class AnalysisTaskRunner
             await AnalysisTaskRunner.clearPreviousAnalysis(deck);
         }
 
-        const queueResult = await AnalysisTaskRunner.#postQueueRequest(deck);
+        const queueResult = await AnalysisTaskRunner.#postQueueRequest(deck, { force, skipAnalysis, regenerateTopics, autoGenerateCuratedStudyOverride });
         const taskId             = queueResult.taskId;
         const bAlreadyRunning    = queueResult.bAlreadyRunning === true;
+        // The server returns a `reason` discriminator on the 409
+        // path so we can distinguish a benign auto-join (an unrelated
+        // analysis that happened to be running) from a force-regen
+        // that was actively rejected. Surfacing it through the result
+        // lets the caller decide whether to wait, alert, or retry.
+        const reason            = typeof queueResult.reason === "string" ? queueResult.reason : null;
 
         if (onStatusChange)
         {
-            onStatusChange({ phase: bAlreadyRunning ? "joined-existing-run" : "queued", taskId: taskId, bAlreadyRunning: bAlreadyRunning });
+            onStatusChange({ phase: bAlreadyRunning ? "joined-existing-run" : "queued", taskId: taskId, bAlreadyRunning: bAlreadyRunning, reason: reason });
         }
 
         const finalTaskTree = await AnalysisTaskRunner.#pollUntilTerminal(taskId, onStatusChange);
@@ -87,7 +108,7 @@ class AnalysisTaskRunner
             }
         }
 
-        return { taskTree: finalTaskTree, status: finalStatus, bAlreadyRunning: bAlreadyRunning };
+        return { taskTree: finalTaskTree, status: finalStatus, bAlreadyRunning: bAlreadyRunning, reason: reason };
     }
 
     /**
@@ -98,7 +119,10 @@ class AnalysisTaskRunner
      */
     static async clearPreviousAnalysis(deck)
     {
-        const studyMaterials = deck.getStudyMaterials(true);
+        // Must pass bIncludeCurated=true — the whole point of this
+        // method is to delete curated materials, which the default
+        // (bIncludeCurated=false) would silently filter out.
+        const studyMaterials = deck.getStudyMaterials(true, true);
         const pendingDeletions = [];
         for (const studyMaterial of studyMaterials)
         {
@@ -153,15 +177,22 @@ class AnalysisTaskRunner
         });
     }
 
-    static async #postQueueRequest(deck)
+    static async #postQueueRequest(deck, curatedFlags = {})
     {
         const additionalData = deck.getAdditionalData() || {};
-        const autoGenerateCuratedStudy = additionalData[AutoAnalysisDeckFields.AUTO_GENERATE_CURATED_STUDY_ENABLED] === true;
+        // Use the caller's override when provided; fall back to the
+        // deck's persisted toggle for unattended (dispatcher) calls.
+        const autoGenerateCuratedStudy = (curatedFlags.autoGenerateCuratedStudyOverride === null || curatedFlags.autoGenerateCuratedStudyOverride === undefined)
+            ? additionalData[AutoAnalysisDeckFields.AUTO_GENERATE_CURATED_STUDY_ENABLED] === true
+            : curatedFlags.autoGenerateCuratedStudyOverride === true;
 
         const requestBody = JSON.stringify
         ({
             deckId: deck.getId(),
             autoGenerateCuratedStudy: autoGenerateCuratedStudy,
+            force: curatedFlags.force === true,
+            skipAnalysis: curatedFlags.skipAnalysis === true,
+            regenerateTopics: Array.isArray(curatedFlags.regenerateTopics) ? curatedFlags.regenerateTopics : [],
         });
 
         const response = await fetch(AnalysisTaskRunner.QUEUE_ENDPOINT,
@@ -172,7 +203,10 @@ class AnalysisTaskRunner
             body: requestBody,
         });
 
-        if (!response.ok)
+        // 409 is the server's "force regen blocked by an already-running
+        // task" signal — the response body still carries the existing
+        // task's id so callers can join it transparently if they choose.
+        if (!response.ok && response.status !== 409)
         {
             const responseText = await response.text().catch(() => "");
             throw new Error(`${AnalysisTaskRunner.QUEUE_ENDPOINT} returned ${response.status}: ${responseText}`);
@@ -193,6 +227,36 @@ class AnalysisTaskRunner
      * stops the polling from running forever if something goes wrong
      * server-side and the task never lands at COMPLETED/FAILED.
      */
+    /**
+     * Recursive tree-status check. Mirrors `isSubtreeTerminal` on the
+     * Dock side: a tree is terminal only when its root AND every
+     * descendant is in COMPLETED or FAILED. Used by the polling loop
+     * so the resolve fires after the entire ANALYZE_DECK_PERFORMANCE
+     * → GENERATE_CURATED_STUDY_MATERIAL fan-out lands, not just the
+     * orchestrator parent.
+     */
+    static #isTreeTerminal(node)
+    {
+        if (!node)
+        {
+            return true;
+        }
+        const nodeStatus = typeof node.status === "number" ? node.status : taskStatus.UNKNOWN;
+        if (nodeStatus !== taskStatus.COMPLETED && nodeStatus !== taskStatus.FAILED)
+        {
+            return false;
+        }
+        const children = Array.isArray(node.children) ? node.children : [];
+        for (const childNode of children)
+        {
+            if (!AnalysisTaskRunner.#isTreeTerminal(childNode))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
     static async #pollUntilTerminal(taskId, onStatusChange)
     {
         const startTimestampMilliseconds = Date.now();
@@ -249,8 +313,21 @@ class AnalysisTaskRunner
                         onStatusChange({ phase: "progress", taskTree: taskTree });
                     }
 
-                    const currentStatus = (taskTree && typeof taskTree.status === "number") ? taskTree.status : taskStatus.UNKNOWN;
-                    if (currentStatus === taskStatus.COMPLETED || currentStatus === taskStatus.FAILED)
+                    // Walk the whole task tree, not just the root.
+                    // ANALYZE_DECK_PERFORMANCE spawns
+                    // GENERATE_CURATED_STUDY_MATERIAL children that own
+                    // the actual material + flashcard writes. The
+                    // parent's `status` flips to COMPLETED the moment
+                    // run() returns (i.e. once children are queued),
+                    // long before children themselves finish. Resolving
+                    // on parent-only would trigger a sync against a
+                    // database that doesn't yet hold the new materials,
+                    // which the Continue-branch session would then
+                    // interpret as "every topic passed, all easy" and
+                    // incorrectly congratulate the user. So wait for
+                    // every node — including children — to land
+                    // terminal before resolving.
+                    if (AnalysisTaskRunner.#isTreeTerminal(taskTree))
                     {
                         cleanupAndResolve(taskTree);
                     }

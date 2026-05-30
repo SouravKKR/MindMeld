@@ -60,7 +60,7 @@ class TutorialEntityCleanup
                 continue;
             }
 
-            const directCards = deck.getCards(false);
+            const directCards = deck.getCards(false, true);
             for (const card of directCards)
             {
                 if (TutorialEntityCleanup.#hasFlag(card.getAdditionalData?.(), flagKey))
@@ -70,7 +70,7 @@ class TutorialEntityCleanup
                 }
             }
 
-            const directMaterials = deck.getStudyMaterials(false);
+            const directMaterials = deck.getStudyMaterials(false, true);
             for (const material of directMaterials)
             {
                 if (TutorialEntityCleanup.#hasFlag(material.getAdditionalData?.(), flagKey))
