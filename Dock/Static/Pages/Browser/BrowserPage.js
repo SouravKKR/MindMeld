@@ -1,6 +1,7 @@
 import HeaderComponent from "../../CommonComponents/HeaderComponent.js";
 import Deck from "../../Globals/Model/Deck.js";
 import GenericSelection from "../../Globals/Classes/GenericSelection.js";
+import MockTestAttemptCleaner from "../../Globals/Classes/MockTestAttemptCleaner.js";
 import { htmlToSearchableText } from "../../Globals/UtilityFunctions/HtmlToSearchableText.js";
 import { entityTypes } from "../../Globals/Enumerations/EntityTypes.js";
 import CardListItem from "./Components/CardListItem.js";
@@ -99,6 +100,7 @@ class BrowserPage extends HTMLElement
     {
         const searchInput = this.querySelector(".entity-search-input");
         const deckSelect  = this.querySelector(".browser-deck-select");
+        const clearMockTestAttemptsButton = this.querySelector(".browser-clear-mock-test-attempts-button");
 
         this.addEventListener("click", () =>
         {
@@ -115,6 +117,22 @@ class BrowserPage extends HTMLElement
         {
             this.#search(event.target.value);
         });
+
+        if (clearMockTestAttemptsButton)
+        {
+            clearMockTestAttemptsButton.addEventListener("click", async (clickEvent) =>
+            {
+                // The page-level click handler above deselects everything;
+                // stop propagation so opening the confirm dialog doesn't
+                // also blow away the selection state we don't care about.
+                clickEvent.stopPropagation();
+                const result = await MockTestAttemptCleaner.clearForDeck(this.#deck);
+                if (result.cleared > 0)
+                {
+                    this.refresh();
+                }
+            });
+        }
     }
 
     #search(searchTerm = "")
@@ -147,11 +165,14 @@ class BrowserPage extends HTMLElement
     {
         this.setAttribute("page", "");
 
+        const showClearAttemptsButton = this.#entityType === entityTypes.MOCK_TEST;
+
         this.innerHTML =
         `
             <header-component title="${this.#pageTitle()}"></header-component>
             <input type="text" placeholder="Search..." class="entity-search-input">
             <button type="button" class="browser-deck-select"></button>
+            ${showClearAttemptsButton ? `<button type="button" class="browser-clear-mock-test-attempts-button">Clear Mock Test Attempts</button>` : ""}
             <div class="entity-list-container"></div>
         `;
 

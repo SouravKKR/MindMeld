@@ -16,13 +16,18 @@ async function getRevenueStats(request, response)
             ? "$currency"
             : "$deckId";
 
+    // Purchase.toJson serialises purchaseDate as an ISO string, so the
+    // field is stored as a string (not BSON Date) in Mongo. Compare
+    // string-to-string — ISO-8601 sort order matches chronological
+    // order — instead of Date-to-string which Mongo's cross-type
+    // bracket comparison would never match.
     const pipeline =
     [
         {
             $match:
             {
                 status: purchaseStatuses.COMPLETED,
-                purchaseDate: { $gte: fromDate, $lte: toDate }
+                purchaseDate: { $gte: fromDate.toISOString(), $lte: toDate.toISOString() }
             }
         },
         {

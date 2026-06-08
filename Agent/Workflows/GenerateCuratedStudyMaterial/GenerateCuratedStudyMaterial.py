@@ -1,9 +1,12 @@
 import asyncio
 import json
-import math
 import os
+import re
 import uuid
 from datetime import datetime, timezone
+from html import escape as html_escape
+
+from bs4 import BeautifulSoup
 
 from Workflows.Workflow import Workflow
 from Globals.Classes.Analysis.CuratedFlashcardFields import CuratedFlashcardFields
@@ -20,6 +23,7 @@ from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
 from Globals.Enumerations.CuratedBatchReviewStates import CuratedBatchReviewStates
 from Globals.Enumerations.CuratedFlashcardGrade import CuratedFlashcardGrade
 from Globals.Enumerations.TopicStrength import TopicStrength
+from Globals.Utility.CosineSimilarity import cosine_similarity
 from Globals.Utility.StripJsonMarkdown import strip_json_markdown
 
 
@@ -67,6 +71,14 @@ class GenerateCuratedStudyMaterial(Workflow):
     # VOLATILE tier gets the disambiguation variant. Both share the
     # simpler-language baseline.
 
+    CITATION_INSTRUCTION_CLAUSE = (
+        " When you state a fact drawn from one of the numbered web sources in the user context, append "
+        "the matching reference in square brackets immediately after that sentence — for example `[1]` or "
+        "`[2, 4]` for multiple sources. Only use numbers that exist in the Sources list; never invent a "
+        "number, never cite the textbook excerpts, and never put a bracketed reference inside a code "
+        "block or formula."
+    )
+
     SYSTEM_PROMPT_WEAK = (
         "You are a patient tutor writing a foundational study material on a topic the student is weak in. "
         "Use the simplest possible language — assume the student was confused by the standard explanation "
@@ -77,7 +89,7 @@ class GenerateCuratedStudyMaterial(Workflow):
         "goal is comprehension over rigour — better that the student leaves understanding the core idea "
         "than dazzled by terminology. Output a single self-contained HTML fragment (no <html> or <body> "
         "wrappers) with semantic tags (<h2>, <h3>, <p>, <ul>, <ol>, <pre>, <strong>, <em>). Keep tone "
-        "warm and encouraging."
+        "warm and encouraging." + CITATION_INSTRUCTION_CLAUSE
     )
 
     SYSTEM_PROMPT_VOLATILE = (
@@ -89,19 +101,38 @@ class GenerateCuratedStudyMaterial(Workflow):
         "confused with X — the difference is …'). Include at least one worked example whose solution "
         "depends on getting this distinction right. Comprehension over rigour. Output a single "
         "self-contained HTML fragment (no <html> or <body> wrappers) with semantic tags (<h2>, <h3>, "
-        "<p>, <ul>, <ol>, <pre>, <strong>, <em>). Keep tone warm and encouraging."
+        "<p>, <ul>, <ol>, <pre>, <strong>, <em>). Keep tone warm and encouraging." + CITATION_INSTRUCTION_CLAUSE
     )
 
     SYSTEM_PROMPT_FLASHCARDS = (
-        "You are generating flashcards to reinforce a study material you just authored. The student is "
-        "weak in this topic and just read a simpler-language explanation. Produce flashcards that test "
-        "the core ideas of that explanation — NOT obscure trivia, NOT prerequisite material the student "
-        "should already know. Each card should test a single idea cleanly. Choose the card count "
-        "yourself between " + str(MIN_FLASHCARDS_PER_TOPIC) + " and " + str(MAX_FLASHCARDS_PER_TOPIC) +
-        " — fewer high-quality cards beat many shallow ones. Return STRICT compact JSON with exactly "
-        "one key 'flashcards' whose value is an array of objects with 'question' (short plain-text "
-        "string) and 'answer' (semantic HTML fragment, no <html>/<body> wrappers). No prose outside the "
-        "JSON."
+        "You are generating flashcards that test a student's understanding of A SPECIFIC TOPIC — NOT "
+        "their memory of the study material itself. The student name of the topic is given in the user "
+        "prompt; every flashcard you write must directly probe that topic.\n\n"
+        "THE GOLDEN RULE: the material you were just shown may use analogies, real-world examples, "
+        "stories, or mnemonics to teach the topic. Those are pedagogical SCAFFOLDING — they exist to "
+        "help the student understand the topic. They are NEVER the subject of a flashcard. The student "
+        "needs to be tested on the topic itself, not on whether they remember the analogy used to "
+        "explain it.\n\n"
+        "BAD-VS-GOOD EXAMPLES (study these before writing any cards):\n"
+        "  Topic: IaaS vs PaaS vs SaaS (material used a pizza-delivery analogy)\n"
+        "    BAD:  What does the pizza dough represent in the IaaS analogy?\n"
+        "    GOOD: In IaaS, what does the cloud provider manage and what does the customer manage?\n"
+        "  Topic: TCP three-way handshake (material used a phone-call analogy)\n"
+        "    BAD:  What does each ring of the phone correspond to in the handshake?\n"
+        "    GOOD: Name the three segments exchanged during a TCP three-way handshake in order.\n"
+        "  Topic: Photosynthesis light-dependent reactions (material referenced a 'factory' metaphor)\n"
+        "    BAD:  In the factory analogy, what does the assembly line stand for?\n"
+        "    GOOD: Which molecules are produced by the light-dependent reactions of photosynthesis?\n\n"
+        "Each card should test ONE idea cleanly. Avoid prerequisite knowledge the student should "
+        "already have. Avoid obscure trivia. Choose the card count yourself between "
+        + str(MIN_FLASHCARDS_PER_TOPIC) + " and " + str(MAX_FLASHCARDS_PER_TOPIC) +
+        " — fewer high-quality cards beat many shallow ones.\n\n"
+        "Return STRICT compact JSON with exactly one key 'flashcards' whose value is an array of "
+        "objects with 'question' (short plain-text string) and 'answer' (semantic HTML fragment, no "
+        "<html>/<body> wrappers). No prose outside the JSON.\n\n"
+        "FINAL REMINDER: every question must reference the topic by name (or a direct synonym). If a "
+        "question mentions an analogy keyword that doesn't appear in the topic name, that question is "
+        "wrong — rewrite it to ask about the underlying concept instead."
     )
 
     def __init__(self, payload: dict = {}):
@@ -135,6 +166,14 @@ class GenerateCuratedStudyMaterial(Workflow):
         hard_cards_payload = payload.get("hardCards", [])
         self.__hard_cards  = [entry for entry in hard_cards_payload if isinstance(entry, dict)] if isinstance(hard_cards_payload, list) else []
 
+        # Source card ids — the underlying (non-curated) cards that
+        # AnalyzeDeckPerformance attributed to this topic. The frontend's
+        # COMPLETED_ALL_EASY archive flow looks these up on the persisted
+        # StudyMaterial.additionalData and grades each one Easy so the
+        # FSRS / Glicko state reflects the user's curated practice.
+        source_card_ids_payload = payload.get("sourceCardIds", [])
+        self.__source_card_ids  = [value for value in source_card_ids_payload if isinstance(value, str) and value] if isinstance(source_card_ids_payload, list) else []
+
     async def run(self, args: dict = {}):
         if not self.__deck_id or not self.__user_id or not self.__topic_name:
             print("[GenerateCuratedStudyMaterial] Missing deckId, userId, or topicName — exiting.")
@@ -158,14 +197,16 @@ class GenerateCuratedStudyMaterial(Workflow):
             return
 
         textbook_snippets = await self.__collect_textbook_snippets(text_embeddings_collection)
-        web_snippets      = await self.__collect_web_snippets()
+        web_sources       = await self.__collect_web_snippets()
 
-        merged_context = self.__assemble_context(textbook_snippets, web_snippets)
+        merged_context = self.__assemble_context(textbook_snippets, web_sources)
 
         html_content = await self.__synthesize_html_content(merged_context)
         if not html_content:
             print(f"[GenerateCuratedStudyMaterial] LLM returned no content for topic '{self.__topic_name}' — exiting.")
             return
+
+        html_content = GenerateCuratedStudyMaterial.__inject_citation_links(html_content, web_sources)
 
         study_material_id = str(uuid.uuid4())
         now_iso           = datetime.now(timezone.utc).isoformat()
@@ -207,6 +248,7 @@ class GenerateCuratedStudyMaterial(Workflow):
                     CuratedStudyMaterialFields.BATCH_REVIEW_STATE:        CuratedBatchReviewStates.LIVE.name,
                     CuratedStudyMaterialFields.TOPIC_INDEX:               self.__topic_index,
                     CuratedStudyMaterialFields.READ_STATE:                "UNREAD",
+                    CuratedStudyMaterialFields.SOURCE_CARD_IDS:           self.__source_card_ids,
                 },
             },
         }
@@ -267,31 +309,19 @@ class GenerateCuratedStudyMaterial(Workflow):
             if not isinstance(embedding_vector, list) or not isinstance(content_text, str) or not content_text:
                 continue
 
-            similarity = GenerateCuratedStudyMaterial.__cosine_similarity(query_vector, embedding_vector)
+            similarity = cosine_similarity(query_vector, embedding_vector)
             scored.append((similarity, content_text))
 
         scored.sort(key=lambda entry: entry[0], reverse=True)
         return [content for _, content in scored[: GenerateCuratedStudyMaterial.EMBEDDING_TOP_K]]
 
-    @staticmethod
-    def __cosine_similarity(first_vector: list[float], second_vector: list[float]) -> float:
-        if not first_vector or not second_vector or len(first_vector) != len(second_vector):
-            return 0.0
-
-        dot_product      = 0.0
-        first_magnitude  = 0.0
-        second_magnitude = 0.0
-        for first_value, second_value in zip(first_vector, second_vector):
-            dot_product      += first_value * second_value
-            first_magnitude  += first_value * first_value
-            second_magnitude += second_value * second_value
-
-        if first_magnitude == 0.0 or second_magnitude == 0.0:
-            return 0.0
-
-        return dot_product / (math.sqrt(first_magnitude) * math.sqrt(second_magnitude))
-
-    async def __collect_web_snippets(self) -> list[str]:
+    async def __collect_web_snippets(self) -> list[dict]:
+        """
+        Returns a list of `{title, url, snippet}` records so the URL stays
+        available for the citation-link injection step later. The snippet
+        is trimmed to `WEB_CONTENT_SNIPPET_CHAR_LIMIT`; records with no
+        usable snippet OR no URL are dropped because they can't be cited.
+        """
         try:
             scraper = WebScraper()
             search_results = await scraper.search_rich(
@@ -302,32 +332,35 @@ class GenerateCuratedStudyMaterial(Workflow):
             print(f"[GenerateCuratedStudyMaterial] Web search failed for topic '{self.__topic_name}': {scraper_error}")
             return []
 
-        snippets: list[str] = []
+        web_sources: list[dict] = []
         for result in search_results or []:
             title   = (result.get("title") or "").strip()
             snippet = (result.get("snippet") or "").strip()
             url     = (result.get("url") or "").strip()
 
-            if not snippet:
+            if not snippet or not url:
                 continue
 
             trimmed_snippet = snippet[: GenerateCuratedStudyMaterial.WEB_CONTENT_SNIPPET_CHAR_LIMIT]
-            snippets.append(f"[{title}] {trimmed_snippet} (source: {url})")
+            web_sources.append({"title": title, "url": url, "snippet": trimmed_snippet})
 
-        return snippets
+        return web_sources
 
-    def __assemble_context(self, textbook_snippets: list[str], web_snippets: list[str]) -> str:
+    def __assemble_context(self, textbook_snippets: list[str], web_sources: list[dict]) -> str:
         assembled_blocks: list[str] = []
 
         if textbook_snippets:
-            assembled_blocks.append("=== EXCERPTS FROM THE STUDENT'S OWN TEXTBOOK ===")
+            assembled_blocks.append("=== EXCERPTS FROM THE STUDENT'S OWN TEXTBOOK (do not cite — use only as background) ===")
             for excerpt_index, snippet in enumerate(textbook_snippets, start=1):
                 assembled_blocks.append(f"Excerpt {excerpt_index}: {snippet}")
 
-        if web_snippets:
-            assembled_blocks.append("=== EXCERPTS FROM RECENT WEB SEARCH ===")
-            for web_index, snippet in enumerate(web_snippets, start=1):
-                assembled_blocks.append(f"Web result {web_index}: {snippet}")
+        if web_sources:
+            assembled_blocks.append("=== NUMBERED WEB SOURCES (cite as [N] when you draw on one) ===")
+            for source_index, source in enumerate(web_sources, start=1):
+                source_title   = source.get("title") or "(no title)"
+                source_url     = source.get("url") or ""
+                source_snippet = source.get("snippet") or ""
+                assembled_blocks.append(f"[{source_index}] {source_title} — {source_url}\n    {source_snippet}")
 
         assembled_text = "\n\n".join(assembled_blocks)
         return assembled_text[: GenerateCuratedStudyMaterial.MAX_CONTEXT_CHARACTERS]
@@ -360,6 +393,102 @@ class GenerateCuratedStudyMaterial(Workflow):
             "Address the underlying confusion these questions reveal — do NOT simply restate the same "
             "answer; explain the gap that led to the wrong response:\n" + trimmed_block + "\n\n"
         )
+
+    # Matches a reference cluster like `[1]`, `[2, 4]`, or `[1,3,5]`.
+    # Disallows whitespace immediately inside the outer brackets so the
+    # pattern doesn't swallow things like `[ note ]` or markdown link
+    # fragments that happen to contain commas.
+    CITATION_MARKER_PATTERN = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+
+    # Tags whose text content must NOT be touched — code, links,
+    # KaTeX/MathML, and script/style. Any [N] inside these stays as
+    # literal text.
+    CITATION_SKIP_TAGS = frozenset({"a", "code", "pre", "kbd", "samp", "tt", "script", "style", "math"})
+
+    @staticmethod
+    def __inject_citation_links(html_content: str, web_sources: list[dict]) -> str:
+        """
+        Walks the LLM-authored HTML and replaces `[N]` / `[N, M]` citation
+        markers with clickable anchor tags pointing at `web_sources[N-1].url`.
+        Skips text inside `<a>`, `<code>`, `<pre>`, `<math>`, etc. so code
+        examples like `array[1]` and existing links are left alone. A
+        marker that references a number outside the valid source range is
+        also left untouched — protects against the LLM hallucinating
+        `[99]` and from incidental text that just happens to contain
+        bracketed digits.
+        """
+        if not html_content or not web_sources:
+            return html_content
+
+        soup = BeautifulSoup(html_content, "html.parser")
+
+        def is_inside_skip_element(node) -> bool:
+            ancestor = node.parent
+            while ancestor is not None:
+                if getattr(ancestor, "name", None) in GenerateCuratedStudyMaterial.CITATION_SKIP_TAGS:
+                    return True
+                ancestor = ancestor.parent
+            return False
+
+        # Snapshot the text-node list first — replace_with mutates the
+        # tree mid-iteration and would otherwise revisit our inserted
+        # anchors and try to "cite" their own text.
+        text_nodes = [node for node in soup.find_all(string=True) if not is_inside_skip_element(node)]
+
+        for text_node in text_nodes:
+            original_text = str(text_node)
+            if "[" not in original_text:
+                continue
+
+            replacement_fragments: list[str] = []
+            cursor = 0
+            b_replaced_any = False
+
+            for match in GenerateCuratedStudyMaterial.CITATION_MARKER_PATTERN.finditer(original_text):
+                number_strings = [chunk.strip() for chunk in match.group(1).split(",")]
+                try:
+                    citation_numbers = [int(piece) for piece in number_strings]
+                except ValueError:
+                    continue
+
+                if not all(1 <= citation_number <= len(web_sources) for citation_number in citation_numbers):
+                    continue
+
+                # Reject `array[1]`-style usage: if the character right
+                # before the bracket is a word character, the [N] is
+                # almost certainly an index expression, not a citation.
+                if match.start() > 0:
+                    preceding_character = original_text[match.start() - 1]
+                    if preceding_character.isalnum() or preceding_character == "_":
+                        continue
+
+                replacement_fragments.append(html_escape(original_text[cursor:match.start()]))
+                replacement_fragments.append("[")
+                for index_in_cluster, citation_number in enumerate(citation_numbers):
+                    if index_in_cluster > 0:
+                        replacement_fragments.append(", ")
+                    source = web_sources[citation_number - 1]
+                    source_url   = source.get("url") or ""
+                    source_title = source.get("title") or source_url
+                    replacement_fragments.append(
+                        f'<a href="{html_escape(source_url, quote=True)}" '
+                        f'class="curated-citation-link" '
+                        f'target="_blank" rel="noopener noreferrer" '
+                        f'title="{html_escape(source_title, quote=True)}">{citation_number}</a>'
+                    )
+                replacement_fragments.append("]")
+                cursor = match.end()
+                b_replaced_any = True
+
+            if not b_replaced_any:
+                continue
+
+            replacement_fragments.append(html_escape(original_text[cursor:]))
+            replacement_html = "".join(replacement_fragments)
+            replacement_soup = BeautifulSoup(replacement_html, "html.parser")
+            text_node.replace_with(*list(replacement_soup.contents))
+
+        return str(soup)
 
     @staticmethod
     def __build_system_prompt(topic_strength: TopicStrength) -> str:
@@ -487,14 +616,18 @@ class GenerateCuratedStudyMaterial(Workflow):
         hard_cards_clause = self.__build_hard_cards_clause()
 
         user_prompt = (
-            f"Topic: {self.__topic_name}\n"
+            f"TOPIC TO TEST: {self.__topic_name}\n"
             f"Topic strength tier: {self.__topic_strength.name}\n\n"
+            f"Every flashcard you write must test the student's understanding of the topic named above. "
+            f"The reference material below may use analogies, examples, or stories as teaching aids — "
+            f"those are scaffolding, NOT the subject of any question. If a question asks about an "
+            f"analogy keyword instead of the topic concept, rewrite it.\n\n"
             f"{hard_cards_clause}"
-            f"The study material you just authored for this topic (use this as the source of truth for the "
-            f"flashcards):\n\n{material_html}\n\n"
-            f"Additional context for reference (do NOT pull obscure trivia from here):\n\n"
+            f"REFERENCE MATERIAL (use this for the underlying concepts of '{self.__topic_name}', NOT as "
+            f"the subject of questions):\n\n{material_html}\n\n"
+            f"ADDITIONAL CONTEXT (background only — do NOT pull obscure trivia from here):\n\n"
             f"{merged_context if merged_context else '(no additional context available)'}\n\n"
-            f"Generate the flashcards now."
+            f"Now generate flashcards that test '{self.__topic_name}'."
         )
 
         request = AutomationRequest(

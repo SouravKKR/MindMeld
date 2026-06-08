@@ -17,6 +17,12 @@ class CuratedStudyMaterialFields
     static READ_STATE                 = "readState";
     static READ_AT                    = "readAt";
     static SESSION_OUTCOME            = "sessionOutcome";
+    // IDs of the underlying (non-curated) cards that AnalyzeDeckPerformance
+    // attributed to this topic. The COMPLETED_ALL_EASY archive path uses
+    // these to apply a positive review to the original cards via
+    // Card.attempt(Easy), so the next analysis pass sees the updated
+    // FSRS / Glicko state instead of re-flagging the same topic.
+    static SOURCE_CARD_IDS            = "sourceCardIds";
 
     /**
      * Returns every key this class owns. Useful for any future export
@@ -34,6 +40,7 @@ class CuratedStudyMaterialFields
             CuratedStudyMaterialFields.READ_STATE,
             CuratedStudyMaterialFields.READ_AT,
             CuratedStudyMaterialFields.SESSION_OUTCOME,
+            CuratedStudyMaterialFields.SOURCE_CARD_IDS,
         ];
     }
 }

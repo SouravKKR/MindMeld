@@ -1,6 +1,5 @@
 import AutoAnalysisDeckFields from "./AutoAnalysisDeckFields.js";
-import SyncEvents from "../../Events/SyncEvents.js";
-import SyncOrchestrator from "../Syncing/SyncOrchestrator.js";
+import TaskProgressTracker from "../Task/TaskProgressTracker.js";
 import { taskStatus } from "../../Enumerations/TaskStatus.js";
 
 
@@ -33,10 +32,7 @@ import { taskStatus } from "../../Enumerations/TaskStatus.js";
  */
 class AnalysisTaskRunner
 {
-    static POLL_INTERVAL_MILLISECONDS = 2000;
-    static MAX_POLL_DURATION_MILLISECONDS = 5 * 60 * 1000;
-    static QUEUE_ENDPOINT    = "/Analysis/QueueDeckAnalysis";
-    static PROGRESS_ENDPOINT = "/Generate/Progress";
+    static QUEUE_ENDPOINT = "/Analysis/QueueDeckAnalysis";
 
     /**
      * Queues (or joins) an analysis run for the given deck and polls
@@ -91,21 +87,21 @@ class AnalysisTaskRunner
             onStatusChange({ phase: bAlreadyRunning ? "joined-existing-run" : "queued", taskId: taskId, bAlreadyRunning: bAlreadyRunning, reason: reason });
         }
 
-        const finalTaskTree = await AnalysisTaskRunner.#pollUntilTerminal(taskId, onStatusChange);
-        const finalStatus   = (finalTaskTree && typeof finalTaskTree.status === "number") ? finalTaskTree.status : taskStatus.UNKNOWN;
+        // Delegate the polling + sync-trigger to TaskProgressTracker so
+        // this runner shares one implementation with the mock-test
+        // evaluation wait flow. When bTriggerSync is false (legacy
+        // dispatcher callers), poll only without firing the post-task
+        // sync — the dispatcher handles its own sync batching.
+        const trackResult = bTriggerSync
+            ? await TaskProgressTracker.trackAndSync(taskId, onStatusChange)
+            : { taskTree: await TaskProgressTracker.pollUntilTerminal(taskId, onStatusChange), status: taskStatus.UNKNOWN };
 
-        if (onStatusChange)
+        const finalTaskTree = trackResult.taskTree;
+        const finalStatus = (finalTaskTree && typeof finalTaskTree.status === "number") ? finalTaskTree.status : taskStatus.UNKNOWN;
+
+        if (!bTriggerSync && onStatusChange)
         {
             onStatusChange({ phase: "task-terminal", taskTree: finalTaskTree, status: finalStatus });
-        }
-
-        if (bTriggerSync && finalStatus === taskStatus.COMPLETED)
-        {
-            await AnalysisTaskRunner.triggerSync();
-            if (onStatusChange)
-            {
-                onStatusChange({ phase: "sync-complete" });
-            }
         }
 
         return { taskTree: finalTaskTree, status: finalStatus, bAlreadyRunning: bAlreadyRunning, reason: reason };
@@ -142,39 +138,14 @@ class AnalysisTaskRunner
     }
 
     /**
-     * Triggers a single sync cycle. SyncOrchestrator's `sync` is
-     * async but dispatches its progress + completion via events
-     * rather than via the returned promise, so we wait on the
-     * COMPLETED event and resolve when it fires. A FAILED event
-     * resolves with rejection.
+     * Triggers a single sync cycle. Delegates to TaskProgressTracker
+     * which now owns the canonical implementation; kept here as a
+     * thin alias for backwards compatibility with any caller that
+     * still imports AnalysisTaskRunner.triggerSync directly.
      */
     static async triggerSync()
     {
-        return new Promise((resolve, reject) =>
-        {
-            const onCompleted = () =>
-            {
-                window.removeEventListener(SyncEvents.COMPLETED, onCompleted);
-                window.removeEventListener(SyncEvents.FAILED, onFailed);
-                resolve();
-            };
-            const onFailed = (failedEvent) =>
-            {
-                window.removeEventListener(SyncEvents.COMPLETED, onCompleted);
-                window.removeEventListener(SyncEvents.FAILED, onFailed);
-                const failureReason = failedEvent?.detail?.error || new Error("Sync failed.");
-                reject(failureReason);
-            };
-            window.addEventListener(SyncEvents.COMPLETED, onCompleted);
-            window.addEventListener(SyncEvents.FAILED, onFailed);
-
-            SyncOrchestrator.sync({ bForce: true }).catch((triggerError) =>
-            {
-                window.removeEventListener(SyncEvents.COMPLETED, onCompleted);
-                window.removeEventListener(SyncEvents.FAILED, onFailed);
-                reject(triggerError);
-            });
-        });
+        return await TaskProgressTracker.triggerSync();
     }
 
     static async #postQueueRequest(deck, curatedFlags = {})
@@ -220,131 +191,13 @@ class AnalysisTaskRunner
         return responseBody;
     }
 
-    /**
-     * Polls /Generate/Progress every POLL_INTERVAL_MILLISECONDS and
-     * resolves with the final task tree once the task reaches a
-     * terminal status. A MAX_POLL_DURATION_MILLISECONDS safety cap
-     * stops the polling from running forever if something goes wrong
-     * server-side and the task never lands at COMPLETED/FAILED.
-     */
-    /**
-     * Recursive tree-status check. Mirrors `isSubtreeTerminal` on the
-     * Dock side: a tree is terminal only when its root AND every
-     * descendant is in COMPLETED or FAILED. Used by the polling loop
-     * so the resolve fires after the entire ANALYZE_DECK_PERFORMANCE
-     * → GENERATE_CURATED_STUDY_MATERIAL fan-out lands, not just the
-     * orchestrator parent.
-     */
-    static #isTreeTerminal(node)
-    {
-        if (!node)
-        {
-            return true;
-        }
-        const nodeStatus = typeof node.status === "number" ? node.status : taskStatus.UNKNOWN;
-        if (nodeStatus !== taskStatus.COMPLETED && nodeStatus !== taskStatus.FAILED)
-        {
-            return false;
-        }
-        const children = Array.isArray(node.children) ? node.children : [];
-        for (const childNode of children)
-        {
-            if (!AnalysisTaskRunner.#isTreeTerminal(childNode))
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    static async #pollUntilTerminal(taskId, onStatusChange)
-    {
-        const startTimestampMilliseconds = Date.now();
-
-        return new Promise((resolve, reject) =>
-        {
-            let intervalHandle = null;
-
-            const cleanupAndResolve = (terminalTaskTree) =>
-            {
-                if (intervalHandle !== null)
-                {
-                    clearInterval(intervalHandle);
-                    intervalHandle = null;
-                }
-                resolve(terminalTaskTree);
-            };
-
-            const cleanupAndReject = (pollError) =>
-            {
-                if (intervalHandle !== null)
-                {
-                    clearInterval(intervalHandle);
-                    intervalHandle = null;
-                }
-                reject(pollError);
-            };
-
-            const pollOnce = async () =>
-            {
-                try
-                {
-                    if (Date.now() - startTimestampMilliseconds > AnalysisTaskRunner.MAX_POLL_DURATION_MILLISECONDS)
-                    {
-                        cleanupAndReject(new Error("Analysis task timed out — server never reported COMPLETED."));
-                        return;
-                    }
-
-                    const progressResponse = await fetch(`${AnalysisTaskRunner.PROGRESS_ENDPOINT}?taskid=${encodeURIComponent(taskId)}`,
-                    {
-                        method: "GET",
-                        credentials: "same-origin",
-                    });
-                    if (!progressResponse.ok)
-                    {
-                        const responseText = await progressResponse.text().catch(() => "");
-                        cleanupAndReject(new Error(`${AnalysisTaskRunner.PROGRESS_ENDPOINT} returned ${progressResponse.status}: ${responseText}`));
-                        return;
-                    }
-                    const taskTree = await progressResponse.json();
-
-                    if (onStatusChange)
-                    {
-                        onStatusChange({ phase: "progress", taskTree: taskTree });
-                    }
-
-                    // Walk the whole task tree, not just the root.
-                    // ANALYZE_DECK_PERFORMANCE spawns
-                    // GENERATE_CURATED_STUDY_MATERIAL children that own
-                    // the actual material + flashcard writes. The
-                    // parent's `status` flips to COMPLETED the moment
-                    // run() returns (i.e. once children are queued),
-                    // long before children themselves finish. Resolving
-                    // on parent-only would trigger a sync against a
-                    // database that doesn't yet hold the new materials,
-                    // which the Continue-branch session would then
-                    // interpret as "every topic passed, all easy" and
-                    // incorrectly congratulate the user. So wait for
-                    // every node — including children — to land
-                    // terminal before resolving.
-                    if (AnalysisTaskRunner.#isTreeTerminal(taskTree))
-                    {
-                        cleanupAndResolve(taskTree);
-                    }
-                }
-                catch (pollError)
-                {
-                    cleanupAndReject(pollError);
-                }
-            };
-
-            // Fire one immediate poll so the caller sees `progress`
-            // before the first 2-second interval, then settle into
-            // the steady polling cadence.
-            pollOnce();
-            intervalHandle = setInterval(pollOnce, AnalysisTaskRunner.POLL_INTERVAL_MILLISECONDS);
-        });
-    }
+    // The legacy `#pollUntilTerminal` + `#isTreeTerminal` lived here
+    // before this file was refactored to delegate to TaskProgressTracker.
+    // Both are now owned by `Main/Globals/Classes/Task/TaskProgressTracker.js`;
+    // calling `TaskProgressTracker.trackAndSync(taskId, onStatusChange)`
+    // reproduces the exact same polling + tree-terminal + sync-trigger
+    // behaviour and dispatches the same phase events ("progress",
+    // "task-terminal", "sync-complete") this runner used to emit itself.
 }
 
 export default AnalysisTaskRunner;

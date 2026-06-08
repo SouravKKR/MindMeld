@@ -3,16 +3,23 @@ import DialogBox from "../../CommonComponents/DialogBox.js";
 import PaidDeckUploadDialog from "./Components/PaidDeckUploadDialog.js";
 import PaidDeckEditDialog from "./Components/PaidDeckEditDialog.js";
 import BulkApplyDialog from "./Components/BulkApplyDialog.js";
+import CreateOrganizationDialog from "./Components/CreateOrganizationDialog.js";
+import OrganizationDetailsDialog from "./Components/OrganizationDetailsDialog.js";
+import AddMembersDialog from "./Components/AddMembersDialog.js";
+import AlertNotifier from "./Components/AlertNotifier.js";
 import { userRoles } from "../../Globals/Enumerations/UserRoles.js";
+import { alertSeverity } from "../../Globals/Enumerations/AlertSeverity.js";
 import { adminPanelTabs } from "../../Globals/Enumerations/AdminPanelTabs.js";
 import { semVerBumpTypes } from "../../Globals/Enumerations/SemVerBumpTypes.js";
+import { organizationStatus } from "../../Globals/Enumerations/OrganizationStatus.js";
 
 /**
  * AdminPanelPage
  *
- * Tabbed admin UI: Decks (upload/edit/list/publish/rotate/bulk-apply),
- * Pricing (per-deck per-region), Bundles (define included children +
- * discounts), Stats (revenue aggregation). All operations call
+ * Tabbed admin UI: Decks (upload/edit/list/publish/rotate/bulk-apply —
+ * regional pricing is authored inline in the upload dialog), Stats (revenue
+ * aggregation), Admins, Release Notes, Organizations, and Alerts (the
+ * operational alert log + browser-notification opt-in). All operations call
  * /Admin/* endpoints gated by the EnsureAdmin server plugin — the
  * client-side role check below is UX only; the server is the source
  * of truth.
@@ -23,13 +30,20 @@ class AdminPanelPage extends HTMLElement
     #paidDecks = [];
     #selectedDeckIds = new Set();
     #adminDeckSearchQuery = "";
+    #organizations = [];
+    #selectedMemberOrganizationId = "";
+    #organizationMembers = [];
+    #selectedMemberIds = new Set();
 
     async connectedCallback()
     {
         this.setAttribute("page", "");
 
         const currentUser = window["user"];
-        if (!currentUser || currentUser.getRole() !== userRoles.ADMIN)
+        const isSuperAdmin = currentUser && currentUser.getRole() === userRoles.ADMIN;
+        const isOrganizationAdmin = currentUser && currentUser.getRole() === userRoles.ORG_ADMIN;
+
+        if (!currentUser || (!isSuperAdmin && !isOrganizationAdmin))
         {
             this.innerHTML = `
                 <header-component title="Admin Panel"></header-component>
@@ -38,15 +52,30 @@ class AdminPanelPage extends HTMLElement
             return;
         }
 
+        // Org-admin users see only the Members tab — no decks, pricing,
+        // bundles, stats, admin allowlist, release notes, or super-admin
+        // org management. The backend re-enforces every restriction.
+        const superAdminTabs =
+        [
+            { tab: adminPanelTabs.DECKS, label: "Decks" },
+            { tab: adminPanelTabs.STATS, label: "Stats" },
+            { tab: adminPanelTabs.ADMINS, label: "Admins" },
+            { tab: adminPanelTabs.RELEASE_NOTES, label: "Release Notes" },
+            { tab: adminPanelTabs.ORGANIZATIONS, label: "Organizations" },
+            { tab: adminPanelTabs.ALERTS, label: "Alerts" }
+        ];
+        const organizationAdminTabs =
+        [
+            { tab: adminPanelTabs.ORGANIZATION_MEMBERS, label: "Members" }
+        ];
+        const visibleTabs = isSuperAdmin ? superAdminTabs : organizationAdminTabs;
+
+        this.#activeTab = isSuperAdmin ? adminPanelTabs.DECKS : adminPanelTabs.ORGANIZATION_MEMBERS;
+
         this.innerHTML = `
             <header-component title="Admin Panel"></header-component>
             <div class="admin-panel-tabs">
-                <button class="admin-panel-tab" data-tab="${adminPanelTabs.DECKS}">Decks</button>
-                <button class="admin-panel-tab" data-tab="${adminPanelTabs.PRICING}">Pricing</button>
-                <button class="admin-panel-tab" data-tab="${adminPanelTabs.BUNDLES}">Bundles</button>
-                <button class="admin-panel-tab" data-tab="${adminPanelTabs.STATS}">Stats</button>
-                <button class="admin-panel-tab" data-tab="${adminPanelTabs.ADMINS}">Admins</button>
-                <button class="admin-panel-tab" data-tab="${adminPanelTabs.RELEASE_NOTES}">Release Notes</button>
+                ${visibleTabs.map(entry => `<button class="admin-panel-tab" data-tab="${entry.tab}">${entry.label}</button>`).join("")}
             </div>
             <div class="admin-panel-content" data-role="content"></div>
         `;
@@ -65,6 +94,22 @@ class AdminPanelPage extends HTMLElement
 
     async #renderTab()
     {
+        // Guard: only render tabs the current user's role is allowed to
+        // see. The tab buttons are filtered at construction so a click
+        // can't reach this method for a forbidden tab in normal use —
+        // this is the defence in depth for code paths that set
+        // this.#activeTab directly.
+        const currentUser = window["user"];
+        const isSuperAdmin = currentUser && currentUser.getRole() === userRoles.ADMIN;
+        const allowedTabs = isSuperAdmin
+            ? new Set([adminPanelTabs.DECKS, adminPanelTabs.STATS, adminPanelTabs.ADMINS, adminPanelTabs.RELEASE_NOTES, adminPanelTabs.ORGANIZATIONS, adminPanelTabs.ALERTS])
+            : new Set([adminPanelTabs.ORGANIZATION_MEMBERS]);
+
+        if (!allowedTabs.has(this.#activeTab))
+        {
+            return;
+        }
+
         for (const tabButton of this.querySelectorAll(".admin-panel-tab"))
         {
             const tabValue = Number(tabButton.dataset.tab);
@@ -79,12 +124,6 @@ class AdminPanelPage extends HTMLElement
             case adminPanelTabs.DECKS:
                 await this.#renderDecksTab(content);
                 break;
-            case adminPanelTabs.PRICING:
-                await this.#renderPricingTab(content);
-                break;
-            case adminPanelTabs.BUNDLES:
-                await this.#renderBundlesTab(content);
-                break;
             case adminPanelTabs.STATS:
                 await this.#renderStatsTab(content);
                 break;
@@ -93,6 +132,15 @@ class AdminPanelPage extends HTMLElement
                 break;
             case adminPanelTabs.RELEASE_NOTES:
                 await this.#renderReleaseNotesTab(content);
+                break;
+            case adminPanelTabs.ORGANIZATIONS:
+                await this.#renderOrganizationsTab(content);
+                break;
+            case adminPanelTabs.ALERTS:
+                await this.#renderAlertsTab(content);
+                break;
+            case adminPanelTabs.ORGANIZATION_MEMBERS:
+                await this.#renderOrganizationMembersTab(content);
                 break;
         }
     }
@@ -371,115 +419,155 @@ class AdminPanelPage extends HTMLElement
         }
     }
 
-    async #renderPricingTab(content)
+    async #renderAlertsTab(content)
     {
-        await this.#fetchPaidDecks();
+        // Visiting the tab is a good moment to make sure the background
+        // notifier is running for this admin session.
+        AlertNotifier.start();
 
-        content.innerHTML = `
-            <p>Set per-region pricing for each deck. Multiple rows per deck supported with effective windows.</p>
-            <select class="admin-panel-pricing-deck">
-                ${this.#paidDecks.map(deck => `<option value="${AdminPanelPage.#escape(deck.id)}">${AdminPanelPage.#escape(deck.title)}</option>`).join("")}
-            </select>
-            <div class="admin-panel-pricing-form">
-                <label>Region (e.g. IN, US, GLOBAL): <input class="admin-panel-pricing-region" value="IN"></label>
-                <label>Price (minor units): <input type="number" class="admin-panel-pricing-amount" value="0"></label>
-                <label>Currency: <input class="admin-panel-pricing-currency" value="INR"></label>
-                <label>Discount %: <input type="number" class="admin-panel-pricing-discount" value="0"></label>
-                <button class="admin-panel-pricing-save">Save pricing</button>
-            </div>
-            <p class="admin-panel-pricing-note">
-                Pricing is currently set manually. The future PricingOptimizer (Python) will
-                also write to this same table — manual overrides will coexist via effective
-                date windows.
-            </p>
-        `;
-
-        this.querySelector(".admin-panel-pricing-save").addEventListener("click", async () =>
+        try
         {
-            const deckId = this.querySelector(".admin-panel-pricing-deck").value;
-            const region = this.querySelector(".admin-panel-pricing-region").value.toUpperCase();
-            const priceMinor = parseInt(this.querySelector(".admin-panel-pricing-amount").value || "0", 10);
-            const currency = this.querySelector(".admin-panel-pricing-currency").value.toUpperCase();
-            const discountPercent = parseFloat(this.querySelector(".admin-panel-pricing-discount").value || "0");
-
-            const response = await fetch("/Admin/PaidDecks/Pricing",
+            const response = await fetch("/Admin/Alerts/List");
+            if (!response.ok)
             {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify
-                ({
-                    deckId: deckId,
-                    pricings: [{ region, priceMinor, currency, discountPercent }]
-                })
+                content.innerHTML = `<div class="admin-panel-error">HTTP ${response.status}</div>`;
+                return;
+            }
+            const responseJson = await response.json();
+            const alerts = Array.isArray(responseJson.alerts) ? responseJson.alerts : [];
+
+            content.innerHTML = `
+                <div class="admin-panel-alerts-toolbar">
+                    <button class="admin-panel-alerts-notify" data-role="enable-notifications"></button>
+                    <span class="admin-panel-alerts-notify-state" data-role="notify-state"></span>
+                </div>
+                <table class="admin-panel-table admin-panel-alerts-table">
+                    <thead><tr><th>Severity</th><th>Source</th><th>Title</th><th>Message</th><th>Count</th><th>Last seen</th><th></th></tr></thead>
+                    <tbody>${this.#renderAlertRows(alerts)}</tbody>
+                </table>
+            `;
+
+            this.#refreshNotifyButton();
+            this.querySelector('[data-role="enable-notifications"]').addEventListener("click", async () =>
+            {
+                await AlertNotifier.requestPermission();
+                AlertNotifier.start();
+                this.#refreshNotifyButton();
             });
 
-            if (response.ok)
+            this.#bindAlertRowActions(content);
+
+            // First visit and no decision yet — prompt once.
+            if (AlertNotifier.getPermission() === "default")
             {
-                await DialogBox.alert("Saved", "Pricing saved.");
+                AlertNotifier.requestPermission().then(() => this.#refreshNotifyButton());
             }
-            else
-            {
-                await DialogBox.alert("Failed", `HTTP ${response.status}`);
-            }
-        });
+        }
+        catch (alertsError)
+        {
+            content.innerHTML = `<div class="admin-panel-error">${AdminPanelPage.#escape(alertsError.message)}</div>`;
+        }
     }
 
-    async #renderBundlesTab(content)
+    #refreshNotifyButton()
     {
-        await this.#fetchPaidDecks();
+        const button = this.querySelector('[data-role="enable-notifications"]');
+        const stateLabel = this.querySelector('[data-role="notify-state"]');
+        if (!button) return;
 
-        content.innerHTML = `
-            <p>Define a bundle deck's included children. Setting "discount when included" to 100 means the user gets full credit toward the bundle for owning that child.</p>
-            <label>Bundle deck:
-                <select class="admin-panel-bundle-parent">
-                    ${this.#paidDecks.map(deck => `<option value="${AdminPanelPage.#escape(deck.id)}">${AdminPanelPage.#escape(deck.title)}</option>`).join("")}
-                </select>
-            </label>
-            <div class="admin-panel-bundle-children">
-                ${this.#paidDecks.map(deck => `
-                    <label class="admin-panel-bundle-row">
-                        <input type="checkbox" data-deck-id="${AdminPanelPage.#escape(deck.id)}">
-                        ${AdminPanelPage.#escape(deck.title)}
-                        <input type="number" data-discount-for="${AdminPanelPage.#escape(deck.id)}" value="100" min="0" max="100" style="width: 60px">%
-                    </label>
-                `).join("")}
-            </div>
-            <button class="admin-panel-bundle-save">Save bundle</button>
-        `;
-
-        this.querySelector(".admin-panel-bundle-save").addEventListener("click", async () =>
+        const permission = AlertNotifier.getPermission();
+        if (permission === "granted")
         {
-            const bundleDeckId = this.querySelector(".admin-panel-bundle-parent").value;
-            const includedDecks = [];
+            button.textContent = "Browser notifications enabled";
+            button.disabled = true;
+        }
+        else if (permission === "denied")
+        {
+            button.textContent = "Notifications blocked";
+            button.disabled = true;
+        }
+        else if (permission === "unsupported")
+        {
+            button.textContent = "Notifications unsupported";
+            button.disabled = true;
+        }
+        else
+        {
+            button.textContent = "Enable browser notifications";
+            button.disabled = false;
+        }
 
-            for (const checkbox of this.querySelectorAll(".admin-panel-bundle-row input[type=checkbox]"))
-            {
-                if (!checkbox.checked) continue;
-                const childId = checkbox.dataset.deckId;
-                const discountInput = this.querySelector(`[data-discount-for="${childId}"]`);
-                includedDecks.push
-                ({
-                    includedDeckId: childId,
-                    discountPercentWhenIncluded: parseFloat(discountInput.value || "100")
-                });
-            }
+        if (stateLabel)
+        {
+            stateLabel.textContent = permission === "denied"
+                ? "Re-enable notifications for this site in your browser settings."
+                : "";
+        }
+    }
 
-            const response = await fetch("/Admin/PaidDecks/Bundle",
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ bundleDeckId, includedDecks })
-            });
+    #renderAlertRows(alerts)
+    {
+        if (!alerts.length)
+        {
+            return `<tr><td colspan="7" class="admin-panel-alerts-empty">No alerts.</td></tr>`;
+        }
+        return alerts.map((alert) =>
+        {
+            const severityClass = alert.severity === alertSeverity.ERROR
+                ? "admin-panel-alert-severity-error"
+                : alert.severity === alertSeverity.WARNING
+                    ? "admin-panel-alert-severity-warning"
+                    : "admin-panel-alert-severity-info";
+            const severityLabel = alert.severity === alertSeverity.ERROR
+                ? "ERROR"
+                : alert.severity === alertSeverity.WARNING ? "WARN" : "INFO";
+            const lastSeen = alert.lastSeenAt ? new Date(alert.lastSeenAt).toLocaleString() : "";
+            return `
+                <tr>
+                    <td><span class="admin-panel-alert-severity ${severityClass}">${severityLabel}</span></td>
+                    <td>${AdminPanelPage.#escape(alert.source || "")}</td>
+                    <td>${AdminPanelPage.#escape(alert.title || "")}</td>
+                    <td class="admin-panel-alert-message">${AdminPanelPage.#escape(alert.message || "")}</td>
+                    <td>${alert.occurrenceCount || 1}</td>
+                    <td>${AdminPanelPage.#escape(lastSeen)}</td>
+                    <td class="admin-panel-alert-actions">
+                        <button data-role="ack-alert" data-alert-id="${AdminPanelPage.#escape(alert.id)}">Acknowledge</button>
+                        <button data-role="delete-alert" data-alert-id="${AdminPanelPage.#escape(alert.id)}">Delete</button>
+                    </td>
+                </tr>
+            `;
+        }).join("");
+    }
 
-            if (response.ok)
-            {
-                await DialogBox.alert("Saved", "Bundle saved.");
-            }
-            else
-            {
-                await DialogBox.alert("Failed", `HTTP ${response.status}`);
-            }
+    #bindAlertRowActions(content)
+    {
+        for (const button of content.querySelectorAll('[data-role="ack-alert"]'))
+        {
+            button.addEventListener("click", () => this.#postAlertAction("/Admin/Alerts/Acknowledge", button.dataset.alertId));
+        }
+        for (const button of content.querySelectorAll('[data-role="delete-alert"]'))
+        {
+            button.addEventListener("click", () => this.#postAlertAction("/Admin/Alerts/Delete", button.dataset.alertId));
+        }
+    }
+
+    async #postAlertAction(endpoint, alertId)
+    {
+        const response = await fetch(endpoint,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: alertId })
         });
+
+        if (response.ok)
+        {
+            await this.#renderAlertsTab(this.querySelector('[data-role="content"]'));
+        }
+        else
+        {
+            await DialogBox.alert("Failed", `HTTP ${response.status}`);
+        }
     }
 
     async #renderStatsTab(content)
@@ -1066,6 +1154,437 @@ class AdminPanelPage extends HTMLElement
         }
 
         await this.#renderTab();
+    }
+
+    async #renderOrganizationsTab(content)
+    {
+        content.innerHTML = `<div class="admin-panel-loading">Loading organizations…</div>`;
+
+        let organizations;
+        try
+        {
+            const response = await fetch("/Admin/Organizations/List");
+            if (!response.ok)
+            {
+                content.innerHTML = `<div class="admin-panel-error">HTTP ${response.status}</div>`;
+                return;
+            }
+            const responseJson = await response.json();
+            organizations = Array.isArray(responseJson.organizations) ? responseJson.organizations : [];
+        }
+        catch (loadError)
+        {
+            content.innerHTML = `<div class="admin-panel-error">${AdminPanelPage.#escape(loadError.message)}</div>`;
+            return;
+        }
+
+        this.#organizations = organizations;
+
+        content.innerHTML = `
+            <div class="admin-panel-toolbar">
+                <button class="admin-panel-upload" data-role="create-organization">Create organization</button>
+            </div>
+            <table class="admin-panel-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Admin email</th>
+                        <th>Status</th>
+                        <th>Members</th>
+                        <th>Created</th>
+                        <th>Perks</th>
+                        <th>Last payment</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody data-role="organization-rows"></tbody>
+            </table>
+            <p class="admin-panel-pricing-note">
+                Creating an organization sends an email-OTP to the appointed admin —
+                share the code with them, type it back here, then take payment via
+                Razorpay (or set the amount to 0 to skip payment). Organizations stay
+                in PENDING_PAYMENT until Razorpay confirms; the webhook handles
+                close-tab-mid-checkout automatically.
+            </p>
+        `;
+
+        this.querySelector('[data-role="create-organization"]').addEventListener("click", async () =>
+        {
+            const created = await CreateOrganizationDialog.show();
+            if (created)
+            {
+                await this.#renderTab();
+            }
+        });
+
+        this.#renderOrganizationRows(organizations);
+    }
+
+    #renderOrganizationRows(organizations)
+    {
+        const tbody = this.querySelector('[data-role="organization-rows"]');
+        if (!tbody)
+        {
+            return;
+        }
+
+        if (organizations.length === 0)
+        {
+            tbody.innerHTML = `<tr><td colspan="8" class="admin-panel-loading">No organizations yet.</td></tr>`;
+            return;
+        }
+
+        const statusLabel = (statusValue) =>
+        {
+            if (statusValue === organizationStatus.PENDING_PAYMENT) return "Pending payment";
+            if (statusValue === organizationStatus.ACTIVE) return "Active";
+            if (statusValue === organizationStatus.SUSPENDED) return "Suspended";
+            return String(statusValue);
+        };
+        const formatDate = (value) =>
+        {
+            if (!value) return "";
+            const parsed = new Date(value);
+            return Number.isNaN(parsed.getTime()) ? "" : parsed.toLocaleDateString();
+        };
+
+        tbody.innerHTML = organizations.map((organization) =>
+        {
+            return `
+                <tr data-organization-id="${AdminPanelPage.#escape(organization.id)}">
+                    <td>${AdminPanelPage.#escape(organization.name)}</td>
+                    <td>${AdminPanelPage.#escape(organization.adminEmail)}</td>
+                    <td>${AdminPanelPage.#escape(statusLabel(organization.status))}</td>
+                    <td>${organization.currentMemberCount} / ${organization.maxMembers}</td>
+                    <td>${AdminPanelPage.#escape(formatDate(organization.creationDate))}</td>
+                    <td>${organization.perkCount}</td>
+                    <td>${organization.lastPaymentStatus !== null && organization.lastPaymentStatus !== undefined ? organization.lastPaymentStatus : ""}</td>
+                    <td>
+                        <button data-action="view-organization" data-organization-id="${AdminPanelPage.#escape(organization.id)}">View / edit</button>
+                        <button data-action="delete-organization" data-organization-id="${AdminPanelPage.#escape(organization.id)}">Delete</button>
+                    </td>
+                </tr>
+            `;
+        }).join("");
+
+        for (const viewButton of this.querySelectorAll('[data-action="view-organization"]'))
+        {
+            viewButton.addEventListener("click", async (clickEvent) =>
+            {
+                const organizationId = clickEvent.currentTarget.dataset.organizationId;
+                const refreshed = await OrganizationDetailsDialog.show(organizationId);
+                if (refreshed)
+                {
+                    await this.#renderTab();
+                }
+            });
+        }
+
+        for (const deleteButton of this.querySelectorAll('[data-action="delete-organization"]'))
+        {
+            deleteButton.addEventListener("click", async (clickEvent) =>
+            {
+                const organizationId = clickEvent.currentTarget.dataset.organizationId;
+                const organization = organizations.find(entry => entry.id === organizationId);
+                if (!organization) return;
+                await this.#handleDeleteOrganization(organization);
+            });
+        }
+    }
+
+    async #handleDeleteOrganization(organization)
+    {
+        const confirmed = await DialogBox.confirm
+        (
+            "Delete organization",
+            `Delete "${organization.name}"? This removes members and perks immediately. Already-issued deck licenses remain valid until their own expiry. This cannot be undone.`
+        );
+        if (!confirmed)
+        {
+            return;
+        }
+
+        const response = await fetch("/Admin/Organizations/Delete",
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ organizationId: organization.id })
+        });
+
+        if (!response.ok)
+        {
+            const responseJson = await response.json().catch(() => ({}));
+            await DialogBox.alert("Could not delete", responseJson.error || `HTTP ${response.status}`);
+            return;
+        }
+
+        await this.#renderTab();
+    }
+
+    async #renderOrganizationMembersTab(content)
+    {
+        content.innerHTML = `<div class="admin-panel-loading">Loading organizations…</div>`;
+
+        let organizations;
+        try
+        {
+            const response = await fetch("/Organization/Mine/List");
+            if (!response.ok)
+            {
+                content.innerHTML = `<div class="admin-panel-error">HTTP ${response.status}</div>`;
+                return;
+            }
+            const responseJson = await response.json();
+            organizations = Array.isArray(responseJson.organizations) ? responseJson.organizations : [];
+        }
+        catch (loadError)
+        {
+            content.innerHTML = `<div class="admin-panel-error">${AdminPanelPage.#escape(loadError.message)}</div>`;
+            return;
+        }
+
+        const activeOrganizations = organizations.filter(organization => organization.status === organizationStatus.ACTIVE);
+
+        if (activeOrganizations.length === 0)
+        {
+            content.innerHTML = `
+                <p>You don't currently administer any active organizations.</p>
+                <p class="admin-panel-pricing-note">
+                    If an organization is awaiting payment, the MindMeld team
+                    will activate it after payment clears — members can be
+                    added at that point.
+                </p>
+            `;
+            return;
+        }
+
+        // Default the picker to the first active org on initial render
+        // and persist the selection across re-renders so adding a member
+        // doesn't snap the user back to the first org.
+        if (!this.#selectedMemberOrganizationId || !activeOrganizations.some(organization => organization.id === this.#selectedMemberOrganizationId))
+        {
+            this.#selectedMemberOrganizationId = activeOrganizations[0].id;
+        }
+
+        content.innerHTML = `
+            <div class="admin-panel-toolbar">
+                <label>
+                    Organization:
+                    <select class="admin-panel-org-picker">
+                        ${activeOrganizations.map(organization => `<option value="${AdminPanelPage.#escape(organization.id)}" ${organization.id === this.#selectedMemberOrganizationId ? "selected" : ""}>${AdminPanelPage.#escape(organization.name)}</option>`).join("")}
+                    </select>
+                </label>
+                <button class="admin-panel-upload" data-role="add-members">Add members</button>
+                <button class="admin-panel-bulk-apply" data-role="bulk-remove" disabled>Remove selected (0)</button>
+                <span class="admin-panel-member-counts" data-role="member-counts"></span>
+            </div>
+            <table class="admin-panel-table">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" class="admin-panel-select-all-members"></th>
+                        <th>Email</th>
+                        <th>User</th>
+                        <th>Added</th>
+                    </tr>
+                </thead>
+                <tbody data-role="member-rows"></tbody>
+            </table>
+        `;
+
+        const picker = this.querySelector(".admin-panel-org-picker");
+        picker.addEventListener("change", async () =>
+        {
+            this.#selectedMemberOrganizationId = picker.value;
+            this.#selectedMemberIds.clear();
+            await this.#loadOrganizationMembers();
+        });
+
+        this.querySelector('[data-role="add-members"]').addEventListener("click", async () =>
+        {
+            const added = await AddMembersDialog.show
+            ({
+                organizationId: this.#selectedMemberOrganizationId,
+                existingMembers: this.#organizationMembers
+            });
+            if (added)
+            {
+                await this.#loadOrganizationMembers();
+            }
+        });
+
+        this.querySelector('[data-role="bulk-remove"]').addEventListener("click", () => this.#handleBulkRemoveMembers());
+
+        const selectAllCheckbox = this.querySelector(".admin-panel-select-all-members");
+        selectAllCheckbox.addEventListener("change", () =>
+        {
+            if (selectAllCheckbox.checked)
+            {
+                for (const member of this.#organizationMembers)
+                {
+                    this.#selectedMemberIds.add(member.id);
+                }
+            }
+            else
+            {
+                this.#selectedMemberIds.clear();
+            }
+            this.#renderMemberRows();
+        });
+
+        await this.#loadOrganizationMembers();
+    }
+
+    async #loadOrganizationMembers()
+    {
+        const queryUrl = `/Organization/Members/List?organizationId=${encodeURIComponent(this.#selectedMemberOrganizationId)}`;
+        let payload;
+        try
+        {
+            const response = await fetch(queryUrl);
+            if (!response.ok)
+            {
+                this.#organizationMembers = [];
+                this.#renderMemberRows();
+                this.#updateMemberCounts(0, 0);
+                return;
+            }
+            payload = await response.json();
+        }
+        catch (loadError)
+        {
+            this.#organizationMembers = [];
+            this.#renderMemberRows();
+            this.#updateMemberCounts(0, 0);
+            return;
+        }
+
+        this.#organizationMembers = Array.isArray(payload?.members) ? payload.members : [];
+        this.#updateMemberCounts(payload?.currentMemberCount || 0, payload?.maxMembers || 0);
+        this.#renderMemberRows();
+    }
+
+    #updateMemberCounts(current, max)
+    {
+        const counts = this.querySelector('[data-role="member-counts"]');
+        if (!counts)
+        {
+            return;
+        }
+        const remainingSlots = Math.max(0, max - current);
+        if (remainingSlots === 0)
+        {
+            counts.innerHTML = `<strong>${current} / ${max}</strong> — capacity reached. Contact MindMeld to extend.`;
+        }
+        else
+        {
+            counts.innerHTML = `<strong>${current} / ${max}</strong> members (${remainingSlots} slot${remainingSlots === 1 ? "" : "s"} remaining)`;
+        }
+    }
+
+    #renderMemberRows()
+    {
+        const tbody = this.querySelector('[data-role="member-rows"]');
+        if (!tbody)
+        {
+            return;
+        }
+
+        if (this.#organizationMembers.length === 0)
+        {
+            tbody.innerHTML = `<tr><td colspan="4" class="admin-panel-loading">No members yet. Use “Add members” to invite emails to this organization.</td></tr>`;
+            this.#refreshBulkRemoveButton();
+            return;
+        }
+
+        const formatDate = (value) =>
+        {
+            if (!value) return "";
+            const parsed = new Date(value);
+            return Number.isNaN(parsed.getTime()) ? "" : parsed.toLocaleDateString();
+        };
+
+        tbody.innerHTML = this.#organizationMembers.map((member) =>
+        {
+            const isSelected = this.#selectedMemberIds.has(member.id);
+            const userBadge = member.userId && member.userId.length > 0 ? "Account linked" : "Pending first login";
+            return `
+                <tr data-member-id="${AdminPanelPage.#escape(member.id)}">
+                    <td><input type="checkbox" class="admin-panel-member-select" data-member-id="${AdminPanelPage.#escape(member.id)}" ${isSelected ? "checked" : ""}></td>
+                    <td>${AdminPanelPage.#escape(member.email)}</td>
+                    <td>${AdminPanelPage.#escape(userBadge)}</td>
+                    <td>${AdminPanelPage.#escape(formatDate(member.addedAt))}</td>
+                </tr>
+            `;
+        }).join("");
+
+        for (const checkbox of this.querySelectorAll(".admin-panel-member-select"))
+        {
+            checkbox.addEventListener("change", () =>
+            {
+                const memberId = checkbox.dataset.memberId;
+                if (checkbox.checked)
+                {
+                    this.#selectedMemberIds.add(memberId);
+                }
+                else
+                {
+                    this.#selectedMemberIds.delete(memberId);
+                }
+                this.#refreshBulkRemoveButton();
+            });
+        }
+
+        this.#refreshBulkRemoveButton();
+    }
+
+    #refreshBulkRemoveButton()
+    {
+        const button = this.querySelector('[data-role="bulk-remove"]');
+        if (!button)
+        {
+            return;
+        }
+        const count = this.#selectedMemberIds.size;
+        button.disabled = count === 0;
+        button.textContent = `Remove selected (${count})`;
+    }
+
+    async #handleBulkRemoveMembers()
+    {
+        const ids = Array.from(this.#selectedMemberIds);
+        if (ids.length === 0)
+        {
+            return;
+        }
+        const confirmed = await DialogBox.confirm
+        (
+            "Remove members",
+            `Remove ${ids.length} member${ids.length === 1 ? "" : "s"} from this organization? Their existing deck licenses are not revoked — they keep access until each license's own expiry.`
+        );
+        if (!confirmed)
+        {
+            return;
+        }
+
+        const response = await fetch("/Organization/Members/BulkRemove",
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ organizationId: this.#selectedMemberOrganizationId, memberIds: ids })
+        });
+
+        if (!response.ok)
+        {
+            const responseJson = await response.json().catch(() => ({}));
+            await DialogBox.alert("Could not remove", responseJson.error || `HTTP ${response.status}`);
+            return;
+        }
+        const responseJson = await response.json();
+        const summary = responseJson.summary || { requested: ids.length, removed: 0, notFound: 0 };
+
+        this.#selectedMemberIds.clear();
+        await DialogBox.alert("Members removed", `Removed ${summary.removed} of ${summary.requested}${summary.notFound > 0 ? ` (${summary.notFound} not found)` : ""}.`);
+        await this.#loadOrganizationMembers();
     }
 
     static #escape(rawString)

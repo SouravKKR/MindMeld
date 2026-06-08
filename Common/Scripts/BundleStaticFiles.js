@@ -1,12 +1,19 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const esbuild = require('esbuild');
 
 class StaticBundler
 {
-    static ENTRY_FILENAME = '.bundle-entry.js';
+    static ENTRY_FILE_PREFIX = '.bundle-entry-';
     static SKIPPED_TOP_LEVEL_DIRECTORIES = new Set(['ThirdParty']);
     static DELETABLE_EXTENSIONS = new Set(['.js', '.css']);
+
+    // Upper bound on how many code-split parts we emit per HTML entry. The
+    // downstream MinifyAndObfuscateStaticFiles.js worker pool processes the
+    // parts in parallel, so more parts = better parallelism — capped here
+    // to avoid producing dozens of trivially small chunks.
+    static MAX_BUNDLE_PARTS = 8;
 
     // Each HTML entry point gets its own pair of bundles. The login shell
     // lives outside the SPA so unauthenticated visitors download only the
@@ -21,7 +28,6 @@ class StaticBundler
     constructor(staticDirectory)
     {
         this.staticDirectory = staticDirectory;
-        this.entryPath = path.join(staticDirectory, StaticBundler.ENTRY_FILENAME);
 
         // Absolute paths of every bundle file produced this run. The
         // post-bundle source-sweep skips these so we don't delete our
@@ -41,6 +47,8 @@ class StaticBundler
 
         let totalScriptEntryCount = 0;
         let totalStylesheetEntryCount = 0;
+        let totalPartCount = 0;
+        let totalChunkCount = 0;
         let processedEntryCount = 0;
 
         for (const entry of StaticBundler.HTML_ENTRY_POINTS)
@@ -60,6 +68,8 @@ class StaticBundler
             const counts = await this.bundleEntryPoint(htmlPath, entry);
             totalScriptEntryCount     += counts.scriptCount;
             totalStylesheetEntryCount += counts.stylesheetCount;
+            totalPartCount            += counts.partCount;
+            totalChunkCount           += counts.chunkCount;
             processedEntryCount++;
         }
 
@@ -73,13 +83,14 @@ class StaticBundler
         const removedDirectoryCount = this.removeEmptyDirectories();
 
         const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log(`Done. Bundled ${processedEntryCount} entry point(s): ${totalScriptEntryCount} JS entry(ies) + ${totalStylesheetEntryCount} CSS file(s), deleted ${deletedCount} now-unused source file(s), pruned ${removedDirectoryCount} empty director(ies) in ${elapsedSeconds}s.`);
+        console.log(`Done. Bundled ${processedEntryCount} entry point(s): ${totalScriptEntryCount} JS entry(ies) split into ${totalPartCount} part(s) + ${totalChunkCount} shared chunk(s) + ${totalStylesheetEntryCount} CSS file(s), deleted ${deletedCount} now-unused source file(s), pruned ${removedDirectoryCount} empty director(ies) in ${elapsedSeconds}s.`);
     }
 
     async bundleEntryPoint(htmlPath, entry)
     {
         const javascriptBundlePath = path.join(this.staticDirectory, entry.javascriptBundleName);
         const cssBundlePath        = path.join(this.staticDirectory, entry.cssBundleName);
+        const bundleBaseName       = path.basename(entry.javascriptBundleName, '.js');
 
         const originalHtml = fs.readFileSync(htmlPath, 'utf8');
         const moduleScriptSources = this.extractRelativeModuleScriptSources(originalHtml);
@@ -91,21 +102,63 @@ class StaticBundler
             process.exit(1);
         }
 
-        this.writeEntryFile(moduleScriptSources);
+        // Split the entry's imports across N sub-entry files so esbuild can
+        // emit one part-output per sub-entry (plus shared chunks for code
+        // referenced by more than one part). The downstream obfuscator then
+        // processes each output file on its own worker thread — the whole
+        // point of splitting is to parallelise the otherwise-O(n²) obfuscation
+        // step on a single huge bundle.
+        const splitCount = this.calculateSplitCount(moduleScriptSources.length);
+        const importGroups = this.distributeImports(moduleScriptSources, splitCount);
 
+        const subEntryPaths = [];
+        for (let groupIndex = 0; groupIndex < importGroups.length; groupIndex++)
+        {
+            const subEntryPath = path.join(this.staticDirectory, `${StaticBundler.ENTRY_FILE_PREFIX}${bundleBaseName}-${groupIndex}.js`);
+            this.writeEntryFile(subEntryPath, importGroups[groupIndex]);
+            subEntryPaths.push(subEntryPath);
+        }
+
+        let outputBaseNames;
         try
         {
-            await this.buildJavascriptBundle(javascriptBundlePath);
+            outputBaseNames = await this.buildJavascriptBundles(subEntryPaths, bundleBaseName);
         }
         finally
         {
-            if (fs.existsSync(this.entryPath))
+            for (const subEntryPath of subEntryPaths)
             {
-                fs.unlinkSync(this.entryPath);
+                if (fs.existsSync(subEntryPath))
+                {
+                    fs.unlinkSync(subEntryPath);
+                }
             }
         }
 
+        const partFileNames  = outputBaseNames.filter((name) => name.startsWith(`${bundleBaseName}.part-`));
+        const chunkFileNames = outputBaseNames.filter((name) => name.startsWith(`${bundleBaseName}.chunk-`));
+
+        if (partFileNames.length === 0)
+        {
+            console.error(`esbuild produced no part files for ${entry.javascriptBundleName}.`);
+            process.exit(1);
+        }
+
+        // The HTML still loads a single <script src="Bundle.js">. That file
+        // is now a tiny proxy whose only job is to import every part — the
+        // parts in turn import shared chunks via the relative paths esbuild
+        // already baked into them.
+        const proxySource = partFileNames.map((name) => `import "./${name}";`).join('\n') + '\n';
+        fs.writeFileSync(javascriptBundlePath, proxySource, 'utf8');
         this.preservedBundlePaths.add(javascriptBundlePath);
+        for (const name of partFileNames)
+        {
+            this.preservedBundlePaths.add(path.join(this.staticDirectory, name));
+        }
+        for (const name of chunkFileNames)
+        {
+            this.preservedBundlePaths.add(path.join(this.staticDirectory, name));
+        }
 
         if (stylesheetSources.length > 0)
         {
@@ -123,7 +176,43 @@ class StaticBundler
         );
         fs.writeFileSync(htmlPath, rewrittenHtml, 'utf8');
 
-        return { scriptCount: moduleScriptSources.length, stylesheetCount: stylesheetSources.length };
+        return {
+            scriptCount: moduleScriptSources.length,
+            stylesheetCount: stylesheetSources.length,
+            partCount: partFileNames.length,
+            chunkCount: chunkFileNames.length,
+        };
+    }
+
+    calculateSplitCount(importCount)
+    {
+        const cpuCount = os.cpus().length;
+        const ceiling = Math.max(1, Math.min(StaticBundler.MAX_BUNDLE_PARTS, cpuCount - 1));
+        return Math.max(1, Math.min(ceiling, importCount));
+    }
+
+    distributeImports(moduleScriptSources, splitCount)
+    {
+        const groups = [];
+        for (let groupIndex = 0; groupIndex < splitCount; groupIndex++)
+        {
+            groups.push([]);
+        }
+
+        const baseSize  = Math.floor(moduleScriptSources.length / splitCount);
+        const extraSize = moduleScriptSources.length % splitCount;
+
+        let sourceIndex = 0;
+        for (let groupIndex = 0; groupIndex < splitCount; groupIndex++)
+        {
+            const groupSize = baseSize + (groupIndex < extraSize ? 1 : 0);
+            for (let memberIndex = 0; memberIndex < groupSize; memberIndex++)
+            {
+                groups[groupIndex].push(moduleScriptSources[sourceIndex++]);
+            }
+        }
+
+        return groups;
     }
 
     extractRelativeModuleScriptSources(html)
@@ -150,12 +239,12 @@ class StaticBundler
         return sources;
     }
 
-    writeEntryFile(moduleScriptSources)
+    writeEntryFile(entryPath, moduleScriptSources)
     {
         const importStatements = moduleScriptSources
-            .map(sourceUrl => `import ${JSON.stringify(this.normaliseImportPath(sourceUrl))};`)
+            .map((sourceUrl) => `import ${JSON.stringify(this.normaliseImportPath(sourceUrl))};`)
             .join('\n');
-        fs.writeFileSync(this.entryPath, importStatements + '\n', 'utf8');
+        fs.writeFileSync(entryPath, importStatements + '\n', 'utf8');
     }
 
     normaliseImportPath(sourceUrl)
@@ -171,20 +260,28 @@ class StaticBundler
         return './' + sourceUrl;
     }
 
-    async buildJavascriptBundle(javascriptBundlePath)
+    async buildJavascriptBundles(subEntryPaths, bundleBaseName)
     {
-        await esbuild.build({
-            entryPoints: [this.entryPath],
+        const buildResult = await esbuild.build({
+            entryPoints: subEntryPaths,
             bundle: true,
             format: 'esm',
             target: 'es2022',
-            outfile: javascriptBundlePath,
+            outdir: this.staticDirectory,
+            splitting: true,
             sourcemap: false,
             minify: true,
             legalComments: 'none',
             absWorkingDir: this.staticDirectory,
             logLevel: 'warning',
+            entryNames: `${bundleBaseName}.part-[hash]`,
+            chunkNames: `${bundleBaseName}.chunk-[hash]`,
+            metafile: true,
         });
+
+        return Object.keys(buildResult.metafile.outputs)
+            .filter((outputPath) => outputPath.toLowerCase().endsWith('.js'))
+            .map((outputPath) => path.basename(outputPath));
     }
 
     extractRelativeStylesheetSources(html)

@@ -1,7 +1,6 @@
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
-const { deckLicenseStatuses } = require("../../Globals/Enumerations/DeckLicenseStatuses");
 
 async function getPaidDeckContent(request, response)
 {
@@ -25,8 +24,11 @@ async function getPaidDeckContent(request, response)
 
     const license = await KeyManagementService.getLicense(session.getUserId(), deckId);
 
-    if (!license || license.getStatus() !== deckLicenseStatuses.ACTIVE)
+    if (!KeyManagementService.isLicenseActive(license))
     {
+        // Covers: missing license, status != ACTIVE, AND expiresAt in the past.
+        // Org-perk-issued licenses are time-bounded; after their durationDays
+        // window the user must re-purchase at regular price.
         response.statusCode = 403;
         response.sendJson({ error: "NO_ACTIVE_LICENSE" });
         return;

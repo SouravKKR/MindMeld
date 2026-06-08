@@ -30,6 +30,7 @@ const taskTypes =
   GENERATE_CURATED_STUDY_MATERIAL: 27,
   ENHANCE_IMAGES: 28,
   GENERATION_FINALIZATION: 29,
+  EVALUATE_MOCK_TEST_ATTEMPT: 30,
 }
 
 module.exports = { taskTypes };

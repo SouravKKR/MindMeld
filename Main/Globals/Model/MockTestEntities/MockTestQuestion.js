@@ -15,9 +15,14 @@ class MockTestQuestion extends MockTestItem
     #solvingSteps = "";
     #marks = 1;
     #score = 0; // The score awarded after evaluation
+    // Examiner-style HTML note attached during evaluation. Populated only
+    // when the grader has something useful to surface to the candidate
+    // (wrong answer, partial credit justification, factual slip, etc.).
+    // Empty string means the Answer Key page will not render a remarks block.
+    #remarks = "";
     #additionalData = {};
 
-    constructor(id, question = "", expectedAnswer = "", answerReason = "", marks = 1, answer = "", score = 0, additionalData = {}, solvingSteps = "")
+    constructor(id, question = "", expectedAnswer = "", answerReason = "", marks = 1, answer = "", score = 0, additionalData = {}, solvingSteps = "", remarks = "")
     {
         super(id, mockTestItemTypes.QUESTION);
         this.#question = question;
@@ -28,6 +33,7 @@ class MockTestQuestion extends MockTestItem
         this.#score = score;
         this.#additionalData = additionalData;
         this.#solvingSteps = solvingSteps;
+        this.#remarks = remarks;
     }
 
     getQuestion() { return this.#question; }
@@ -51,6 +57,9 @@ class MockTestQuestion extends MockTestItem
     getScore() { return this.#score; }
     setScore(value) { this.#score = value; }
 
+    getRemarks() { return this.#remarks; }
+    setRemarks(value) { this.#remarks = value || ""; }
+
     getAdditionalData() { return this.#additionalData; }
     setAdditionalData(value) { this.#additionalData = value; }
 
@@ -65,6 +74,7 @@ class MockTestQuestion extends MockTestItem
             solvingSteps: this.#solvingSteps,
             marks: this.#marks,
             score: this.#score,
+            remarks: this.#remarks,
             additionalData: this.#additionalData
         };
     }
@@ -80,7 +90,8 @@ class MockTestQuestion extends MockTestItem
             json.answer,
             json.score,
             json.additionalData || {},
-            json.solvingSteps || ""
+            json.solvingSteps || "",
+            json.remarks || ""
         );
     }
 }

@@ -268,13 +268,17 @@ class GetMyActivityEndpoint
             fragments.push({ $or: [{ status: numericStatus }, { status: String(numericStatus) }] });
         }
 
+        // Purchase.toJson serialises purchaseDate as an ISO string, so
+        // it's stored as a string in Mongo (not a BSON Date). Compare
+        // string-to-string — ISO-8601 strings sort lexicographically the
+        // same as chronologically.
         const range = filters.timestamp || {};
         if (range.from)
         {
             const fromDate = new Date(range.from);
             if (!Number.isNaN(fromDate.getTime()))
             {
-                fragments.push({ purchaseDate: { $gte: fromDate } });
+                fragments.push({ purchaseDate: { $gte: fromDate.toISOString() } });
             }
         }
         if (range.until)
@@ -282,7 +286,7 @@ class GetMyActivityEndpoint
             const untilDate = new Date(range.until);
             if (!Number.isNaN(untilDate.getTime()))
             {
-                fragments.push({ purchaseDate: { $lte: untilDate } });
+                fragments.push({ purchaseDate: { $lte: untilDate.toISOString() } });
             }
         }
 

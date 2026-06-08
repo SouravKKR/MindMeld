@@ -255,6 +255,141 @@
 }
 
 
+/* ── History modal ────────────────────────────────────────────────────────── */
+
+.mock-test-history-modal-header
+{
+    padding: 18px 20px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    flex-shrink: 0;
+}
+
+.mock-test-history-modal-header-title
+{
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--primary-text-color);
+}
+
+.mock-test-history-modal-header-subtitle
+{
+    font-size: 12px;
+    color: #777777;
+    margin-top: 3px;
+}
+
+.mock-test-history-modal-list
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px 20px;
+    overflow-y: auto;
+    flex: 1;
+    box-sizing: border-box;
+}
+
+.mock-test-history-modal-list::-webkit-scrollbar
+{
+    width: 4px;
+}
+
+.mock-test-history-modal-list::-webkit-scrollbar-thumb
+{
+    background-color: #333333;
+    border-radius: 4px;
+}
+
+.mock-test-history-modal-row
+{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid #2c2c2c;
+    background-color: var(--secondary-background-color);
+    color: var(--primary-text-color);
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    transition: border-color 0.15s ease-in-out, background-color 0.15s ease-in-out;
+}
+
+.mock-test-history-modal-row:hover
+{
+    border-color: #444444;
+    background-color: var(--tertiary-background-color);
+}
+
+.mock-test-history-modal-row-main
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    flex: 1;
+}
+
+.mock-test-history-modal-row-date
+{
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary-text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mock-test-history-modal-row-status
+{
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    align-self: flex-start;
+    padding: 2px 8px;
+    border-radius: 999px;
+    letter-spacing: 0.2px;
+    text-transform: uppercase;
+}
+
+.mock-test-history-modal-row-status-completed
+{
+    background-color: rgba(60, 160, 60, 0.18);
+    color: #6dd06d;
+}
+
+.mock-test-history-modal-row-status-grading
+{
+    background-color: rgba(37, 99, 235, 0.18);
+    color: #7aa5ff;
+}
+
+.mock-test-history-modal-row-status-failed
+{
+    background-color: rgba(220, 38, 38, 0.18);
+    color: #ff7373;
+}
+
+.mock-test-history-modal-row-status-pending
+{
+    background-color: rgba(255, 255, 255, 0.07);
+    color: #999999;
+}
+
+.mock-test-history-modal-row-score
+{
+    font-size: 14px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--primary-text-color);
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+
 /* ── Print modal ──────────────────────────────────────────────────────────── */
 
 .mock-test-print-modal-toolbar

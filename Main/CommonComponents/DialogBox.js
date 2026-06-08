@@ -1,72 +1,37 @@
 class DialogBox extends HTMLElement
 {
-    // ── Singleton queue ────────────────────────────────────────────────────────
+    // ── Stacking ───────────────────────────────────────────────────────────────
     //
-    // Only one DialogBox is allowed in the DOM at a time. Subsequent calls (e.g.
-    // a model-download prompt firing while an onboarding tutorial alert is
-    // already up) park the new dialog in a queue; it gets appended to the body
-    // when the active one closes. Without this, dialogs stacked on top of one
-    // another and the topmost one's backdrop covered the others, making the
-    // queued popup feel "stuck behind" the visible one.
+    // Every new DialogBox (and its backdrop) is assigned the next two values
+    // from a session-wide monotonically increasing z-index counter, so a
+    // dialog opened while another is already on screen always sits visually
+    // above the previous one. The backdrop sits one step below its own
+    // dialog so the dialog stays clickable while the backdrop catches any
+    // click-throughs against the rest of the page.
     //
-    // The element is created and configured (innerHTML, listeners, inline
-    // styles set by callers like MockTestStartDialog) BEFORE it is appended.
-    // Custom-element lifecycle hooks (connectedCallback / disconnectedCallback)
-    // run only when the element is actually attached — that's how the backdrop
-    // is gated to the visible dialog.
+    // The counter starts just above the OptionsSidebar (z-index 1000) and is
+    // never decremented — closing a dialog doesn't free its slot. A user
+    // would have to open ~2.147 billion dialogs in a single session to wrap
+    // around to int-32 max, which is not a realistic concern.
 
-    static #queue = [];
-    static #activeDialog = null;
+    static #nextDialogZIndex = 1001;
 
     #backdrop = null;
-
-    static #presentNext()
-    {
-        if (DialogBox.#activeDialog)
-        {
-            return;
-        }
-        if (DialogBox.#queue.length === 0)
-        {
-            return;
-        }
-        const nextDialog = DialogBox.#queue.shift();
-        DialogBox.#activeDialog = nextDialog;
-        document.body.appendChild(nextDialog);
-    }
-
-    /**
-     * Adds a configured dialog element to the queue. If nothing is currently
-     * showing, it's presented immediately. Used internally by every static
-     * factory below — callers never touch the queue directly.
-     */
-    static #enqueue(dialog)
-    {
-        DialogBox.#queue.push(dialog);
-        DialogBox.#presentNext();
-    }
 
     connectedCallback()
     {
         this.#backdrop = document.createElement("div");
         this.#backdrop.className = "dialog-backdrop";
+        this.#backdrop.style.zIndex = String(DialogBox.#nextDialogZIndex++);
         document.body.insertBefore(this.#backdrop, this);
+
+        this.style.zIndex = String(DialogBox.#nextDialogZIndex++);
     }
 
     disconnectedCallback()
     {
         this.#backdrop?.remove();
         this.#backdrop = null;
-
-        // The active dialog being removed (either via close() or because the
-        // caller mutated the DOM directly) is the trigger for advancing the
-        // queue. If a queued dialog is closed before it ever appeared, this
-        // hook doesn't fire — close() handles that path separately.
-        if (DialogBox.#activeDialog === this)
-        {
-            DialogBox.#activeDialog = null;
-            DialogBox.#presentNext();
-        }
     }
 
     static async alert(title, message)
@@ -90,7 +55,7 @@ class DialogBox extends HTMLElement
                 resolve();
             });
 
-            DialogBox.#enqueue(dialog);
+            document.body.appendChild(dialog);
         });
     }
 
@@ -124,7 +89,7 @@ class DialogBox extends HTMLElement
                 resolve(false);
             });
 
-            DialogBox.#enqueue(dialog);
+            document.body.appendChild(dialog);
         });
     }
 
@@ -165,7 +130,7 @@ class DialogBox extends HTMLElement
                 }
             });
 
-            DialogBox.#enqueue(dialog);
+            document.body.appendChild(dialog);
         });
     }
 
@@ -189,25 +154,12 @@ class DialogBox extends HTMLElement
             dialog.close();
         });
 
-        DialogBox.#enqueue(dialog);
+        document.body.appendChild(dialog);
         return dialog;
     }
 
     close()
     {
-        // Two paths into close():
-        //   1. The dialog is currently shown — remove it from the DOM. The
-        //      disconnectedCallback then clears the active-dialog slot and
-        //      presents the next queued entry.
-        //   2. The dialog is still queued (never appeared) — splice it out of
-        //      the queue. No DOM removal needed; no advancement needed since
-        //      whichever dialog is currently active is unaffected.
-        const queueIndex = DialogBox.#queue.indexOf(this);
-        if (queueIndex !== -1)
-        {
-            DialogBox.#queue.splice(queueIndex, 1);
-            return;
-        }
         this.remove();
     }
 }

@@ -1,12 +1,13 @@
 const PacketronResponse = require("@gamiumgamers/packetron/PacketronResponse");
 const {authenticationProviders }= require("../../Globals/Enumerations/AuthenticationProviders");
-const { userRoles } = require("../../Globals/Enumerations/UserRoles");
 const User = require("../../Globals/Model/User");
 const UserSession = require("../../Globals/Model/UserSession");
 const App = require("../../Globals/Classes/App");
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
 const SyncQueryEngine = require("../../Globals/Classes/Database/SyncQueryEngine");
-const AdminEmailQueryEngine = require("../../Globals/Classes/Database/AdminEmailQueryEngine");
+const UserRoleReconciliator = require("../../Globals/Classes/Authentication/UserRoleReconciliator");
+const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
+const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/OrganizationAutoAssigner");
 
 async function handleLoginCallback(request, response)
 {
@@ -111,27 +112,34 @@ async function handleLoginCallback(request, response)
         user = existingUser;
     }
 
-    // Reconcile the admin allowlist against the User document on every
-    // login. The seed file + admin-panel Admins tab manage the
-    // allowlist; this is where it actually takes effect on user.role.
-    // Failing closed (treat allowlist as not containing the email) if
-    // the DB call throws would silently demote a legitimate admin on a
-    // transient error, so we let the exception propagate — the login
-    // should fail loudly rather than silently change role.
-    const targetEmail = (user.getAdditionalData()?.email || "").toLowerCase();
-    if (targetEmail.length > 0 && await AdminEmailQueryEngine.isAdminEmail(targetEmail))
-    {
-        if (user.getRole() !== userRoles.ADMIN)
-        {
-            user.setRole(userRoles.ADMIN);
-        }
-    }
-    else if (user.getRole() === userRoles.ADMIN)
-    {
-        user.setRole(userRoles.USER);
-    }
+    // Centralised role reconciliation handles the admin allowlist AND
+    // organization-admin promotion in one place. Mutates user.role.
+    // Failing closed on a DB hiccup would silently demote a legitimate
+    // admin, so we let the exception propagate — login fails loudly
+    // rather than silently changing role.
+    await UserRoleReconciliator.reconcile(user);
 
     await AuthenticationQueryEngine.createUser(user);
+
+    // Back-fill the userId on any memberships keyed by this email so
+    // downstream queries (e.g. expansion to userId-based joins) work
+    // without re-walking the email index. Then mint any pending FREE
+    // perks the user is entitled to but doesn't yet have — catches the
+    // brief's "if it already exists" case where someone was added as a
+    // member before they had an account.
+    const targetEmail = (user.getAdditionalData()?.email || "").toLowerCase();
+    if (targetEmail.length > 0)
+    {
+        await OrganizationMemberQueryEngine.backfillUserId(targetEmail, user.getId());
+    }
+    try
+    {
+        await OrganizationAutoAssigner.applyFreePerksOnLogin(user);
+    }
+    catch (autoAssignError)
+    {
+        console.error(`[HandleLoginCallback] applyFreePerksOnLogin failed for ${user.getId()}: ${autoAssignError.message}`);
+    }
 
     // Seed a per-user sync-data row at timestamp 0 so the syncData
     // collection always carries a record for this user, even before

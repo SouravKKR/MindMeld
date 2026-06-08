@@ -1,0 +1,74 @@
+{
+    "name": "OrganizationPayment",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "organizationId":
+        {
+            "datatype": "string"
+        },
+        "kind":
+        {
+            "datatype": "enum:OrganizationPaymentKinds",
+            "defaultValue": 0
+        },
+        "status":
+        {
+            "datatype": "enum:OrganizationPaymentStatuses",
+            "defaultValue": 0
+        },
+        "paymentProvider":
+        {
+            "datatype": "enum:PaymentProviders",
+            "defaultValue": 0
+        },
+        "providerOrderId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "providerPaymentId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "amountMinor":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "currency":
+        {
+            "datatype": "string",
+            "defaultValue": "INR",
+            "maxLength": 8
+        },
+        "additionalMembers":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "createdAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "capturedAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "additionalData":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        }
+    }
+}

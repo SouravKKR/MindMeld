@@ -153,18 +153,29 @@ class PrivateMemberMangler
 
 function findBundleFiles(staticDirectory)
 {
-    // Every top-level *Bundle.js in Dock/Static/ is an entry-point bundle
-    // produced by BundleStaticFiles.js. Discovering them dynamically means
-    // adding a new HTML entry point (e.g. login.html → LoginBundle.js)
-    // only needs a single change in BundleStaticFiles.js — the mangler
-    // automatically picks the new bundle up.
+    // BundleStaticFiles.js now code-splits each HTML entry into:
+    //   - a tiny *Bundle.js proxy (re-imports every part)
+    //   - one *Bundle.part-<hash>.js per esbuild entry-point split
+    //   - zero or more *Bundle.chunk-<hash>.js shared between parts
+    // We mangle private members in all of them so the obfuscation step
+    // downstream sees uniformly mangled identifiers. The proxy contains no
+    // classes so it's a no-op but staying in the list is harmless.
     if (!fs.existsSync(staticDirectory))
     {
         return [];
     }
 
+    const bundleOutputRegex = /Bundle\.(part|chunk)-[A-Za-z0-9_-]+\.js$/;
+
     return fs.readdirSync(staticDirectory, { withFileTypes: true })
-        .filter((entry) => entry.isFile() && entry.name.endsWith('Bundle.js'))
+        .filter((entry) =>
+        {
+            if (!entry.isFile())
+            {
+                return false;
+            }
+            return entry.name.endsWith('Bundle.js') || bundleOutputRegex.test(entry.name);
+        })
         .map((entry) => path.join(staticDirectory, entry.name));
 }
 

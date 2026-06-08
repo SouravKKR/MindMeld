@@ -4,7 +4,7 @@ from Globals.Enumerations.DeckLicenseStatuses import DeckLicenseStatuses
 
 
 class DeckLicense:
-    def __init__(self, user_id: str = None, deck_id: str = None, status: DeckLicenseStatuses = DeckLicenseStatuses(1), key_version: int = 1, wrapped_key_blob: str = '', issued_at: datetime = datetime.now(), rotated_at: datetime = datetime.now(), additional_data: dict = {}) -> None:
+    def __init__(self, user_id: str = None, deck_id: str = None, status: DeckLicenseStatuses = DeckLicenseStatuses(1), key_version: int = 1, wrapped_key_blob: str = '', issued_at: datetime = datetime.now(), rotated_at: datetime = datetime.now(), expires_at: datetime = datetime.now(), grant_source: str = 'PURCHASE', downloaded_content_version: int = 0, password_hash: str = '', password_salt: str = '', password_wrapped_content_key_base64: str = '', password_wrapped_iv_base64: str = '', server_wrapped_content_key_base64: str = '', server_wrapped_iv_base64: str = '', content_key_version: int = 0, additional_data: dict = {}) -> None:
         self.__id = str(uuid.uuid4())
         self.set_user_id(user_id)
         self.set_deck_id(deck_id)
@@ -13,6 +13,16 @@ class DeckLicense:
         self.set_wrapped_key_blob(wrapped_key_blob)
         self.set_issued_at(issued_at)
         self.set_rotated_at(rotated_at)
+        self.set_expires_at(expires_at)
+        self.set_grant_source(grant_source)
+        self.set_downloaded_content_version(downloaded_content_version)
+        self.set_password_hash(password_hash)
+        self.set_password_salt(password_salt)
+        self.set_password_wrapped_content_key_base64(password_wrapped_content_key_base64)
+        self.set_password_wrapped_iv_base64(password_wrapped_iv_base64)
+        self.set_server_wrapped_content_key_base64(server_wrapped_content_key_base64)
+        self.set_server_wrapped_iv_base64(server_wrapped_iv_base64)
+        self.set_content_key_version(content_key_version)
         self.set_additional_data(additional_data)
 
     def get_id(self) -> str:
@@ -96,6 +106,104 @@ class DeckLicense:
             value = datetime.now()
         self.__rotated_at = value
 
+    def get_expires_at(self) -> datetime:
+        return self.__expires_at
+
+    def set_expires_at(self, value: datetime) -> None:
+        if value is not None:
+            if isinstance(value, str):
+                try:
+                    value = datetime.fromisoformat(value)
+                except ValueError:
+                    value = datetime.now()
+            elif not isinstance(value, datetime):
+                value = datetime.now()
+        else:
+            value = datetime.now()
+        self.__expires_at = value
+
+    def get_grant_source(self) -> str:
+        return self.__grant_source
+
+    def set_grant_source(self, value: str) -> None:
+        if value is not None:
+            value = str(value)
+            if len(value) > 64:
+                value = value[:64]
+        self.__grant_source = value
+
+    def get_downloaded_content_version(self) -> int:
+        return self.__downloaded_content_version
+
+    def set_downloaded_content_version(self, value: int) -> None:
+        if value is not None:
+            try:
+                value = int(value)
+                value = max(0, value)
+            except (ValueError, TypeError):
+                value = 0
+        self.__downloaded_content_version = value
+
+    def get_password_hash(self) -> str:
+        return self.__password_hash
+
+    def set_password_hash(self, value: str) -> None:
+        if value is not None:
+            value = str(value)
+        self.__password_hash = value
+
+    def get_password_salt(self) -> str:
+        return self.__password_salt
+
+    def set_password_salt(self, value: str) -> None:
+        if value is not None:
+            value = str(value)
+        self.__password_salt = value
+
+    def get_password_wrapped_content_key_base64(self) -> str:
+        return self.__password_wrapped_content_key_base64
+
+    def set_password_wrapped_content_key_base64(self, value: str) -> None:
+        if value is not None:
+            value = str(value)
+        self.__password_wrapped_content_key_base64 = value
+
+    def get_password_wrapped_iv_base64(self) -> str:
+        return self.__password_wrapped_iv_base64
+
+    def set_password_wrapped_iv_base64(self, value: str) -> None:
+        if value is not None:
+            value = str(value)
+        self.__password_wrapped_iv_base64 = value
+
+    def get_server_wrapped_content_key_base64(self) -> str:
+        return self.__server_wrapped_content_key_base64
+
+    def set_server_wrapped_content_key_base64(self, value: str) -> None:
+        if value is not None:
+            value = str(value)
+        self.__server_wrapped_content_key_base64 = value
+
+    def get_server_wrapped_iv_base64(self) -> str:
+        return self.__server_wrapped_iv_base64
+
+    def set_server_wrapped_iv_base64(self, value: str) -> None:
+        if value is not None:
+            value = str(value)
+        self.__server_wrapped_iv_base64 = value
+
+    def get_content_key_version(self) -> int:
+        return self.__content_key_version
+
+    def set_content_key_version(self, value: int) -> None:
+        if value is not None:
+            try:
+                value = int(value)
+                value = max(0, value)
+            except (ValueError, TypeError):
+                value = 0
+        self.__content_key_version = value
+
     def get_additional_data(self) -> dict:
         return self.__additional_data
 
@@ -116,6 +224,16 @@ class DeckLicense:
             'wrappedKeyBlob': self.get_wrapped_key_blob(),
             'issuedAt': self.get_issued_at().isoformat() if self.get_issued_at() is not None else None,
             'rotatedAt': self.get_rotated_at().isoformat() if self.get_rotated_at() is not None else None,
+            'expiresAt': self.get_expires_at().isoformat() if self.get_expires_at() is not None else None,
+            'grantSource': self.get_grant_source(),
+            'downloadedContentVersion': self.get_downloaded_content_version(),
+            'passwordHash': self.get_password_hash(),
+            'passwordSalt': self.get_password_salt(),
+            'passwordWrappedContentKeyBase64': self.get_password_wrapped_content_key_base64(),
+            'passwordWrappedIvBase64': self.get_password_wrapped_iv_base64(),
+            'serverWrappedContentKeyBase64': self.get_server_wrapped_content_key_base64(),
+            'serverWrappedIvBase64': self.get_server_wrapped_iv_base64(),
+            'contentKeyVersion': self.get_content_key_version(),
             'additionalData': self.get_additional_data(),
         }
 
@@ -129,6 +247,16 @@ class DeckLicense:
             wrapped_key_blob=data.get('wrappedKeyBlob'),
             issued_at=datetime.fromisoformat(data.get('issuedAt')) if data.get('issuedAt') is not None else None,
             rotated_at=datetime.fromisoformat(data.get('rotatedAt')) if data.get('rotatedAt') is not None else None,
+            expires_at=datetime.fromisoformat(data.get('expiresAt')) if data.get('expiresAt') is not None else None,
+            grant_source=data.get('grantSource'),
+            downloaded_content_version=data.get('downloadedContentVersion'),
+            password_hash=data.get('passwordHash'),
+            password_salt=data.get('passwordSalt'),
+            password_wrapped_content_key_base64=data.get('passwordWrappedContentKeyBase64'),
+            password_wrapped_iv_base64=data.get('passwordWrappedIvBase64'),
+            server_wrapped_content_key_base64=data.get('serverWrappedContentKeyBase64'),
+            server_wrapped_iv_base64=data.get('serverWrappedIvBase64'),
+            content_key_version=data.get('contentKeyVersion'),
             additional_data=data.get('additionalData')
         )
         if data.get('id') is not None:

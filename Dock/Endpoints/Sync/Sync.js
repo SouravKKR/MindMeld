@@ -3,6 +3,7 @@ const { getUser } = require("../Helpers/GetUser");
 const SyncQueryEngine = require("../../Globals/Classes/Database/SyncQueryEngine");
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
+const TaskManager = require("../../Globals/Classes/Task/TaskManager");
 const { entityTypes } = require("../../Globals/Enumerations/EntityTypes");
 
 // ── Pull-phase chunking ────────────────────────────────────────────────
@@ -61,6 +62,30 @@ async function handleSync(request, response)
         return;
     }
 
+    // ── Per-chunk lock-holder verification ────────────────────────────
+    //
+    // The client acquires the sync lock once via /Sync/Lock before the
+    // multi-chunk push, but each chunk lands here as an independent
+    // request. If the original holder's network stalls long enough for
+    // its lock TTL to expire (or another device hits /Sync/ForceUnlock),
+    // a second device can acquire the lock and start its own push —
+    // and without this check the original device's remaining chunks
+    // would still be accepted, interleaving two timelines into the same
+    // serverUpdatedAt window and corrupting the per-entity history.
+    //
+    // 423 Locked tells the client "your lock is gone; re-acquire and
+    // restart this sync cycle from the top." SyncOrchestrator's catch
+    // path treats a non-2xx chunk response as a hard failure, resets
+    // pendingChanges-removal (so the user's records aren't lost), and
+    // the next debounced cycle re-races for the lock cleanly.
+    const lockState = await TaskManager.getSyncLockState(userId);
+    if (!lockState.bIsLocked || lockState.holderDeviceId !== deviceId)
+    {
+        console.warn(`[Sync] Rejecting push from device ${deviceId} — lock is ${lockState.bIsLocked ? "held by " + lockState.holderDeviceId : "not held"}.`);
+        response.sendStatusCode(423);
+        return;
+    }
+
     // ===================== PUSH PHASE =====================
     console.log(`[Sync] PUSH PHASE — ${changes.length} changes, isLastChunk=${isLastChunk}`);
 
@@ -76,13 +101,40 @@ async function handleSync(request, response)
         deletions:                        []
     };
 
+    // Paid-deck content must never flow through the regular sync
+    // collections. The client filters first, but a malicious or
+    // out-of-date client could still try — server enforces a hard
+    // backstop here. Any entityId that already lives inside the
+    // buyer's paidDeckUserContent row (or any deckId pointing at an
+    // owned paid-deck root) is silently dropped from this push.
+    const paidDeckRejectedEntityIds = await collectPaidDeckProtectedEntityIds(db, userId);
+
+    let droppedPaidDeckChangeCount = 0;
     for (const change of changes)
     {
         if (change.deleted)
         {
             byType.deletions.push(change);
+            continue;
         }
-        else if (byType[change.entityType] !== undefined)
+
+        if (paidDeckRejectedEntityIds.has(change?.data?.id))
+        {
+            droppedPaidDeckChangeCount++;
+            continue;
+        }
+        if (paidDeckRejectedEntityIds.has(change?.data?.deckId))
+        {
+            droppedPaidDeckChangeCount++;
+            continue;
+        }
+        if (paidDeckRejectedEntityIds.has(change?.data?.parent))
+        {
+            droppedPaidDeckChangeCount++;
+            continue;
+        }
+
+        if (byType[change.entityType] !== undefined)
         {
             byType[change.entityType].push(change.data);
         }
@@ -92,6 +144,11 @@ async function handleSync(request, response)
         }
     }
 
+    if (droppedPaidDeckChangeCount > 0)
+    {
+        console.warn(`[Sync] Dropped ${droppedPaidDeckChangeCount} change(s) targeting paid-deck content — use /PaidDecks/Entities/Update.`);
+    }
+
     // Single Node-clock timestamp for every doc written in this push.
     // Used both as `serverUpdatedAt` on the upserted docs and as the
     // floor for this response's `serverTime`, so the client's saved
@@ -99,6 +156,16 @@ async function handleSync(request, response)
     // even if Mongo's host clock is skewed ahead of Node's.
     const pushWriteTimestamp = new Date();
 
+    // Upserts run concurrently across collections, but the deletion
+    // cascade must wait until they have ALL settled. The cascade in
+    // bulkRecordDeletions reads each entity collection's current state
+    // by data.deckId / data.parent to discover descendants; if a card
+    // or material was just re-parented by a concurrent upsert in this
+    // same push (merge flow, drag-drop, etc.) the cascade would
+    // otherwise see its pre-upsert deckId and pick it up as a victim of
+    // the old parent's deletion. Sequencing upserts → deletions makes
+    // the cascade observe the post-move state and leave the re-parented
+    // entity alone.
     await Promise.all(
     [
         SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.DECKS_COLLECTION),             byType[entityTypes.DECK],              pushWriteTimestamp),
@@ -106,8 +173,8 @@ async function handleSync(request, response)
         SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.STUDY_MATERIALS_COLLECTION),   byType[entityTypes.STUDY_MATERIAL],    pushWriteTimestamp),
         SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.MOCK_TESTS_COLLECTION),        byType[entityTypes.MOCK_TEST],         pushWriteTimestamp),
         SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION), byType[entityTypes.ASK_AI_POPUP_LINK], pushWriteTimestamp),
-        SyncQueryEngine.bulkRecordDeletions(userId, db, byType.deletions)
     ]);
+    await SyncQueryEngine.bulkRecordDeletions(userId, db, byType.deletions);
 
     console.log(`[Sync] PUSH complete — decks:${byType[entityTypes.DECK].length} cards:${byType[entityTypes.CARD].length} studyMaterials:${byType[entityTypes.STUDY_MATERIAL].length} mockTests:${byType[entityTypes.MOCK_TEST].length} popupLinks:${byType[entityTypes.ASK_AI_POPUP_LINK].length} deletions:${byType.deletions.length}`);
 
@@ -396,6 +463,39 @@ async function handleSync(request, response)
         remainingEntityCount,
         requestFullResync:   bRequestFullResync
     });
+}
+
+/**
+ * Returns the set of all entity IDs that are part of the buyer's
+ * paid-deck content (every deck node + every card / study material /
+ * mock test inside any of their owned paid decks). Sync push filtering
+ * drops any change targeting an ID in this set so paid-deck content
+ * cannot leak into the plaintext sync collections via a hostile or
+ * stale client.
+ */
+async function collectPaidDeckProtectedEntityIds(database, userId)
+{
+    const protectedIds = new Set();
+    const userContentDocuments = await database
+        .collection(DatabaseConstants.PAID_DECK_USER_CONTENT_COLLECTION)
+        .find({ userId: userId })
+        .toArray();
+
+    for (const userContentDocument of userContentDocuments)
+    {
+        if (userContentDocument?.contentByEntityId && typeof userContentDocument.contentByEntityId === "object")
+        {
+            for (const entityIdKey of Object.keys(userContentDocument.contentByEntityId))
+            {
+                protectedIds.add(entityIdKey);
+            }
+        }
+        if (typeof userContentDocument?.deckId === "string" && userContentDocument.deckId.length > 0)
+        {
+            protectedIds.add(userContentDocument.deckId);
+        }
+    }
+    return protectedIds;
 }
 
 module.exports = { handleSync };

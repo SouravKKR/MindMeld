@@ -1,7 +1,7 @@
 import HeaderComponent from "../../CommonComponents/HeaderComponent.js";
-import DialogBox from "../../CommonComponents/DialogBox.js";
+import PageNavigator from "../../Globals/Classes/PageNavigator.js";
 import PaidDeckFilterPanel from "./Components/PaidDeckFilterPanel.js";
-import { paymentProviders } from "../../Globals/Enumerations/PaymentProviders.js";
+import RegionMetadata from "../../Globals/Classes/RegionMetadata.js";
 import { paidDeckSortFields } from "../../Globals/Enumerations/PaidDeckSortFields.js";
 import { sortDirections } from "../../Globals/Enumerations/SortDirections.js";
 
@@ -12,8 +12,12 @@ class PaidDeckLibraryPage extends HTMLElement
     static #PAGE_SIZE = 24;
     static #QUERY_FILTER_KEY = "query";
     static #SEARCH_DEBOUNCE_MILLISECONDS = 250;
+    static #REGION_STORAGE_KEY = "paidDeckLibrary.manualRegion";
 
-    #region = "IN";
+    // null => auto-detect (backend resolves via CF-IPCountry / locale hint).
+    // A region code => the buyer's explicit manual override.
+    #manualRegion = null;
+    #resolvedRegion = null;
     #filterPanel = null;
     #currentFilters = {};
     #currentSort = { field: paidDeckSortFields.PUBLISHED_AT, direction: sortDirections.DESCENDING };
@@ -23,9 +27,23 @@ class PaidDeckLibraryPage extends HTMLElement
 
     initialize(args)
     {
-        if (args?.region)
+        // Explicit arg wins; otherwise restore the buyer's last manual pick.
+        if (args?.region && RegionMetadata.isValidRegion(args.region))
         {
-            this.#region = args.region;
+            this.#manualRegion = args.region;
+            return;
+        }
+        try
+        {
+            const stored = window.localStorage.getItem(PaidDeckLibraryPage.#REGION_STORAGE_KEY);
+            if (RegionMetadata.isValidRegion(stored))
+            {
+                this.#manualRegion = stored;
+            }
+        }
+        catch (storageError)
+        {
+            // Storage unavailable — stay on auto-detect.
         }
     }
 
@@ -46,7 +64,12 @@ class PaidDeckLibraryPage extends HTMLElement
                     <button class="paid-deck-library-search-clear" type="button" hidden>Clear</button>
                 </div>
                 <div class="paid-deck-library-region-bar">
-                    Region: <strong>${this.#region}</strong>
+                    <label>Region</label>
+                    <select class="paid-deck-library-region-select">
+                        <option value="">Auto-detect</option>
+                        ${RegionMetadata.getAllRegions().map((region) => `<option value="${region.code}"${this.#manualRegion === region.code ? " selected" : ""}>${PaidDeckLibraryPage.#escape(region.label)} (${PaidDeckLibraryPage.#escape(region.currency)})</option>`).join("")}
+                    </select>
+                    <span class="paid-deck-library-region-resolved" data-role="region-resolved"></span>
                 </div>
                 <div class="paid-deck-library-sort">
                     <label>Sort by</label>
@@ -88,6 +111,29 @@ class PaidDeckLibraryPage extends HTMLElement
         this.querySelector(".paid-deck-library-sort-direction").addEventListener("change", (changeEvent) =>
         {
             this.#currentSort.direction = Number(changeEvent.currentTarget.value);
+            this.#currentOffset = 0;
+            this.#runSearch();
+        });
+
+        this.querySelector(".paid-deck-library-region-select").addEventListener("change", (changeEvent) =>
+        {
+            const picked = changeEvent.currentTarget.value;
+            this.#manualRegion = RegionMetadata.isValidRegion(picked) ? picked : null;
+            try
+            {
+                if (this.#manualRegion)
+                {
+                    window.localStorage.setItem(PaidDeckLibraryPage.#REGION_STORAGE_KEY, this.#manualRegion);
+                }
+                else
+                {
+                    window.localStorage.removeItem(PaidDeckLibraryPage.#REGION_STORAGE_KEY);
+                }
+            }
+            catch (storageError)
+            {
+                // Non-fatal — the pick still applies for this session.
+            }
             this.#currentOffset = 0;
             this.#runSearch();
         });
@@ -223,7 +269,8 @@ class PaidDeckLibraryPage extends HTMLElement
                 ({
                     filters: this.#currentFilters,
                     sort: this.#currentSort,
-                    region: this.#region,
+                    region: this.#manualRegion,
+                    localeRegionHint: RegionMetadata.guessRegionFromLocale(),
                     limit: PaidDeckLibraryPage.#PAGE_SIZE,
                     offset: this.#currentOffset
                 })
@@ -267,6 +314,17 @@ class PaidDeckLibraryPage extends HTMLElement
 
         const decks = Array.isArray(searchResult.decks) ? searchResult.decks : [];
 
+        // Reflect the region the backend actually priced against (useful in
+        // auto-detect mode, where the buyer didn't pick one explicitly).
+        this.#resolvedRegion = searchResult.region || null;
+        const resolvedElement = this.querySelector('[data-role="region-resolved"]');
+        if (resolvedElement)
+        {
+            resolvedElement.textContent = (!this.#manualRegion && this.#resolvedRegion)
+                ? `Showing prices for ${RegionMetadata.getLabel(this.#resolvedRegion)}`
+                : "";
+        }
+
         resultCount.textContent = `${searchResult.totalCount || 0} deck${searchResult.totalCount === 1 ? "" : "s"} found`;
 
         if (decks.length === 0)
@@ -281,7 +339,9 @@ class PaidDeckLibraryPage extends HTMLElement
             const finalMinor = deck.computedPrice?.finalPriceMinor ?? deck.basePriceMinor ?? 0;
             const baseMinor = deck.computedPrice?.basePriceMinor ?? deck.basePriceMinor ?? 0;
             const showStrike = baseMinor > 0 && finalMinor < baseMinor;
-            const currency = deck.currency || "INR";
+            // Prefer the per-deck currency the pricing engine stamped (already
+            // converted into the buyer region's display currency).
+            const currency = deck.computedPrice?.currency || deck.currency || "INR";
             const ownedNote = deck.computedPrice?.reason === "ALREADY_OWNED"
                 ? `<div class="paid-deck-card-owned">Already owned</div>`
                 : "";
@@ -296,19 +356,19 @@ class PaidDeckLibraryPage extends HTMLElement
                         <span class="paid-deck-card-final">${currency} ${(finalMinor / 100).toFixed(2)}</span>
                     </div>
                     ${ownedNote}
-                    <button class="paid-deck-card-buy" data-deck-index="${deckIndex}" ${deck.computedPrice?.reason === "ALREADY_OWNED" ? "disabled" : ""}>
-                        ${deck.computedPrice?.reason === "ALREADY_OWNED" ? "Owned" : "Buy"}
-                    </button>
+                    <button class="paid-deck-card-view" data-deck-index="${deckIndex}">View details</button>
                 </div>
             `;
         }).join("");
 
-        for (const buyButton of this.querySelectorAll(".paid-deck-card-buy"))
+        for (const card of this.querySelectorAll(".paid-deck-card"))
         {
-            buyButton.addEventListener("click", (clickEvent) =>
+            card.addEventListener("click", (clickEvent) =>
             {
-                const deckIndex = parseInt(clickEvent.currentTarget.dataset.deckIndex, 10);
-                this.#initiatePurchase(decks[deckIndex]);
+                const deckIndex = parseInt(card.dataset.deckIndex, 10);
+                if (!Number.isFinite(deckIndex)) return;
+                PageNavigator.open("paid-deck-details-page", decks[deckIndex], this.#resolvedRegion || this.#manualRegion);
+                clickEvent.stopPropagation();
             });
         }
 
@@ -349,112 +409,6 @@ class PaidDeckLibraryPage extends HTMLElement
             this.#currentOffset = currentOffset + pageSize;
             this.#runSearch();
         });
-    }
-
-    async #initiatePurchase(deck)
-    {
-        if (!deck)
-        {
-            return;
-        }
-
-        let response;
-        try
-        {
-            response = await fetch("/PaidDecks/Purchase/Initiate",
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify
-                ({
-                    deckIds: [deck.id],
-                    region: this.#region,
-                    paymentProvider: paymentProviders.RAZORPAY
-                })
-            });
-        }
-        catch (initiateError)
-        {
-            await DialogBox.alert("Error", `Network error: ${initiateError.message}`);
-            return;
-        }
-
-        if (!response.ok)
-        {
-            const responseJson = await response.json().catch(() => ({}));
-            await DialogBox.alert("Purchase failed", responseJson.error || `HTTP ${response.status}`);
-            return;
-        }
-
-        const responseJson = await response.json();
-
-        if (responseJson.requiresPayment === false)
-        {
-            await DialogBox.alert("Acquired", "This deck has been added to your library.");
-            await this.#runSearch();
-            return;
-        }
-
-        await this.#openPaymentCheckout(deck, responseJson);
-    }
-
-    async #openPaymentCheckout(deck, initiateResponse)
-    {
-        const order = initiateResponse.order;
-        const checkoutContext = order.checkoutContext;
-
-        if (!window.Razorpay)
-        {
-            await DialogBox.alert
-            (
-                "Razorpay SDK missing",
-                "The Razorpay checkout script is not loaded. Include https://checkout.razorpay.com/v1/checkout.js in your HTML."
-            );
-            return;
-        }
-
-        const options =
-        {
-            key: checkoutContext.keyId,
-            amount: checkoutContext.amount,
-            currency: checkoutContext.currency,
-            order_id: checkoutContext.orderId,
-            name: "MindMeld",
-            description: deck.title,
-            handler: async (razorpayResponse) =>
-            {
-                const verifyResponse = await fetch("/PaidDecks/Purchase/Verify",
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify
-                    ({
-                        providerOrderId: razorpayResponse.razorpay_order_id,
-                        providerPaymentId: razorpayResponse.razorpay_payment_id,
-                        signature: razorpayResponse.razorpay_signature,
-                        paymentProvider: initiateResponse.provider,
-                        deckIds: [deck.id],
-                        region: this.#region,
-                        amountMinor: order.amountMinor,
-                        currency: order.currency
-                    })
-                });
-
-                if (verifyResponse.ok)
-                {
-                    await DialogBox.alert("Purchase complete", "Your deck has been added to your library.");
-                    await this.#runSearch();
-                }
-                else
-                {
-                    const verifyJson = await verifyResponse.json().catch(() => ({}));
-                    await DialogBox.alert("Verification failed", verifyJson.error || `HTTP ${verifyResponse.status}`);
-                }
-            }
-        };
-
-        const razorpayInstance = new window.Razorpay(options);
-        razorpayInstance.open();
     }
 
     static #escape(rawString)

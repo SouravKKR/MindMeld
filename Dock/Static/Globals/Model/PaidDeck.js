@@ -1,4 +1,5 @@
 import { deckPurchaseGranularity } from '../Enumerations/DeckPurchaseGranularity.js';
+import { paidDeckFeatureBadges } from '../Enumerations/PaidDeckFeatureBadges.js';
 
 class PaidDeck
 {
@@ -18,9 +19,12 @@ class PaidDeck
     #keyVersion;
     #isPublished;
     #publishedAt;
+    #featureBadges;
+    #extraTags;
+    #contentSummary;
     #additionalData;
 
-    constructor({title = null, description = '', sellerId = '', thumbnailUrl = '', category = '', tags = [], basePriceMinor = 0, currency = 'INR', granularity = 0, bundleChildIds = [], parentBundleIds = [], assetBlobId = '', keyVersion = 1, isPublished = false, publishedAt = new Date(), additionalData = {}} = {})
+    constructor({title = null, description = '', sellerId = '', thumbnailUrl = '', category = '', tags = [], basePriceMinor = 0, currency = 'INR', granularity = 0, bundleChildIds = [], parentBundleIds = [], assetBlobId = '', keyVersion = 1, isPublished = false, publishedAt = new Date(), featureBadges = [], extraTags = [], contentSummary = {}, additionalData = {}} = {})
     {
         this.#id = crypto.randomUUID();
         this.setTitle(title);
@@ -38,6 +42,9 @@ class PaidDeck
         this.setKeyVersion(keyVersion);
         this.setIsPublished(isPublished);
         this.setPublishedAt(publishedAt);
+        this.setFeatureBadges(featureBadges);
+        this.setExtraTags(extraTags);
+        this.setContentSummary(contentSummary);
         this.setAdditionalData(additionalData);
     }
 
@@ -317,6 +324,50 @@ class PaidDeck
         this.#publishedAt = value;
     }
 
+    getFeatureBadges()
+    {
+        return this.#featureBadges;
+    }
+
+    setFeatureBadges(value)
+    {
+        if (value !== null)
+        {
+            if (!Array.isArray(value))
+            {
+                value = null;
+            }
+        }
+        this.#featureBadges = value;
+    }
+
+    getExtraTags()
+    {
+        return this.#extraTags;
+    }
+
+    setExtraTags(value)
+    {
+        if (value !== null)
+        {
+            if (!Array.isArray(value))
+            {
+                value = null;
+            }
+        }
+        this.#extraTags = value;
+    }
+
+    getContentSummary()
+    {
+        return this.#contentSummary;
+    }
+
+    setContentSummary(value)
+    {
+        this.#contentSummary = value;
+    }
+
     getAdditionalData()
     {
         return this.#additionalData;
@@ -346,6 +397,9 @@ class PaidDeck
             keyVersion: this.getKeyVersion(),
             isPublished: this.getIsPublished(),
             publishedAt: this.getPublishedAt() !== null ? this.getPublishedAt().toISOString() : null,
+            featureBadges: this.getFeatureBadges() !== null ? this.getFeatureBadges().map(item => Number(item)) : null,
+            extraTags: this.getExtraTags(),
+            contentSummary: this.getContentSummary(),
             additionalData: this.getAdditionalData(),
         };
     }
@@ -368,6 +422,9 @@ class PaidDeck
             keyVersion: json.keyVersion ?? null,
             isPublished: json.isPublished ?? null,
             publishedAt: json.publishedAt != null ? new Date(json.publishedAt) : null,
+            featureBadges: json.featureBadges ?? null,
+            extraTags: json.extraTags ?? null,
+            contentSummary: json.contentSummary ?? null,
             additionalData: json.additionalData ?? null
         });
         instance._restoreId_id(json.id);

@@ -36,6 +36,18 @@ import { entityTypes } from "../../Enumerations/EntityTypes.js";
  */
 class CuratedStudyController
 {
+    // FSRS userRating used when applying the grade-back review on
+    // source cards. 1.0 is "Easy" on the 0..1 scale the standard
+    // Easy button passes through (`<button class="easy-button" score="1">`
+    // in StudyPage's template). The user finished the curated batch
+    // with every flashcard marked Easy — Easy is the correct mirror.
+    static SOURCE_CARD_GRADE_BACK_RATING = 1.0;
+    // Estimated time-spent the FSRS review function uses for its
+    // time-on-card term. The user didn't actually attempt each source
+    // card individually; ~30 s is a reasonable proxy for "engaged with
+    // the topic" averaged across the curated material + flashcards.
+    static SOURCE_CARD_GRADE_BACK_TIME_SECONDS = 30;
+
     /**
      * Returns the deck's currently-LIVE curated batch as a structured
      * object, or null if no LIVE batch exists. The skippedDueToInProgress
@@ -267,6 +279,18 @@ class CuratedStudyController
         deck.setAdditionalDataField(AutoAnalysisDeckFields.LAST_CURATED_BATCH_TAG, null);
         deck.setAdditionalDataField(AutoAnalysisDeckFields.LAST_CURATED_BATCH_TOPICS, null);
 
+        // Grade-back: when the user completed the batch with every
+        // flashcard marked Easy, apply a positive FSRS review to each
+        // archived material's source cards so the next analysis pass
+        // sees the updated stability / Glicko rating instead of
+        // re-flagging the same topics. Skipped on every other outcome
+        // (ENDED_WITH_HARDS / REPLACED_BY_REGEN / AUTO_REPLACED — none
+        // of those count as mastery evidence).
+        if (outcomeName === CuratedStudyController.#outcomeName(curatedSessionOutcomes.COMPLETED_ALL_EASY))
+        {
+            await CuratedStudyController.#applyGradeBackToSourceCards(deck, mutatedMaterials);
+        }
+
         await CuratedStudyController.#persistDeckAndDispatchMaterialChanges(deck, mutatedMaterials);
     }
 
@@ -396,6 +420,13 @@ class CuratedStudyController
         // curated card grades are an artefact of the curated session
         // itself and shouldn't count as evidence of the user studying
         // their actual deck content.
+        //
+        // The per-attempt timestamp lives inside `fsrs.lastReview` on
+        // each ProgressPoint — the model has no top-level
+        // `getTimestamp()`. Reading the wrong field made every check
+        // return "no new progress" and the Regenerate button stayed
+        // disabled even right after a study session. Pattern mirrors
+        // AutoAnalysisDispatcher.#collectProgressPointTimestamps.
         const allCards = deck.getCards(true);
         for (const card of allCards)
         {
@@ -407,17 +438,24 @@ class CuratedStudyController
             const progressPoints = typeof progress.getProgressPoints === "function" ? progress.getProgressPoints() : [];
             for (const progressPoint of progressPoints)
             {
-                const timestamp = typeof progressPoint.getTimestamp === "function" ? progressPoint.getTimestamp() : null;
-                let timestampMilliseconds = null;
-                if (timestamp instanceof Date)
+                const fsrsState = typeof progressPoint?.getFsrsState === "function" ? progressPoint.getFsrsState() : null;
+                const lastReviewValue = fsrsState?.lastReview;
+
+                let timestampMilliseconds = NaN;
+                if (typeof lastReviewValue === "string")
                 {
-                    timestampMilliseconds = timestamp.getTime();
+                    timestampMilliseconds = Date.parse(lastReviewValue);
                 }
-                else if (typeof timestamp === "string" && timestamp.length > 0)
+                else if (lastReviewValue instanceof Date)
                 {
-                    timestampMilliseconds = Date.parse(timestamp);
+                    timestampMilliseconds = lastReviewValue.getTime();
                 }
-                if (timestampMilliseconds !== null && Number.isFinite(timestampMilliseconds) && timestampMilliseconds > lastAnalyzedAtMilliseconds)
+                else if (typeof lastReviewValue === "number")
+                {
+                    timestampMilliseconds = lastReviewValue;
+                }
+
+                if (Number.isFinite(timestampMilliseconds) && timestampMilliseconds > lastAnalyzedAtMilliseconds)
                 {
                     return true;
                 }
@@ -643,6 +681,98 @@ class CuratedStudyController
 
         topicGroups.sort((firstGroup, secondGroup) => firstGroup.topicIndex - secondGroup.topicIndex);
         return topicGroups;
+    }
+
+    /**
+     * Applies a positive FSRS review to each source card referenced by
+     * `mutatedMaterials`. Runs only on COMPLETED_ALL_EASY archive — the
+     * user has demonstrated mastery of the topics by passing every
+     * curated flashcard, so the underlying cards' FSRS stability and
+     * Glicko rating should reflect that. Without this, the next
+     * analysis pass would still see the original weak signal on these
+     * cards and re-pick the same topics.
+     *
+     * Each `card.attempt(...)` chains through its own `card.save()` →
+     * `deck.save(false)` → `SyncEvents.ENTITY_CHANGED`, so the
+     * mutations are persisted and the sync push picks them up
+     * individually. The redundant final deck save inside
+     * `#persistDeckAndDispatchMaterialChanges` after this returns is
+     * cheap because the in-memory state is already consistent.
+     */
+    static async #applyGradeBackToSourceCards(deck, mutatedMaterials)
+    {
+        if (!deck || !Array.isArray(mutatedMaterials) || mutatedMaterials.length === 0)
+        {
+            return;
+        }
+
+        // Union of every archived material's source-card-id list. A
+        // single source card can drive multiple topics, so we dedupe
+        // before the lookup.
+        const sourceCardIds = new Set();
+        for (const material of mutatedMaterials)
+        {
+            const idsForMaterial = material.getAdditionalData()?.[CuratedStudyMaterialFields.SOURCE_CARD_IDS];
+            if (!Array.isArray(idsForMaterial))
+            {
+                continue;
+            }
+            for (const sourceId of idsForMaterial)
+            {
+                if (typeof sourceId === "string" && sourceId.length > 0)
+                {
+                    sourceCardIds.add(sourceId);
+                }
+            }
+        }
+        if (sourceCardIds.size === 0)
+        {
+            return;
+        }
+
+        // One pass over the deck builds an id→card index. AnalyzeDeckPerformance
+        // scopes into descendants, so the grade-back walks the full
+        // subtree to find every source card.
+        const cardLookup = new Map();
+        for (const card of deck.getCards(true))
+        {
+            cardLookup.set(card.getId(), card);
+        }
+
+        let gradeBackCount = 0;
+        for (const sourceId of sourceCardIds)
+        {
+            const card = cardLookup.get(sourceId);
+            if (!card)
+            {
+                continue;
+            }
+            // Defensive — source cards should always be non-curated by
+            // construction (the analysis filters bCurated out) but the
+            // check is cheap insurance against a stale dataset.
+            if (card.getAdditionalData()?.[CuratedFlashcardFields.B_CURATED] === true)
+            {
+                continue;
+            }
+            try
+            {
+                await card.attempt(
+                    CuratedStudyController.SOURCE_CARD_GRADE_BACK_RATING,
+                    CuratedStudyController.SOURCE_CARD_GRADE_BACK_TIME_SECONDS,
+                    true,
+                );
+                gradeBackCount += 1;
+            }
+            catch (gradeBackError)
+            {
+                console.warn(`[CuratedStudyController] Grade-back failed for source card ${sourceId}:`, gradeBackError);
+            }
+        }
+
+        if (gradeBackCount > 0)
+        {
+            console.info(`[CuratedStudyController] Grade-back applied Easy review to ${gradeBackCount} source card(s) after COMPLETED_ALL_EASY.`);
+        }
     }
 
     /**

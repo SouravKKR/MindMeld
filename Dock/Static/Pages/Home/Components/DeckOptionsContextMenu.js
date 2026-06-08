@@ -2,6 +2,7 @@ import ContextMenu from "../../../CommonComponents/ContextMenu.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import DeckEvents from "../../../Globals/Events/DeckEvents.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
+import PaidDeckRegistry from "../../../Globals/Classes/PaidDeckRegistry.js";
 import { entityTypes } from "../../../Globals/Enumerations/EntityTypes.js";
 import HomePageContextMenu from "./HomePageContextMenu.js";
 import AiFeatureGate from "../../../Globals/Classes/AiFeatureGate.js";
@@ -51,15 +52,42 @@ class DeckOptionsContextMenu extends ContextMenu
         const browseButton         = this.querySelector(".browse-button");
         const exportButton         = this.querySelector(".export-button");
         const generateWithAIButton = this.querySelector(".generate-with-ai-button");
+        const checkForPaidDeckUpdatesButton = this.querySelector(".check-for-paid-deck-updates-button");
 
         this.addEventListener("click", (event) => { event.stopPropagation(); });
 
-        insightsButton.addEventListener("click", () =>
+        if (checkForPaidDeckUpdatesButton)
         {
-            PageNavigator.open("deck-insights-page", this.#deck);
-            DeckOptionsContextMenu.removeAll();
-            HomePageContextMenu.removeAll();
-        });
+            checkForPaidDeckUpdatesButton.addEventListener("click", async () =>
+            {
+                DeckOptionsContextMenu.removeAll();
+                HomePageContextMenu.removeAll();
+                await this.#handleCheckForPaidDeckUpdates();
+            });
+        }
+
+        if (insightsButton)
+        {
+            insightsButton.addEventListener("click", () =>
+            {
+                PageNavigator.open("deck-insights-page", this.#deck);
+                DeckOptionsContextMenu.removeAll();
+                HomePageContextMenu.removeAll();
+            });
+        }
+
+        if (expandButton)
+        {
+            expandButton.addEventListener("click", () =>
+            {
+                window.dispatchEvent(new CustomEvent(DeckEvents.EXPAND, { detail: { deck: this.#deck } }));
+            });
+        }
+
+        if (!addButton)
+        {
+            return;
+        }
 
         addButton.addEventListener("click", () =>
         {
@@ -80,11 +108,6 @@ class DeckOptionsContextMenu extends ContextMenu
                     handler: () => PageNavigator.open("mock-test-editor-page", null, this.#deck)
                 },
             ]);
-        });
-
-        expandButton.addEventListener("click", () =>
-        {
-            window.dispatchEvent(new CustomEvent(DeckEvents.EXPAND, { detail: { deck: this.#deck } }));
         });
 
         generateWithAIButton.addEventListener("click", async () =>
@@ -274,19 +297,70 @@ class DeckOptionsContextMenu extends ContextMenu
 
     connectedCallback()
     {
-        this.innerHTML =
-        `
-            <button class="insights-button">Insights</button>
-            <button class="add-button">Add</button>
-            <button class="generate-with-ai-button">Generate With AI</button>
-            <button class="expand-button">Expand</button>
-            <button class="edit-button">Edit</button>
-            <button class="browse-button">Browse</button>
-            <button class="export-button">Export</button>
-        `;
+        const isPaidDeck = this.#deck && PaidDeckRegistry.isLicensed(this.#deck.getId());
+
+        // Paid decks are read/edited through the dedicated browse page
+        // backed by PaidDeckContentClient — every option below that
+        // would mutate the local Deck instance (Add, Edit, Generate
+        // With AI, Export) is hidden because there is no local
+        // plaintext deck to mutate. "Clear Mock Test Attempts" now
+        // lives on the deck editor + the Browse > Mock Tests page so
+        // it stays close to where the attempts are visible.
+        this.innerHTML = isPaidDeck
+            ? `
+                <button class="insights-button">Insights</button>
+                <button class="expand-button">Expand</button>
+                <button class="check-for-paid-deck-updates-button">Check for Updates</button>
+            `
+            : `
+                <button class="insights-button">Insights</button>
+                <button class="add-button">Add</button>
+                <button class="generate-with-ai-button">Generate With AI</button>
+                <button class="expand-button">Expand</button>
+                <button class="edit-button">Edit</button>
+                <button class="browse-button">Browse</button>
+                <button class="export-button">Export</button>
+            `;
 
         super.connectedCallback();
         this.#handleEvents();
+    }
+
+    async #handleCheckForPaidDeckUpdates()
+    {
+        const deckId = this.#deck.getId();
+        let updatesResponse;
+        try
+        {
+            updatesResponse = await fetch("/PaidDecks/CheckForContentUpdates");
+        }
+        catch (checkError)
+        {
+            await DialogBox.alert("Check failed", `Network error: ${checkError.message}`);
+            return;
+        }
+
+        if (!updatesResponse.ok)
+        {
+            await DialogBox.alert("Check failed", `HTTP ${updatesResponse.status}`);
+            return;
+        }
+
+        const responseJson = await updatesResponse.json();
+        const updatesList = Array.isArray(responseJson.updates) ? responseJson.updates : [];
+        const updateForThisDeck = updatesList.find((entry) => entry.deckId === deckId);
+
+        if (!updateForThisDeck)
+        {
+            await DialogBox.alert("Up to date", "You already have the latest version of this deck.");
+            return;
+        }
+
+        await DialogBox.alert
+        (
+            "Update available",
+            `Version ${updateForThisDeck.currentVersion} is available (you have v${updateForThisDeck.downloadedVersion}). Open the Paid Deck Library and view this deck to choose how to update.`
+        );
     }
 }
 

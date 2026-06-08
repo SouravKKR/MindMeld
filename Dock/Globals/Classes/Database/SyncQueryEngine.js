@@ -352,14 +352,24 @@ class SyncQueryEngine
                                 {
                                     $cond:
                                     {
-                                        if:   { $lt: [{ $toDate: { $ifNull: ["$data.lifecycle.lastModified", null] } }, incomingDate] },
-                                        // $literal protects every nested string in `data` from
-                                        // being parsed as a field-path reference. Without it,
-                                        // any user-content string starting with `$` (currency
-                                        // values, LaTeX, regex snippets, etc.) is interpreted
-                                        // as a path; if that path ends with `.` the whole
-                                        // bulkWrite fails with "FieldPath must not end with a
-                                        // '.'." See the LLM-emitted option "$650,000... ." case.
+                                        // $lte (not $lt) so two devices writing in the same
+                                        // millisecond don't silently drop one writer's
+                                        // change. Last-arrival wins on ties, which matches
+                                        // the rest of the sync model's "newer write wins"
+                                        // semantics; a strict $lt would skip the upsert on
+                                        // ties and leave the loser's pending push to fail
+                                        // every retry until something else nudged the
+                                        // server-side lifecycle past the local one.
+                                        //
+                                        // $literal protects every nested string in `data`
+                                        // from being parsed as a field-path reference.
+                                        // Without it, any user-content string starting with
+                                        // `$` (currency values, LaTeX, regex snippets, etc.)
+                                        // is interpreted as a path; if that path ends with
+                                        // `.` the whole bulkWrite fails with "FieldPath must
+                                        // not end with a '.'." See the LLM-emitted option
+                                        // "$650,000... ." case.
+                                        if:   { $lte: [{ $toDate: { $ifNull: ["$data.lifecycle.lastModified", null] } }, incomingDate] },
                                         then: { $literal: data },
                                         else: "$data"
                                     }
@@ -368,7 +378,7 @@ class SyncQueryEngine
                                 {
                                     $cond:
                                     {
-                                        if:   { $lt: [{ $toDate: { $ifNull: ["$data.lifecycle.lastModified", null] } }, incomingDate] },
+                                        if:   { $lte: [{ $toDate: { $ifNull: ["$data.lifecycle.lastModified", null] } }, incomingDate] },
                                         then: writeDate,
                                         else: "$serverUpdatedAt"
                                     }
@@ -563,16 +573,24 @@ class SyncQueryEngine
         // ── Cascade descendants for any DECK deletions ────────────────────
         // Frontier holds the deck ids whose descendants we still need to
         // discover. Each iteration finds direct children (sub-decks +
-        // cards / materials / mock tests) and feeds the sub-deck ids
-        // into the next iteration. Terminates when no new sub-decks are
-        // found (tree depth bound).
+        // cards / materials / mock tests / popup links) and feeds the
+        // sub-deck ids into the next iteration. Terminates when no new
+        // sub-decks are found (tree depth bound).
+        //
+        // Popup links MUST be cascaded — they live in their own collection
+        // (askAiPopupLinks) and reference the deck only by data.deckId.
+        // The legacy code below originally walked decks/cards/materials/
+        // mock-tests but skipped popups, so deleting a deck left every
+        // popup attached to it orphaned in the DB. They were never
+        // tombstoned (so other devices never learned about the deletion)
+        // and never garbage-collected (askAiPopupLinks has no TTL).
         let frontierDeckIds = fullDeletionSet
             .filter((deletion) => deletion.entityType === entityTypes.DECK)
             .map((deletion) => deletion.entityId);
 
         while (frontierDeckIds.length > 0)
         {
-            const [childDecks, childCards, childStudyMaterials, childMockTests] = await Promise.all(
+            const [childDecks, childCards, childStudyMaterials, childMockTests, childPopupLinks] = await Promise.all(
             [
                 db.collection(DatabaseConstants.DECKS_COLLECTION)
                     .find({ userId: userId, "data.parent": { $in: frontierDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
@@ -584,6 +602,9 @@ class SyncQueryEngine
                     .find({ userId: userId, "data.deckId": { $in: frontierDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
                     .toArray(),
                 db.collection(DatabaseConstants.MOCK_TESTS_COLLECTION)
+                    .find({ userId: userId, "data.deckId": { $in: frontierDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
+                    .toArray(),
+                db.collection(DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION)
                     .find({ userId: userId, "data.deckId": { $in: frontierDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
                     .toArray()
             ]);
@@ -633,6 +654,23 @@ class SyncQueryEngine
                 }
                 seenDeletionKeys.add(deletionKey);
                 fullDeletionSet.push({ entityId: document.data.id, entityType: entityTypes.MOCK_TEST });
+            }
+
+            // Popup-link tombstones: same pattern as cards/materials/mock-
+            // tests. They get added to the deletion set (which drives both
+            // the deletion-collection upsert below AND the per-collection
+            // deleteMany sweep) so the next pull on every other device
+            // applies the deletion locally and the askAiPopupLinks
+            // collection on the server no longer hosts the orphan doc.
+            for (const document of childPopupLinks)
+            {
+                const deletionKey = buildDeletionKey(document.data.id, entityTypes.ASK_AI_POPUP_LINK);
+                if (seenDeletionKeys.has(deletionKey))
+                {
+                    continue;
+                }
+                seenDeletionKeys.add(deletionKey);
+                fullDeletionSet.push({ entityId: document.data.id, entityType: entityTypes.ASK_AI_POPUP_LINK });
             }
 
             frontierDeckIds = nextFrontier;

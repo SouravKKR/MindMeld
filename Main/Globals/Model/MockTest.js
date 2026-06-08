@@ -4,6 +4,7 @@ import Deck from "./Deck.js";
 import Lifecycle from "./Lifecycle.js";
 import SyncEvents from "../Events/SyncEvents.js";
 import { entityTypes } from "../Enumerations/EntityTypes.js";
+import { questionTypes } from "../Enumerations/QuestionTypes.js";
 import MockTestAttempt from "./MockTestEntities/MockTestAttempt.js";
 import MockTestItemFactory from "./MockTestEntities/MockTestItemFactory.js";
 
@@ -152,13 +153,37 @@ class MockTest
             }
         }
 
-        const typeKey = question?.additionalData?.typeKey;
+        const typeKey = MockTest.#resolveTypeKeyFromQuestion(question);
         if (typeKey && scheme.perTypeMarkingOverrides && scheme.perTypeMarkingOverrides[typeKey])
         {
             return MockTest.#overlayMarkingRule(baseRule, scheme.perTypeMarkingOverrides[typeKey]);
         }
 
         return baseRule;
+    }
+
+    static #resolveTypeKeyFromQuestion(question)
+    {
+        const additionalData = question?.additionalData;
+        if (!additionalData)
+        {
+            return null;
+        }
+        if (typeof additionalData.typeKey === "string" && additionalData.typeKey.length > 0)
+        {
+            return additionalData.typeKey;
+        }
+        if (Number.isFinite(additionalData.type))
+        {
+            for (const candidateKey of Object.keys(questionTypes))
+            {
+                if (questionTypes[candidateKey] === additionalData.type)
+                {
+                    return candidateKey;
+                }
+            }
+        }
+        return null;
     }
 
     static #overlayMarkingRule(baseRule, overlayRule)
@@ -171,10 +196,51 @@ class MockTest
         };
     }
 
-    addAttempt(attempt) 
+    addAttempt(attempt)
     {
         this.#history.push(attempt);
         this.#lifecycle?.touch();
+    }
+
+    /**
+     * Removes a single attempt from history. Returns true when an entry
+     * was actually removed (caller still has to call save() to persist).
+     */
+    removeAttempt(attempt)
+    {
+        if (!attempt)
+        {
+            return false;
+        }
+        const targetId = typeof attempt.getId === "function" ? attempt.getId() : null;
+        if (!targetId)
+        {
+            return false;
+        }
+        const previousLength = this.#history.length;
+        this.#history = this.#history.filter((entry) => entry.getId() !== targetId);
+        if (this.#history.length === previousLength)
+        {
+            return false;
+        }
+        this.#lifecycle?.touch();
+        return true;
+    }
+
+    /**
+     * Drops every attempt in history. Returns the number of attempts
+     * removed (caller still has to call save() to persist).
+     */
+    clearAttempts()
+    {
+        const removedCount = this.#history.length;
+        if (removedCount === 0)
+        {
+            return 0;
+        }
+        this.#history = [];
+        this.#lifecycle?.touch();
+        return removedCount;
     }
 
     async view(timeSpentInSeconds, bSave = true) 

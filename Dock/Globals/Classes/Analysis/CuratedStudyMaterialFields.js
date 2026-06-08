@@ -17,6 +17,7 @@ class CuratedStudyMaterialFields
     static READ_STATE = "readState";
     static READ_AT = "readAt";
     static SESSION_OUTCOME = "sessionOutcome";
+    static SOURCE_CARD_IDS = "sourceCardIds";
 
     static getAllKeys()
     {
@@ -30,6 +31,7 @@ class CuratedStudyMaterialFields
             CuratedStudyMaterialFields.READ_STATE,
             CuratedStudyMaterialFields.READ_AT,
             CuratedStudyMaterialFields.SESSION_OUTCOME,
+            CuratedStudyMaterialFields.SOURCE_CARD_IDS,
         ];
     }
 }

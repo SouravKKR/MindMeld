@@ -16,11 +16,14 @@ import Lifecycle from "./Lifecycle.js";
 import StudyMaterial from "./StudyMaterial.js";
 import MockTest from "./MockTest.js";
 import SyncEvents from "../Events/SyncEvents.js";
+import SyncTransport from "../Classes/Syncing/SyncTransport.js";
+import SyncOrchestrator from "../Classes/Syncing/SyncOrchestrator.js";
 import { entityTypes } from "../Enumerations/EntityTypes.js";
 import UserIdentityEvents from "../Events/UserIdentityEvents.js";
 import UserIdentityManager from "../Classes/UserIdentityManager.js";
 import AutoAnalysisDeckFields from "../Classes/Analysis/AutoAnalysisDeckFields.js";
 import CuratedFlashcardFields from "../Classes/Analysis/CuratedFlashcardFields.js";
+import PaidDeckRegistry from "../Classes/PaidDeckRegistry.js";
 import CuratedStudyMaterialFields from "../Classes/Analysis/CuratedStudyMaterialFields.js";
 import CuratedStudyMaterialMigration from "../Classes/Analysis/CuratedStudyMaterialMigration.js";
 import BrowserLlmDownloadConstants from "../Constants/BrowserLlmDownloadConstants.js";
@@ -722,6 +725,44 @@ class Deck
             throw new Error("Cannot merge an ancestor into one of its descendants (would create a cycle).");
         }
 
+        // Hold the sync mutex for the duration of the merge. Without
+        // this, a debounced or periodic sync cycle can fire between any
+        // of the awaits below (sub-deck saves, the target save, the
+        // source delete) and push a snapshot where the target has the
+        // moved children but the source is still alive — and the
+        // eventual delete fires its tombstones in a separate cycle. End
+        // state converges (idempotent deletes, last-write-wins upserts)
+        // but the intermediate window is visible to every other device
+        // on the account, which is jarring. Holding the mutex makes the
+        // merge atomic from sync's perspective: the next cycle to run
+        // observes only the final post-merge state.
+        const releaseSyncMutex = await SyncOrchestrator.acquireSyncMutex();
+
+        try
+        {
+            await this.#mergeFromUnsynced(sourceDeck, resolutions);
+        }
+        finally
+        {
+            releaseSyncMutex();
+        }
+
+        // Released before scheduling so the about-to-fire sync cycle
+        // can take the mutex immediately. The ENTITY_CHANGED /
+        // ENTITY_DELETED events dispatched inside #mergeFromUnsynced
+        // landed in pendingChanges via the usual handler path (the gate
+        // doesn't apply outside an apply phase), so they'll all be
+        // picked up by the next debounced cycle.
+        SyncOrchestrator.scheduleDebouncedSync();
+    }
+
+    /**
+     * Inner body of mergeFrom, factored out so the public wrapper can
+     * hold the sync mutex around a single try/finally without nesting
+     * the existing logic three levels deep.
+     */
+    async #mergeFromUnsynced(sourceDeck, resolutions)
+    {
         // ── Move cards ───────────────────────────────────────────────
         const sourceCards = Array.from(sourceDeck.#cards.values());
         for (const movingCard of sourceCards)
@@ -943,29 +984,44 @@ class Deck
      * `Decks/${this.getId()}.mmd` with the data format of
      * `dataFormats.BUFFER`.
      */
-    async save(bRecursive = false)
+    async save(bRecursive = false, bSuppressDispatch = false)
     {
         const deckJson = this.toJson();
         const deckBson = serialize(deckJson);
 
         await Persistence.write(`Decks/${this.getId()}.mmd`, deckBson, dataFormats.BUFFER);
 
-        window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_CHANGED, 
-        { 
-            detail: 
-            { 
-                entityId: this.getId(), 
-                entityType: entityTypes.DECK, 
-                data: this.toSyncJson() 
-            } 
-        }));
+        // bSuppressDispatch exists so SyncApplier.flushDirtyDecks can
+        // persist server-applied state to disk without firing an
+        // ENTITY_CHANGED that SyncOrchestrator would queue as a
+        // pending push — which would echo the server's own write back
+        // to it on the next cycle. Every other caller (user edits,
+        // import direct-queue, merge mutations) leaves it at the
+        // default so the change reaches pendingChanges. With this
+        // parameter in place, SyncOrchestrator's entity-event handlers
+        // no longer need an apply-phase gate, which means user
+        // mutations that happen to coincide with an in-flight apply
+        // phase (deletes, edits, study-progress flushes from a card
+        // attempt) are no longer silently dropped.
+        if (!bSuppressDispatch)
+        {
+            window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_CHANGED,
+            {
+                detail:
+                {
+                    entityId: this.getId(),
+                    entityType: entityTypes.DECK,
+                    data: this.toSyncJson()
+                }
+            }));
+        }
 
         if(bRecursive)
         {
             for(let i = 0; i < this.#subDecks.length; i++)
             {
                 const subDeck = this.#subDecks[i];
-                await subDeck.save(bRecursive);
+                await subDeck.save(bRecursive, bSuppressDispatch);
             }
         }
     }
@@ -1116,8 +1172,55 @@ class Deck
         };
     }
     
+    #isAnyAncestorOrSelfPaidLicensed()
+    {
+        let walker = this;
+        while (walker !== null && walker !== undefined)
+        {
+            if (PaidDeckRegistry.isLicensed(walker.getId()))
+            {
+                return true;
+            }
+            walker = walker.getParent();
+        }
+        return false;
+    }
+
+    #hasAnyPaidDeckedDescendant()
+    {
+        const subDecks = this.getSubDecks();
+        for (let subDeckIndex = 0; subDeckIndex < subDecks.length; subDeckIndex++)
+        {
+            const subDeck = subDecks[subDeckIndex];
+            if (PaidDeckRegistry.isLicensed(subDeck.getId()))
+            {
+                return true;
+            }
+            if (subDeck.#hasAnyPaidDeckedDescendant())
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     async export(options = { bRecursive: true, bRetainProgress: true })
     {
+        // Paid-deck content carries an upstream licence; exporting it
+        // would surface plaintext encrypted-on-the-server material as a
+        // freely-redistributable .emmd file. Block at the root and at
+        // every descendant — covers the case where the user opens the
+        // export from a deeper subdeck whose ancestor is paid.
+        if (this.#isAnyAncestorOrSelfPaidLicensed() || this.#hasAnyPaidDeckedDescendant())
+        {
+            await DialogBox.alert
+            (
+                "Export blocked",
+                "Paid decks can't be exported. Edits to a paid deck are stored on the server only."
+            );
+            return;
+        }
+
         const progressDialog = ProgressDialog.show("Exporting Deck");
 
         try
@@ -1180,6 +1283,16 @@ class Deck
 
     async import()
     {
+        if (this.#isAnyAncestorOrSelfPaidLicensed())
+        {
+            await DialogBox.alert
+            (
+                "Import blocked",
+                "Paid decks can't accept imported content — every edit must go through the protected server flow."
+            );
+            return;
+        }
+
         const file = await NativeDialog.fileSelector(false, [".emmd"]);
 
         const acknowledged = await DialogBox.confirm
@@ -1195,6 +1308,20 @@ class Deck
 
         const progressDialog = ProgressDialog.show("Importing Deck");
         let bImportSucceeded = false;
+
+        // Acquire the sync mutex for the entire tree-mutation portion
+        // of the import. Without this, a concurrent forcePullFromServer
+        // (which also takes this mutex) could land its
+        // applyBulkSnapshot call between any of the awaits below — and
+        // because applyBulkSnapshot runs Deck.clearAllInMemory() the
+        // tree we're importing into vanishes mid-flight. The imported
+        // root would attach to an orphaned `this` reference, and the
+        // direct-queue loop at the end would walk a now-stale subtree.
+        // Periodic sync cycles also acquire this mutex inside sync(),
+        // so the price of this guard is that they sit queued while the
+        // import runs — acceptable because the next debounced cycle
+        // (scheduled below) pushes everything the moment we release.
+        const releaseSyncMutex = await SyncOrchestrator.acquireSyncMutex();
 
         try
         {
@@ -1235,22 +1362,35 @@ class Deck
                     }
                 }
 
-                // Re-stamp every child entity's deckId to the deck's NEW id.
-                // Without this the imported study materials / cards / mock
-                // tests carry the exporter's original deckId, which won't
-                // resolve via Deck.getById on the importer's side — leading
-                // to StudyMaterial.getDeck() returning undefined and
-                // save()/view() crashing the study session.
+                // Re-stamp every child entity's id AND deckId.
+                //
+                // deckId remap keeps the child resolvable via Deck.getById on
+                // the importer's side — without it StudyMaterial.getDeck()
+                // returns undefined and save()/view() crashes the study
+                // session.
+                //
+                // id regeneration makes "two imports of the same export file"
+                // produce two genuinely independent decks at every level. The
+                // deck doc already gets a fresh UUID above; before this fix
+                // the children kept the exporter's UUIDs, which silently
+                // collided with any tombstones a previous delete had left in
+                // DELETIONS_COLLECTION — a later sync on a third device then
+                // pulled both the re-upserted entity AND the stale tombstone
+                // and (apply order: changes first, deletions second) wiped
+                // the entity right after recreating it.
                 for(let cardIndex = 0; cardIndex < (deckJson.cards || []).length; cardIndex++)
                 {
+                    deckJson.cards[cardIndex].id = Card.generateId();
                     deckJson.cards[cardIndex].deckId = newId;
                 }
                 for(let materialIndex = 0; materialIndex < (deckJson.studyMaterials || []).length; materialIndex++)
                 {
+                    deckJson.studyMaterials[materialIndex].id = StudyMaterial.generateId();
                     deckJson.studyMaterials[materialIndex].deckId = newId;
                 }
                 for(let mockTestIndex = 0; mockTestIndex < (deckJson.mockTests || []).length; mockTestIndex++)
                 {
+                    deckJson.mockTests[mockTestIndex].id = MockTest.generateId();
                     deckJson.mockTests[mockTestIndex].deckId = newId;
                 }
             }
@@ -1286,6 +1426,100 @@ class Deck
 
             await this.save(true);
 
+            await progressDialog.setProgressAndYield(0.9, "Queuing for sync");
+
+            // Walk the imported tree and queue every deck, card, study
+            // material, and mock test into SyncTransport.pendingChanges.
+            //
+            // We push records DIRECTLY into pendingChanges instead of
+            // dispatching SyncEvents.ENTITY_CHANGED, because the event
+            // handler at SyncOrchestrator.#handleEntityChanged is gated on
+            // #bApplyingServerChanges — and that gate can be true here.
+            // The import flow includes several `await` points above
+            // (progress yields, the recursive `this.save(true)` which
+            // itself awaits Persistence writes per deck). Any sync cycle
+            // that entered its apply phase during one of those yields
+            // sets the gate to true; when control returns to this
+            // synchronous loop, every dispatchEvent would be silently
+            // dropped. Direct setPendingChange bypasses the gate — the
+            // same pattern SyncApplier.gatherAllLocalEntities and
+            // SyncApplier's orphan-tombstoner already use for their
+            // bulk programmatic queues (see SyncApplier.js comments).
+            //
+            // Decks are queued explicitly here for the same reason —
+            // the recursive Deck.save inside `this.save(true)` already
+            // fired ENTITY_CHANGED for each deck through window dispatch,
+            // but those events are also subject to the gate; queuing
+            // them again here makes the import's "everything goes up"
+            // promise robust regardless of any concurrent apply phase.
+            // The reference-aware removePushedChanges at end-of-sync
+            // de-dupes naturally.
+            const deckTraversalStack = [importedRoot];
+            while(deckTraversalStack.length > 0)
+            {
+                const currentDeck = deckTraversalStack.pop();
+
+                SyncTransport.setPendingChange(currentDeck.getId(),
+                {
+                    entityId:   currentDeck.getId(),
+                    entityType: entityTypes.DECK,
+                    data:       currentDeck.toSyncJson(),
+                    deleted:    false
+                });
+
+                const directCards = currentDeck.getCards(false, true);
+                for(let cardIndex = 0; cardIndex < directCards.length; cardIndex++)
+                {
+                    const importedCard = directCards[cardIndex];
+                    SyncTransport.setPendingChange(importedCard.getId(),
+                    {
+                        entityId:   importedCard.getId(),
+                        entityType: entityTypes.CARD,
+                        data:       importedCard.toJson(),
+                        deleted:    false
+                    });
+                }
+
+                const directMaterials = currentDeck.getStudyMaterials(false, true);
+                for(let materialIndex = 0; materialIndex < directMaterials.length; materialIndex++)
+                {
+                    const importedMaterial = directMaterials[materialIndex];
+                    SyncTransport.setPendingChange(importedMaterial.getId(),
+                    {
+                        entityId:   importedMaterial.getId(),
+                        entityType: entityTypes.STUDY_MATERIAL,
+                        data:       importedMaterial.toJson(),
+                        deleted:    false
+                    });
+                }
+
+                const directMockTests = currentDeck.getMockTests(false);
+                for(let mockTestIndex = 0; mockTestIndex < directMockTests.length; mockTestIndex++)
+                {
+                    const importedMockTest = directMockTests[mockTestIndex];
+                    SyncTransport.setPendingChange(importedMockTest.getId(),
+                    {
+                        entityId:   importedMockTest.getId(),
+                        entityType: entityTypes.MOCK_TEST,
+                        data:       importedMockTest.toJson(),
+                        deleted:    false
+                    });
+                }
+
+                const childDecks = currentDeck.getSubDecks();
+                for(let childIndex = 0; childIndex < childDecks.length; childIndex++)
+                {
+                    deckTraversalStack.push(childDecks[childIndex]);
+                }
+            }
+
+            // Direct setPendingChange skips the
+            // SyncOrchestrator.#handleEntityChanged path that would
+            // normally schedule a debounced sync. Schedule one
+            // explicitly so the just-queued records don't sit until the
+            // next periodic tick (up to 5 minutes).
+            SyncOrchestrator.scheduleDebouncedSync();
+
             await progressDialog.setProgressAndYield(1, "Done");
 
             window.dispatchEvent(new CustomEvent(DeckEvents.EXPAND, {detail: {deck: this}}));
@@ -1299,6 +1533,13 @@ class Deck
         }
         finally
         {
+            // Release the sync mutex acquired above so the debounced
+            // sync we just scheduled (or any periodic / force-pull
+            // request that was queued behind us) can run. Release
+            // happens BEFORE the success/error dialog so the dialog
+            // doesn't hold up sync activity while waiting for the
+            // user to dismiss it.
+            releaseSyncMutex();
             progressDialog.close();
         }
 
@@ -1389,39 +1630,16 @@ class Deck
     }
 
     /**
-     * Configures a HTML select element with the given deck filter and root deck.
-     * @param {HTMLSelectElement} selectElement
-     * @param {(deck: Deck) => boolean} filter
-     * @param {Deck} root
-     * @param {string|null} defaultSelection
-     */
-    static configureSelector(selectElement, filter = (deck) => { return true; }, root = Deck.#root, defaultSelection = null)
-    {
-        selectElement.innerHTML = "";
-
-        const allDecks = Deck.getAll(filter, root);
-
-        for(let i = 0; i < allDecks.length; i++)
-        {
-            const deck = allDecks[i];
-            const option = document.createElement("option");
-            option.value = deck.getId();
-            option.text = deck.getNameWithAncestors();
-            selectElement.add(option);
-        }
-
-        if(defaultSelection != null)
-        {
-            selectElement.value = defaultSelection;
-        }
-    }
-
-    /**
-     * Drop-in replacement for `configureSelector` that turns a <button>
-     * into a searchable dropdown trigger backed by SearchableDropdown.
-     * Behaves like a native <select> from the caller's point of view —
-     * the picked deck id lands on `triggerElement.value` and a "change"
-     * event fires so existing listeners keep working unchanged.
+     * Configures the given element as a searchable deck dropdown. Lists
+     * every deck under `root` that passes `filter`, each labelled with its
+     * full ancestor path, behind a SearchableDropdown trigger. From the
+     * caller's point of view it behaves like a native <select>: the picked
+     * deck id lands on `triggerElement.value` and a "change" event fires so
+     * existing listeners keep working unchanged.
+     *
+     * Pass any element that can host the trigger markup (typically a
+     * <button> or <div>). The old native-<select> population was retired —
+     * every deck selector in the app is searchable now.
      *
      * @param {HTMLElement} triggerElement
      * @param {(deck: Deck) => boolean} filter
@@ -1429,7 +1647,7 @@ class Deck
      * @param {string|null} defaultSelection
      * @param {string} [placeholderLabel]
      */
-    static configureSearchableSelector(triggerElement, filter = (deck) => { return true; }, root = Deck.#root, defaultSelection = null, placeholderLabel = "Select a deck...")
+    static configureSelector(triggerElement, filter = (deck) => { return true; }, root = Deck.#root, defaultSelection = null, placeholderLabel = "Select a deck...")
     {
         const allDecks = Deck.getAll(filter, root);
         const items = allDecks.map(deck =>
@@ -1493,6 +1711,22 @@ class Deck
     }
 
     /**
+     * @deprecated Alias for {@link configureSelector}, which is searchable
+     * by default now. Kept so existing call sites keep working — prefer
+     * `configureSelector` in new code.
+     *
+     * @param {HTMLElement} triggerElement
+     * @param {(deck: Deck) => boolean} filter
+     * @param {Deck} root
+     * @param {string|null} defaultSelection
+     * @param {string} [placeholderLabel]
+     */
+    static configureSearchableSelector(triggerElement, filter = (deck) => { return true; }, root = Deck.#root, defaultSelection = null, placeholderLabel = "Select a deck...")
+    {
+        return Deck.configureSelector(triggerElement, filter, root, defaultSelection, placeholderLabel);
+    }
+
+    /**
      * Deletes the deck and all of its sub-decks recursively.
      * @param {boolean} bTopLevel - True when called directly (not from a parent delete cascade).
      *   Only the top-level call saves the parent, which is the only ancestor that
@@ -1500,91 +1734,110 @@ class Deck
      *   save their parent, because that parent is itself being deleted; saving it would
      *   fire ENTITY_CHANGED and overwrite its own ENTITY_DELETED in pendingChanges,
      *   turning a deletion into an upsert on the server.
+     * @param {boolean} bSuppressDispatch - True only when called from
+     *   SyncApplier.applyServerDeletions: we are deleting locally
+     *   *because* the server already tombstoned the entity. Re-firing
+     *   ENTITY_DELETED would queue our own redundant tombstone, which
+     *   the next push would echo back to the server — wasteful and on
+     *   a rare schedule could pre-empt a legitimate later resurrection
+     *   if the user undeletes via another channel. Recursive cascade
+     *   calls forward the same flag so an entire server-driven
+     *   sub-tree teardown stays event-free; the parent save at the
+     *   end also forwards it so the parent's own state-snapshot doesn't
+     *   get pushed back to the server as a fresh write either.
      */
-    async delete(bTopLevel = true)
+    async delete(bTopLevel = true, bSuppressDispatch = false)
     {
         const existsInFileSystem = await Persistence.exists(`Decks/${this.getId()}.mmd`);
-        
+
         if(existsInFileSystem)
         {
             await Persistence.delete(`Decks/${this.getId()}.mmd`);
         }
 
-        // ── Dispatch ENTITY_DELETED for every card ─────────────────────────────
-        const directCards = Array.from(this.#cards.values());
-
-        for(let i = 0; i < directCards.length; i++)
+        // Dispatch ENTITY_DELETED for every direct child and for this
+        // deck itself, unless the caller is the sync apply path (see
+        // bSuppressDispatch jsdoc). The events drive the
+        // SyncOrchestrator handler which enqueues tombstones into
+        // pendingChanges for the next push.
+        if (!bSuppressDispatch)
         {
-            window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_DELETED, 
-            { 
-                detail: 
-                { 
-                    entityId: directCards[i].getId(), 
-                    entityType: entityTypes.CARD 
-                } 
-            }));
-        }
+            const directCards = Array.from(this.#cards.values());
+            for(let i = 0; i < directCards.length; i++)
+            {
+                window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_DELETED,
+                {
+                    detail:
+                    {
+                        entityId: directCards[i].getId(),
+                        entityType: entityTypes.CARD
+                    }
+                }));
+            }
 
-        // ── Dispatch ENTITY_DELETED for every study material ───────────────────
-        const directStudyMaterials = Array.from(this.#studyMaterials.values());
+            const directStudyMaterials = Array.from(this.#studyMaterials.values());
+            for(let i = 0; i < directStudyMaterials.length; i++)
+            {
+                window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_DELETED,
+                {
+                    detail:
+                    {
+                        entityId: directStudyMaterials[i].getId(),
+                        entityType: entityTypes.STUDY_MATERIAL
+                    }
+                }));
+            }
 
-        for(let i = 0; i < directStudyMaterials.length; i++)
-        {
+            const directMockTests = Array.from(this.#mockTests.values());
+            for(let i = 0; i < directMockTests.length; i++)
+            {
+                window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_DELETED,
+                {
+                    detail:
+                    {
+                        entityId: directMockTests[i].getId(),
+                        entityType: entityTypes.MOCK_TEST
+                    }
+                }));
+            }
+
             window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_DELETED,
             {
                 detail:
                 {
-                    entityId: directStudyMaterials[i].getId(),
-                    entityType: entityTypes.STUDY_MATERIAL
+                    entityId: this.getId(),
+                    entityType: entityTypes.DECK
                 }
             }));
         }
 
-        // ── Dispatch ENTITY_DELETED for every mock test ───────────────────────
-        const directMockTests = Array.from(this.#mockTests.values());
-
-        for(let i = 0; i < directMockTests.length; i++)
-        {
-            window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_DELETED,
-            {
-                detail:
-                {
-                    entityId: directMockTests[i].getId(),
-                    entityType: entityTypes.MOCK_TEST
-                }
-            }));
-        }
-
-        // ── Dispatch ENTITY_DELETED for this deck ──────────────────────────────
-        window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_DELETED, 
-        { 
-            detail: 
-            { 
-                entityId: this.getId(), 
-                entityType: entityTypes.DECK 
-            } 
-        }));
-
-        // ── Cascade delete — pass bTopLevel=false so children do NOT save their
-        //    parent (which is this deck, also being deleted). Snapshot first:
-        //    each recursive delete() calls removeSubDeck on us, splicing
-        //    #subDecks mid-iteration — without the snapshot every other child
-        //    is skipped, leaving orphans on the server. ──────────────────────
+        // Cascade delete. Snapshot first because each recursive delete()
+        // calls removeSubDeck on us, splicing #subDecks mid-iteration —
+        // without the snapshot every other child is skipped, leaving
+        // orphans on the server. bTopLevel=false on the cascade so the
+        // children do NOT save their parent (which is this deck, also
+        // being deleted). bSuppressDispatch propagates so server-driven
+        // tree teardowns stay event-free all the way down.
         const childDecksSnapshot = Array.from(this.#subDecks);
         for(let childIndex = 0; childIndex < childDecksSnapshot.length; childIndex++)
         {
-            await childDecksSnapshot[childIndex].delete(false);
+            await childDecksSnapshot[childIndex].delete(false, bSuppressDispatch);
         }
 
         this.#parent?.removeSubDeck(this);
         Deck.#idMap.delete(this.getId());
 
-        // ── Only persist the parent when we are the top-level deletion.
-        //    Intermediate cascade calls skip this to avoid re-saving a deck that
-        //    is itself being deleted (which would corrupt pendingChanges). ───────
+        // Only persist the parent when we are the top-level deletion.
+        // Intermediate cascade calls skip this to avoid re-saving a deck
+        // that is itself being deleted (which would corrupt
+        // pendingChanges). bSuppressDispatch forwards: a sync-apply
+        // teardown saves the parent's new state to disk but does not
+        // push it back as a fresh ENTITY_CHANGED, because the server
+        // already knows about both the deletion and the parent's
+        // updated subDecks list.
         if(bTopLevel)
         {
-            await this.#parent?.save();
+            await this.#parent?.save(false, bSuppressDispatch);
         }
     }
 

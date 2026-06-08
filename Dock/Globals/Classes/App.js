@@ -111,6 +111,11 @@ class App
         return process.env.SMTP_SOURCE_EMAIL || "";
     }
 
+    static getRazorpayWebhookSecret()
+    {
+        return process.env.RAZORPAY_WEBHOOK_SECRET || "";
+    }
+
 }
 
 module.exports = App;

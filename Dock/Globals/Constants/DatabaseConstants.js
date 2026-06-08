@@ -20,6 +20,7 @@ class DatabaseConstants
     static PAID_DECK_PRICINGS_COLLECTION = 'paidDeckPricings';
     static PAID_DECK_ASSETS_COLLECTION = 'paidDeckAssets';
     static DECK_LICENSES_COLLECTION = 'deckLicenses';
+    static PAID_DECK_USER_CONTENT_COLLECTION = 'paidDeckUserContent';
     static DEVICES_COLLECTION = 'devices';
     static UPLOAD_QUOTAS_COLLECTION = 'uploadQuotas';
     static BUNDLE_DISCOUNTS_COLLECTION = 'bundleDiscounts';
@@ -28,6 +29,12 @@ class DatabaseConstants
     static ADMIN_EMAILS_COLLECTION = 'adminEmails';
     static OTP_REQUESTS_COLLECTION = 'otpRequests';
     static RELEASE_NOTES_COLLECTION = 'releaseNotes';
+    static ORGANIZATIONS_COLLECTION = 'organizations';
+    static ORGANIZATION_MEMBERS_COLLECTION = 'organizationMembers';
+    static ORGANIZATION_DECK_PERKS_COLLECTION = 'organizationDeckPerks';
+    static ORG_ADMIN_VERIFICATIONS_COLLECTION = 'orgAdminVerifications';
+    static ORGANIZATION_PAYMENTS_COLLECTION = 'organizationPayments';
+    static ALERTS_COLLECTION = 'alerts';
 }
 
 module.exports = DatabaseConstants;

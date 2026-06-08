@@ -11,6 +11,7 @@ import TutorialEngine from "../../Globals/Classes/TutorialEngine.js";
 import AutoAnalysisDeckFields from "../../Globals/Classes/Analysis/AutoAnalysisDeckFields.js";
 import StudyMaterial from "../../Globals/Model/StudyMaterial.js";
 import AiFeatureGate from "../../Globals/Classes/AiFeatureGate.js";
+import MockTestAttemptCleaner from "../../Globals/Classes/MockTestAttemptCleaner.js";
 
 class DeckEditorPage extends HTMLElement
 {
@@ -78,6 +79,186 @@ class DeckEditorPage extends HTMLElement
             : this.#deck.getParent().getId();
 
         Deck.configureSearchableSelector(deckParentInput, filter, Deck.getRoot(), currentParentId, "Select parent...");
+    }
+
+    /**
+     * Walks this deck and every descendant, then asks the server to
+     * generate readable short names from the AI beautifier (same workflow
+     * used by the Good Quality Deck Short Names option in the generation
+     * page). Each beautified name is applied to the matching Deck
+     * instance and persisted through the normal save/sync path so other
+     * devices pick the change up via the sync system.
+     *
+     * The chain sent for each deck is its full root-to-deck name path
+     * (excluding the unnamed root). Giving the LLM the ancestral context
+     * helps it pick a short name that reads sensibly in the deck tree
+     * (e.g. under "Math > Algebra", "Linear Algebra" can shorten to
+     * "Linear Algebra" rather than "Math Algebra Linear Algebra").
+     */
+    async #beautifyShortNames(triggerButton)
+    {
+        const subtreeDecks = [];
+        const walk = (deck) =>
+        {
+            subtreeDecks.push(deck);
+            for (const subDeck of deck.getSubDecks())
+            {
+                walk(subDeck);
+            }
+        };
+        walk(this.#deck);
+
+        const deckChains = [];
+        const deckIdByKey = new Map();
+
+        for (const subtreeDeck of subtreeDecks)
+        {
+            if (subtreeDeck.isRoot())
+            {
+                continue;
+            }
+
+            const chainParts = [];
+            let cursorDeck = subtreeDeck;
+            while (cursorDeck != null && !cursorDeck.isRoot())
+            {
+                const namePart = (cursorDeck.getName() || "").trim();
+                if (namePart.length === 0)
+                {
+                    chainParts.length = 0;
+                    break;
+                }
+                chainParts.unshift(namePart);
+                cursorDeck = cursorDeck.getParent();
+            }
+
+            if (chainParts.length === 0)
+            {
+                continue;
+            }
+
+            const deckKey = chainParts.join(" > ");
+            if (deckIdByKey.has(deckKey))
+            {
+                continue;
+            }
+
+            deckIdByKey.set(deckKey, subtreeDeck.getId());
+            deckChains.push(chainParts);
+        }
+
+        if (deckChains.length === 0)
+        {
+            await DialogBox.alert("Nothing to beautify", "This deck and its subtree have no nameable decks to beautify.");
+            return;
+        }
+
+        const confirmed = await DialogBox.confirm(
+            "Beautify Short Names",
+            `This will rewrite the short name of ${deckChains.length} deck(s) using AI and save them. Continue?`
+        );
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        const originalButtonLabel = triggerButton.textContent;
+        triggerButton.disabled = true;
+        triggerButton.textContent = "Beautifying...";
+
+        try
+        {
+            const response = await fetch("/Admin/Decks/BeautifyShortNames",
+            {
+                method:  "POST",
+                headers: { "Content-Type": "application/json" },
+                body:    JSON.stringify({ deckChains })
+            });
+
+            if (!response.ok)
+            {
+                let serverMessage = "";
+                try
+                {
+                    const errorBody = await response.json();
+                    serverMessage = (errorBody && (errorBody.message || errorBody.error)) || "";
+                }
+                catch
+                {
+                    serverMessage = await response.text().catch(() => "");
+                }
+
+                await DialogBox.alert(
+                    "Beautification failed",
+                    serverMessage || `The server returned ${response.status}.`
+                );
+                return;
+            }
+
+            const responseBody = await response.json().catch(() => ({}));
+            const shortNamesByKey = (responseBody && responseBody.shortNamesByKey) || {};
+
+            let appliedCount = 0;
+            const decksToSave = [];
+
+            for (const [beautifiedKey, beautifiedShortName] of Object.entries(shortNamesByKey))
+            {
+                if (typeof beautifiedShortName !== "string" || beautifiedShortName.length === 0)
+                {
+                    continue;
+                }
+
+                const targetDeckId = deckIdByKey.get(beautifiedKey);
+                if (!targetDeckId)
+                {
+                    continue;
+                }
+
+                const targetDeck = Deck.getById(targetDeckId);
+                if (!targetDeck)
+                {
+                    continue;
+                }
+
+                if (targetDeck.getShortName() === beautifiedShortName)
+                {
+                    continue;
+                }
+
+                targetDeck.setShortName(beautifiedShortName);
+                decksToSave.push(targetDeck);
+                appliedCount++;
+            }
+
+            for (const modifiedDeck of decksToSave)
+            {
+                await modifiedDeck.save(false);
+            }
+
+            // Refresh the short-name input so the user sees the new
+            // value for the deck they're currently editing without
+            // having to close and reopen the editor.
+            const shortNameInput = this.querySelector(".deck-short-name-input");
+            if (shortNameInput)
+            {
+                shortNameInput.value = this.#deck.getShortName();
+            }
+
+            window.dispatchEvent(new CustomEvent(DeckEvents.UPDATE, { detail: { deck: this.#deck } }));
+
+            await DialogBox.alert("Beautification complete", `${appliedCount} deck short name(s) updated.`);
+        }
+        catch (beautifyError)
+        {
+            console.error("[DeckEditorPage] Beautify short names failed:", beautifyError);
+            await DialogBox.alert("Beautification failed", beautifyError.message || String(beautifyError));
+        }
+        finally
+        {
+            triggerButton.disabled = false;
+            triggerButton.textContent = originalButtonLabel;
+        }
     }
 
     /**
@@ -177,6 +358,12 @@ class DeckEditorPage extends HTMLElement
             await Promise.all(cards.map(card => card.reset()));
         });
 
+        const clearMockTestAttemptsButton = this.querySelector(".deck-clear-mock-test-attempts-input");
+        clearMockTestAttemptsButton.addEventListener("click", async () =>
+        {
+            await MockTestAttemptCleaner.clearForDeck(this.#deck);
+        });
+
         autoPerformanceAnalysisInput.addEventListener("change", async () =>
         {
             // Only the toggle-ON path costs LLM credits — toggle-OFF is
@@ -224,6 +411,24 @@ class DeckEditorPage extends HTMLElement
                 AutoAnalysisDeckFields.AUTO_GENERATE_CURATED_STUDY_ENABLED,
                 autoGenerateCuratedStudyInput.checked
             );
+        });
+
+        const beautifyShortNamesContainer = this.querySelector(".deck-beautify-short-names-container");
+        const beautifyShortNamesButton = this.querySelector(".deck-beautify-short-names-input");
+
+        if (AiFeatureGate.isAdmin())
+        {
+            beautifyShortNamesContainer.style.display = "";
+        }
+
+        beautifyShortNamesButton.addEventListener("click", async () =>
+        {
+            if (!await AiFeatureGate.ensureAdminOrShowAlert())
+            {
+                return;
+            }
+
+            await this.#beautifyShortNames(beautifyShortNamesButton);
         });
 
         clearAnalysisDataButton.addEventListener("click", async () =>
@@ -402,12 +607,20 @@ class DeckEditorPage extends HTMLElement
                 <div class="deck-field deck-clear-analysis-data-container">
                     <button class="deck-field-input deck-clear-analysis-data-input">Clear Analysis Data</button>
                 </div>
+                <div class="deck-field deck-beautify-short-names-container" style="display: none;">
+                    <button class="deck-field-input deck-beautify-short-names-input">Beautify Short Names (AI)</button>
+                    <div class="deck-field-helper">Rewrites the short name of this deck and every sub-deck using AI based on the full deck hierarchy.</div>
+                </div>
                 <div style="height: 25px"></div>
                 <div class="deck-field deck-delete-container">
                     <button class="deck-field-input deck-delete-input">Delete Deck</button>
                 </div>
                 <div class="deck-field deck-reset-progress-container">
                     <button class="deck-field-input deck-reset-progress-input">Reset Progress</button>
+                </div>
+                <div class="deck-field deck-clear-mock-test-attempts-container">
+                    <button class="deck-field-input deck-clear-mock-test-attempts-input">Clear Mock Test Attempts</button>
+                    <div class="deck-field-helper">Deletes every recorded attempt across this deck and its subdecks. Mock test definitions stay intact.</div>
                 </div>
                 <div style="height: 25px"></div>
                 <div class="deck-field deck-save-cancel-container">

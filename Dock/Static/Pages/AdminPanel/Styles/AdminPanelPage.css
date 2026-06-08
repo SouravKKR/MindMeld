@@ -490,6 +490,525 @@ admin-panel-page
     cursor: pointer;
 }
 
+/* When dialog-box hosts the paid-deck upload/edit form, widen it on
+   desktop and let the form itself scroll if its content runs taller
+   than the viewport. The dialog-box default of max-width: 60% is fine
+   for confirmation dialogs but cramped for this packed form. */
+dialog-box:has(.paid-deck-upload-form),
+dialog-box:has(.paid-deck-edit-form),
+dialog-box:has(.paid-deck-replace-form)
+{
+    max-width: min(96vw, 1100px);
+    width: min(96vw, 1100px);
+}
+
+.paid-deck-upload-form,
+.paid-deck-edit-form,
+.paid-deck-replace-form
+{
+    /* These forms live inside the widened dialog-box above; clear the
+       720px cap inherited from the shared rule so the two-column grid
+       fills the dialog instead of hugging its left edge. */
+    width: 100%;
+    max-width: none;
+    max-height: calc(90vh - 80px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 4px 18px 4px 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.paid-deck-upload-section
+{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px;
+    border-radius: 8px;
+    background-color: var(--tertiary-background-color);
+    border: 1px solid var(--outline-color-subtle);
+}
+
+.paid-deck-upload-section-title
+{
+    margin: 0;
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--primary-text-color);
+}
+
+.paid-deck-upload-section-suffix
+{
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--secondary-text-color);
+    margin-left: 6px;
+}
+
+.paid-deck-upload-section-hint
+{
+    margin: 0;
+    font-size: 12px;
+    color: var(--secondary-text-color);
+}
+
+.paid-deck-upload-section-body
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.paid-deck-upload-section-body.paid-deck-upload-grid
+{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.paid-deck-upload-advanced > summary
+{
+    cursor: pointer;
+    list-style: revert;
+}
+
+.paid-deck-upload-tree-heading
+{
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 4px;
+}
+
+.paid-deck-upload-tree-heading > span
+{
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--primary-text-color);
+}
+
+.paid-deck-upload-tree-heading > small
+{
+    font-size: 11px;
+    color: var(--secondary-text-color);
+    line-height: 1.4;
+}
+
+.paid-deck-individual-tree
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.paid-deck-individual-tree-empty
+{
+    padding: 10px 12px;
+    border-radius: 6px;
+    background-color: var(--secondary-background-color);
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    font-style: italic;
+}
+
+/* One card per deck node in the recursive tree. The header row (caret +
+   checkbox) and the mini-form / children container are stacked inside. */
+.paid-deck-individual-tree-node
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background-color: var(--secondary-background-color);
+    border: 1px solid var(--outline-color-subtle);
+}
+
+.paid-deck-individual-tree-row
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.paid-deck-individual-tree-caret
+{
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: transparent;
+    color: var(--secondary-text-color);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    transition: transform 0.15s ease;
+}
+
+.paid-deck-individual-tree-caret-expanded
+{
+    transform: rotate(90deg);
+}
+
+.paid-deck-individual-tree-caret-hidden
+{
+    visibility: hidden;
+}
+
+.paid-deck-individual-tree-children
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.paid-deck-individual-tree-toggle
+{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--primary-text-color);
+    flex: 1 1 auto;
+}
+
+.paid-deck-individual-tree-toggle input[type="checkbox"]
+{
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.paid-deck-individual-tree-name
+{
+    font-weight: 600;
+    flex: 0 0 auto;
+}
+
+.paid-deck-individual-tree-counts
+{
+    font-size: 11px;
+    color: var(--secondary-text-color);
+    flex: 1 1 auto;
+}
+
+.paid-deck-individual-tree-mini-form
+{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    padding: 10px 8px 4px 26px;
+    border-left: 2px solid var(--accent-color);
+    margin-left: 6px;
+}
+
+.paid-deck-source-deck-row
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.paid-deck-source-deck-button
+{
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: none;
+    outline: 1px dashed var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    cursor: pointer;
+    text-align: left;
+}
+
+.paid-deck-source-deck-button:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.paid-deck-source-deck-summary
+{
+    padding: 8px 12px;
+    border-radius: 6px;
+    background-color: var(--accent-background-color);
+    color: var(--accent-color);
+    font-size: 13px;
+}
+
+.paid-deck-upload-section-divider
+{
+    margin-top: 10px;
+    padding-top: 12px;
+    border-top: 1px solid var(--outline-color-subtle);
+}
+
+.paid-deck-upload-section-heading
+{
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--secondary-text-color);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.paid-deck-badge-picker
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.paid-deck-badge-chip
+{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease, outline-color 0.15s ease;
+}
+
+.paid-deck-badge-chip:hover
+{
+    outline-color: var(--outline-color-strong);
+    color: var(--primary-text-color);
+}
+
+.paid-deck-badge-chip-selected
+{
+    background-color: var(--accent-background-color);
+    color: var(--accent-color);
+    outline-color: var(--accent-color);
+}
+
+.paid-deck-badge-chip-icon
+{
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.paid-deck-content-summary-row
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    font-size: 13px;
+}
+
+.paid-deck-content-summary-cell
+{
+    color: var(--secondary-text-color);
+}
+
+.paid-deck-content-summary-cell strong
+{
+    color: var(--primary-text-color);
+    font-weight: 700;
+}
+
+.paid-deck-edit-replace-content
+{
+    padding: 10px 16px;
+    border-radius: 8px;
+    border: none;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.paid-deck-edit-replace-content:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+/* Regional price editor (upload dialog) ----------------------- */
+
+.paid-deck-regional-prices-rows
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.paid-deck-regional-price-row
+{
+    display: grid;
+    grid-template-columns: 1fr 140px 80px auto;
+    align-items: center;
+    gap: 8px;
+}
+
+.paid-deck-regional-region,
+.paid-deck-regional-price,
+.paid-deck-regional-currency
+{
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-family: inherit;
+    box-sizing: border-box;
+    width: 100%;
+}
+
+.paid-deck-regional-remove
+{
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 6px;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--danger-text-color);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+}
+
+.paid-deck-regional-add
+{
+    align-self: flex-start;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: none;
+    outline: 1px dashed var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.paid-deck-regional-add:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+/* Alerts tab -------------------------------------------------- */
+
+.admin-panel-alerts-toolbar
+{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.admin-panel-alerts-notify
+{
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: none;
+    background: var(--primary-background-gradient);
+    color: var(--primary-text-color);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.admin-panel-alerts-notify:disabled
+{
+    opacity: 0.6;
+    cursor: default;
+}
+
+.admin-panel-alerts-notify-state
+{
+    font-size: 12px;
+    color: var(--secondary-text-color);
+}
+
+.admin-panel-alerts-empty
+{
+    text-align: center;
+    color: var(--secondary-text-color);
+    font-style: italic;
+    padding: 18px;
+}
+
+.admin-panel-alert-message
+{
+    max-width: 360px;
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    white-space: normal;
+    word-break: break-word;
+}
+
+.admin-panel-alert-severity
+{
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.admin-panel-alert-severity-error
+{
+    background-color: var(--danger-background-color);
+    color: var(--danger-text-color);
+}
+
+.admin-panel-alert-severity-warning
+{
+    background-color: var(--accent-background-color);
+    color: var(--accent-color);
+}
+
+.admin-panel-alert-severity-info
+{
+    background-color: var(--tertiary-background-color);
+    color: var(--secondary-text-color);
+}
+
+.admin-panel-alert-actions
+{
+    display: flex;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.admin-panel-alert-actions button
+{
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    cursor: pointer;
+    font-size: 12px;
+}
+
 @media (max-width: 600px)
 {
     .admin-panel-tabs

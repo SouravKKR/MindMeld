@@ -266,6 +266,22 @@ mock-test-answer-key-page .mock-test-answer-key-row-value
 {
     flex: 1;
     white-space: pre-wrap;
+    padding-top: 2px;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-row-value > p:first-child
+{
+    margin-top: 0;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-row-value > p:last-child
+{
+    margin-bottom: 0;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-row-value > p
+{
+    margin: 6px 0;
 }
 
 mock-test-answer-key-page .mock-test-answer-key-row-missing-value
@@ -282,3 +298,153 @@ mock-test-answer-key-page .mock-test-answer-key-solving-steps
     padding: 6px 8px;
     border-radius: 4px;
 }
+
+mock-test-answer-key-page .mock-test-answer-key-page-toolbar-actions
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-attempt-select
+{
+    font: inherit;
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background-color: var(--secondary-background-color);
+    color: inherit;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-reevaluate-button
+{
+    font: inherit;
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background-color: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-reevaluate-button:hover
+{
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-delete-attempt-button
+{
+    font: inherit;
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: 1px solid rgba(220, 38, 38, 0.5);
+    background-color: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-delete-attempt-button:hover
+{
+    background-color: rgba(220, 38, 38, 0.15);
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-wait-button
+{
+    font: inherit;
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--color-accent, #2563eb);
+    background-color: rgba(37, 99, 235, 0.12);
+    color: inherit;
+    cursor: pointer;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-wait-button:hover
+{
+    background-color: rgba(37, 99, 235, 0.22);
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-toolbar-actions
+{
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-toolbar-score
+{
+    font-size: 14px;
+    margin-top: 2px;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-banner
+{
+    flex: 0 0 auto;
+    padding: 10px 20px;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-banner-info
+{
+    background-color: rgba(37, 99, 235, 0.12);
+    color: var(--text-color, inherit);
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-banner-warning
+{
+    background-color: rgba(220, 38, 38, 0.12);
+    color: var(--text-color, inherit);
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-banner-progress-line
+{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    margin-bottom: 6px;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-banner-progress-label
+{
+    font-weight: 600;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-banner-progress-percent
+{
+    font-variant-numeric: tabular-nums;
+    opacity: 0.85;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-banner-progress-track
+{
+    width: 100%;
+    height: 6px;
+    background-color: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-banner-progress-fill
+{
+    height: 100%;
+    background-color: var(--color-accent, #2563eb);
+    transition: width 0.3s ease;
+    border-radius: 3px;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-option-user-selected
+{
+    outline: 2px dashed rgba(37, 99, 235, 0.6);
+    outline-offset: -2px;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-row-remarks
+{
+    background-color: rgba(255, 184, 28, 0.08);
+    border-left: 3px solid rgba(255, 184, 28, 0.7);
+    padding-left: 8px;
+}
+

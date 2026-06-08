@@ -109,7 +109,9 @@ class PaidDeckSearchEngine
             (
                 userId,
                 [deckDocument.id],
-                effectiveRegion
+                effectiveRegion,
+                undefined,
+                true
             );
 
             enrichedDecks.push

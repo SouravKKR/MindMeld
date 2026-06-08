@@ -104,23 +104,17 @@ class SyncBlockingDialog
             </div>
         `);
 
-        // Elevate this dialog above every other interactive surface so the
-        // user cannot click through to the OptionsSidebar (z-index 1000),
-        // drag ghosts (10000), the rich-text editor (9999) or the tutorial
-        // overlay (2147483500) while a force sync is in flight — any of
-        // those would race with the bulk apply that's about to wipe the
-        // in-memory deck tree. Tag the backdrop too so it shares the lift.
-        this.#dialog.classList.add("sync-blocking-dialog-elevated");
-
+        // Tag the backdrop so it shows a busy cursor, and absorb every
+        // interactive event on it so taps that land "between" the dialog
+        // and the surrounding viewport can't trigger anything underneath
+        // while the bulk apply is in flight. Capture-phase so the stop
+        // happens before any underlying listener can fire. Stacking
+        // itself is handled by DialogBox's auto-incrementing z-index.
         const backdropElement = this.#dialog.previousElementSibling;
         if (backdropElement && backdropElement.classList.contains("dialog-backdrop"))
         {
-            backdropElement.classList.add("sync-blocking-backdrop-elevated");
+            backdropElement.classList.add("sync-blocking-backdrop-busy");
 
-            // Absorb every interactive event on the backdrop so taps that
-            // land "between" the dialog and the surrounding viewport
-            // can't trigger anything underneath. Capture-phase so the
-            // stop happens before any underlying listener can fire.
             for (const interactiveEventName of ["click", "pointerdown", "pointerup", "keydown", "keyup", "wheel", "touchstart", "touchend"])
             {
                 backdropElement.addEventListener(interactiveEventName, (interactiveEvent) =>

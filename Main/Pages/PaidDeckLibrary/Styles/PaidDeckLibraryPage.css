@@ -80,8 +80,28 @@ paid-deck-library-page
 
 .paid-deck-library-region-bar
 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     font-size: 13px;
     color: var(--primary-text-color);
+}
+
+.paid-deck-library-region-select
+{
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+}
+
+.paid-deck-library-region-resolved
+{
+    font-size: 12px;
+    color: var(--secondary-text-color);
 }
 
 .paid-deck-library-sort
@@ -305,6 +325,13 @@ paid-deck-library-page
     outline: 1px solid var(--outline-color-subtle);
     outline-offset: -1px;
     box-shadow: 0 1px 4px var(--shadow-color);
+    cursor: pointer;
+    transition: outline-color 0.15s ease;
+}
+
+.paid-deck-card:hover
+{
+    outline-color: var(--outline-color-strong);
 }
 
 .paid-deck-card-thumb
@@ -358,7 +385,7 @@ paid-deck-library-page
     font-weight: 600;
 }
 
-.paid-deck-card-buy
+.paid-deck-card-view
 {
     padding: 10px;
     border: none;
@@ -370,16 +397,9 @@ paid-deck-library-page
     transition: filter 0.15s ease-out;
 }
 
-.paid-deck-card-buy:hover:not(:disabled)
+.paid-deck-card-view:hover
 {
     filter: brightness(1.08);
-}
-
-.paid-deck-card-buy:disabled
-{
-    background: var(--tertiary-background-color);
-    opacity: 0.7;
-    cursor: not-allowed;
 }
 
 .paid-deck-library-pagination

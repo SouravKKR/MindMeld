@@ -1,9 +1,10 @@
 export const adminPanelTabs =
 {
   DECKS: 0,
-  PRICING: 1,
-  BUNDLES: 2,
-  STATS: 3,
-  ADMINS: 4,
-  RELEASE_NOTES: 5,
+  STATS: 1,
+  ADMINS: 2,
+  RELEASE_NOTES: 3,
+  ORGANIZATIONS: 4,
+  ORGANIZATION_MEMBERS: 5,
+  ALERTS: 6,
 }

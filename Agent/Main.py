@@ -140,6 +140,11 @@ async def main():
                 from Workflows.EnhanceImages.EnhanceImages import EnhanceImages
                 workflow = EnhanceImages(task_descriptor.get_payload())
 
+            case TaskTypes.EVALUATE_MOCK_TEST_ATTEMPT:
+                print("EVALUATE_MOCK_TEST_ATTEMPT")
+                from Workflows.EvaluateMockTestAttempt.EvaluateMockTestAttempt import EvaluateMockTestAttempt
+                workflow = EvaluateMockTestAttempt(task_descriptor.get_payload())
+
             case _:
                 print("Invalid workflow")
 

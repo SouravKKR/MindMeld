@@ -1,5 +1,6 @@
 const PaidDeckPricingEngine = require("../../Globals/Classes/Pricing/PaidDeckPricingEngine");
 const PaymentProviderFactory = require("../../Globals/Classes/Payments/PaymentProviderFactory");
+const { getUser } = require("../Helpers/GetUser");
 const { paymentProviders } = require("../../Globals/Enumerations/PaymentProviders");
 
 async function initiatePurchase(request, response)
@@ -26,7 +27,10 @@ async function initiatePurchase(request, response)
         return;
     }
 
-    const pricing = await PaidDeckPricingEngine.computeFinalPrice(session.getUserId(), deckIds, region);
+    // Load the user once so the pricing engine can resolve org-perks
+    // by email without redundant DB hits.
+    const user = await getUser(request);
+    const pricing = await PaidDeckPricingEngine.computeFinalPrice(session.getUserId(), deckIds, region, user);
 
     if (pricing.totalMinor === 0)
     {

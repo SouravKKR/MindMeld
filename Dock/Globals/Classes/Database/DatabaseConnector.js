@@ -187,7 +187,37 @@ class DatabaseConnector
         // ── Deletions ──────────────────────────────────────────────────────────
         await deletionsCollection.createIndex({ userId: 1, entityId: 1 }, { unique: true });
         await deletionsCollection.createIndex({ userId: 1, deletedAt: 1 });
-        await deletionsCollection.createIndex({ deletedAt: 1 }, { expireAfterSeconds: DatabaseConstants.DELETIONS_TTL_DAYS * 24 * 60 * 60 });
+
+        // TTL index on deletedAt. Mongo's `createIndex` is idempotent ONLY
+        // when the new options match the existing options exactly. When we
+        // bumped DELETIONS_TTL_DAYS from 90 to 365 the on-disk index was
+        // already created at the old TTL — calling createIndex again with
+        // the new value would either silently be a no-op or throw
+        // "Index already exists with different options," depending on
+        // driver version. So we do the upgrade explicitly: try collMod
+        // first to retune the existing index's expireAfterSeconds in
+        // place, then fall through to createIndex for the fresh-install
+        // case where the index doesn't exist yet.
+        const newDeletionsTtlSeconds = DatabaseConstants.DELETIONS_TTL_DAYS * 24 * 60 * 60;
+        try
+        {
+            await database.command(
+            {
+                collMod: DatabaseConstants.DELETIONS_COLLECTION,
+                index: { keyPattern: { deletedAt: 1 }, expireAfterSeconds: newDeletionsTtlSeconds }
+            });
+        }
+        catch (collModError)
+        {
+            // IndexNotFound (code 27) is the expected fresh-install case;
+            // any other failure is worth surfacing so a future TTL change
+            // doesn't silently leave production on the old value.
+            if (collModError?.code !== 27)
+            {
+                console.warn(`[DatabaseConnector] Could not collMod the deletions TTL index (will fall back to createIndex): ${collModError?.message || collModError}`);
+            }
+        }
+        await deletionsCollection.createIndex({ deletedAt: 1 }, { expireAfterSeconds: newDeletionsTtlSeconds });
 
         // ── Mock tests ─────────────────────────────────────────────────────────
         // One document per user per mock test
@@ -198,6 +228,18 @@ class DatabaseConnector
 
         // Fetch all mock tests belonging to a specific deck
         await mockTestsCollection.createIndex({ userId: 1, "data.deckId": 1 });
+
+        // ── Ask-AI popup links ─────────────────────────────────────────────────
+        // Standalone sync entity (used to live under deck.additionalData but
+        // moved to its own collection so heavy popups don't bloat the deck doc
+        // past Mongo's 16 MB cap). Index set mirrors decks/cards/materials so
+        // the sync pull, the upsert-by-id lookup, and the deletion cascade's
+        // by-deckId frontier query all hit indexes instead of full collection
+        // scans. Without these every sync cycle was O(N_popups) per pull.
+        const askAiPopupLinksCollection = database.collection(DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION);
+        await askAiPopupLinksCollection.createIndex({ userId: 1, "data.id": 1 }, { unique: true });
+        await askAiPopupLinksCollection.createIndex({ userId: 1, serverUpdatedAt: 1 });
+        await askAiPopupLinksCollection.createIndex({ userId: 1, "data.deckId": 1 });
 
         // ── Generation templates ───────────────────────────────────────────────
         // Curated exam-prep blueprints (JEE Mains, NEET UG, CBSE, etc.) the
@@ -375,6 +417,67 @@ class DatabaseConnector
         await releaseNotesCollection.createIndex({ version: 1 }, { unique: true });
         await releaseNotesCollection.createIndex({ versionSortKey: -1 }, { unique: true });
         await releaseNotesCollection.createIndex({ releaseDate: -1 });
+
+        // ── Organizations ──────────────────────────────────────────────────────
+        // B2B partnership entities. One row per org; the admin user is
+        // looked up by adminEmail (login-time reconciliation) so the email
+        // gets its own non-unique index. Multi-org admins are allowed, so
+        // adminEmail is intentionally NOT unique. Status filtering on
+        // listing pages is small enough not to warrant a dedicated index.
+        const organizationsCollection = database.collection(DatabaseConstants.ORGANIZATIONS_COLLECTION);
+        await organizationsCollection.createIndex({ id: 1 }, { unique: true });
+        await organizationsCollection.createIndex({ adminEmail: 1 });
+
+        // ── Organization members ───────────────────────────────────────────────
+        // Membership is keyed by email — the userId is back-filled on
+        // first login. Unique on (organizationId, email) blocks duplicates.
+        // The standalone `email` index powers the pricing-engine lookup
+        // "what orgs is this email a member of?" which fires on every
+        // paid-deck price calculation for org members.
+        const organizationMembersCollection = database.collection(DatabaseConstants.ORGANIZATION_MEMBERS_COLLECTION);
+        await organizationMembersCollection.createIndex({ id: 1 }, { unique: true });
+        await organizationMembersCollection.createIndex({ organizationId: 1, email: 1 }, { unique: true });
+        await organizationMembersCollection.createIndex({ email: 1 });
+
+        // ── Organization deck perks ────────────────────────────────────────────
+        // The deal terms — at most one perk row per (org, paidDeckId).
+        // Lookups: "all perks for this org" (admin panel render),
+        // "perk for this org+deck" (pricing engine).
+        const organizationDeckPerksCollection = database.collection(DatabaseConstants.ORGANIZATION_DECK_PERKS_COLLECTION);
+        await organizationDeckPerksCollection.createIndex({ id: 1 }, { unique: true });
+        await organizationDeckPerksCollection.createIndex({ organizationId: 1, deckId: 1 }, { unique: true });
+
+        // ── Org-admin verifications ────────────────────────────────────────────
+        // Short-lived (1h) record proving the super-admin completed the
+        // emailed-OTP step for a given email. Two phases: code-hash phase
+        // (rate-limited like login OTPs), then verification-token phase
+        // (consumed by Create / VerifyCreationPayment). Single row per
+        // email at a time; TTL purges stale rows on the absolute expiry.
+        const orgAdminVerificationsCollection = database.collection(DatabaseConstants.ORG_ADMIN_VERIFICATIONS_COLLECTION);
+        await orgAdminVerificationsCollection.createIndex({ email: 1 }, { unique: true });
+        await orgAdminVerificationsCollection.createIndex({ verificationToken: 1 });
+        await orgAdminVerificationsCollection.createIndex({ expirationDate: 1 }, { expireAfterSeconds: 0 });
+
+        // ── Organization payments ──────────────────────────────────────────────
+        // Audit log of Razorpay charges tied to an org (creation +
+        // expansions). providerOrderId is the idempotency key the webhook
+        // uses to recognise duplicate deliveries.
+        const organizationPaymentsCollection = database.collection(DatabaseConstants.ORGANIZATION_PAYMENTS_COLLECTION);
+        await organizationPaymentsCollection.createIndex({ id: 1 }, { unique: true });
+        await organizationPaymentsCollection.createIndex({ providerOrderId: 1 }, { unique: true });
+        await organizationPaymentsCollection.createIndex({ organizationId: 1, kind: 1, createdAt: -1 });
+
+        // ── Alerts ─────────────────────────────────────────────────────────────
+        // Operational alert log surfaced in the admin panel. Open
+        // (unacknowledged) rows are deduped by (source, title), so that pair
+        // is indexed to make the dedupe lookup cheap. createdAt/lastSeenAt
+        // power the newest-first listing and the admin notifier's
+        // "lastSeenAt > since" poll.
+        const alertsCollection = database.collection(DatabaseConstants.ALERTS_COLLECTION);
+        await alertsCollection.createIndex({ id: 1 }, { unique: true });
+        await alertsCollection.createIndex({ lastSeenAt: -1 });
+        await alertsCollection.createIndex({ acknowledged: 1, lastSeenAt: -1 });
+        await alertsCollection.createIndex({ source: 1, title: 1, acknowledged: 1 });
     }
 }
 

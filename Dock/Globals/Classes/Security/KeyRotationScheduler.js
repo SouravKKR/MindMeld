@@ -43,7 +43,16 @@ class KeyRotationScheduler
         }
         catch (rotationError)
         {
-            console.error("[KeyRotationScheduler] Periodic rotation failed:", rotationError);
+            console.error("[KeyRotationScheduler] Periodic master-key rotation failed:", rotationError);
+        }
+
+        try
+        {
+            await KeyManagementService.rotateAllOverduePaidDeckContentKeys();
+        }
+        catch (rotationError)
+        {
+            console.error("[KeyRotationScheduler] Periodic paid-deck content-key rotation failed:", rotationError);
         }
     }
 }

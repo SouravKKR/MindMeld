@@ -268,6 +268,48 @@ study-page study-zoom-controls .study-zoom-reset-button
     min-width: 48px;
 }
 
+/* ── Portrait + narrow: shrink the grade buttons so all four fit a single
+       row on common phone widths.
+
+   At the base rule each button enforces min-width: 96px so labels of
+   different lengths ("Very Hard" vs "Easy") render uniformly on wide
+   screens. On a 360-375 px phone four 96 px buttons plus their gaps add
+   up to ~402 px — the row overflows the viewport and the rightmost
+   button gets clipped. Dropping the floor to 0 lets `flex: 1 1 0`
+   distribute the available width equally; the labels stay readable
+   because the buttons remain the same width as each other and the
+   row no longer exceeds the screen.
+
+   A safety net below 340 px (vanishingly rare modern device) wraps the
+   row into a 2x2 grid so labels can't be clipped even there. ─────── */
+
+@media (orientation: portrait) and (max-width: 480px)
+{
+    .user-score-section
+    {
+        gap: 4px;
+    }
+
+    .user-score-section button
+    {
+        min-width: 0;
+        padding: 9px 4px;
+    }
+}
+
+@media (orientation: portrait) and (max-width: 340px)
+{
+    .user-score-section
+    {
+        flex-wrap: wrap;
+    }
+
+    .user-score-section button
+    {
+        flex: 1 1 calc(50% - 2px);
+    }
+}
+
 /* ── Landscape: drop the forced 100% basis so all controls share one row ───── */
 
 @media (orientation: landscape)

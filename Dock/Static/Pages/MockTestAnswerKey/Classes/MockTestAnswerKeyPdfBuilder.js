@@ -1,4 +1,5 @@
 import { mockTestItemTypes } from "../../../Globals/Enumerations/MockTestItemTypes.js";
+import { mockTestEvaluationStatuses } from "../../../Globals/Enumerations/MockTestEvaluationStatuses.js";
 import sanitizeForJsPdf from "../../../Globals/UtilityFunctions/SanitizeForJsPdf.js";
 import MockTestAnswerKeyPage from "../MockTestAnswerKeyPage.js";
 import MockTestSession from "../../Study/Classes/MockTestSession.js";
@@ -15,21 +16,50 @@ class MockTestAnswerKeyPdfBuilder
     static PAGE_WIDTH_MM = 210;
     static PAGE_HEIGHT_MM = 297;
 
-    static buildPdfBlob(mockTest)
+    static buildPdfBlob(mockTest, attempt = null)
     {
-        const pdfDocument = MockTestAnswerKeyPdfBuilder.#buildDocument(mockTest);
+        const pdfDocument = MockTestAnswerKeyPdfBuilder.#buildDocument(mockTest, attempt);
         return pdfDocument.output("blob");
     }
 
-    static downloadPdf(mockTest)
+    static downloadPdf(mockTest, attempt = null)
     {
-        const pdfDocument = MockTestAnswerKeyPdfBuilder.#buildDocument(mockTest);
+        const pdfDocument = MockTestAnswerKeyPdfBuilder.#buildDocument(mockTest, attempt);
         const title = mockTest.getTitle() || "Mock Test";
-        pdfDocument.save(`${title} — Answer Key.pdf`);
+        const fileLabel = MockTestAnswerKeyPdfBuilder.#isCompleted(attempt) ? "Result" : "Answer Key";
+        pdfDocument.save(`${title} — ${fileLabel}.pdf`);
     }
 
-    static #buildDocument(mockTest)
+    static #isCompleted(attempt)
     {
+        return !!(attempt && attempt.getEvaluationStatus && attempt.getEvaluationStatus() === mockTestEvaluationStatuses.COMPLETED);
+    }
+
+    static #buildGradedLookup(attempt)
+    {
+        const lookup = new Map();
+        if (!MockTestAnswerKeyPdfBuilder.#isCompleted(attempt))
+        {
+            return lookup;
+        }
+        for (const item of attempt.getItems() || [])
+        {
+            if (item?.getType?.() !== mockTestItemTypes.QUESTION)
+            {
+                continue;
+            }
+            lookup.set(item.getId(), {
+                userAnswer: item.getAnswer ? item.getAnswer() : "",
+                score: item.getScore ? item.getScore() : 0,
+                remarks: item.getRemarks ? item.getRemarks() : ""
+            });
+        }
+        return lookup;
+    }
+
+    static #buildDocument(mockTest, attempt = null)
+    {
+        const gradedLookup = MockTestAnswerKeyPdfBuilder.#buildGradedLookup(attempt);
         const document = new window.jspdf.jsPDF({ orientation: "p", unit: "mm", format: "a4" });
 
         const pageMargin = MockTestAnswerKeyPdfBuilder.PAGE_MARGIN_MM;
@@ -154,7 +184,8 @@ class MockTestAnswerKeyPdfBuilder
             else if (itemType === mockTestItemTypes.QUESTION)
             {
                 runningQuestionNumber += 1;
-                cursorY = MockTestAnswerKeyPdfBuilder.#renderQuestion(document, item, runningQuestionNumber, pageMargin, contentWidth, cursorY, guardSpace, writeText, mockTest, currentSection);
+                const gradedQuestion = gradedLookup.get(item.getId()) || null;
+                cursorY = MockTestAnswerKeyPdfBuilder.#renderQuestion(document, item, runningQuestionNumber, pageMargin, contentWidth, cursorY, guardSpace, writeText, mockTest, currentSection, gradedQuestion);
             }
         }
 
@@ -162,7 +193,7 @@ class MockTestAnswerKeyPdfBuilder
         return document;
     }
 
-    static #renderQuestion(document, questionItem, questionNumber, pageMargin, contentWidth, cursorY, guardSpace, writeText, mockTest = null, sectionItem = null)
+    static #renderQuestion(document, questionItem, questionNumber, pageMargin, contentWidth, cursorY, guardSpace, writeText, mockTest = null, sectionItem = null, gradedQuestion = null)
     {
         const questionPrefixWidth = 12;
         const questionMarksWidth = 20;
@@ -271,6 +302,11 @@ class MockTestAnswerKeyPdfBuilder
             cursorY += stepLines.length * (9 * 0.35278 * 1.35) + 1;
         }
 
+        if (gradedQuestion)
+        {
+            cursorY = MockTestAnswerKeyPdfBuilder.#renderGradedRows(document, gradedQuestion, marks, options, labelX, valueX, valueWidth, cursorY, guardSpace);
+        }
+
         cursorY += 3;
         document.setLineDashPattern([0.5, 1.5], 0);
         document.setLineWidth(0.2);
@@ -281,6 +317,94 @@ class MockTestAnswerKeyPdfBuilder
         cursorY += 3;
 
         return cursorY;
+    }
+
+    static #renderGradedRows(document, gradedQuestion, maxMarks, options, labelX, valueX, valueWidth, cursorY, guardSpace)
+    {
+        const userAnswerDisplay = MockTestAnswerKeyPdfBuilder.#formatUserAnswerForPdf(gradedQuestion.userAnswer, options);
+
+        guardSpace(15);
+        document.setFont("helvetica", "bold");
+        document.setFontSize(9);
+        document.setTextColor(120, 60, 0);
+        document.text("Your Answer:", labelX, cursorY + 3);
+        document.setTextColor(0, 0, 0);
+        const userLines = document.splitTextToSize(sanitizeForJsPdf(userAnswerDisplay || "— left blank —"), valueWidth);
+        document.setFont("helvetica", "normal");
+        document.setFontSize(9);
+        document.text(userLines, valueX, cursorY + 3);
+        cursorY += userLines.length * (9 * 0.35278 * 1.35) + 1;
+
+        guardSpace(12);
+        document.setFont("helvetica", "bold");
+        document.setFontSize(9);
+        document.setTextColor(120, 60, 0);
+        document.text("Score:", labelX, cursorY + 3);
+        document.setTextColor(0, 0, 0);
+        const scoreText = `${MockTestAnswerKeyPdfBuilder.#formatScore(gradedQuestion.score)} / ${maxMarks}`;
+        const scoreLines = document.splitTextToSize(sanitizeForJsPdf(scoreText), valueWidth);
+        document.setFont("helvetica", "normal");
+        document.setFontSize(9);
+        document.text(scoreLines, valueX, cursorY + 3);
+        cursorY += scoreLines.length * (9 * 0.35278 * 1.35) + 1;
+
+        if (gradedQuestion.remarks && String(gradedQuestion.remarks).trim().length > 0)
+        {
+            guardSpace(15);
+            document.setFont("helvetica", "bold");
+            document.setFontSize(9);
+            document.setTextColor(120, 60, 0);
+            document.text("Examiner's Note:", labelX, cursorY + 3);
+            document.setTextColor(0, 0, 0);
+            const plainRemarks = String(gradedQuestion.remarks).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+            const remarkLines = document.splitTextToSize(sanitizeForJsPdf(plainRemarks), valueWidth);
+            document.setFont("helvetica", "italic");
+            document.setFontSize(9);
+            document.text(remarkLines, valueX, cursorY + 3);
+            cursorY += remarkLines.length * (9 * 0.35278 * 1.35) + 1;
+        }
+
+        return cursorY;
+    }
+
+    static #formatUserAnswerForPdf(rawValue, options)
+    {
+        if (rawValue === null || rawValue === undefined)
+        {
+            return "";
+        }
+        const text = String(rawValue);
+        const hasOptions = Array.isArray(options) && options.length > 0;
+        if (!hasOptions)
+        {
+            return text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+        }
+        try
+        {
+            const parsed = JSON.parse(text);
+            if (Array.isArray(parsed))
+            {
+                const letters = parsed
+                    .filter((entry) => Number.isFinite(entry))
+                    .map((entry) => MockTestAnswerKeyPage.OPTION_LETTERS_UPPERCASE[entry] || String(entry));
+                return letters.join(", ");
+            }
+        }
+        catch (parseError)
+        {
+            // Fall through.
+        }
+        return text;
+    }
+
+    static #formatScore(value)
+    {
+        const numericValue = Number(value);
+        if (!Number.isFinite(numericValue))
+        {
+            return "0";
+        }
+        return Number.isInteger(numericValue) ? String(numericValue) : numericValue.toFixed(2);
     }
 
     static #isCorrectOption(rawExpectedAnswer, optionIndex)

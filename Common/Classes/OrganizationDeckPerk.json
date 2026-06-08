@@ -1,0 +1,42 @@
+{
+    "name": "OrganizationDeckPerk",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "organizationId":
+        {
+            "datatype": "string"
+        },
+        "deckId":
+        {
+            "datatype": "string"
+        },
+        "perkType":
+        {
+            "datatype": "enum:OrganizationDeckPerkTypes",
+            "defaultValue": 0
+        },
+        "perkValue":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "durationDays":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "createdAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        }
+    }
+}

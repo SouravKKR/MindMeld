@@ -3,6 +3,7 @@ import json
 import os
 
 from Workflows.Workflow import Workflow
+from Workflows.BeautifyDeckShortNames.BeautifiedDeckShortNamesResponse import BeautifiedDeckShortNamesResponse
 from Globals.Classes.Automation.AutomationCaller import AutomationCaller
 from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Automation.AutomationRequest import AutomationRequest
@@ -42,7 +43,22 @@ class BeautifyDeckShortNames(Workflow):
             print("[BeautifyDeckShortNames] No MAIN_TASK_ID — exiting.")
             return
 
-        topic_chains = await self.__collect_topic_chains(main_task_id)
+        # Two invocation modes:
+        # 1. Post-generation (Generate.js) — payload is empty; we scan the
+        #    task folder's Flashcards/ and StudyMaterials/ for topicChains.
+        # 2. Admin-triggered (BeautifyDeckShortNames endpoint) — payload
+        #    carries `deckChains` directly so we skip the file scan and
+        #    avoid touching the staged generation artefacts.
+        payload_deck_chains = self._payload.get("deckChains") if isinstance(self._payload, dict) else None
+
+        if isinstance(payload_deck_chains, list) and payload_deck_chains:
+            topic_chains = [
+                [str(part) for part in chain]
+                for chain in payload_deck_chains
+                if isinstance(chain, list) and chain
+            ]
+        else:
+            topic_chains = await self.__collect_topic_chains(main_task_id)
 
         if not topic_chains:
             print("[BeautifyDeckShortNames] No topic chains found — nothing to beautify.")
@@ -139,12 +155,12 @@ class BeautifyDeckShortNames(Workflow):
             prompt_lines.append(f"{index + 1}. {hierarchy_breadcrumb}")
 
         user_prompt = (
-            "For each numbered deck path below, output a concise short name (max 16 characters) "
-            "on its own line, in the same numbered order. Use only the LEAF of the path (the last "
-            "segment) when crafting the short name, but consult the parent segments for context "
-            "(so 'Math > Algebra > Limits' might shorten to 'Limits' rather than 'Math Limits'). "
-            "Return exactly one line per input, in the format '<n>. <short name>'. Do not include "
-            "any other commentary.\n\n"
+            "For each numbered deck path below, produce a concise short name (max 16 characters) "
+            "for the LEAF segment (the last segment after the final '>'). Consult the parent "
+            "segments for context (so 'Math > Algebra > Limits' should shorten to 'Limits' rather "
+            "than 'Math Limits'). Return the result as JSON matching the requested schema — one "
+            "item per input, with `index` matching the input number and `short_name` containing "
+            "the beautified name.\n\n"
             + "\n".join(prompt_lines)
         )
 
@@ -152,14 +168,18 @@ class BeautifyDeckShortNames(Workflow):
             BeautifyDeckShortNames.MODEL_NAME,
             [
                 AutomationContent(AutomationContentTypes.SYSTEM, BeautifyDeckShortNames.SYSTEM_PROMPT),
-                AutomationContent(AutomationContentTypes.TEXT,   user_prompt),
+                AutomationContent(
+                    AutomationContentTypes.TEXT,
+                    user_prompt,
+                    metadata = { "response_schema": BeautifiedDeckShortNamesResponse },
+                ),
             ]
         )
 
         response = await caller.call(request, None, retries = 2)
 
         if response is None:
-            print("[BeautifyDeckShortNames] LLM returned no response for batch — falling back per entry.")
+            print("[BeautifyDeckShortNames] LLM returned no response for batch.")
             return [None] * len(batch_entries)
 
         try:
@@ -168,44 +188,30 @@ class BeautifyDeckShortNames(Workflow):
             print(f"[BeautifyDeckShortNames] Failed to read LLM response: {response_error}")
             return [None] * len(batch_entries)
 
-        if not isinstance(raw_output, str):
-            print("[BeautifyDeckShortNames] LLM response was not text — falling back per entry.")
+        if not isinstance(raw_output, str) or not raw_output.strip():
+            print("[BeautifyDeckShortNames] LLM response was empty or non-string.")
             return [None] * len(batch_entries)
 
-        return BeautifyDeckShortNames.__parse_batch_response(raw_output, len(batch_entries))
+        try:
+            parsed_response = BeautifiedDeckShortNamesResponse.model_validate_json(raw_output)
+        except Exception as parse_error:
+            snippet = raw_output.strip()
+            if len(snippet) > 600:
+                snippet = snippet[:600] + "..."
+            print(f"[BeautifyDeckShortNames] Schema validation failed: {parse_error}. Raw output: {snippet}")
+            return [None] * len(batch_entries)
 
-    @staticmethod
-    def __parse_batch_response(raw_output: str, expected_count: int) -> list[str | None]:
-        parsed_short_names: list[str | None] = [None] * expected_count
-
-        for raw_line in raw_output.splitlines():
-            stripped_line = raw_line.strip()
-            if not stripped_line:
+        results: list[str | None] = [None] * len(batch_entries)
+        for item in parsed_response.items:
+            entry_index = item.index - 1
+            if entry_index < 0 or entry_index >= len(batch_entries):
                 continue
-
-            dot_position = stripped_line.find(".")
-            if dot_position <= 0:
+            candidate = (item.short_name or "").strip()
+            if not candidate:
                 continue
+            results[entry_index] = candidate[: BeautifyDeckShortNames.MAX_SHORT_NAME_LENGTH]
 
-            leading_number = stripped_line[:dot_position].strip()
-            if not leading_number.isdigit():
-                continue
-
-            entry_index = int(leading_number) - 1
-            if entry_index < 0 or entry_index >= expected_count:
-                continue
-
-            candidate_short_name = stripped_line[dot_position + 1 :].strip()
-            if not candidate_short_name:
-                continue
-
-            sanitized_short_name = candidate_short_name.strip("\"'`").strip()
-            if not sanitized_short_name:
-                continue
-
-            parsed_short_names[entry_index] = sanitized_short_name[: BeautifyDeckShortNames.MAX_SHORT_NAME_LENGTH]
-
-        return parsed_short_names
+        return results
 
     async def __write_output(self, main_task_id: str, beautified_map: dict) -> None:
         output_path = join_path(

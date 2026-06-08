@@ -7,8 +7,8 @@
     border-radius: 10px;
     /* Above the home footer (z-index: 5) so the profile context menu
        isn't clipped by the footer when opened from the profile pill.
-       Stays below DialogBox (z-index: 1000) and OptionsSidebar so a
-       modal can still appear over the menu. */
+       Stays below OptionsSidebar (z-index: 1000) and the DialogBox
+       stacking range (1001+) so a modal can still appear over the menu. */
     z-index: 100;
     box-shadow: 0 4px 14px var(--shadow-color-strong);
 }

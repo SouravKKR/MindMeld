@@ -6,6 +6,7 @@ import { syncStates } from "../../Enumerations/SyncStates.js";
 import { createPromiseMutex } from "../../UtilityFunctions/CreatePromiseMutex.js";
 import ActiveEntityTracker from "../ActiveEntityTracker.js";
 import Deck from "../../Model/Deck.js";
+import PageNavigator from "../PageNavigator.js";
 import UserIdentityManager from "../UserIdentityManager.js";
 import SyncApplier from "./SyncApplier.js";
 import SyncProgressReporter from "./SyncProgressReporter.js";
@@ -526,10 +527,18 @@ class SyncOrchestrator
 
     static #handleEntityChanged(event)
     {
-        if (SyncOrchestrator.#bApplyingServerChanges)
-        {
-            return;
-        }
+        // Historical note: this handler used to early-return when
+        // #bApplyingServerChanges was true, on the theory that any
+        // ENTITY_CHANGED fired during the apply phase came from
+        // SyncApplier.flushDirtyDecks persisting server state and
+        // would otherwise echo back to the server on the next push.
+        // The gate was too coarse — it also dropped legitimate user
+        // mutations (delete, edit, study-progress writes) that
+        // happened to coincide with an in-flight apply. Server-source
+        // events are now suppressed at the dispatch site instead
+        // (Deck.save / Deck.delete accept bSuppressDispatch=true; the
+        // sync apply path passes true), so this handler can
+        // unconditionally queue every event it receives.
 
         const detail = event.detail;
 
@@ -546,10 +555,10 @@ class SyncOrchestrator
 
     static #handleEntityDeleted(event)
     {
-        if (SyncOrchestrator.#bApplyingServerChanges)
-        {
-            return;
-        }
+        // No apply-phase gate — see #handleEntityChanged for rationale.
+        // SyncApplier.applyServerDeletions calls Deck.delete with
+        // bSuppressDispatch=true, so server-source teardowns never
+        // reach this handler in the first place.
 
         const detail = event.detail;
 
@@ -576,6 +585,46 @@ class SyncOrchestrator
             SyncOrchestrator.#debouncedSyncTimeoutId = null;
             SyncOrchestrator.sync();
         }, SyncOrchestrator.#DEBOUNCE_SYNC_DELAY_MILLISECONDS);
+    }
+
+    /**
+     * Public wrapper for the debounced-sync scheduler.
+     *
+     * Bulk-loaders (currently Deck.import) need to schedule a sync after
+     * directly populating SyncTransport.pendingChanges, because they
+     * bypass the SyncEvents.ENTITY_CHANGED / ENTITY_DELETED handlers
+     * (which would otherwise be silently dropped by the
+     * #bApplyingServerChanges gate when those events happen to fire
+     * while a sync's apply phase is running). Without this scheduler
+     * call, the imported entities would just sit in pendingChanges
+     * until the next periodic tick (up to 5 minutes later) or the next
+     * unrelated entity change debounce-fires a sync.
+     */
+    static scheduleDebouncedSync()
+    {
+        SyncOrchestrator.#scheduleDebouncedSync();
+    }
+
+    /**
+     * Public lease on the sync mutex.
+     *
+     * Multi-step model mutations that must not be observed mid-flight by
+     * a sync cycle (currently Deck.mergeFrom — which moves cards /
+     * materials / mocks across decks, saves the target, then deletes the
+     * source over several `await` points) acquire this lease for the
+     * full duration of the operation. The lease blocks any debounced or
+     * periodic sync cycle from starting until the lease is released,
+     * which means the next cycle observes the final post-merge state
+     * exactly once instead of an intermediate "target has new children
+     * but empty source still exists" snapshot.
+     *
+     * Returns the same release-function shape as the internal
+     * `#syncMutex.acquire()` calls inside this class — call it from a
+     * `finally` block to guarantee the lease is released even on error.
+     */
+    static acquireSyncMutex()
+    {
+        return SyncOrchestrator.#syncMutex.acquire();
     }
 
     static #startPeriodicSync()
@@ -960,6 +1009,31 @@ class SyncOrchestrator
 
         const releaseMutex = await SyncOrchestrator.#syncMutex.acquire();
 
+        // Active-entity guard. The bulk-snapshot apply phase below calls
+        // Deck.clearAllInMemory() which wipes every Card / StudyMaterial /
+        // MockTest reference. Any page currently rendering the active
+        // entity (Study session, card editor, etc.) is holding object
+        // references that go stale the moment the wipe runs — its next
+        // tick reads getDeck() / getCards() against a freshly constructed
+        // tree that doesn't know about its in-progress edit, and a
+        // `save()` on the held reference crashes inside Card.save /
+        // StudyMaterial.save when getDeck() returns null. Navigate back
+        // to the home page first so PageNavigator's own teardown clears
+        // the active-entity tracker and removes the stale render;
+        // `clearAndOpen` wipes the page stack so the user can't /back/
+        // into the now-orphaned page either.
+        //
+        // We do this AFTER acquiring the mutex so any sync cycle that
+        // was mid-apply when force-pull was triggered has fully
+        // completed first — otherwise the home page would re-render
+        // against a tree the apply phase is still mutating.
+        if (ActiveEntityTracker.getId())
+        {
+            console.warn(`[SyncOrchestrator] forcePullFromServer — active entity ${ActiveEntityTracker.getId()} is set; navigating to home before wiping in-memory state.`);
+            PageNavigator.clearAndOpen("home-page");
+            ActiveEntityTracker.clear();
+        }
+
         // Callers that know they've just invalidated the server's view of
         // the world (e.g. the Clear All Server Data flow) pass
         // bDiscardPendingChanges so the safeguard below doesn't bail —
@@ -1183,18 +1257,24 @@ class SyncOrchestrator
 
         SyncOrchestrator.#bApplyingServerChanges = true;
 
-        // Only raise the blocking overlay for *substantial* pulls — a
-        // chunked drain (this cycle's response has more pending, or we
-        // were already mid-drain). Small one-off incremental pulls that
-        // happen to touch the active entity should never interrupt the
-        // user mid-study; they get applied silently and the in-page UI
-        // catches up via the usual DeckEvents.UPDATE / SyncEvents.COMPLETED
-        // listeners. The whole-DB bulk-snapshot path
-        // (`forcePullFromServer`) uses its own SyncBlockingDialog, so it
-        // doesn't rely on this event at all.
-        const bSubstantialPull        = bResponseChunked || SyncOrchestrator.#bInChunkedDrain;
-        const bBlockingActiveEntity   = bSubstantialPull
-            && SyncApplier.isActiveEntityAffected(serverChanges, serverDeletions);
+        // Raise the active-entity overlay for ANY pull that touches the
+        // entity the user is currently studying or editing — not just
+        // chunked drains. The earlier policy only triggered on
+        // "substantial" pulls (drain cycles), on the theory that small
+        // incremental pulls were fast enough not to matter. But a
+        // single-entity pull whose `data.lifecycle.lastModified` is
+        // newer than the local copy will overwrite the in-memory
+        // Card / StudyMaterial / MockTest object reference held by the
+        // editor page — and the editor's subsequent `save()` then
+        // writes the user's pre-pull edits back over the server's
+        // newer state, leaving both the editor and the server stuck on
+        // a stale value with no visible warning. Blocking on every
+        // affected pull is cheap (the overlay only stays up for the
+        // apply phase, typically a few hundred ms) and keeps the
+        // editor's reference stable until the user dismisses it. The
+        // whole-DB bulk-snapshot path (`forcePullFromServer`) uses its
+        // own SyncBlockingDialog so it doesn't rely on this event.
+        const bBlockingActiveEntity   = SyncApplier.isActiveEntityAffected(serverChanges, serverDeletions);
         const blockedActiveEntityId   = bBlockingActiveEntity ? ActiveEntityTracker.getId()   : null;
         const blockedActiveEntityType = bBlockingActiveEntity ? ActiveEntityTracker.getType() : null;
 

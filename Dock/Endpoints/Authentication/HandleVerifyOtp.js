@@ -2,6 +2,9 @@ const { authenticationProviders } = require("../../Globals/Enumerations/Authenti
 const UserSession = require("../../Globals/Model/UserSession");
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
 const OtpManager = require("../../Globals/Classes/Authentication/OtpManager");
+const UserRoleReconciliator = require("../../Globals/Classes/Authentication/UserRoleReconciliator");
+const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
+const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/OrganizationAutoAssigner");
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -38,6 +41,31 @@ async function handleVerifyOtp(request, response)
         }
         response.sendJson(errorPayload);
         return;
+    }
+
+    // Role reconciliation runs on every login path so a user whose
+    // email is in the admin allowlist OR who has been appointed as an
+    // org admin gets promoted on the next sign-in. The previous version
+    // of this handler skipped the step entirely — that bug also masked
+    // admin promotions for email-OTP-only super-admins.
+    const userAfterVerify = await AuthenticationQueryEngine.getUserById(result.userId);
+    if (userAfterVerify)
+    {
+        await UserRoleReconciliator.reconcile(userAfterVerify);
+        await AuthenticationQueryEngine.createUser(userAfterVerify);
+        const targetEmail = (userAfterVerify.getAdditionalData()?.email || "").toLowerCase();
+        if (targetEmail.length > 0)
+        {
+            await OrganizationMemberQueryEngine.backfillUserId(targetEmail, userAfterVerify.getId());
+        }
+        try
+        {
+            await OrganizationAutoAssigner.applyFreePerksOnLogin(userAfterVerify);
+        }
+        catch (autoAssignError)
+        {
+            console.error(`[HandleVerifyOtp] applyFreePerksOnLogin failed for ${userAfterVerify.getId()}: ${autoAssignError.message}`);
+        }
     }
 
     const session = await AuthenticationQueryEngine.createSession(result.userId, authenticationProviders.EMAIL_OTP);

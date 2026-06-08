@@ -5,6 +5,7 @@ import { getRandomUuid } from "../../UtilityFunctions/GetRandomUuid.js";
 import { fetchPostJsonWithTimeout, fetchGetJsonWithTimeout } from "../../UtilityFunctions/FetchWithTimeout.js";
 import IndexedDbHelper from "../IndexedDbHelper.js";
 import Persistence from "../Persistence.js";
+import PaidDeckRegistry from "../PaidDeckRegistry.js";
 
 
 /**
@@ -144,6 +145,54 @@ class SyncTransport
     }
 
     // ── pendingChanges ────────────────────────────────────────────────
+
+    /**
+     * Drops every pending change that targets paid-deck content. Paid
+     * decks have a separate edit flow (PaidDeckContentClient →
+     * /PaidDecks/Entities/Update); letting these changes ride the
+     * plaintext /Sync wire would defeat the entire protection model.
+     * Server-side Sync.js applies the same filter as a backstop.
+     */
+    static async #filterOutPaidDeckChanges(changes)
+    {
+        // Ensures licenses are loaded from persistence on a cold boot
+        // (e.g., the first sync after page-load races registry init).
+        // Without this await, isLicensed returns false for every deck
+        // and the filter is silently bypassed.
+        await PaidDeckRegistry.initialize();
+
+        const filteredChanges = [];
+        let droppedCount = 0;
+        for (const change of changes)
+        {
+            const candidateIds = [];
+            if (typeof change?.data?.id === "string")     { candidateIds.push(change.data.id); }
+            if (typeof change?.data?.deckId === "string") { candidateIds.push(change.data.deckId); }
+            if (typeof change?.data?.parent === "string") { candidateIds.push(change.data.parent); }
+
+            let targetsPaidDeck = false;
+            for (const candidateId of candidateIds)
+            {
+                if (PaidDeckRegistry.isLicensed(candidateId))
+                {
+                    targetsPaidDeck = true;
+                    break;
+                }
+            }
+
+            if (targetsPaidDeck)
+            {
+                droppedCount++;
+                continue;
+            }
+            filteredChanges.push(change);
+        }
+        if (droppedCount > 0)
+        {
+            console.warn(`[SyncTransport] Dropped ${droppedCount} pending change(s) targeting paid-deck content.`);
+        }
+        return filteredChanges;
+    }
 
     static getPendingChanges()
     {
@@ -426,20 +475,48 @@ class SyncTransport
      * Sends the local pendingChanges to the server in chunks of
      * #CHUNK_SIZE. The final chunk carries `isLastChunk: true`, which is
      * the signal that the server should run the pull phase and return
-     * server-side changes for us to apply. For multi-chunk pushes the
-     * intermediate chunks are sent in parallel batches of
-     * #PARALLEL_CHUNK_LIMIT.
+     * server-side changes for us to apply.
+     *
+     * Ordering rule: upsert records are sorted before deletion records,
+     * and chunks run sequentially whenever any deletion is in the push.
+     * Each /Sync POST runs its own deletion cascade server-side
+     * (bulkRecordDeletions), and that cascade reads each entity
+     * collection's current state — so a deletion chunk landing before
+     * an upsert chunk that re-parents the same entity would let the
+     * cascade tombstone the just-moved entity. Pure-upsert pushes
+     * (initial sync, study-progress flushes) keep the old parallel
+     * fast path. The within-chunk ordering is enforced server-side by
+     * Sync.js, which awaits all upserts before running bulkRecordDeletions.
      *
      * Returns the response from the final chunk (containing
      * `changes`, `deletions`, `serverTime`) or null on transport failure.
      */
     static async pushInChunks(changes, onChunkComplete = null)
     {
-        const totalChunks = Math.ceil(changes.length / SyncTransport.#CHUNK_SIZE) || 1;
+        // Drop any change that targets paid-deck content before it can
+        // ride the plaintext sync wire. Paid-deck edits must go through
+        // /PaidDecks/Entities/Update (see PaidDeckContentClient).
+        // Awaits registry init so a cold-boot sync (registry hasn't
+        // hydrated yet) doesn't silently let paid-deck edits through.
+        const filteredChanges = await SyncTransport.#filterOutPaidDeckChanges(changes);
+
+        // Sort upserts first, deletions last. Stable enough — sort key
+        // is just the boolean `deleted` flag, and we don't depend on
+        // any relative order within either group.
+        const orderedChanges = [...filteredChanges].sort((firstChange, secondChange) =>
+        {
+            const firstIsDeletion  = firstChange?.deleted  ? 1 : 0;
+            const secondIsDeletion = secondChange?.deleted ? 1 : 0;
+            return firstIsDeletion - secondIsDeletion;
+        });
+
+        const bHasDeletions = orderedChanges.some((change) => change?.deleted === true);
+
+        const totalChunks = Math.ceil(orderedChanges.length / SyncTransport.#CHUNK_SIZE) || 1;
 
         if (totalChunks === 1)
         {
-            const onlyChunk = changes.slice(0, SyncTransport.#CHUNK_SIZE);
+            const onlyChunk = orderedChanges.slice(0, SyncTransport.#CHUNK_SIZE);
             const response  = await SyncTransport.#postSyncChunk(onlyChunk, true);
 
             if (onChunkComplete)
@@ -450,54 +527,83 @@ class SyncTransport
             return response;
         }
 
-        // Multi-chunk path — intermediates in parallel, final chunk last
-        // so the server's pull phase only fires once all data is ingested.
+        // Multi-chunk path — intermediates either in parallel (pure
+        // upsert) or sequential (any deletion in the push). Final chunk
+        // always runs last so the server's pull phase only fires once
+        // all data is ingested.
         const intermediateChunks = [];
 
         for (let chunkIndex = 0; chunkIndex < totalChunks - 1; chunkIndex++)
         {
-            intermediateChunks.push(changes.slice(
+            intermediateChunks.push(orderedChanges.slice(
                 chunkIndex * SyncTransport.#CHUNK_SIZE,
                 (chunkIndex + 1) * SyncTransport.#CHUNK_SIZE,
             ));
         }
 
-        for (let batchStart = 0; batchStart < intermediateChunks.length; batchStart += SyncTransport.#PARALLEL_CHUNK_LIMIT)
+        if (bHasDeletions)
         {
-            const batchEnd     = Math.min(batchStart + SyncTransport.#PARALLEL_CHUNK_LIMIT, intermediateChunks.length);
-            const batchPromises = [];
-
-            for (let chunkIndex = batchStart; chunkIndex < batchEnd; chunkIndex++)
+            // Sequential: deletion chunk's cascade must observe every
+            // earlier chunk's upserts.
+            for (let chunkIndex = 0; chunkIndex < intermediateChunks.length; chunkIndex++)
             {
-                const chunk        = intermediateChunks[chunkIndex];
-                const chunkNumber  = chunkIndex + 1;
+                const chunk       = intermediateChunks[chunkIndex];
+                const chunkNumber = chunkIndex + 1;
+                const response    = await SyncTransport.#postSyncChunk(chunk, false);
 
-                batchPromises.push(SyncTransport.#postSyncChunk(chunk, false).then((response) =>
+                if (!response)
                 {
-                    if (!response)
-                    {
-                        throw new Error(`Chunk ${chunkNumber}/${totalChunks} failed.`);
-                    }
+                    console.error(`[SyncTransport] Chunk ${chunkNumber}/${totalChunks} failed (sequential mode).`);
+                    return null;
+                }
 
-                    if (onChunkComplete)
-                    {
-                        onChunkComplete();
-                    }
-                }));
+                if (onChunkComplete)
+                {
+                    onChunkComplete();
+                }
             }
+        }
+        else
+        {
+            // Pure-upsert fast path: send intermediate chunks in
+            // bounded-parallel batches of #PARALLEL_CHUNK_LIMIT.
+            for (let batchStart = 0; batchStart < intermediateChunks.length; batchStart += SyncTransport.#PARALLEL_CHUNK_LIMIT)
+            {
+                const batchEnd      = Math.min(batchStart + SyncTransport.#PARALLEL_CHUNK_LIMIT, intermediateChunks.length);
+                const batchPromises = [];
 
-            try
-            {
-                await Promise.all(batchPromises);
-            }
-            catch (batchError)
-            {
-                console.error(`[SyncTransport] Parallel chunk batch failed: ${batchError.message}`);
-                return null;
+                for (let chunkIndex = batchStart; chunkIndex < batchEnd; chunkIndex++)
+                {
+                    const chunk       = intermediateChunks[chunkIndex];
+                    const chunkNumber = chunkIndex + 1;
+
+                    batchPromises.push(SyncTransport.#postSyncChunk(chunk, false).then((response) =>
+                    {
+                        if (!response)
+                        {
+                            throw new Error(`Chunk ${chunkNumber}/${totalChunks} failed.`);
+                        }
+
+                        if (onChunkComplete)
+                        {
+                            onChunkComplete();
+                        }
+                    }));
+                }
+
+                try
+                {
+                    await Promise.all(batchPromises);
+                }
+                catch (batchError)
+                {
+                    console.error(`[SyncTransport] Parallel chunk batch failed: ${batchError.message}`);
+                    return null;
+                }
             }
         }
 
-        const finalChunk    = changes.slice((totalChunks - 1) * SyncTransport.#CHUNK_SIZE, totalChunks * SyncTransport.#CHUNK_SIZE);
+        const finalChunk    = orderedChanges.slice((totalChunks - 1) * SyncTransport.#CHUNK_SIZE, totalChunks * SyncTransport.#CHUNK_SIZE);
         const finalResponse = await SyncTransport.#postSyncChunk(finalChunk, true);
 
         if (onChunkComplete)

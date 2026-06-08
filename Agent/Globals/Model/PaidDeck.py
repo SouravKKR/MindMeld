@@ -2,10 +2,11 @@ import uuid
 from datetime import datetime
 from typing import List
 from Globals.Enumerations.DeckPurchaseGranularity import DeckPurchaseGranularity
+from Globals.Enumerations.PaidDeckFeatureBadges import PaidDeckFeatureBadges
 
 
 class PaidDeck:
-    def __init__(self, title: str = None, description: str = '', seller_id: str = '', thumbnail_url: str = '', category: str = '', tags: List[str] = [], base_price_minor: int = 0, currency: str = 'INR', granularity: DeckPurchaseGranularity = DeckPurchaseGranularity(0), bundle_child_ids: List[str] = [], parent_bundle_ids: List[str] = [], asset_blob_id: str = '', key_version: int = 1, is_published: bool = False, published_at: datetime = datetime.now(), additional_data: dict = {}) -> None:
+    def __init__(self, title: str = None, description: str = '', seller_id: str = '', thumbnail_url: str = '', category: str = '', tags: List[str] = [], base_price_minor: int = 0, currency: str = 'INR', granularity: DeckPurchaseGranularity = DeckPurchaseGranularity(0), bundle_child_ids: List[str] = [], parent_bundle_ids: List[str] = [], asset_blob_id: str = '', key_version: int = 1, is_published: bool = False, published_at: datetime = datetime.now(), feature_badges: List[PaidDeckFeatureBadges] = [], extra_tags: List[str] = [], content_summary: dict = {}, additional_data: dict = {}) -> None:
         self.__id = str(uuid.uuid4())
         self.set_title(title)
         self.set_description(description)
@@ -22,6 +23,9 @@ class PaidDeck:
         self.set_key_version(key_version)
         self.set_is_published(is_published)
         self.set_published_at(published_at)
+        self.set_feature_badges(feature_badges)
+        self.set_extra_tags(extra_tags)
+        self.set_content_summary(content_summary)
         self.set_additional_data(additional_data)
 
     def get_id(self) -> str:
@@ -180,6 +184,30 @@ class PaidDeck:
             value = datetime.now()
         self.__published_at = value
 
+    def get_feature_badges(self) -> List[PaidDeckFeatureBadges]:
+        return self.__feature_badges
+
+    def set_feature_badges(self, value: List[PaidDeckFeatureBadges]) -> None:
+        if value is not None:
+            if not isinstance(value, list):
+                value = None
+        self.__feature_badges = value
+
+    def get_extra_tags(self) -> List[str]:
+        return self.__extra_tags
+
+    def set_extra_tags(self, value: List[str]) -> None:
+        if value is not None:
+            if not isinstance(value, list):
+                value = None
+        self.__extra_tags = value
+
+    def get_content_summary(self) -> dict:
+        return self.__content_summary
+
+    def set_content_summary(self, value: dict) -> None:
+        self.__content_summary = value
+
     def get_additional_data(self) -> dict:
         return self.__additional_data
 
@@ -208,6 +236,9 @@ class PaidDeck:
             'keyVersion': self.get_key_version(),
             'isPublished': self.get_is_published(),
             'publishedAt': self.get_published_at().isoformat() if self.get_published_at() is not None else None,
+            'featureBadges': [int(item.value) for item in self.get_feature_badges()] if self.get_feature_badges() is not None else None,
+            'extraTags': self.get_extra_tags(),
+            'contentSummary': self.get_content_summary(),
             'additionalData': self.get_additional_data(),
         }
 
@@ -229,6 +260,9 @@ class PaidDeck:
             key_version=data.get('keyVersion'),
             is_published=data.get('isPublished'),
             published_at=datetime.fromisoformat(data.get('publishedAt')) if data.get('publishedAt') is not None else None,
+            feature_badges=[PaidDeckFeatureBadges(v) for v in data.get('featureBadges')] if data.get('featureBadges') is not None else None,
+            extra_tags=data.get('extraTags'),
+            content_summary=data.get('contentSummary'),
             additional_data=data.get('additionalData')
         )
         if data.get('id') is not None:

@@ -299,6 +299,19 @@ class StudyPage extends HTMLElement
             this.#contextMenuHandler = null;
         }
         StudyContextMenu.removeAll();
+
+        // Tear down a mock-test session if one is in flight. Without this
+        // the MockTestRunner stays mounted (PageNavigator.back hides the
+        // page via display:none rather than removing it from the DOM),
+        // its timer keeps ticking, and on expiry the auto-submit fires
+        // its "Time Up — submitting your answers" dialog from a page the
+        // user is no longer looking at. Stopping the session discards
+        // the in-progress attempt by design — there is no draft autosave
+        // on mock tests.
+        if (this.#session instanceof MockTestSession && typeof this.#session.stop === "function")
+        {
+            this.#session.stop();
+        }
     }
 
     /**

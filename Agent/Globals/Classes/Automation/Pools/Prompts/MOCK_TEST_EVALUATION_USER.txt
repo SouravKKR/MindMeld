@@ -1,0 +1,26 @@
+Exam: {exam_name}
+Subject: {subject_name}
+
+You are grading the following batch of {question_type_label} questions. Each question carries its own marking rule and max marks; honor them exactly.
+
+════════════════════════════════════════════════════
+QUESTIONS TO GRADE
+════════════════════════════════════════════════════
+
+{questions_block}
+
+════════════════════════════════════════════════════
+OUTPUT INSTRUCTIONS
+════════════════════════════════════════════════════
+
+Return a JSON array with exactly {question_count} object(s), one per question above, with the same `index` values. Schema per object:
+{
+    "index":   number,
+    "score":   number,
+    "remarks": string
+}
+
+`score` is bounded by the per-question rule (must satisfy min(wrong, unattempted) ≤ score ≤ maxMarks).
+`remarks` is HTML; leave it as `""` unless there is something useful to communicate.
+
+Return only the JSON array. No other text, no markdown fences.

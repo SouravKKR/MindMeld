@@ -1,0 +1,68 @@
+paid-deck-tree-preview
+{
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+paid-deck-tree-preview .paid-deck-tree-row
+{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    transition: background-color 0.15s ease;
+}
+
+paid-deck-tree-preview .paid-deck-tree-row:hover
+{
+    background-color: var(--quaternary-background-color);
+}
+
+paid-deck-tree-preview .paid-deck-tree-row-name
+{
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--primary-text-color);
+    font-size: 0.9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+paid-deck-tree-preview .paid-deck-tree-row-counts
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+paid-deck-tree-preview .paid-deck-tree-count
+{
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background-color: var(--accent-background-color);
+    color: var(--accent-color);
+    white-space: nowrap;
+}
+
+paid-deck-tree-preview .paid-deck-tree-count-empty
+{
+    font-size: 11px;
+    color: var(--secondary-text-color);
+    font-style: italic;
+}
+
+paid-deck-tree-preview .paid-deck-tree-preview-empty
+{
+    text-align: center;
+    padding: 20px 10px;
+    color: var(--secondary-text-color);
+    font-size: 13px;
+    font-style: italic;
+}

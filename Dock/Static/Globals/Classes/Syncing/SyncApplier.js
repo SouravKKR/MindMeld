@@ -200,6 +200,13 @@ class SyncApplier
 
         // Deck deletions are real on-disk deletes (deck.delete()), not full-
         // blob rewrites — they can't be deferred via the dirty set.
+        // bSuppressDispatch=true so the server-driven teardown doesn't
+        // re-fire ENTITY_DELETED back through SyncOrchestrator's handler
+        // and echo the tombstone back to the server next cycle. This is
+        // the replacement for the old #bApplyingServerChanges gate —
+        // suppress events at their source instead of dropping them at
+        // the listener, so user mutations that happen to race the apply
+        // phase still queue their events normally.
         for (let deckIndex = 0; deckIndex < deckDeletionIds.length; deckIndex++)
         {
             const deckId = deckDeletionIds[deckIndex];
@@ -207,7 +214,7 @@ class SyncApplier
 
             if (deck && !deck.isRoot())
             {
-                await deck.delete();
+                await deck.delete(true, true);
                 dirtyDeckIds.delete(deckId);
             }
             processedDeletionCount++;
@@ -409,12 +416,18 @@ class SyncApplier
 
         // Wrap each save so per-deck completions tick the bar — Promise.all
         // on bare deck.save() promises would only tick once at the end.
+        // bSuppressDispatch=true so server-applied changes don't fire
+        // ENTITY_CHANGED back through SyncOrchestrator and queue a
+        // server-echo on the next push. This replaces the old apply-
+        // phase event gate, allowing user mutations that race the apply
+        // phase (study-progress writes, edits, deletes) to queue
+        // their events normally.
         const savePromises = deckIds.map(async (deckId) =>
         {
             const deck = Deck.getById(deckId);
             if (deck)
             {
-                await deck.save(false);
+                await deck.save(false, true);
             }
             completedDeckCount++;
             if (onProgress)

@@ -39,28 +39,3 @@ options-sidebar button.admin-panel-button[hidden]
 {
     display: none;
 }
-
-dialog-box .deck-select
-{
-    padding: 10px;
-    border-radius: 5px;
-    background-color: var(--tertiary-background-color);
-    color: var(--primary-text-color);
-}
-
-dialog-box .deck-select:hover
-{
-    background-color: var(--quaternary-background-color);
-}
-
-dialog-box .import-button
-{
-    padding: 10px;
-    border-radius: 5px;
-    background-color: blue;
-}
-
-dialog-box .import-button:hover
-{
-    background-color: rgb(0, 0, 255, 0.7);
-}

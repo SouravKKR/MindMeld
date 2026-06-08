@@ -1,12 +1,14 @@
 import PageNavigator from "../Globals/Classes/PageNavigator.js";
 import Deck from "../Globals/Model/Deck.js";
 import DialogBox from "./DialogBox.js";
+import SearchableDropdown from "./SearchableDropdown.js";
 import ReleaseNotesDialog from "./ReleaseNotesDialog.js";
 import TutorialEngine from "../Globals/Classes/TutorialEngine.js";
 import AuthenticationEvents from "../Globals/Events/AuthenticationEvents.js";
 import { userRoles } from "../Globals/Enumerations/UserRoles.js";
 import Persistence from "../Globals/Classes/Persistence.js";
 import Profile from "../Globals/Classes/Profile.js";
+import AlertNotifier from "../Pages/AdminPanel/Components/AlertNotifier.js";
 
 class OptionsSidebar extends HTMLElement
 {
@@ -195,26 +197,34 @@ class OptionsSidebar extends HTMLElement
             });
         }
 
-        importButton.addEventListener("click", () => 
+        importButton.addEventListener("click", async () =>
         {
-            const dialog = DialogBox.modal
-            (`
-                <h1 align="center">Select Parent Deck</h1>
-                <div style="padding: 15px; display: flex; flex-direction: column; gap: 20px;">
-                <button type="button" class="deck-select"></button>
-                <button class="import-button">Choose File</button>
-                </div>
-            `);
+            const allDecks = Deck.getAll(() => true, Deck.getRoot());
+            const deckItems = allDecks.map(deck => ({
+                key:   deck.getId(),
+                label: deck.getNameWithAncestors(),
+            }));
 
-            Deck.configureSearchableSelector(dialog.querySelector(".deck-select"), (deck) => { return true; }, Deck.getRoot(), Deck.getRoot().getId(), "Select parent...");
-
-            dialog.querySelector(".import-button").addEventListener("click", () => 
-            { 
-                const deck = Deck.getById(dialog.querySelector(".deck-select").value);
-
-                deck.import();
-                dialog.close();
+            const selectedDeckId = await SearchableDropdown.show({
+                title:              "Select parent deck",
+                searchPlaceholder:  "Search decks...",
+                initialKey:         Deck.getRoot().getId(),
+                items:              deckItems,
+                emptyStateMessage:  "No decks match your search.",
             });
+
+            if (selectedDeckId === null || selectedDeckId === undefined)
+            {
+                return;
+            }
+
+            const parentDeck = Deck.getById(selectedDeckId);
+            if (!parentDeck)
+            {
+                return;
+            }
+
+            await parentDeck.import();
         });
     }
 
@@ -253,6 +263,16 @@ class OptionsSidebar extends HTMLElement
         const currentUser = window["user"];
         const isAdmin = !!currentUser && typeof currentUser.getRole === "function" && currentUser.getRole() === userRoles.ADMIN;
         adminPanelButton.hidden = !isAdmin;
+
+        // The sidebar is part of the always-present chrome, so this is a
+        // reliable app-wide place to spin up the operational-alert notifier
+        // for admins — it then fires browser notifications (once permission
+        // is granted) for any alert raised while the app is open, not only
+        // while the Alerts tab is visible. start() is idempotent + gated.
+        if (isAdmin)
+        {
+            AlertNotifier.start();
+        }
     }
 }
 

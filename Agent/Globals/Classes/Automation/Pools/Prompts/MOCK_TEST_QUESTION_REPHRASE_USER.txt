@@ -3,14 +3,18 @@ Subject: {subject_name}
 Topic: {topic_chain}
 
 ════════════════════════════════════════════════════
-STUDY MATERIAL
+STUDY MATERIAL — for YOUR reference only
 ════════════════════════════════════════════════════
+
+The block below tells YOU what subject matter to draw questions from. The candidate does NOT have it.
 
 {content}
 
 ════════════════════════════════════════════════════
-PREVIOUS-YEAR QUESTIONS (SEED POOL)
+PREVIOUS-YEAR QUESTIONS (SEED POOL) — for YOUR reference only
 ════════════════════════════════════════════════════
+
+The PYQ pool below shows you the STYLE and DIFFICULTY of questions this exam asks. The candidate cannot see this pool — never write "as in the seed PYQ" or refer to it in your output.
 
 {seed_questions_block}
 
@@ -18,7 +22,7 @@ PREVIOUS-YEAR QUESTIONS (SEED POOL)
 GENERATION INSTRUCTIONS
 ════════════════════════════════════════════════════
 
-Generate exactly {num_questions} question(s) total.
+Generate exactly {num_questions} question(s) total. Write each question as a standalone exam question — the candidate will see ONLY the question text and must be able to answer it from their own knowledge, with no source to refer to.
 
 Question type breakdown — exactly these counts:
 {type_breakdown}
@@ -26,6 +30,11 @@ Question type breakdown — exactly these counts:
 Difficulty breakdown — distribute exactly these counts across all questions:
 {difficulty_breakdown}
 
-Where a seed PYQ is a good fit for one of the requested type/difficulty slots, REPHRASE it (change numbers, swap variables, light twist) so the underlying concept is preserved but the question is materially different. Aim for roughly half the questions to be rephrased from seeds. For the remaining slots, generate fresh questions from the study material above. Never copy a seed verbatim.
+Where a seed PYQ is a good fit for one of the requested type/difficulty slots, REPHRASE it (change numbers, swap variables, light twist) so the underlying concept is preserved but the question is materially different. Aim for roughly half the questions to be rephrased from seeds. For the remaining slots, generate fresh questions on topics the material above covers. Never copy a seed verbatim.
+
+‼ FINAL REMINDER — CLOSED-BOOK CHECK ‼
+Before writing each question, ask yourself: "If I delete every reference to 'the text', 'the study material', 'the source', 'the passage', 'the provided content', 'the document', 'the material', 'the given content', or 'the previous-year question' from this question, does it still make complete sense?" — If yes, you should have written the question without those references in the first place. Rewrite. If no, the question was leaning on a source the candidate cannot see — restructure it so it stands entirely on its own.
+
+NEVER begin a question with "According to the text…", "According to the study material…", "According to the provided text…", "As described in the material…", "The provided text describes…", or any equivalent phrasing.
 
 Calibrate marks to the exam context. Return only the JSON array.

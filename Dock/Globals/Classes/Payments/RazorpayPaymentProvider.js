@@ -107,6 +107,41 @@ class RazorpayPaymentProvider extends PaymentProvider
         return { verified: verified, providerOrderId: providerOrderId, providerPaymentId: providerPaymentId };
     }
 
+    verifyWebhookSignature(rawBody, signature)
+    {
+        // Razorpay signs webhook deliveries with HMAC-SHA256 of the raw
+        // request body using a webhook-specific secret (NOT the API key
+        // secret used by verifyPayment above). The handler MUST capture
+        // the raw bytes — JSON.parse-then-stringify changes whitespace
+        // and breaks the signature.
+        const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || "";
+        if (!webhookSecret)
+        {
+            return { verified: false, reason: "WEBHOOK_SECRET_NOT_CONFIGURED" };
+        }
+
+        if (typeof rawBody !== "string" || typeof signature !== "string" || signature.length === 0)
+        {
+            return { verified: false, reason: "MISSING_FIELDS" };
+        }
+
+        const expectedSignature = crypto
+            .createHmac("sha256", webhookSecret)
+            .update(rawBody)
+            .digest("hex");
+
+        const expectedBuffer = Buffer.from(expectedSignature, "utf8");
+        const signatureBuffer = Buffer.from(signature, "utf8");
+
+        if (expectedBuffer.length !== signatureBuffer.length)
+        {
+            return { verified: false, reason: "SIGNATURE_LENGTH_MISMATCH" };
+        }
+
+        const verified = crypto.timingSafeEqual(expectedBuffer, signatureBuffer);
+        return { verified: verified };
+    }
+
     async refund(paymentId, amountMinor)
     {
         if (!this.isConfigured())

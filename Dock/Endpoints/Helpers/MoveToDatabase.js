@@ -785,7 +785,7 @@ function buildQuestionItem(generatedQuestion)
     };
 }
 
-async function assembleAndUpsertTestsForDeck(userId, targetDeckId, questionsForDeck, blueprint, markingScheme, typeKeyByValue, now)
+async function assembleAndUpsertTestsForDeck(userId, targetDeckId, questionsForDeck, blueprint, markingScheme, typeKeyByValue, now, mockTestGenerationSettings = null)
 {
     if (!Array.isArray(questionsForDeck) || questionsForDeck.length === 0)
     {
@@ -973,7 +973,7 @@ async function upsertMockTests(userId, deckId, mainTaskId, now, mockTestGenerati
 
     if (!recursive)
     {
-        await assembleAndUpsertTestsForDeck(userId, deckId, allQuestions, blueprint, markingScheme, typeKeyByValue, now);
+        await assembleAndUpsertTestsForDeck(userId, deckId, allQuestions, blueprint, markingScheme, typeKeyByValue, now, mockTestGenerationSettings);
         return;
     }
 
@@ -981,7 +981,7 @@ async function upsertMockTests(userId, deckId, mainTaskId, now, mockTestGenerati
     if (typeof resolveLeafDeckId !== "function" || !(deckKeyToDataMap instanceof Map))
     {
         console.warn(`[MoveToDatabase] Recursive mock test mode requested but deck hierarchy was not provided — falling back to single-deck bundle on ${deckId}.`);
-        await assembleAndUpsertTestsForDeck(userId, deckId, allQuestions, blueprint, markingScheme, typeKeyByValue, now);
+        await assembleAndUpsertTestsForDeck(userId, deckId, allQuestions, blueprint, markingScheme, typeKeyByValue, now, mockTestGenerationSettings);
         return;
     }
 
@@ -1043,7 +1043,7 @@ async function upsertMockTests(userId, deckId, mainTaskId, now, mockTestGenerati
     let totalTestsUpserted = 0;
     for (const [targetDeckId, bucket] of bucketsByDeckId.entries())
     {
-        const upserted = await assembleAndUpsertTestsForDeck(userId, targetDeckId, bucket, blueprint, markingScheme, typeKeyByValue, now);
+        const upserted = await assembleAndUpsertTestsForDeck(userId, targetDeckId, bucket, blueprint, markingScheme, typeKeyByValue, now, mockTestGenerationSettings);
         totalTestsUpserted += upserted;
     }
 

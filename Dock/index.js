@@ -21,17 +21,37 @@ const { handleAnalysisEndpoints } = require("./Endpoints/HandleAnalysisEndpoints
 const { handleProfileEndpoints } = require("./Endpoints/HandleProfileEndpoints");
 const { handleBrowserLlmEndpoints } = require("./Endpoints/BrowserLlm/HandleBrowserLlmEndpoints");
 const { handleAskAiEndpoints } = require("./Endpoints/AskAi/HandleAskAiEndpoints");
+const { handleMockTestEndpoints } = require("./Endpoints/HandleMockTestEndpoints");
+const { handleOrganizationEndpoints } = require("./Endpoints/HandleOrganizationEndpoints");
+const { handleWebhookEndpoints } = require("./Endpoints/HandleWebhookEndpoints");
 const Logger = require("./Globals/Classes/Logger");
 const KeyManagementService = require("./Globals/Classes/Security/KeyManagementService");
 const KeyRotationScheduler = require("./Globals/Classes/Security/KeyRotationScheduler");
 const AuthenticationQueryEngine = require("./Globals/Classes/Database/AuthenticationQueryEngine");
 const { getSession } = require("./Endpoints/Helpers/GetSession");
+const FxRatesCache = require("./Globals/Classes/Pricing/FxRatesCache");
+const EcbRatesClient = require("./Globals/Classes/Pricing/EcbRatesClient");
+const FxRatesRefreshScheduler = require("./Globals/Classes/Pricing/FxRatesRefreshScheduler");
 
 
 Logger.initialize();
 TaskManager.initialize();
 KeyManagementService.initialize();
 KeyRotationScheduler.start();
+
+// Foreign-exchange rates: connect the Redis-backed cache, do one best-effort
+// initial fetch (so a fresh boot localizes prices immediately), then refresh
+// daily. Any failure is recorded as an admin Alert and never blocks boot.
+FxRatesCache.initialize()
+    .then(() =>
+    {
+        EcbRatesClient.fetchAndStoreLatestRates().catch(() => {});
+        FxRatesRefreshScheduler.start();
+    })
+    .catch((fxInitializationError) =>
+    {
+        console.error("[FxRates] Cache initialization failed; currency conversion will degrade gracefully:", fxInitializationError);
+    });
 
 if (process.argv.includes("--logout"))
 {
@@ -102,3 +122,6 @@ handleAnalysisEndpoints(server);
 handleProfileEndpoints(server);
 handleBrowserLlmEndpoints(server);
 handleAskAiEndpoints(server);
+handleMockTestEndpoints(server);
+handleOrganizationEndpoints(server);
+handleWebhookEndpoints(server);

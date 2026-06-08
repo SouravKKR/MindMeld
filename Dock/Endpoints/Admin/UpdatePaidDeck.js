@@ -14,7 +14,9 @@ const ALLOWED_FIELDS = new Set
     "bundleChildIds",
     "parentBundleIds",
     "isPublished",
-    "additionalData"
+    "additionalData",
+    "featureBadges",
+    "extraTags"
 ]);
 
 async function updatePaidDeck(request, response)

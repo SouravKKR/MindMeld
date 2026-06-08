@@ -1,8 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const JavaScriptObfuscator = require('javascript-obfuscator');
-const CleanCss = require('clean-css');
-const { minify: minifyHtmlSource } = require('html-minifier-terser');
+const os = require('os');
+const { Worker } = require('worker_threads');
 
 class StaticFileMinifier
 {
@@ -10,11 +9,15 @@ class StaticFileMinifier
         'ThirdParty',
     ]);
 
+    static MIN_WORKER_COUNT = 1;
+    static MAX_WORKER_COUNT = 8;
+
     constructor(staticDirectory, useAggressiveObfuscation)
     {
-        this.staticDirectory = staticDirectory;
-        this.useAggressiveObfuscation = useAggressiveObfuscation;
-        this.cleanCssMinifier = new CleanCss({ level: 2, returnPromise: false, inline: false });
+        this.staticDirectory             = staticDirectory;
+        this.useAggressiveObfuscation    = useAggressiveObfuscation;
+        this.workerScriptPath            = path.join(__dirname, 'MinifyAndObfuscateWorker.js');
+        this.javascriptObfuscatorOptions = this.buildObfuscatorOptions();
         this.htmlMinifierOptions = {
             collapseWhitespace: true,
             removeComments: true,
@@ -23,18 +26,19 @@ class StaticFileMinifier
             keepClosingSlash: true,
             removeAttributeQuotes: false,
         };
-        this.javascriptObfuscatorOptions = this.buildObfuscatorOptions();
-        this.processedFileCount = 0;
-        this.skippedFileCount = 0;
     }
 
     buildObfuscatorOptions()
     {
+        // renameGlobals is intentionally disabled — the bundler now emits a
+        // tiny *Bundle.js proxy plus N part/chunk files that import each
+        // other by name across module boundaries. Renaming top-level
+        // identifiers would silently break those cross-file imports.
         const conservativeOptions = {
             compact: true,
             target: 'browser',
             identifierNamesGenerator: 'mangled-shuffled',
-            renameGlobals: true,
+            renameGlobals: false,
             transformObjectKeys: false,
             stringArray: true,
             stringArrayEncoding: ['base64'],
@@ -85,107 +89,189 @@ class StaticFileMinifier
         }
 
         const profileName = this.useAggressiveObfuscation ? 'aggressive' : 'conservative';
-        console.log(`Minifying + obfuscating Dock/Static/ (profile: ${profileName})...`);
-
         const startTime = Date.now();
-        await this.processDirectory(this.staticDirectory);
-        const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
 
-        console.log(`Done. Processed ${this.processedFileCount} file(s), skipped ${this.skippedFileCount} in ${elapsedSeconds}s.`);
+        const { eligibleFilePaths, skippedFileCount } = this.collectEligibleFiles(this.staticDirectory);
+
+        const workerCount = this.calculateWorkerCount(eligibleFilePaths.length);
+        console.log(`Minifying + obfuscating Dock/Static/ (profile: ${profileName}, ${eligibleFilePaths.length} file(s) across ${workerCount} worker(s))...`);
+
+        await this.processFilesInParallel(eligibleFilePaths, workerCount);
+
+        const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log(`Done. Processed ${eligibleFilePaths.length} file(s), skipped ${skippedFileCount} in ${elapsedSeconds}s.`);
     }
 
-    async processDirectory(currentDirectory)
+    collectEligibleFiles(rootDirectory)
     {
-        const entries = fs.readdirSync(currentDirectory, { withFileTypes: true });
+        const eligibleFilePaths = [];
+        let skippedFileCount = 0;
 
-        for (const entry of entries)
+        const walk = (currentDirectory) =>
         {
-            const entryPath = path.join(currentDirectory, entry.name);
+            const entries = fs.readdirSync(currentDirectory, { withFileTypes: true });
 
-            if (entry.isDirectory())
+            for (const entry of entries)
             {
-                if (StaticFileMinifier.SKIPPED_DIRECTORIES.has(entry.name))
+                const entryPath = path.join(currentDirectory, entry.name);
+
+                if (entry.isDirectory())
                 {
+                    if (StaticFileMinifier.SKIPPED_DIRECTORIES.has(entry.name))
+                    {
+                        continue;
+                    }
+                    walk(entryPath);
                     continue;
                 }
-                await this.processDirectory(entryPath);
+
+                const lowerCaseName = entry.name.toLowerCase();
+                const extension     = path.extname(lowerCaseName);
+
+                if (extension === '.js')
+                {
+                    if (lowerCaseName.endsWith('.min.js'))
+                    {
+                        skippedFileCount++;
+                        continue;
+                    }
+                    eligibleFilePaths.push(entryPath);
+                }
+                else if (extension === '.css')
+                {
+                    if (lowerCaseName.endsWith('.min.css'))
+                    {
+                        skippedFileCount++;
+                        continue;
+                    }
+                    eligibleFilePaths.push(entryPath);
+                }
+                else if (extension === '.html')
+                {
+                    eligibleFilePaths.push(entryPath);
+                }
+                else
+                {
+                    skippedFileCount++;
+                }
             }
-            else
-            {
-                await this.processFile(entryPath);
-            }
-        }
+        };
+        walk(rootDirectory);
+
+        // Process the largest files first. JavaScript obfuscation scales
+        // super-linearly with file size, so feeding the biggest payload to
+        // the first idle worker minimises the chance that a giant file
+        // arrives last and stretches the wall-clock tail.
+        eligibleFilePaths.sort((leftPath, rightPath) =>
+        {
+            const leftSize  = fs.statSync(leftPath).size;
+            const rightSize = fs.statSync(rightPath).size;
+            return rightSize - leftSize;
+        });
+
+        return { eligibleFilePaths, skippedFileCount };
     }
 
-    async processFile(filePath)
+    calculateWorkerCount(fileCount)
     {
-        const extension = path.extname(filePath).toLowerCase();
+        const cpuCount = os.cpus().length;
+        const ceiling  = Math.max(StaticFileMinifier.MIN_WORKER_COUNT, Math.min(StaticFileMinifier.MAX_WORKER_COUNT, cpuCount - 1));
+        return Math.max(StaticFileMinifier.MIN_WORKER_COUNT, Math.min(ceiling, fileCount));
+    }
 
-        try
+    async processFilesInParallel(filePaths, workerCount)
+    {
+        if (filePaths.length === 0)
         {
-            if (extension === '.js')
+            return;
+        }
+
+        const workerConfiguration = {
+            javascriptObfuscatorOptions: this.javascriptObfuscatorOptions,
+            htmlMinifierOptions: this.htmlMinifierOptions,
+        };
+
+        await new Promise((resolve, reject) =>
+        {
+            const workers = [];
+            let nextFileIndex = 0;
+            let completedCount = 0;
+            let hasSettled = false;
+
+            const finalise = (errorOrNull) =>
             {
-                if (filePath.toLowerCase().endsWith('.min.js'))
+                if (hasSettled)
                 {
-                    this.skippedFileCount++;
                     return;
                 }
-                const source = fs.readFileSync(filePath, 'utf8');
-                const obfuscated = this.obfuscateJavaScript(source);
-                fs.writeFileSync(filePath, obfuscated, 'utf8');
-                this.processedFileCount++;
-            }
-            else if (extension === '.css')
+                hasSettled = true;
+                Promise.all(workers.map((worker) => worker.terminate().catch(() => {})))
+                    .then(() =>
+                    {
+                        if (errorOrNull)
+                        {
+                            reject(errorOrNull);
+                        }
+                        else
+                        {
+                            resolve();
+                        }
+                    });
+            };
+
+            const dispatchNext = (worker) =>
             {
-                if (filePath.toLowerCase().endsWith('.min.css'))
+                if (hasSettled)
                 {
-                    this.skippedFileCount++;
                     return;
                 }
-                const source = fs.readFileSync(filePath, 'utf8');
-                const minified = this.minifyCss(source, filePath);
-                fs.writeFileSync(filePath, minified, 'utf8');
-                this.processedFileCount++;
-            }
-            else if (extension === '.html')
+                if (nextFileIndex >= filePaths.length)
+                {
+                    worker.postMessage({ type: 'shutdown' });
+                    return;
+                }
+                worker.postMessage({ type: 'process', filePath: filePaths[nextFileIndex++] });
+            };
+
+            for (let workerIndex = 0; workerIndex < workerCount; workerIndex++)
             {
-                const source = fs.readFileSync(filePath, 'utf8');
-                const minified = await this.minifyHtml(source);
-                fs.writeFileSync(filePath, minified, 'utf8');
-                this.processedFileCount++;
+                const worker = new Worker(this.workerScriptPath, { workerData: workerConfiguration });
+                workers.push(worker);
+
+                worker.on('message', (message) =>
+                {
+                    if (message.type === 'done')
+                    {
+                        completedCount++;
+                        if (completedCount === filePaths.length)
+                        {
+                            finalise(null);
+                            return;
+                        }
+                        dispatchNext(worker);
+                    }
+                    else if (message.type === 'error')
+                    {
+                        finalise(new Error(`Failed to process ${message.filePath}:\n${message.errorMessage}`));
+                    }
+                });
+
+                worker.on('error', (workerError) =>
+                {
+                    finalise(workerError);
+                });
+
+                worker.on('exit', (exitCode) =>
+                {
+                    if (exitCode !== 0 && !hasSettled)
+                    {
+                        finalise(new Error(`Worker exited with code ${exitCode} before completing all files.`));
+                    }
+                });
+
+                dispatchNext(worker);
             }
-            else
-            {
-                this.skippedFileCount++;
-            }
-        }
-        catch (error)
-        {
-            console.error(`Failed to process ${filePath}:`);
-            console.error(error);
-            process.exit(1);
-        }
-    }
-
-    obfuscateJavaScript(source)
-    {
-        const result = JavaScriptObfuscator.obfuscate(source, this.javascriptObfuscatorOptions);
-        return result.getObfuscatedCode();
-    }
-
-    minifyCss(source, filePath)
-    {
-        const result = this.cleanCssMinifier.minify(source);
-        if (result.errors && result.errors.length > 0)
-        {
-            throw new Error(`clean-css errors in ${filePath}: ${result.errors.join('; ')}`);
-        }
-        return result.styles;
-    }
-
-    async minifyHtml(source)
-    {
-        return await minifyHtmlSource(source, this.htmlMinifierOptions);
+        });
     }
 }
 
@@ -194,5 +280,14 @@ class StaticFileMinifier
     const useAggressiveObfuscation = process.argv.includes('--aggressive');
     const staticDirectory = path.join(__dirname, '..', '..', 'Dock', 'Static');
     const minifier = new StaticFileMinifier(staticDirectory, useAggressiveObfuscation);
-    await minifier.run();
+    try
+    {
+        await minifier.run();
+    }
+    catch (error)
+    {
+        console.error('Minification + obfuscation failed:');
+        console.error(error);
+        process.exit(1);
+    }
 })();

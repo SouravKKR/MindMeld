@@ -18,12 +18,43 @@ class MockTestOptionsContextMenu extends ContextMenu
 
     #handleEvents()
     {
-        const editButton   = this.querySelector(".edit-button");
-        const deleteButton = this.querySelector(".delete-button");
+        const editButton           = this.querySelector(".edit-button");
+        const clearAttemptsButton  = this.querySelector(".clear-attempts-button");
+        const deleteButton         = this.querySelector(".delete-button");
 
         editButton.addEventListener("click", () =>
         {
             PageNavigator.open("mock-test-editor-page", this.#mockTest, this.#mockTest.getDeck());
+        });
+
+        clearAttemptsButton.addEventListener("click", async () =>
+        {
+            const attemptCount = this.#mockTest.getHistory ? this.#mockTest.getHistory().length : 0;
+            if (attemptCount === 0)
+            {
+                await DialogBox.alert("Clear Attempts", "This mock test has no attempts to clear.");
+                return;
+            }
+
+            const confirmed = await DialogBox.confirm(
+                "Clear Attempts",
+                `Are you sure you want to delete all ${attemptCount} attempt${attemptCount === 1 ? "" : "s"} for this mock test?<br><br>This action cannot be undone.`
+            );
+
+            if(!confirmed) return;
+
+            this.#mockTest.clearAttempts();
+            try
+            {
+                await this.#mockTest.save();
+            }
+            catch (saveError)
+            {
+                console.error("[MockTestOptionsContextMenu] Failed to save mock test after clearing attempts:", saveError);
+                await DialogBox.alert("Clear Attempts", "The attempts were removed locally but couldn't be saved. Try again.");
+                return;
+            }
+            this.#browserPage.refresh();
         });
 
         deleteButton.addEventListener("click", async () =>
@@ -45,6 +76,7 @@ class MockTestOptionsContextMenu extends ContextMenu
         this.innerHTML =
         `
             <button class="edit-button">Edit</button>
+            <button class="clear-attempts-button">Clear Attempts</button>
             <button class="delete-button">Delete</button>
         `;
 

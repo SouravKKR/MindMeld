@@ -90,6 +90,21 @@
             "datatype": "date",
             "defaultValue": "now"
         },
+        "featureBadges":
+        {
+            "datatype": "array<enum:PaidDeckFeatureBadges>",
+            "defaultValue": []
+        },
+        "extraTags":
+        {
+            "datatype": "array<string>",
+            "defaultValue": []
+        },
+        "contentSummary":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        },
         "additionalData":
         {
             "datatype": "object",

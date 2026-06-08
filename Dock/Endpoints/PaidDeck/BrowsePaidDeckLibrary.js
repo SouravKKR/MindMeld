@@ -1,13 +1,14 @@
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const PaidDeckPricingEngine = require("../../Globals/Classes/Pricing/PaidDeckPricingEngine");
+const RegionResolver = require("../../Globals/Classes/Pricing/RegionResolver");
 
 async function browsePaidDeckLibrary(request, response)
 {
     const session = request.session;
     const userId = session ? session.getUserId() : null;
     const queryParams = await request.getQueryParams();
-    const region = (queryParams.region || "GLOBAL").toUpperCase();
+    const region = RegionResolver.resolveRegion(request, (queryParams.region || "").toUpperCase() || null, (queryParams.localeRegionHint || "").toUpperCase() || null);
     const category = queryParams.category || null;
     const limit = Math.min(parseInt(queryParams.limit || "50", 10) || 50, 200);
     const offset = parseInt(queryParams.offset || "0", 10) || 0;
@@ -36,7 +37,9 @@ async function browsePaidDeckLibrary(request, response)
         (
             userId,
             [deckDocument.id],
-            region
+            region,
+            undefined,
+            true
         );
 
         const deckPayload = { ...deckDocument };

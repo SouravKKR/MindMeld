@@ -42,6 +42,59 @@
             "datatype": "date",
             "defaultValue": "now"
         },
+        "expiresAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "grantSource":
+        {
+            "datatype": "string",
+            "defaultValue": "PURCHASE",
+            "maxLength": 64
+        },
+        "downloadedContentVersion":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "passwordHash":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "passwordSalt":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "passwordWrappedContentKeyBase64":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "passwordWrappedIvBase64":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "serverWrappedContentKeyBase64":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "serverWrappedIvBase64":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "contentKeyVersion":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
         "additionalData":
         {
             "datatype": "object",

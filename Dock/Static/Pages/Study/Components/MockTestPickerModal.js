@@ -1,5 +1,6 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
+import { mockTestEvaluationStatuses } from "../../../Globals/Enumerations/MockTestEvaluationStatuses.js";
 import MockTestSession from "../Classes/MockTestSession.js";
 import MockTestStartDialog from "./MockTestStartDialog.js";
 
@@ -200,10 +201,177 @@ class MockTestPickerModal
             }
             else if (action === "history")
             {
-                // TODO: Implement attempt history viewer.
-                DialogBox.alert("Coming Soon", "Attempt history is not yet implemented.");
+                // Close the picker first — DialogBox is a singleton queue.
+                dialog.close();
+                MockTestPickerModal.#openHistoryModal(selectedMockTest);
             }
         });
+    }
+
+    // ── History modal ──────────────────────────────────────────────────────────
+
+    static #openHistoryModal(mockTest)
+    {
+        const history = mockTest.getHistory ? mockTest.getHistory() : [];
+
+        if (!Array.isArray(history) || history.length === 0)
+        {
+            DialogBox.alert(
+                "No Attempts",
+                "You haven't taken this mock test yet. Take it once and your attempts will show up here."
+            );
+            return;
+        }
+
+        const sortedAttemptsLatestFirst = [...history].sort((firstAttempt, secondAttempt) =>
+        {
+            const firstTime = firstAttempt.getAttemptDate ? firstAttempt.getAttemptDate().getTime() : 0;
+            const secondTime = secondAttempt.getAttemptDate ? secondAttempt.getAttemptDate().getTime() : 0;
+            return secondTime - firstTime;
+        });
+
+        const dialog = DialogBox.modal(MockTestPickerModal.#buildHistoryModalHtml(mockTest, sortedAttemptsLatestFirst));
+
+        dialog.style.padding       = "0";
+        dialog.style.overflow      = "hidden";
+        dialog.style.width         = "min(560px, 94vw)";
+        dialog.style.maxHeight     = "min(85vh, 720px)";
+        dialog.style.display       = "flex";
+        dialog.style.flexDirection = "column";
+        dialog.style.boxSizing     = "border-box";
+
+        // Same DialogBox wrapper-neutralisation trick as the picker.
+        const dialogBoxInnerWrapper = dialog.querySelector(":scope > div");
+        if (dialogBoxInnerWrapper)
+        {
+            dialogBoxInnerWrapper.style.flex          = "1";
+            dialogBoxInnerWrapper.style.minHeight     = "0";
+            dialogBoxInnerWrapper.style.padding       = "0";
+            dialogBoxInnerWrapper.style.overflow      = "hidden";
+            dialogBoxInnerWrapper.style.display       = "flex";
+            dialogBoxInnerWrapper.style.flexDirection = "column";
+        }
+
+        dialog.addEventListener("click", (event) =>
+        {
+            const row = event.target.closest("[data-attempt-id]");
+            if (!row)
+            {
+                return;
+            }
+            const attemptId = row.dataset.attemptId;
+            const selectedAttempt = sortedAttemptsLatestFirst.find((entry) => entry.getId() === attemptId);
+            if (!selectedAttempt)
+            {
+                return;
+            }
+            dialog.close();
+            PageNavigator.open("mock-test-answer-key-page", mockTest, selectedAttempt);
+        });
+    }
+
+    static #buildHistoryModalHtml(mockTest, sortedAttempts)
+    {
+        const mockTestTitle = mockTest.getTitle() || "Mock Test";
+        const rowsHtml = sortedAttempts
+            .map((attempt) => MockTestPickerModal.#buildHistoryRowHtml(attempt))
+            .join("");
+
+        return `
+            <div class="mock-test-history-modal-header">
+                <div class="mock-test-history-modal-header-title">Attempt History</div>
+                <div class="mock-test-history-modal-header-subtitle">${MockTestPickerModal.#escapeHtml(mockTestTitle)} — ${sortedAttempts.length} attempt${sortedAttempts.length === 1 ? "" : "s"}</div>
+            </div>
+            <div class="mock-test-history-modal-list">
+                ${rowsHtml}
+            </div>
+        `;
+    }
+
+    static #buildHistoryRowHtml(attempt)
+    {
+        const attemptId = attempt.getId();
+        const attemptDate = attempt.getAttemptDate ? attempt.getAttemptDate() : null;
+        const dateLabel = attemptDate ? attemptDate.toLocaleString() : "(unknown date)";
+        const status = attempt.getEvaluationStatus ? attempt.getEvaluationStatus() : null;
+        const { statusLabel, statusClass } = MockTestPickerModal.#formatAttemptStatus(status);
+        const scoreLabel = MockTestPickerModal.#formatAttemptScore(attempt);
+
+        return `
+            <button
+                type="button"
+                class="mock-test-history-modal-row"
+                data-attempt-id="${MockTestPickerModal.#escapeHtml(attemptId)}"
+            >
+                <div class="mock-test-history-modal-row-main">
+                    <div class="mock-test-history-modal-row-date">${MockTestPickerModal.#escapeHtml(dateLabel)}</div>
+                    <div class="mock-test-history-modal-row-status mock-test-history-modal-row-status-${statusClass}">${statusLabel}</div>
+                </div>
+                <div class="mock-test-history-modal-row-score">${scoreLabel}</div>
+            </button>
+        `;
+    }
+
+    static #formatAttemptStatus(status)
+    {
+        if (status === mockTestEvaluationStatuses.COMPLETED)
+        {
+            return { statusLabel: "Graded", statusClass: "completed" };
+        }
+        if (status === mockTestEvaluationStatuses.GRADING)
+        {
+            return { statusLabel: "Grading…", statusClass: "grading" };
+        }
+        if (status === mockTestEvaluationStatuses.FAILED)
+        {
+            return { statusLabel: "Failed", statusClass: "failed" };
+        }
+        return { statusLabel: "Not graded", statusClass: "pending" };
+    }
+
+    static #formatAttemptScore(attempt)
+    {
+        const status = attempt.getEvaluationStatus ? attempt.getEvaluationStatus() : null;
+        if (status !== mockTestEvaluationStatuses.COMPLETED)
+        {
+            return "—";
+        }
+        let score = 0;
+        let maxScore = 0;
+        for (const item of attempt.getItems() || [])
+        {
+            if (typeof item?.getMarks !== "function" || typeof item?.getScore !== "function")
+            {
+                continue;
+            }
+            const itemScore = item.getScore();
+            const itemMarks = item.getMarks();
+            score += Number.isFinite(itemScore) ? itemScore : 0;
+            maxScore += Number.isFinite(itemMarks) ? itemMarks : 0;
+        }
+        if (maxScore === 0)
+        {
+            // Fall back to the attempt-level totals if per-item sum yields
+            // nothing (legacy attempts that never had per-item scoring).
+            score = attempt.getScore ? attempt.getScore() : 0;
+            maxScore = attempt.getMaxScore ? attempt.getMaxScore() : 0;
+        }
+        const formattedScore = Number.isInteger(score) ? String(score) : score.toFixed(2);
+        const formattedMaxScore = Number.isInteger(maxScore) ? String(maxScore) : maxScore.toFixed(2);
+        return `${formattedScore} / ${formattedMaxScore}`;
+    }
+
+    static #escapeHtml(value)
+    {
+        if (value === null || value === undefined)
+        {
+            return "";
+        }
+        return String(value)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
     }
 
     // ── Print modal ────────────────────────────────────────────────────────────

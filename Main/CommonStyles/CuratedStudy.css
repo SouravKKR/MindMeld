@@ -960,3 +960,29 @@ study-page.study-page--curated-mode .study-action-row
         padding: 0.35em 0.7em;
     }
 }
+
+/* ── Inline citation links ─────────────────────────────────────────
+   GenerateCuratedStudyMaterial post-processes the LLM HTML to wrap
+   numeric reference markers (e.g. `[1]`, `[2, 4]`) in anchors that
+   point at the source URL. Each citation number is its own <a> so a
+   cluster like `[2, 4]` reads as `[2, 4]` with both digits clickable
+   independently. Styled as a subtle accent-coloured link — visible
+   enough to invite a click, restrained enough not to fight the
+   surrounding prose. */
+
+a.curated-citation-link
+{
+    color: var(--accent-color);
+    text-decoration: none;
+    font-weight: 600;
+    padding: 0 1px;
+    border-radius: 3px;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+a.curated-citation-link:hover,
+a.curated-citation-link:focus
+{
+    text-decoration: underline;
+    background-color: var(--highlight-background-soft, rgba(255, 255, 255, 0.06));
+}

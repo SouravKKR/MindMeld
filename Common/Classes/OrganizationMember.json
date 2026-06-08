@@ -1,0 +1,37 @@
+{
+    "name": "OrganizationMember",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "organizationId":
+        {
+            "datatype": "string"
+        },
+        "email":
+        {
+            "datatype": "string",
+            "minLength": 3,
+            "maxLength": 320
+        },
+        "userId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "addedBy":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "addedAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        }
+    }
+}

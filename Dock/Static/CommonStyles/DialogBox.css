@@ -1,3 +1,7 @@
+/* z-index for both backdrop and dialog is assigned inline by DialogBox.js
+   from a session-wide auto-incrementing counter, so a dialog opened on top
+   of another always stacks visually above. No fixed z-index here. */
+
 .dialog-backdrop
 {
     position: fixed;
@@ -5,7 +9,6 @@
     background: rgba(0, 0, 0, 0.45);
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
-    z-index: 999;
     pointer-events: all;
 }
 
@@ -26,7 +29,6 @@ dialog-box
     justify-content: space-between;
     box-shadow: 0 0 5px rgba(213, 195, 0, 0.7);
     max-width: 60%;
-    z-index: 1000;
 }
 
 @media (orientation: portrait) 

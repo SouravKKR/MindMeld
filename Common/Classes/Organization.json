@@ -1,0 +1,73 @@
+{
+    "name": "Organization",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "name":
+        {
+            "datatype": "string",
+            "minLength": 1,
+            "maxLength": 256
+        },
+        "adminEmail":
+        {
+            "datatype": "string",
+            "minLength": 3,
+            "maxLength": 320
+        },
+        "adminUserId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "status":
+        {
+            "datatype": "enum:OrganizationStatus",
+            "defaultValue": 0
+        },
+        "currency":
+        {
+            "datatype": "string",
+            "defaultValue": "INR",
+            "maxLength": 8
+        },
+        "creationAmountMinor":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "maxMembers":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "currentMemberCount":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "creationDate":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "activationDate":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "additionalData":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        }
+    }
+}

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -57,6 +58,12 @@ class AnalyzeDeckPerformance(Workflow):
     MIN_PROGRESS_POINTS_FOR_VOLATILITY        = 3
     VOLATILITY_RECENT_CORRECTNESS_WINDOW      = 5
     VOLATILITY_GLICKO_RD_THRESHOLD            = 150.0
+    # Per-topic cap on the source-card list carried through the curated
+    # pipeline. The LLM can name up to this many tokens per topic; the
+    # frontend's grade-back applies a positive review to each. Capped
+    # so a runaway LLM response can't dump dozens of cards onto a
+    # single topic.
+    MAX_SOURCE_CARDS_PER_TOPIC                = 8
     ROOT_DECK_ID                              = "0"
 
     SYSTEM_PROMPT = (
@@ -67,12 +74,19 @@ class AnalyzeDeckPerformance(Workflow):
         "student is missing in order to answer it. Topics must be subject-level concepts (e.g. 'Limits of "
         "trigonometric functions', not 'Q3 from chapter 4'). Use the provided deck-context chain to keep "
         "topic names appropriate to the user's syllabus level.\n\n"
+        "Each card you receive is prefixed with an index token like [W1], [W2], [S1], [V1], etc. — 'W' "
+        "for WEAK cards, 'S' for STRONG, 'V' for VOLATILE, numbered in the order shown. For every topic "
+        "you identify, you MUST also list the index tokens of the cards that drove that topic into its "
+        "tier under a 'sourceCardIndices' array. List between one and " + str(MAX_SOURCE_CARDS_PER_TOPIC) + " tokens per topic; only use "
+        "tokens that actually appear in the lists you were shown. The student's downstream pipeline uses "
+        "these tokens to mark the corresponding cards as recently studied — getting them right is more "
+        "important than naming extra topics.\n\n"
         "Return STRICT compact JSON with exactly one key 'topics' — an array of objects with "
-        "'name' (string), 'strength' (one of 'WEAK', 'STRONG', 'VOLATILE'), and 'reason' (one short "
-        "sentence explaining the classification). Return only a small handful of entries per strength "
-        "tier — fewer is better when the card evidence is thin, and skip a tier entirely if it is not "
-        "supported (e.g. zero VOLATILE when no card shows a real confusion pattern). No prose outside "
-        "the JSON."
+        "'name' (string), 'strength' (one of 'WEAK', 'STRONG', 'VOLATILE'), 'reason' (one short "
+        "sentence explaining the classification), and 'sourceCardIndices' (array of card index tokens). "
+        "Return only a small handful of entries per strength tier — fewer is better when the card "
+        "evidence is thin, and skip a tier entirely if it is not supported (e.g. zero VOLATILE when no "
+        "card shows a real confusion pattern). No prose outside the JSON."
     )
 
     def __init__(self, payload: dict = {}):
@@ -500,22 +514,75 @@ class AnalyzeDeckPerformance(Workflow):
 
     @staticmethod
     def __strip_html(html_text: str) -> str:
-        import re
         without_tags = re.sub(r"<[^>]+>", " ", html_text)
         return re.sub(r"\s+", " ", without_tags).strip()[:240]
 
     @staticmethod
-    def __format_card_block(label: str, cards: list[dict]) -> str:
+    def __format_card_block(label: str, tier_prefix: str, cards: list[dict]) -> str:
+        """
+        Renders one tier of cards as a block of bullet lines suitable
+        for embedding in the LLM user-prompt. Every card is prefixed
+        with an index token (`[W1]`, `[S2]`, …) so the LLM can
+        round-trip them in its `sourceCardIndices` answer. `tier_prefix`
+        is the single-letter abbreviation for the tier ('W' for WEAK,
+        'S' for STRONG, 'V' for VOLATILE).
+        """
         if not cards:
             return f"{label}: (no cards in this tier)"
 
         lines = [f"{label}:"]
-        for card in cards:
+        for card_index, card in enumerate(cards):
+            index_token = f"{tier_prefix}{card_index + 1}"
             lines.append(
-                f"- (r30={card['r30']:.2f}, rating={card['rating']:.0f}, rd={card['ratingDeviation']:.0f}) "
+                f"- [{index_token}] (r30={card['r30']:.2f}, rating={card['rating']:.0f}, rd={card['ratingDeviation']:.0f}) "
                 f"Q: {card['question']} | A: {card['answer']}"
             )
         return "\n".join(lines)
+
+    @staticmethod
+    def __build_card_index_to_id_map(weakest_cards: list[dict], strongest_cards: list[dict], volatile_cards: list[dict]) -> dict[str, str]:
+        """
+        Pairs each card index token with its real card id. The LLM
+        answers in tokens; the translator (`__translate_source_card_indices`)
+        uses this map to swap them back into the actual ids the
+        frontend / agent will write to Mongo.
+        """
+        index_to_id: dict[str, str] = {}
+        for tier_prefix, cards in (("W", weakest_cards), ("S", strongest_cards), ("V", volatile_cards)):
+            for card_index, card in enumerate(cards):
+                card_id = card.get("id")
+                if isinstance(card_id, str) and card_id:
+                    index_to_id[f"{tier_prefix}{card_index + 1}"] = card_id
+        return index_to_id
+
+    @staticmethod
+    def __translate_source_card_indices(sanitized_topics: list[dict], card_index_to_id: dict[str, str]) -> list[dict]:
+        """
+        Replaces the LLM's `sourceCardIndices` token list (e.g. ['W1',
+        'W3']) on each topic with the canonical `sourceCardIds` list
+        (actual card ids). Tokens that don't appear in the map are
+        dropped silently — the LLM occasionally hallucinates an index
+        token outside the supplied range, and we'd rather lose a few
+        than corrupt the downstream grade-back.
+        """
+        translated: list[dict] = []
+        for topic in sanitized_topics:
+            raw_indices = topic.get("sourceCardIndices") or []
+            resolved_ids: list[str] = []
+            seen_ids: set[str] = set()
+            for index_token in raw_indices:
+                if not isinstance(index_token, str):
+                    continue
+                card_id = card_index_to_id.get(index_token)
+                if card_id is None or card_id in seen_ids:
+                    continue
+                resolved_ids.append(card_id)
+                seen_ids.add(card_id)
+            new_topic = dict(topic)
+            new_topic.pop("sourceCardIndices", None)
+            new_topic["sourceCardIds"] = resolved_ids
+            translated.append(new_topic)
+        return translated
 
     async def __ask_gemini_for_topics(self, weakest_cards: list[dict], strongest_cards: list[dict], volatile_cards: list[dict], deck_chain: list[str]) -> list[dict] | None:
         deck_context_line = (
@@ -524,14 +591,21 @@ class AnalyzeDeckPerformance(Workflow):
             else "Deck context: (top-level deck, no parent chain)"
         )
 
+        # Build the token→id map upfront so the same prefix scheme is
+        # used both for prompt rendering and for translating the LLM's
+        # `sourceCardIndices` back into real ids.
+        card_index_to_id = AnalyzeDeckPerformance.__build_card_index_to_id_map(weakest_cards, strongest_cards, volatile_cards)
+
         user_prompt = (
             f"{deck_context_line}\n\n"
-            f"{AnalyzeDeckPerformance.__format_card_block('WEAK — lowest retention / lowest win rate', weakest_cards)}\n\n"
-            f"{AnalyzeDeckPerformance.__format_card_block('STRONG — highest retention / steady wins', strongest_cards)}\n\n"
-            f"{AnalyzeDeckPerformance.__format_card_block('VOLATILE — user keeps flipping (high Glicko RD + mixed recent correctness)', volatile_cards)}\n\n"
+            f"{AnalyzeDeckPerformance.__format_card_block('WEAK — lowest retention / lowest win rate', 'W', weakest_cards)}\n\n"
+            f"{AnalyzeDeckPerformance.__format_card_block('STRONG — highest retention / steady wins', 'S', strongest_cards)}\n\n"
+            f"{AnalyzeDeckPerformance.__format_card_block('VOLATILE — user keeps flipping (high Glicko RD + mixed recent correctness)', 'V', volatile_cards)}\n\n"
             "Identify a small number of conceptual topics per tier. A weak topic may be a foundational gap "
-            "rather than the literal card subject — name what the student is missing. Skip a tier entirely "
-            "if the cards do not justify it. Return JSON only."
+            "rather than the literal card subject — name what the student is missing. For every topic, "
+            "list the index tokens (e.g. ['W1', 'W3']) of the cards above that drove the topic into its "
+            "tier under 'sourceCardIndices'. Skip a tier entirely if the cards do not justify it. Return "
+            "JSON only."
         )
 
         request = AutomationRequest(
@@ -555,10 +629,15 @@ class AnalyzeDeckPerformance(Workflow):
                 return None
 
             raw_topics = parsed.get("topics") if isinstance(parsed.get("topics"), list) else []
-            return AnalyzeDeckPerformance.__sanitize_topic_entries(raw_topics)
+            sanitized = AnalyzeDeckPerformance.__sanitize_topic_entries(raw_topics)
+            return AnalyzeDeckPerformance.__translate_source_card_indices(sanitized, card_index_to_id)
         except Exception as parse_error:
             print(f"[AnalyzeDeckPerformance] Failed to parse LLM JSON: {parse_error}")
             return None
+
+    # Index-token validator. Matches the prefix scheme used by
+    # __format_card_block and __build_card_index_to_id_map.
+    __INDEX_TOKEN_PATTERN = re.compile(r"^[WSV]\d+$")
 
     @staticmethod
     def __sanitize_topic_entries(raw_entries: list) -> list[dict]:
@@ -566,7 +645,9 @@ class AnalyzeDeckPerformance(Workflow):
         Validates each LLM topic entry and stamps it with the canonical
         TopicStrength enum name. Unknown strength values are dropped so
         downstream consumers can rely on the field being one of WEAK /
-        STRONG / VOLATILE.
+        STRONG / VOLATILE. Also validates the LLM-supplied
+        `sourceCardIndices` list — only tokens matching the prefix
+        scheme survive, deduped + clamped at MAX_SOURCE_CARDS_PER_TOPIC.
         """
         valid_strength_names = {member.name for member in TopicStrength}
         per_tier_caps = {member.name: AnalyzeDeckPerformance.TOP_TOPICS_PER_TIER for member in TopicStrength}
@@ -593,10 +674,29 @@ class AnalyzeDeckPerformance(Workflow):
                 continue
 
             reason_value = entry.get("reason")
+
+            raw_indices_value = entry.get("sourceCardIndices")
+            cleaned_indices: list[str] = []
+            seen_indices: set[str] = set()
+            if isinstance(raw_indices_value, list):
+                for raw_index in raw_indices_value:
+                    if not isinstance(raw_index, str):
+                        continue
+                    normalized_index = raw_index.strip().upper()
+                    if not AnalyzeDeckPerformance.__INDEX_TOKEN_PATTERN.match(normalized_index):
+                        continue
+                    if normalized_index in seen_indices:
+                        continue
+                    cleaned_indices.append(normalized_index)
+                    seen_indices.add(normalized_index)
+                    if len(cleaned_indices) >= AnalyzeDeckPerformance.MAX_SOURCE_CARDS_PER_TOPIC:
+                        break
+
             sanitized.append({
-                "name":     name_value.strip()[:120],
-                "strength": normalized_strength,
-                "reason":   (reason_value.strip()[:240] if isinstance(reason_value, str) else ""),
+                "name":               name_value.strip()[:120],
+                "strength":           normalized_strength,
+                "reason":             (reason_value.strip()[:240] if isinstance(reason_value, str) else ""),
+                "sourceCardIndices":  cleaned_indices,
             })
             per_tier_counts[normalized_strength] += 1
 
@@ -642,6 +742,17 @@ class AnalyzeDeckPerformance(Workflow):
             effective_topic_index = explicit_topic_index if isinstance(explicit_topic_index, int) else enumeration_index
 
             hard_cards = topic_entry.get("hardCards") or []
+            # Carry the analysis-pass source card ids through to the
+            # child so the persisted curated StudyMaterial knows which
+            # underlying cards drove its topic. The frontend's
+            # COMPLETED_ALL_EASY archive path uses these to apply a
+            # positive FSRS review to each, closing the feedback loop
+            # that the previous version was missing.
+            source_card_ids = topic_entry.get("sourceCardIds") or []
+            if not isinstance(source_card_ids, list):
+                source_card_ids = []
+            else:
+                source_card_ids = [value for value in source_card_ids if isinstance(value, str) and value]
 
             curated_task = TaskDescriptor(
                 type=TaskTypes.GENERATE_CURATED_STUDY_MATERIAL,
@@ -657,6 +768,7 @@ class AnalyzeDeckPerformance(Workflow):
                     "deckChain":              deck_chain,
                     "generatedForAnalysisAt": generated_for_analysis_at,
                     "hardCards":              hard_cards,
+                    "sourceCardIds":          source_card_ids,
                 },
                 next_task_ids=[],
                 parent_task_id=current_task.get_id(),
@@ -785,8 +897,9 @@ class AnalyzeDeckPerformance(Workflow):
         Validates and shapes caller-supplied topics for the skipAnalysis
         branch. Drops malformed entries silently; trims fields to the
         same caps used by the LLM-output sanitiser so downstream sites
-        can treat both paths identically. Carries `topicIndex` and
-        `hardCards` through unchanged for the Continue branch.
+        can treat both paths identically. Carries `topicIndex`,
+        `hardCards`, and `sourceCardIds` through for the Continue
+        branch and the COMPLETED_ALL_EASY auto-queue path.
         """
         if not isinstance(raw_entries, list):
             return []
@@ -815,12 +928,19 @@ class AnalyzeDeckPerformance(Workflow):
             if not isinstance(hard_cards_value, list):
                 hard_cards_value = []
 
+            source_card_ids_value = entry.get("sourceCardIds") or []
+            if not isinstance(source_card_ids_value, list):
+                source_card_ids_value = []
+            else:
+                source_card_ids_value = [value for value in source_card_ids_value if isinstance(value, str) and value]
+
             sanitized.append({
-                "name":       name_value.strip()[:120],
-                "strength":   normalized_strength,
-                "reason":     (reason_value.strip()[:240] if isinstance(reason_value, str) else ""),
-                "topicIndex": entry.get("topicIndex"),
-                "hardCards":  hard_cards_value,
+                "name":           name_value.strip()[:120],
+                "strength":       normalized_strength,
+                "reason":         (reason_value.strip()[:240] if isinstance(reason_value, str) else ""),
+                "topicIndex":     entry.get("topicIndex"),
+                "hardCards":      hard_cards_value,
+                "sourceCardIds":  source_card_ids_value,
             })
 
         return sanitized

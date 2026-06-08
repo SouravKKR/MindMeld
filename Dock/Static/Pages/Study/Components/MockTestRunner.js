@@ -611,6 +611,35 @@ class MockTestRunner extends HTMLElement
         await this.#performSubmit({ uploadedFilePaths: uploadedRelativePaths });
     }
 
+    /**
+     * Public, idempotent teardown. Stops the timer, drops the back-nav
+     * and fullscreen guards, exits fullscreen if engaged, and detaches
+     * itself from the DOM so disconnectedCallback fires once. Use this
+     * when the surrounding page is being left (StudyPage.onPageLeft) or
+     * whenever an in-flight attempt must be abandoned without
+     * submitting — the user's in-progress answers are intentionally
+     * discarded.
+     */
+    cancel()
+    {
+        if (!this.#isActive && !this.#timerIntervalHandle && !this.#popstateHandler)
+        {
+            return;
+        }
+        this.#isActive = false;
+        this.#stopTimer();
+        this.#removeBackNavigationGuard();
+        this.#removeFullscreenWatcher();
+        if (document.fullscreenElement)
+        {
+            document.exitFullscreen().catch(() => {});
+        }
+        if (this.parentNode)
+        {
+            this.parentNode.removeChild(this);
+        }
+    }
+
     // ── Submission ─────────────────────────────────────────────────────────────
 
     async #performSubmit({ uploadedFilePaths } = {})

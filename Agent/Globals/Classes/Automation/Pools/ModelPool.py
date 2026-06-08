@@ -131,5 +131,12 @@ class ModelPool:
 
     MOCK_TEST_AUTO_MODEL                        = ("gemini-3.1-flash-lite", GeminiProvider)
 
+    # Cheap, fast model used to grade subjective mock-test answers in batches.
+    # Grading is a comparatively shallow task — the LLM is given the expected
+    # answer + marking rule and just needs to award a score and optionally
+    # write a short remark. flash-lite holds up here and keeps per-batch cost
+    # low enough that the (future) credit deduction won't sting.
+    MOCK_TEST_GRADING_MODEL = ("gemini-2.5-flash-lite", GeminiProvider)
+
     IMAGE_VALIDATION_MODEL                      = ("gemini-2.5-flash-lite", GeminiProvider)
     IMAGE_VERIFICATION_MODEL                    = ("gemini-3.1-flash-lite", GeminiProvider)

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">
+    <path d="M2 6C2 4.9 2.9 4 4 4H11C12.1 4 13 4.9 13 6V12C13 13.1 12.1 14 11 14H8L4 17V14H4C2.9 14 2 13.1 2 12V6Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+    <text x="4" y="11" font-family="sans-serif" font-size="6" font-weight="bold" fill="currentColor">A</text>
+    <path d="M11 12C11 10.9 11.9 10 13 10H20C21.1 10 22 10.9 22 12V18C22 19.1 21.1 20 20 20H20L20 23L16 20H13C11.9 20 11 19.1 11 18V12Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+    <text x="13" y="17" font-family="sans-serif" font-size="6" font-weight="bold" fill="currentColor">अ</text>
+</svg>

@@ -375,7 +375,7 @@ class TutorialEngine
         const DialogBox = DialogBoxModule.default;
 
         // The tutorial overlay sits at z-index 2147483500, well above the
-        // DialogBox modal (z-index ~1000), so without explicitly hiding the
+        // DialogBox stacking range, so without explicitly hiding the
         // overlay first the confirmation prompt would be visually buried
         // under the tutorial tooltip. Hide it for the duration of the
         // confirm, then re-render the current step afterward — re-render

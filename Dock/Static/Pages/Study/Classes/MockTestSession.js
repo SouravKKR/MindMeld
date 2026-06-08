@@ -1,11 +1,15 @@
 import { mockTestItemTypes } from "../../../Globals/Enumerations/MockTestItemTypes.js";
 import { questionTypes } from "../../../Globals/Enumerations/QuestionTypes.js";
+import { mockTestEvaluationStatuses } from "../../../Globals/Enumerations/MockTestEvaluationStatuses.js";
+import MockTestEvaluationConstants from "../../../Globals/Constants/MockTestEvaluationConstants.js";
 import sanitizeForJsPdf from "../../../Globals/UtilityFunctions/SanitizeForJsPdf.js";
 import StudySession from "./StudySession.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
+import TaskProgressTracker from "../../../Globals/Classes/Task/TaskProgressTracker.js";
 import MockTestAttempt from "../../../Globals/Model/MockTestEntities/MockTestAttempt.js";
 import MockTestItemFactory from "../../../Globals/Model/MockTestEntities/MockTestItemFactory.js";
+import EvaluationInstructionsDialog from "../Components/EvaluationInstructionsDialog.js";
 import "../Components/MockTestRunner.js";
 
 class MockTestSession extends StudySession
@@ -114,6 +118,28 @@ class MockTestSession extends StudySession
     next() { /* not applicable for mock tests */ }
 
     /**
+     * Tears down the mounted MockTestRunner so the in-flight attempt is
+     * abandoned without auto-submitting. Called by StudyPage.onPageLeft
+     * whenever the user navigates away (header back arrow, PageNavigator
+     * back, or any other off-page path the popstate guard inside the
+     * runner does not see). The user's in-progress answers are
+     * intentionally discarded — there is no "draft autosave" on mock
+     * tests.
+     */
+    stop()
+    {
+        if (!this._studyPage)
+        {
+            return;
+        }
+        const runnerElement = this._studyPage.querySelector("mock-test-runner");
+        if (runnerElement && typeof runnerElement.cancel === "function")
+        {
+            runnerElement.cancel();
+        }
+    }
+
+    /**
      * Persists a completed attempt to the mock test's history, exits
      * fullscreen, and navigates back. Evaluation is intentionally a
      * TODO — answers (and any offline scan upload paths) are stored
@@ -143,15 +169,132 @@ class MockTestSession extends StudySession
             attempt.setAdditionalData(additionalData);
         }
 
-        this.#mockTest.addAttempt(attempt);
+        const isOfflineOnlyCandidate = MockTestSession.#attemptIsOfflineOnly(clonedItems);
+        const dialogResult = await EvaluationInstructionsDialog.open({
+            initialInstructions: "",
+            initialEnableLlmMcqFeedback: false,
+            isOfflineOnly: isOfflineOnlyCandidate,
+            title: "Submit & Evaluate",
+            confirmLabel: "Submit"
+        });
 
+        if (!dialogResult.confirmed)
+        {
+            return;
+        }
+
+        attempt.setEvaluationInstructions(dialogResult.instructions);
+        attempt.setEnableLlmMcqFeedback(dialogResult.enableLlmMcqFeedback === true);
+
+        // Even an MCQ-only paper goes to the server when the candidate
+        // opted in to LLM feedback — that's the only way to get remarks
+        // on a deterministically-scored attempt.
+        const shouldRunInlineOfflineGrading = isOfflineOnlyCandidate && dialogResult.enableLlmMcqFeedback !== true;
+
+        if (shouldRunInlineOfflineGrading)
+        {
+            attempt.evaluate(this.#mockTest);
+            attempt.setEvaluationStatus(mockTestEvaluationStatuses.COMPLETED);
+            this.#mockTest.addAttempt(attempt);
+            try
+            {
+                await this.#mockTest.save();
+            }
+            catch (saveError)
+            {
+                console.error("[MockTestSession] Failed to persist offline-graded attempt:", saveError);
+            }
+
+            if (document.fullscreenElement)
+            {
+                try { await document.exitFullscreen(); } catch (exitError) { /* ignore */ }
+            }
+
+            await DialogBox.alert(
+                "Submitted",
+                `Your attempt was graded offline. Score: ${attempt.getScore()} / ${attempt.getMaxScore()}.`
+            );
+            PageNavigator.clearAndOpen("mock-test-answer-key-page", this.#mockTest, attempt);
+            return;
+        }
+
+        attempt.setEvaluationStatus(mockTestEvaluationStatuses.GRADING);
+        this.#mockTest.addAttempt(attempt);
         try
         {
             await this.#mockTest.save();
         }
         catch (saveError)
         {
-            console.error("[MockTestSession] Failed to persist attempt:", saveError);
+            console.error("[MockTestSession] Failed to persist attempt before LLM evaluation:", saveError);
+        }
+
+        // Force a sync BEFORE the POST so the just-added attempt is
+        // visible in Mongo when the Dock endpoint looks it up. Without
+        // this, the endpoint reads an old mockTest snapshot that doesn't
+        // contain the new attempt and returns 404 — the browser then
+        // surfaces a misleading "Could not reach the evaluation server"
+        // message even though the server replied just fine.
+        try
+        {
+            await TaskProgressTracker.triggerSync();
+        }
+        catch (preEvaluationSyncError)
+        {
+            console.warn("[MockTestSession] Pre-evaluation sync push failed; attempting POST anyway:", preEvaluationSyncError);
+        }
+
+        try
+        {
+            const evaluationResponse = await fetch("/MockTest/EvaluateAttempt", {
+                method: "POST",
+                credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    mockTestId: this.#mockTest.getId(),
+                    attemptId: attempt.getId(),
+                    evaluationInstructions: dialogResult.instructions,
+                    enableLlmMcqFeedback: dialogResult.enableLlmMcqFeedback === true,
+                    // Belt-and-braces: include the attempt JSON in the body
+                    // so the Dock can proceed even when our pre-evaluation
+                    // sync push hasn't fully landed yet in Mongo. The Dock
+                    // prefers the Mongo copy when present and falls back
+                    // to this snapshot when the attempt isn't there yet.
+                    attemptSnapshot: attempt.toJson()
+                })
+            });
+
+            if (!evaluationResponse.ok)
+            {
+                const errorBody = await evaluationResponse.text().catch(() => "");
+                throw new Error(`Server returned ${evaluationResponse.status}${errorBody ? ` — ${errorBody}` : ""}`);
+            }
+
+            const responseBody = await evaluationResponse.json().catch(() => ({}));
+            if (responseBody && typeof responseBody.taskId === "string" && responseBody.taskId.length > 0)
+            {
+                const previousAdditional = attempt.getAdditionalData() || {};
+                attempt.setAdditionalData({ ...previousAdditional, evaluationTaskId: responseBody.taskId });
+                try { await this.#mockTest.save(); } catch (resaveError) { /* ignore */ }
+            }
+        }
+        catch (requestError)
+        {
+            console.error("[MockTestSession] Failed to start evaluation task:", requestError);
+            attempt.setEvaluationStatus(mockTestEvaluationStatuses.FAILED);
+            try { await this.#mockTest.save(); } catch (resaveError) { /* ignore */ }
+
+            if (document.fullscreenElement)
+            {
+                try { await document.exitFullscreen(); } catch (exitError) { /* ignore */ }
+            }
+
+            await DialogBox.alert(
+                "Evaluation failed to start",
+                `The evaluation server returned an error: ${requestError?.message || "unknown"}. Your attempt is saved; you can re-evaluate it later from the answer key page.`
+            );
+            PageNavigator.clearAndOpen("mock-test-answer-key-page", this.#mockTest, attempt);
+            return;
         }
 
         if (document.fullscreenElement)
@@ -159,8 +302,53 @@ class MockTestSession extends StudySession
             try { await document.exitFullscreen(); } catch (exitError) { /* ignore */ }
         }
 
-        await DialogBox.alert("Submitted", "Your attempt has been recorded. Evaluation will be wired later.");
-        PageNavigator.back();
+        await DialogBox.alert(
+            "Evaluation in progress",
+            "Your attempt is being graded. Track progress in Activity — the score and examiner remarks will appear on the answer key page once it finishes."
+        );
+        PageNavigator.clearAndOpen("mock-test-answer-key-page", this.#mockTest, attempt);
+    }
+
+    static #attemptIsOfflineOnly(clonedItems)
+    {
+        const offlineGradableTypeKeys = new Set(MockTestEvaluationConstants.OFFLINE_GRADABLE_QUESTION_TYPES);
+        for (const item of clonedItems)
+        {
+            if (!item || item.getType?.() !== mockTestItemTypes.QUESTION)
+            {
+                continue;
+            }
+            const additionalData = item.getAdditionalData ? item.getAdditionalData() : {};
+            const typeKey = MockTestSession.#resolveTypeKey(additionalData);
+            if (!typeKey)
+            {
+                continue;
+            }
+            if (!offlineGradableTypeKeys.has(typeKey))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static #resolveTypeKey(additionalData)
+    {
+        if (typeof additionalData.typeKey === "string" && additionalData.typeKey.length > 0)
+        {
+            return additionalData.typeKey;
+        }
+        if (Number.isFinite(additionalData.type))
+        {
+            for (const candidateKey of Object.keys(questionTypes))
+            {
+                if (questionTypes[candidateKey] === additionalData.type)
+                {
+                    return candidateKey;
+                }
+            }
+        }
+        return null;
     }
 
     static #computeMaxScore(items)

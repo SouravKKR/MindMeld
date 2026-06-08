@@ -1,0 +1,44 @@
+{
+    "name": "OrgAdminVerification",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "email":
+        {
+            "datatype": "string",
+            "minLength": 3,
+            "maxLength": 320
+        },
+        "codeHash":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "attempts":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "verificationToken":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "createdAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "expirationDate":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        }
+    }
+}

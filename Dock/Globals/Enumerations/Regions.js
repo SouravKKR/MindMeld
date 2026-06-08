@@ -1,0 +1,17 @@
+const regions =
+{
+  INDIA: 0,
+  EUROPE: 1,
+  UNITED_KINGDOM: 2,
+  UNITED_STATES: 3,
+  CANADA: 4,
+  MEXICO: 5,
+  BRAZIL: 6,
+  ASIA: 7,
+  AUSTRALIA: 8,
+  SINGAPORE: 9,
+  MIDDLE_EAST: 10,
+  AFRICA: 11,
+}
+
+module.exports = { regions };

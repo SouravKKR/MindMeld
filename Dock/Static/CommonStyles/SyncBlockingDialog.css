@@ -1,19 +1,11 @@
-/* Elevate the sync-blocking dialog + its backdrop above every other
-   interactive surface so the user cannot click through while a bulk
-   sync is mid-apply. Mirrored values stay above OptionsSidebar (1000),
-   drag ghosts (10000), RichTextEditor (9999) and TutorialOverlay
-   (2147483500). The dialog sits one step above its own backdrop. */
+/* Backdrop styling for the sync-blocking dialog: keep a busy cursor and
+   absorb interactions while the bulk apply is in progress. Stacking is
+   handled by DialogBox's auto-incrementing z-index. */
 
-.dialog-backdrop.sync-blocking-backdrop-elevated
+.dialog-backdrop.sync-blocking-backdrop-busy
 {
-    z-index: 2147483700;
     pointer-events: all;
     cursor: wait;
-}
-
-dialog-box.sync-blocking-dialog-elevated
-{
-    z-index: 2147483701;
 }
 
 dialog-box .sync-blocking-content

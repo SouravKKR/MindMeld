@@ -1,16 +1,25 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
+import SearchableDropdown from "../../../CommonComponents/SearchableDropdown.js";
+import Deck from "../../../Globals/Model/Deck.js";
 import { deckPurchaseGranularity } from "../../../Globals/Enumerations/DeckPurchaseGranularity.js";
+import PaidDeckBadgeRegistry from "../../../Globals/Classes/PaidDeckBadgeRegistry.js";
+import PaidDeckUploadDialog from "./PaidDeckUploadDialog.js";
 
 /**
  * PaidDeckEditDialog
  *
  * Edit form for a single existing PaidDeck. Pre-populates the same
  * fields PaidDeckUploadDialog collects; only sends fields the server's
- * /Admin/PaidDecks/Update accepts.
+ * /Admin/PaidDecks/Update accepts. Also surfaces the read-only
+ * contentSummary + a "Replace Deck Content" button that re-POSTs to
+ * /Admin/PaidDecks/Upload with the same deckId so new buyers receive
+ * the freshly-encrypted payload while existing buyers keep their
+ * version until they explicitly redownload.
  */
 class PaidDeckEditDialog
 {
     static #UPDATE_ENDPOINT = "/Admin/PaidDecks/Update";
+    static #UPLOAD_ENDPOINT = "/Admin/PaidDecks/Upload";
 
     static show(deck)
     {
@@ -22,6 +31,10 @@ class PaidDeckEditDialog
             const cancelButton = dialog.querySelector(".paid-deck-edit-cancel");
             const submitButton = dialog.querySelector(".paid-deck-edit-submit");
             const errorElement = dialog.querySelector(".paid-deck-edit-error");
+
+            PaidDeckEditDialog.#wireBadgePicker(dialog, deck);
+            PaidDeckEditDialog.#populateInstituteDatalist(dialog);
+            PaidDeckEditDialog.#wireReplaceContentButton(dialog, deck, resolve);
 
             let bResolved = false;
 
@@ -46,7 +59,7 @@ class PaidDeckEditDialog
                 errorElement.textContent = "";
                 errorElement.hidden = true;
 
-                const updates = PaidDeckEditDialog.#collectFormUpdates(formElement, deck);
+                const updates = PaidDeckEditDialog.#collectFormUpdates(formElement, dialog, deck);
 
                 submitButton.disabled = true;
                 submitButton.textContent = "Saving…";
@@ -93,9 +106,275 @@ class PaidDeckEditDialog
             .replace(/"/g, "&quot;");
     }
 
+    static async #populateInstituteDatalist(dialog)
+    {
+        const datalistElement = dialog.querySelector("#paid-deck-institute-options");
+        if (!datalistElement) return;
+
+        try
+        {
+            const response = await fetch("/Admin/PaidDecks/List?includeUnpublished=true");
+            if (!response.ok) return;
+            const responseJson = await response.json();
+            const decksList = Array.isArray(responseJson.decks) ? responseJson.decks : [];
+
+            const uniqueInstituteNames = new Set();
+            for (const paidDeck of decksList)
+            {
+                const instituteName = paidDeck?.additionalData?.institute?.name;
+                if (typeof instituteName === "string" && instituteName.trim().length > 0)
+                {
+                    uniqueInstituteNames.add(instituteName.trim());
+                }
+            }
+
+            const sortedInstituteNames = Array.from(uniqueInstituteNames).sort((firstName, secondName) =>
+            {
+                return firstName.localeCompare(secondName, undefined, { sensitivity: "base" });
+            });
+
+            datalistElement.innerHTML = sortedInstituteNames
+                .map((instituteName) => `<option value="${PaidDeckEditDialog.#escape(instituteName)}"></option>`)
+                .join("");
+        }
+        catch (fetchError)
+        {
+            // Datalist stays empty — admin can still type a new value.
+        }
+    }
+
+    static #listSourceDeckCandidates()
+    {
+        return Deck.getAll((deck) =>
+        {
+            if (deck.getId() === "0") return false;
+            const parent = typeof deck.getParent === "function" ? deck.getParent() : null;
+            return parent !== null && parent !== undefined && parent.getId() === "0";
+        });
+    }
+
+    static #formatDeckSublabel(deckInstance)
+    {
+        const cardCount = PaidDeckEditDialog.#safeCount(deckInstance, "getCards");
+        const studyMaterialCount = PaidDeckEditDialog.#safeCount(deckInstance, "getStudyMaterials");
+        const mockTestCount = PaidDeckEditDialog.#safeCount(deckInstance, "getMockTests");
+        return `${cardCount} cards · ${studyMaterialCount} materials · ${mockTestCount} mock tests`;
+    }
+
+    static #safeCount(deckInstance, methodName)
+    {
+        try
+        {
+            const value = deckInstance[methodName](true);
+            return Array.isArray(value) ? value.length : 0;
+        }
+        catch (countError)
+        {
+            return 0;
+        }
+    }
+
+    static #renderBadgePicker(selectedBadgeValues)
+    {
+        const selectedSet = new Set((selectedBadgeValues || []).map((value) => Number(value)));
+        const chips = PaidDeckBadgeRegistry.getAll().map((entry) =>
+        {
+            const isSelected = selectedSet.has(entry.value);
+            return `
+                <button type="button" class="paid-deck-badge-chip ${isSelected ? "paid-deck-badge-chip-selected" : ""}" data-badge-value="${entry.value}" title="${PaidDeckEditDialog.#escape(entry.description)}">
+                    <img class="paid-deck-badge-chip-icon" src="${entry.iconPath}" alt="">
+                    <span class="paid-deck-badge-chip-label">${PaidDeckEditDialog.#escape(entry.label)}</span>
+                </button>
+            `;
+        }).join("");
+
+        return `<div class="paid-deck-badge-picker" data-role="badge-picker">${chips}</div>`;
+    }
+
+    static #wireBadgePicker(dialog)
+    {
+        const picker = dialog.querySelector('[data-role="badge-picker"]');
+        if (!picker) return;
+
+        picker.addEventListener("click", (clickEvent) =>
+        {
+            const chip = clickEvent.target.closest(".paid-deck-badge-chip");
+            if (!chip) return;
+            chip.classList.toggle("paid-deck-badge-chip-selected");
+        });
+    }
+
+    static #collectSelectedBadgeValues(dialog)
+    {
+        const selectedChips = dialog.querySelectorAll(".paid-deck-badge-chip.paid-deck-badge-chip-selected");
+        const values = [];
+        for (const chip of selectedChips)
+        {
+            const numericValue = Number(chip.dataset.badgeValue);
+            if (Number.isFinite(numericValue))
+            {
+                values.push(numericValue);
+            }
+        }
+        return values;
+    }
+
+    static #wireReplaceContentButton(dialog, deck, resolveOuter)
+    {
+        const replaceButton = dialog.querySelector(".paid-deck-edit-replace-content");
+        if (!replaceButton) return;
+
+        replaceButton.addEventListener("click", () =>
+        {
+            const subDialog = DialogBox.modal(`
+                <form class="paid-deck-replace-form" onsubmit="return false;">
+                    <h2 class="paid-deck-edit-title">Replace deck content</h2>
+                    <p class="paid-deck-upload-subtitle">
+                        Pick the new source deck from your local library. The content is
+                        re-encrypted and stored alongside the old asset — existing buyers
+                        keep their copy until they choose to redownload, and new buyers
+                        receive this version.
+                    </p>
+                    <label class="paid-deck-upload-field paid-deck-upload-field-full">
+                        <span>New source deck *</span>
+                        <div class="paid-deck-source-deck-row">
+                            <button type="button" class="paid-deck-source-deck-button" data-role="pick-replace-source-deck">
+                                Choose a deck from your library...
+                            </button>
+                            <div class="paid-deck-source-deck-summary" data-role="replace-source-deck-summary" hidden></div>
+                        </div>
+                    </label>
+                    <div class="paid-deck-upload-error" data-role="replace-error" hidden></div>
+                    <div class="paid-deck-upload-actions">
+                        <button type="button" class="paid-deck-replace-cancel">Cancel</button>
+                        <button type="button" class="paid-deck-replace-submit">Replace</button>
+                    </div>
+                </form>
+            `);
+
+            const errorElement = subDialog.querySelector('[data-role="replace-error"]');
+            const cancelButton = subDialog.querySelector(".paid-deck-replace-cancel");
+            const submitButton = subDialog.querySelector(".paid-deck-replace-submit");
+            const pickerButton = subDialog.querySelector('[data-role="pick-replace-source-deck"]');
+            const summaryElement = subDialog.querySelector('[data-role="replace-source-deck-summary"]');
+
+            const sourceDeckState = { selectedDeck: null };
+
+            pickerButton.addEventListener("click", async () =>
+            {
+                const candidateDecks = PaidDeckEditDialog.#listSourceDeckCandidates();
+                const pickedDeckId = await SearchableDropdown.show
+                ({
+                    title: "Choose new source deck",
+                    searchPlaceholder: "Search your decks...",
+                    items: candidateDecks.map((candidateDeck) =>
+                    ({
+                        key: candidateDeck.getId(),
+                        label: candidateDeck.getName(),
+                        sublabel: PaidDeckEditDialog.#formatDeckSublabel(candidateDeck)
+                    }))
+                });
+
+                if (!pickedDeckId) return;
+
+                const pickedDeck = Deck.getById(pickedDeckId);
+                if (!pickedDeck) return;
+
+                sourceDeckState.selectedDeck = pickedDeck;
+                pickerButton.textContent = `Replace pick (currently: ${pickedDeck.getName()})`;
+                summaryElement.innerHTML = `
+                    <strong>Selected:</strong> ${PaidDeckEditDialog.#escape(pickedDeck.getName())}
+                    — ${PaidDeckEditDialog.#formatDeckSublabel(pickedDeck)}
+                `;
+                summaryElement.hidden = false;
+            });
+
+            cancelButton.addEventListener("click", () => subDialog.close());
+
+            submitButton.addEventListener("click", async () =>
+            {
+                errorElement.hidden = true;
+                errorElement.textContent = "";
+
+                if (!sourceDeckState.selectedDeck)
+                {
+                    errorElement.textContent = "Pick a source deck before replacing.";
+                    errorElement.hidden = false;
+                    return;
+                }
+
+                const parsedPayload = PaidDeckUploadDialog.serialiseDeckForUpload(sourceDeckState.selectedDeck);
+                if (!parsedPayload)
+                {
+                    errorElement.textContent = "Could not serialise the picked deck.";
+                    errorElement.hidden = false;
+                    return;
+                }
+
+                submitButton.disabled = true;
+                submitButton.textContent = "Replacing…";
+
+                try
+                {
+                    const response = await fetch(PaidDeckEditDialog.#UPLOAD_ENDPOINT,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify
+                        ({
+                            metadata:
+                            {
+                                id: deck.id,
+                                title: deck.title,
+                                description: deck.description,
+                                sellerId: deck.sellerId,
+                                thumbnailUrl: deck.thumbnailUrl,
+                                category: deck.category,
+                                tags: deck.tags || [],
+                                basePriceMinor: deck.basePriceMinor || 0,
+                                currency: deck.currency || "INR",
+                                granularity: deck.granularity || 0,
+                                bundleChildIds: deck.bundleChildIds || [],
+                                parentBundleIds: deck.parentBundleIds || [],
+                                isPublished: deck.isPublished || false,
+                                additionalData: deck.additionalData || {},
+                                featureBadges: deck.featureBadges || [],
+                                extraTags: deck.extraTags || []
+                            },
+                            deckPayload: parsedPayload
+                        })
+                    });
+
+                    if (response.ok)
+                    {
+                        subDialog.close();
+                        dialog.close();
+                        resolveOuter(true);
+                        return;
+                    }
+
+                    const errorJson = await response.json().catch(() => ({}));
+                    errorElement.textContent = errorJson.error || `Replace failed (HTTP ${response.status}).`;
+                    errorElement.hidden = false;
+                }
+                catch (replaceError)
+                {
+                    errorElement.textContent = replaceError.message;
+                    errorElement.hidden = false;
+                }
+                finally
+                {
+                    submitButton.disabled = false;
+                    submitButton.textContent = "Replace";
+                }
+            });
+        });
+    }
+
     static #getFormMarkup(deck)
     {
         const tagsJoined = Array.isArray(deck.tags) ? deck.tags.join(", ") : "";
+        const extraTagsJoined = Array.isArray(deck.extraTags) ? deck.extraTags.join(", ") : "";
         const bundleChildIdsJoined = Array.isArray(deck.bundleChildIds) ? deck.bundleChildIds.join(", ") : "";
         const parentBundleIdsJoined = Array.isArray(deck.parentBundleIds) ? deck.parentBundleIds.join(", ") : "";
 
@@ -105,6 +384,12 @@ class PaidDeckEditDialog
         const instituteNameValue = typeof existingInstitute.name === "string" ? existingInstitute.name : "";
         const instituteLocationValue = typeof existingInstitute.location === "string" ? existingInstitute.location : "";
         const instituteAlternateNamesValue = Array.isArray(existingInstitute.alternateNames) ? existingInstitute.alternateNames.join(", ") : "";
+
+        const contentSummary = (deck.contentSummary && typeof deck.contentSummary === "object") ? deck.contentSummary : {};
+        const totalCards = Number(contentSummary.totalCards) || 0;
+        const totalStudyMaterials = Number(contentSummary.totalStudyMaterials) || 0;
+        const totalMockTests = Number(contentSummary.totalMockTests) || 0;
+        const contentVersion = Number(contentSummary.contentVersion) || 0;
 
         return `
             <form class="paid-deck-edit-form" onsubmit="return false;">
@@ -154,6 +439,11 @@ class PaidDeckEditDialog
                         <input type="text" name="tags" value="${PaidDeckEditDialog.#escape(tagsJoined)}">
                     </label>
 
+                    <label class="paid-deck-upload-field paid-deck-upload-field-full">
+                        <span>Extra tags shown on the purchase page (comma-separated)</span>
+                        <input type="text" name="extraTags" value="${PaidDeckEditDialog.#escape(extraTagsJoined)}" placeholder="Boards 2026, Crash Course, ...">
+                    </label>
+
                     <label class="paid-deck-upload-field">
                         <span>Bundle child IDs (comma-separated)</span>
                         <input type="text" name="bundleChildIds" value="${PaidDeckEditDialog.#escape(bundleChildIdsJoined)}">
@@ -170,23 +460,47 @@ class PaidDeckEditDialog
                     </label>
 
                     <div class="paid-deck-upload-field paid-deck-upload-field-full paid-deck-upload-section-divider">
+                        <span class="paid-deck-upload-section-heading">Feature badges (shown as icon chips on the purchase page)</span>
+                    </div>
+
+                    <div class="paid-deck-upload-field paid-deck-upload-field-full">
+                        ${PaidDeckEditDialog.#renderBadgePicker(deck.featureBadges)}
+                    </div>
+
+                    <div class="paid-deck-upload-field paid-deck-upload-field-full paid-deck-upload-section-divider">
                         <span class="paid-deck-upload-section-heading">Institute (optional)</span>
                     </div>
 
                     <label class="paid-deck-upload-field">
                         <span>Institute name</span>
-                        <input type="text" name="instituteName" maxlength="256" value="${PaidDeckEditDialog.#escape(instituteNameValue)}" placeholder="Bangalore Institute of Technology">
+                        <input type="text" name="instituteName" list="paid-deck-institute-options" maxlength="256" value="${PaidDeckEditDialog.#escape(instituteNameValue)}" placeholder="Enter institute name">
+                        <datalist id="paid-deck-institute-options"></datalist>
                     </label>
 
                     <label class="paid-deck-upload-field">
                         <span>Institute location</span>
-                        <input type="text" name="instituteLocation" maxlength="256" value="${PaidDeckEditDialog.#escape(instituteLocationValue)}" placeholder="Bangalore, Karnataka">
+                        <input type="text" name="instituteLocation" maxlength="256" value="${PaidDeckEditDialog.#escape(instituteLocationValue)}" placeholder="Enter location">
                     </label>
 
                     <label class="paid-deck-upload-field paid-deck-upload-field-full">
                         <span>Institute alternate names (comma-separated)</span>
-                        <input type="text" name="instituteAlternateNames" value="${PaidDeckEditDialog.#escape(instituteAlternateNamesValue)}" placeholder="BIT, BIT Bangalore">
+                        <input type="text" name="instituteAlternateNames" value="${PaidDeckEditDialog.#escape(instituteAlternateNamesValue)}" placeholder="Enter alternate names">
                     </label>
+
+                    <div class="paid-deck-upload-field paid-deck-upload-field-full paid-deck-upload-section-divider">
+                        <span class="paid-deck-upload-section-heading">Content summary (auto-computed at upload)</span>
+                    </div>
+
+                    <div class="paid-deck-upload-field paid-deck-upload-field-full paid-deck-content-summary-row">
+                        <div class="paid-deck-content-summary-cell"><strong>${totalCards}</strong> flashcards</div>
+                        <div class="paid-deck-content-summary-cell"><strong>${totalStudyMaterials}</strong> study materials</div>
+                        <div class="paid-deck-content-summary-cell"><strong>${totalMockTests}</strong> mock tests</div>
+                        <div class="paid-deck-content-summary-cell">Content version <strong>v${contentVersion}</strong></div>
+                    </div>
+
+                    <div class="paid-deck-upload-field paid-deck-upload-field-full">
+                        <button type="button" class="paid-deck-edit-replace-content">Replace Deck Content...</button>
+                    </div>
                 </div>
 
                 <div class="paid-deck-edit-error" hidden></div>
@@ -207,7 +521,7 @@ class PaidDeckEditDialog
             .filter(part => part.length > 0);
     }
 
-    static #collectFormUpdates(formElement, deck)
+    static #collectFormUpdates(formElement, dialog, deck)
     {
         const getValue = (name) => formElement.elements[name]?.value ?? "";
         const getChecked = (name) => Boolean(formElement.elements[name]?.checked);
@@ -246,9 +560,11 @@ class PaidDeckEditDialog
             currency: getValue("currency").trim().toUpperCase() || "INR",
             granularity: Number(getValue("granularity") || 0),
             tags: PaidDeckEditDialog.#parseCsvList(getValue("tags")),
+            extraTags: PaidDeckEditDialog.#parseCsvList(getValue("extraTags")),
             bundleChildIds: PaidDeckEditDialog.#parseCsvList(getValue("bundleChildIds")),
             parentBundleIds: PaidDeckEditDialog.#parseCsvList(getValue("parentBundleIds")),
             isPublished: getChecked("isPublished"),
+            featureBadges: PaidDeckEditDialog.#collectSelectedBadgeValues(dialog),
             additionalData: mergedAdditionalData
         };
     }

@@ -19,6 +19,7 @@
     "PAID_DECK_PRICINGS_COLLECTION": "paidDeckPricings",
     "PAID_DECK_ASSETS_COLLECTION": "paidDeckAssets",
     "DECK_LICENSES_COLLECTION": "deckLicenses",
+    "PAID_DECK_USER_CONTENT_COLLECTION": "paidDeckUserContent",
     "DEVICES_COLLECTION": "devices",
     "UPLOAD_QUOTAS_COLLECTION": "uploadQuotas",
     "BUNDLE_DISCOUNTS_COLLECTION": "bundleDiscounts",
@@ -26,5 +27,11 @@
     "TASK_HISTORY_COLLECTION": "taskHistory",
     "ADMIN_EMAILS_COLLECTION": "adminEmails",
     "OTP_REQUESTS_COLLECTION": "otpRequests",
-    "RELEASE_NOTES_COLLECTION": "releaseNotes"
+    "RELEASE_NOTES_COLLECTION": "releaseNotes",
+    "ORGANIZATIONS_COLLECTION": "organizations",
+    "ORGANIZATION_MEMBERS_COLLECTION": "organizationMembers",
+    "ORGANIZATION_DECK_PERKS_COLLECTION": "organizationDeckPerks",
+    "ORG_ADMIN_VERIFICATIONS_COLLECTION": "orgAdminVerifications",
+    "ORGANIZATION_PAYMENTS_COLLECTION": "organizationPayments",
+    "ALERTS_COLLECTION": "alerts"
 }

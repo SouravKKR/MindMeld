@@ -3,7 +3,6 @@ import json
 import os
 from urllib.parse import urlparse
 
-import numpy as np
 from sentence_transformers import SentenceTransformer
 
 from Globals.Classes.Automation.AutomationCaller import AutomationCaller
@@ -17,6 +16,7 @@ from Globals.Constants.DatabaseConstants import DatabaseConstants
 from Globals.Constants.PersistenceConstants import PersistenceConstants
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
 from Globals.Enumerations.InformationSourceTypes import InformationSourceTypes
+from Globals.Utility.CosineSimilarity import cosine_similarity
 from Globals.Utility.JoinPath import join_path
 from Globals.Utility.StripJsonMarkdown import strip_json_markdown
 from Globals.Utility.ExpandPageRanges import expand_page_ranges
@@ -82,18 +82,6 @@ class PrepareImages(Workflow):
         # bytes directly, so intermediate JSONs never carry source
         # artwork.
         self._enhance_images_enabled = bool(payload.get("enhanceImagesEnabled", False))
-
-    @staticmethod
-    def _cosine_similarity(vector_a: list, vector_b: list) -> float:
-        array_a = np.array(vector_a)
-        array_b = np.array(vector_b)
-        norm_a = np.linalg.norm(array_a)
-        norm_b = np.linalg.norm(array_b)
-
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-
-        return float(np.dot(array_a, array_b) / (norm_a * norm_b))
 
     async def _load_json_files_from_prefix(self, gcs_prefix: str) -> list[dict]:
         file_paths = await Persistence.list(gcs_prefix)
@@ -927,9 +915,7 @@ class PrepareImages(Workflow):
 
             for sentence_record in study_material_sentence_records:
                 sm_index = sentence_record["study_material_index"]
-                score = PrepareImages._cosine_similarity(
-                    figure_embedding, sentence_record["embedding"]
-                )
+                score = cosine_similarity(figure_embedding, sentence_record["embedding"])
                 existing = best_score_per_study_material.get(sm_index)
                 if existing is None or score > existing["score"]:
                     best_score_per_study_material[sm_index] = {
@@ -967,9 +953,7 @@ class PrepareImages(Workflow):
                     sentence_record["flashcard_file_index"],
                     sentence_record["card_index"],
                 )
-                score = PrepareImages._cosine_similarity(
-                    figure_embedding, sentence_record["embedding"]
-                )
+                score = cosine_similarity(figure_embedding, sentence_record["embedding"])
                 existing = best_score_per_card.get(card_key)
                 if existing is None or score > existing["score"]:
                     best_score_per_card[card_key] = {

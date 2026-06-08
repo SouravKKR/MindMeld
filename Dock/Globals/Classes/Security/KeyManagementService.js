@@ -130,7 +130,7 @@ class KeyManagementService
         );
     }
 
-    static issueLicenseForUser(userId, deckId, keyVersion, wrappedContentKeyIvBase64, wrappedContentKeyBase64)
+    static issueLicenseForUser(userId, deckId, keyVersion, wrappedContentKeyIvBase64, wrappedContentKeyBase64, options = {})
     {
         KeyManagementService.#ensureReady();
 
@@ -147,6 +147,20 @@ class KeyManagementService
             ciphertextBase64: wrappedForUser.ciphertextBase64
         });
 
+        // options.expiresAt is either a future Date for finite licenses
+        // (org-perk grants with a durationDays window) or null / undefined
+        // / new Date(0) for the "forever" sentinel. The codegen's
+        // DeckLicense setExpiresAt coerces null → new Date(), so callers
+        // who want forever must pass new Date(0) explicitly. Anything
+        // <= epoch zero is treated as "never expires" by isLicenseActive.
+        const expiresAt = options.expiresAt instanceof Date
+            ? options.expiresAt
+            : new Date(0);
+
+        const grantSource = typeof options.grantSource === "string" && options.grantSource.length > 0
+            ? options.grantSource
+            : "PURCHASE";
+
         const license = new DeckLicense
         ({
             userId: userId,
@@ -156,10 +170,43 @@ class KeyManagementService
             wrappedKeyBlob: wrappedKeyBlob,
             issuedAt: new Date(),
             rotatedAt: new Date(),
+            expiresAt: expiresAt,
+            grantSource: grantSource,
             additionalData: {}
         });
 
         return license;
+    }
+
+    /**
+     * Returns true iff the license is currently usable — status ACTIVE
+     * AND either has no expiry (epoch-zero sentinel) or expiry is in the
+     * future. Use this anywhere license eligibility is checked instead
+     * of duplicating the expiry logic.
+     * @param {DeckLicense} license
+     * @returns {boolean}
+     */
+    static isLicenseActive(license)
+    {
+        if (!license)
+        {
+            return false;
+        }
+        if (license.getStatus() !== deckLicenseStatuses.ACTIVE)
+        {
+            return false;
+        }
+        const expirationDate = license.getExpiresAt();
+        if (!(expirationDate instanceof Date))
+        {
+            return true;
+        }
+        const expirationTimestampMs = expirationDate.getTime();
+        if (expirationTimestampMs <= 0)
+        {
+            return true; // FOREVER sentinel.
+        }
+        return expirationTimestampMs > Date.now();
     }
 
     static async persistLicense(license)
@@ -286,13 +333,27 @@ class KeyManagementService
 
         for (const licenseDocument of activeLicenseDocuments)
         {
+            // Preserve expiresAt and grantSource from the original
+            // license so an org-perk-issued time-limited license keeps
+            // its expiry through a key rotation. Without this, the
+            // reissued license would default back to the FOREVER
+            // sentinel (new Date(0)) and effectively unlock the deck
+            // forever.
+            const preservedExpiresAt = licenseDocument.expiresAt
+                ? new Date(licenseDocument.expiresAt)
+                : new Date(0);
+            const preservedGrantSource = typeof licenseDocument.grantSource === "string" && licenseDocument.grantSource.length > 0
+                ? licenseDocument.grantSource
+                : "PURCHASE";
+
             const reissued = KeyManagementService.issueLicenseForUser
             (
                 licenseDocument.userId,
                 deckId,
                 newKeyVersion,
                 reencrypted.wrappedContentKeyIvBase64,
-                reencrypted.wrappedContentKeyBase64
+                reencrypted.wrappedContentKeyBase64,
+                { expiresAt: preservedExpiresAt, grantSource: preservedGrantSource }
             );
 
             await KeyManagementService.persistLicense(reissued);
@@ -343,7 +404,7 @@ class KeyManagementService
         return results;
     }
 
-    static async issueLicenseForDeck(userId, deckId)
+    static async issueLicenseForDeck(userId, deckId, options = {})
     {
         const database = await DatabaseConnector.getDatabase();
         const deckDocument = await database
@@ -368,7 +429,8 @@ class KeyManagementService
             deckId,
             deckDocument.keyVersion,
             asset.wrappedContentKeyIvBase64,
-            asset.wrappedContentKeyBase64
+            asset.wrappedContentKeyBase64,
+            options
         );
 
         await KeyManagementService.persistLicense(license);
@@ -386,6 +448,227 @@ class KeyManagementService
                 { userId: userId, deckId: deckId },
                 { $set: { status: deckLicenseStatuses.REVOKED, rotatedAt: new Date() } }
             );
+    }
+
+    /**
+     * Decrypts the master encrypted asset for a paid deck at a given
+     * key version. Used by VerifyPurchase to seed a buyer's per-user
+     * editable copy (paidDeckUserContent) — the master itself stays
+     * encrypted in paidDeckAssets; only the decrypted plaintext is
+     * cloned to the buyer's row.
+     *
+     * Returns the parsed deck-payload JSON or null when the asset
+     * cannot be found / decrypted.
+     */
+    static async decryptPaidDeckMasterPayload(deckId, keyVersion)
+    {
+        KeyManagementService.#ensureReady();
+
+        const asset = await KeyManagementService.getAsset(deckId, keyVersion);
+        if (!asset)
+        {
+            return null;
+        }
+
+        const contentKeyBytes = KeyManagementService.#unwrapContentKey
+        (
+            asset.wrappedContentKeyIvBase64,
+            asset.wrappedContentKeyBase64
+        );
+
+        const plaintextBuffer = KeyManagementService.#decryptBuffer
+        (
+            contentKeyBytes,
+            asset.ivBase64,
+            asset.ciphertextBase64
+        );
+
+        contentKeyBytes.fill(0);
+
+        try
+        {
+            return JSON.parse(plaintextBuffer.toString("utf8"));
+        }
+        finally
+        {
+            plaintextBuffer.fill(0);
+        }
+    }
+
+    // ── Paid-deck content-key flow (per-deck server-derived KEK +
+    //    per-user password-derived KEK). Used by /PaidDecks/UnlockSession,
+    //    /PaidDecks/SetPassword, /PaidDecks/ChangePassword, the rotation
+    //    scheduler, and the verify-purchase clone step. ───────────────────
+
+    static #derivePaidDeckServerKek(deckId)
+    {
+        KeyManagementService.#ensureReady();
+        const salt = Buffer.from(`paid-deck-server-kek:${deckId}`, "utf8");
+        const info = Buffer.from("paid-deck-content-key", "utf8");
+        const derivedBytes = crypto.hkdfSync("sha256", KeyManagementService.#masterKey, salt, info, KeyManagementService.#DECK_KEY_BYTES);
+        return Buffer.from(derivedBytes);
+    }
+
+    static derivePaidDeckPasswordKek(passwordString, passwordSaltBase64)
+    {
+        const saltBuffer = Buffer.from(passwordSaltBase64, "base64");
+        return crypto.pbkdf2Sync
+        (
+            passwordString,
+            saltBuffer,
+            LicenseConstants.PAID_DECK_PASSWORD_PBKDF2_ITERATIONS,
+            KeyManagementService.#DECK_KEY_BYTES,
+            "sha256"
+        );
+    }
+
+    static computePaidDeckPasswordHash(passwordString, passwordSaltBase64)
+    {
+        // Verification hash uses a salt prefixed with "verify:" so it
+        // never collides with the KEK derivation above, even though both
+        // share the same iteration count + algorithm.
+        const verificationSalt = Buffer.from(`verify:${passwordSaltBase64}`, "utf8");
+        const hashBytes = crypto.pbkdf2Sync
+        (
+            passwordString,
+            verificationSalt,
+            LicenseConstants.PAID_DECK_PASSWORD_PBKDF2_ITERATIONS,
+            KeyManagementService.#DECK_KEY_BYTES,
+            "sha256"
+        );
+        return hashBytes.toString("base64");
+    }
+
+    static generatePaidDeckPasswordSaltBase64()
+    {
+        return crypto.randomBytes(16).toString("base64");
+    }
+
+    static generatePaidDeckContentKey()
+    {
+        return crypto.randomBytes(KeyManagementService.#DECK_KEY_BYTES);
+    }
+
+    static wrapPaidDeckContentKeyWithServerKek(contentKeyBuffer, deckId)
+    {
+        const serverKek = KeyManagementService.#derivePaidDeckServerKek(deckId);
+        const wrapped = KeyManagementService.#encryptBuffer(serverKek, contentKeyBuffer);
+        serverKek.fill(0);
+        return wrapped;
+    }
+
+    static unwrapPaidDeckContentKeyWithServerKek(serverWrappedIvBase64, serverWrappedContentKeyBase64, deckId)
+    {
+        const serverKek = KeyManagementService.#derivePaidDeckServerKek(deckId);
+        const contentKeyBytes = KeyManagementService.#decryptBuffer(serverKek, serverWrappedIvBase64, serverWrappedContentKeyBase64);
+        serverKek.fill(0);
+        return contentKeyBytes;
+    }
+
+    static wrapPaidDeckContentKeyWithPasswordKek(contentKeyBuffer, passwordKekBuffer)
+    {
+        return KeyManagementService.#encryptBuffer(passwordKekBuffer, contentKeyBuffer);
+    }
+
+    static encryptPaidDeckEntityPlaintext(plaintextJson, contentKeyBuffer)
+    {
+        const plaintextBuffer = Buffer.from(JSON.stringify(plaintextJson), "utf8");
+        const encrypted = KeyManagementService.#encryptBuffer(contentKeyBuffer, plaintextBuffer);
+        plaintextBuffer.fill(0);
+        return encrypted;
+    }
+
+    /**
+     * Rotates the content key on a single license. Generates a new
+     * content key, re-wraps under the server-derived KEK, and zeroes
+     * out the password-wrap (the next /PaidDecks/UnlockSession refills
+     * it lazily using the password the user supplies in that request).
+     * Bumps contentKeyVersion so the client knows to purge any cached
+     * entities that were encrypted under the old key.
+     *
+     * @param {DeckLicense} license
+     */
+    static async rotatePaidDeckContentKeyForLicense(license)
+    {
+        KeyManagementService.#ensureReady();
+
+        const newContentKeyBytes = KeyManagementService.generatePaidDeckContentKey();
+        const serverWrap = KeyManagementService.wrapPaidDeckContentKeyWithServerKek(newContentKeyBytes, license.getDeckId());
+
+        license.setServerWrappedIvBase64(serverWrap.ivBase64);
+        license.setServerWrappedContentKeyBase64(serverWrap.ciphertextBase64);
+        license.setPasswordWrappedContentKeyBase64("");
+        license.setPasswordWrappedIvBase64("");
+        license.setContentKeyVersion((license.getContentKeyVersion() || 0) + 1);
+        license.setRotatedAt(new Date());
+
+        newContentKeyBytes.fill(0);
+
+        await KeyManagementService.persistLicense(license);
+        return license;
+    }
+
+    static async rotatePaidDeckContentKeyForAllLicensesOfDeck(deckId)
+    {
+        const database = await DatabaseConnector.getDatabase();
+        const licenseDocuments = await database
+            .collection(DatabaseConstants.DECK_LICENSES_COLLECTION)
+            .find({ deckId: deckId, status: deckLicenseStatuses.ACTIVE })
+            .toArray();
+
+        const rotationResults = [];
+        for (const licenseDocument of licenseDocuments)
+        {
+            const license = DeckLicense.fromJson(licenseDocument);
+            try
+            {
+                await KeyManagementService.rotatePaidDeckContentKeyForLicense(license);
+                rotationResults.push({ userId: license.getUserId(), success: true });
+            }
+            catch (rotationError)
+            {
+                console.error(`[KeyManagementService] Failed to rotate content key for user ${license.getUserId()} on deck ${deckId}:`, rotationError);
+                rotationResults.push({ userId: license.getUserId(), success: false, reason: "EXCEPTION" });
+            }
+        }
+        return rotationResults;
+    }
+
+    static async rotateAllOverduePaidDeckContentKeys()
+    {
+        const database = await DatabaseConnector.getDatabase();
+        const cutoffDate = new Date(Date.now() - LicenseConstants.PAID_DECK_CONTENT_KEY_ROTATION_INTERVAL_DAYS * 24 * 60 * 60 * 1000);
+
+        const overdueLicenseDocuments = await database
+            .collection(DatabaseConstants.DECK_LICENSES_COLLECTION)
+            .find
+            ({
+                status: deckLicenseStatuses.ACTIVE,
+                $or:
+                [
+                    { rotatedAt: { $lt: cutoffDate } },
+                    { rotatedAt: { $exists: false } }
+                ]
+            })
+            .limit(500)
+            .toArray();
+
+        const rotationResults = [];
+        for (const licenseDocument of overdueLicenseDocuments)
+        {
+            const license = DeckLicense.fromJson(licenseDocument);
+            try
+            {
+                await KeyManagementService.rotatePaidDeckContentKeyForLicense(license);
+                rotationResults.push({ userId: license.getUserId(), deckId: license.getDeckId(), success: true });
+            }
+            catch (rotationError)
+            {
+                console.error(`[KeyManagementService] Overdue rotation failed for license ${license.getId()}:`, rotationError);
+                rotationResults.push({ userId: license.getUserId(), deckId: license.getDeckId(), success: false });
+            }
+        }
+        return rotationResults;
     }
 }
 

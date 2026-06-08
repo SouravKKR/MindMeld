@@ -155,6 +155,24 @@ class PaidDeckRegistry
         PaidDeckRegistry.#lastSyncTimestamp = 0;
         await PaidDeckRegistry.#saveToPersistence();
     }
+
+    /**
+     * Locally stamps the downloaded content version for an owned deck
+     * after the buyer applies an update, so the next "is there an
+     * update?" check reflects the new state without having to wait
+     * for the next license sync round-trip.
+     */
+    static async markDownloadedVersion(deckId, contentVersion)
+    {
+        const license = PaidDeckRegistry.#licensesByDeckId.get(deckId);
+        if (!license) return;
+        const existingVersion = Number(license.downloadedContentVersion) || 0;
+        const incomingVersion = Number(contentVersion) || 0;
+        if (incomingVersion <= existingVersion) return;
+        license.downloadedContentVersion = incomingVersion;
+        PaidDeckRegistry.#licensesByDeckId.set(deckId, license);
+        await PaidDeckRegistry.#saveToPersistence();
+    }
 }
 
 export default PaidDeckRegistry;

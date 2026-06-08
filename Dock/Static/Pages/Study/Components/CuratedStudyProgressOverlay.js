@@ -34,6 +34,7 @@ class CuratedStudyProgressOverlay
      *   onCancel?: function|null,
      *   onErrorClose?: function|null,    // fires after the user dismisses an error state
      *   bNavigateBackOnErrorClose?: boolean, // default false; when true the error-Close also runs PageNavigator.back()
+     *   phaseLabels?: object|null,       // optional map of {phase: labelString} that overrides the curated-study-specific defaults; missing keys fall through to the defaults
      * }} options
      * @returns {{close, updateStatus, showError}}
      */
@@ -42,6 +43,7 @@ class CuratedStudyProgressOverlay
         const title = options.title || "Working…";
         const initialStatusText = options.statusText || "Starting up";
         const bNavigateBackOnErrorClose = options.bNavigateBackOnErrorClose === true;
+        const phaseLabelOverrides = (options.phaseLabels && typeof options.phaseLabels === "object") ? options.phaseLabels : null;
 
         const dialog = DialogBox.modal(`
             <div class="curated-progress-overlay">
@@ -156,7 +158,13 @@ class CuratedStudyProgressOverlay
                 }
 
                 const phase = statusEvent.phase;
-                const labelForPhase = CuratedStudyProgressOverlay.#labelForPhase(phase);
+                // Caller-supplied overrides win when present so a non-curated
+                // caller (e.g. mock-test evaluation wait) sees its own
+                // domain-appropriate labels without forking the overlay.
+                const overrideLabel = phaseLabelOverrides ? phaseLabelOverrides[phase] : null;
+                const labelForPhase = (typeof overrideLabel === "string" && overrideLabel.length > 0)
+                    ? overrideLabel
+                    : CuratedStudyProgressOverlay.#labelForPhase(phase);
                 if (labelForPhase)
                 {
                     statusLine.textContent = labelForPhase;
