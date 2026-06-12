@@ -1,4 +1,5 @@
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function handleDeviceHeartbeat(request, response)
 {
@@ -17,7 +18,7 @@ async function handleDeviceHeartbeat(request, response)
         await AuthenticationQueryEngine.refreshDeviceHeartbeat(deviceId);
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ success: true });
 }
 

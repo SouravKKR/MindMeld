@@ -2,10 +2,12 @@ const crypto = require("crypto");
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
+const PaidDeckEntityTooLargeError = require("../../Globals/Classes/Security/PaidDeckEntityTooLargeError");
 const PaidDeck = require("../../Globals/Model/PaidDeck");
 const PaidDeckPricing = require("../../Globals/Model/PaidDeckPricing");
 const PaidDeckContentSummarizer = require("../../Globals/Classes/PaidDeck/PaidDeckContentSummarizer");
 const RegionMetadata = require("../../Globals/Classes/Pricing/RegionMetadata");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
  * Upserts the admin-supplied per-region price overrides into the
@@ -58,7 +60,7 @@ async function uploadPaidDeck(request, response)
 {
     if (!KeyManagementService.isReady())
     {
-        response.statusCode = 503;
+        response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
         response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
         return;
     }
@@ -69,7 +71,7 @@ async function uploadPaidDeck(request, response)
 
     if (!metadata || !deckPayload)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_METADATA_OR_PAYLOAD" });
         return;
     }
@@ -82,13 +84,30 @@ async function uploadPaidDeck(request, response)
     const initialKeyVersion = existingDocument?.keyVersion || 1;
     const nextKeyVersion = existingDocument ? initialKeyVersion + 1 : 1;
 
-    const encryptedPayload = KeyManagementService.encryptDeckPayload(deckPayload);
-
-    await KeyManagementService.storeAsset
-    (
-        incomingId,
-        { ...encryptedPayload, keyVersion: nextKeyVersion }
-    );
+    // Store the master copy per-entity (one encrypted doc per card / study
+    // material / mock test / deck node) instead of one monolithic blob, so a
+    // deck larger than Mongo's 16MB document cap uploads cleanly.
+    try
+    {
+        await KeyManagementService.storePaidDeckMaster(incomingId, nextKeyVersion, deckPayload);
+    }
+    catch (storeError)
+    {
+        if (storeError instanceof PaidDeckEntityTooLargeError)
+        {
+            response.statusCode = httpStatus.PAYLOAD_TOO_LARGE;
+            // The upload dialog surfaces `error` directly, so put the
+            // human-readable message there; `code` stays machine-readable.
+            response.sendJson
+            ({
+                error: storeError.message,
+                code: "ENTITY_TOO_LARGE",
+                entityId: storeError.entityId
+            });
+            return;
+        }
+        throw storeError;
+    }
 
     const paidDeckSeed =
     {
@@ -114,6 +133,10 @@ async function uploadPaidDeck(request, response)
     const paidDeck = PaidDeck.fromJson(paidDeckSeed);
     const documentToWrite = paidDeck.toJson();
     documentToWrite.lastKeyRotationAt = new Date();
+    // "Date modified" surfaced on the buyer-facing details page — refreshed
+    // on every content upload, and also bumped by metadata edits (see
+    // UpdatePaidDeck). Distinct from publishedAt so it reflects real changes.
+    documentToWrite.updatedAt = new Date();
 
     // Storefront metadata that lives only on the paidDecks document —
     // never enters the encrypted asset, never reaches buyers' local
@@ -167,7 +190,7 @@ async function uploadPaidDeck(request, response)
     // "Regional prices" rows) into the pricing collection the engine reads.
     await upsertRegionalPriceOverrides(database, incomingId, metadata.regionalPrices);
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         success: true,

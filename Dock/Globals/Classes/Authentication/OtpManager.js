@@ -11,7 +11,6 @@ class OtpManager
     static OTP_EXPIRY_MINUTES = 10;
     static MAX_ATTEMPTS = 5;
     static RESEND_COOLDOWN_SECONDS = 60;
-    static DEFAULT_NEW_USER_CREDITS = 5;
 
     static #normaliseEmail(rawEmail)
     {
@@ -165,14 +164,36 @@ class OtpManager
                 provider: authenticationProviders.EMAIL_OTP,
                 joinDate: new Date(),
                 preferences: {},
+                // The signup credit grant is applied through CreditLedger
+                // below so it is admin-configurable and idempotent — kept
+                // consistent with the Google login path.
                 additionalData:
                 {
-                    email: email,
-                    credits: OtpManager.DEFAULT_NEW_USER_CREDITS
+                    email: email
                 }
             });
 
             await AuthenticationQueryEngine.createUser(user);
+
+            try
+            {
+                const CreditConfigurationStore = require("../Credits/CreditConfigurationStore");
+                const CreditLedger = require("../Credits/CreditLedger");
+                const { creditTransactionTypes } = require("../../Enumerations/CreditTransactionTypes");
+
+                const creditConfiguration = await CreditConfigurationStore.load();
+                await CreditLedger.grant(
+                    user.getId(),
+                    creditConfiguration.getSignupGrant(),
+                    creditTransactionTypes.SIGNUP_GRANT,
+                    `signup:${user.getId()}`,
+                    {}
+                );
+            }
+            catch (signupGrantError)
+            {
+                console.warn(`[OtpManager] signup grant failed for ${user.getId()}: ${signupGrantError.message}`);
+            }
         }
 
         await collection.deleteOne({ email: email });

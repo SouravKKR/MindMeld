@@ -1,5 +1,6 @@
 const OrganizationQueryEngine = require("../../Globals/Classes/Organization/OrganizationQueryEngine");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 async function listMyOrganizations(request, response)
@@ -23,7 +24,7 @@ async function listMyOrganizations(request, response)
         organizations = await OrganizationQueryEngine.listActiveOrganizationsByAdminUserId(user.getId());
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ success: true, organizations: organizations.map(organization => organization.toJson()) });
 }
 

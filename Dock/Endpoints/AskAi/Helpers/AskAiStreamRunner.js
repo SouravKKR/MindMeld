@@ -3,6 +3,7 @@ const readline = require("readline");
 const path = require("path");
 const Logger = require("../../../Globals/Classes/Logger");
 const { getPythonExecutablePathFromVenv } = require("../../../Globals/UtilityFunctions.js/GetPythonExecutablePathFromVenv");
+const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
 
 /**
  * AskAiStreamRunner
@@ -38,7 +39,7 @@ class AskAiStreamRunner
         const validationError = AskAiStreamRunner.#validate(requestBody);
         if (validationError !== null)
         {
-            response.statusCode = 400;
+            response.statusCode = httpStatus.BAD_REQUEST;
             response.end(validationError);
             return;
         }

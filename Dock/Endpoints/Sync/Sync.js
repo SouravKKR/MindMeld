@@ -4,7 +4,11 @@ const SyncQueryEngine = require("../../Globals/Classes/Database/SyncQueryEngine"
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const TaskManager = require("../../Globals/Classes/Task/TaskManager");
+const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
+const PaidDeckSyncCrypto = require("../../Globals/Classes/Security/PaidDeckSyncCrypto");
+const StorageCreditAssessor = require("../../Globals/Classes/Credits/StorageCreditAssessor");
 const { entityTypes } = require("../../Globals/Enumerations/EntityTypes");
+const { deckLicenseStatuses } = require("../../Globals/Enumerations/DeckLicenseStatuses");
 
 // ── Pull-phase chunking ────────────────────────────────────────────────
 //
@@ -62,6 +66,11 @@ async function handleSync(request, response)
         return;
     }
 
+    // Lazily bill the recurring storage categories (debounced to once per
+    // 24h inside the assessor). Fire-and-forget so the sync round-trip is
+    // never blocked on the footprint aggregation or the charge.
+    StorageCreditAssessor.assess(user).catch(() => {});
+
     // ── Per-chunk lock-holder verification ────────────────────────────
     //
     // The client acquires the sync lock once via /Sync/Lock before the
@@ -101,36 +110,11 @@ async function handleSync(request, response)
         deletions:                        []
     };
 
-    // Paid-deck content must never flow through the regular sync
-    // collections. The client filters first, but a malicious or
-    // out-of-date client could still try — server enforces a hard
-    // backstop here. Any entityId that already lives inside the
-    // buyer's paidDeckUserContent row (or any deckId pointing at an
-    // owned paid-deck root) is silently dropped from this push.
-    const paidDeckRejectedEntityIds = await collectPaidDeckProtectedEntityIds(db, userId);
-
-    let droppedPaidDeckChangeCount = 0;
     for (const change of changes)
     {
         if (change.deleted)
         {
             byType.deletions.push(change);
-            continue;
-        }
-
-        if (paidDeckRejectedEntityIds.has(change?.data?.id))
-        {
-            droppedPaidDeckChangeCount++;
-            continue;
-        }
-        if (paidDeckRejectedEntityIds.has(change?.data?.deckId))
-        {
-            droppedPaidDeckChangeCount++;
-            continue;
-        }
-        if (paidDeckRejectedEntityIds.has(change?.data?.parent))
-        {
-            droppedPaidDeckChangeCount++;
             continue;
         }
 
@@ -144,10 +128,15 @@ async function handleSync(request, response)
         }
     }
 
-    if (droppedPaidDeckChangeCount > 0)
-    {
-        console.warn(`[Sync] Dropped ${droppedPaidDeckChangeCount} change(s) targeting paid-deck content — use /PaidDecks/Entities/Update.`);
-    }
+    // Paid decks now ride the normal sync pipeline, but their CONTENT is
+    // authored solely by the server (provisioning) and stored plaintext here.
+    // A client push only carries progress / lifecycle / history — never valid
+    // content (it holds ciphertext). Overlay the server's plaintext content
+    // back onto every incoming paid entity so a push can't overwrite content,
+    // keep the paidDeckId tag authoritative, and drop any client attempt to
+    // author a brand-new paid entity. This is the server-side enforcement of
+    // "content is read-only on the device".
+    await preservePaidContentOnPush(db, userId, byType);
 
     // Single Node-clock timestamp for every doc written in this push.
     // Used both as `serverUpdatedAt` on the upserted docs and as the
@@ -233,6 +222,23 @@ async function handleSync(request, response)
     let highestReturnedTimestamp       = 0;
     const overflowWatermarks           = [];
 
+    // Per-request cache of unwrapped paid-deck content keys (one per owned paid
+    // deck), so the pull encrypts every entity of a deck without re-deriving the
+    // key each time. A null entry means "no active license" — that deck's
+    // entities are withheld from the pull entirely (access is ownership-bound).
+    // All buffers are zeroed before the response is sent.
+    const paidContentKeyByDeckId = new Map();
+    const resolvePaidContentKey = async (paidDeckId) =>
+    {
+        if (paidContentKeyByDeckId.has(paidDeckId))
+        {
+            return paidContentKeyByDeckId.get(paidDeckId);
+        }
+        const contentKeyBuffer = await KeyManagementService.getPaidDeckContentKeyBufferForUser(userId, paidDeckId);
+        paidContentKeyByDeckId.set(paidDeckId, contentKeyBuffer);
+        return contentKeyBuffer;
+    };
+
     if (bIsFullResyncPush)
     {
         console.log(`[Sync] PULL PHASE skipped — full-resync push (${changes.length} entities in this chunk; client already has all data locally).`);
@@ -241,6 +247,12 @@ async function handleSync(request, response)
     {
         // ===================== PULL PHASE =====================
         console.log("[Sync] PULL PHASE");
+
+        // Tombstone-on-lapse (security req #6 + stale-orphan cleanup): tear down
+        // the seeded rows of any paid deck whose license has lapsed BEFORE the
+        // pull fetch + getDeletionsSince, so the resulting tombstones ride out in
+        // this same response and the client drops its now-unlicensed copy.
+        await tombstoneLapsedPaidDeckRows(db, userId);
 
         const pullConfig =
         [
@@ -322,11 +334,27 @@ async function handleSync(request, response)
 
             for (const document of documents)
             {
+                let outgoingData = document.data;
+
+                // Paid entity: encrypt its content fields before they leave the
+                // server so the wire + client IndexedDB only ever hold
+                // ciphertext. With no active license the entity is withheld.
+                const paidDeckId = document.data?.additionalData?.paidDeckId;
+                if (typeof paidDeckId === "string" && paidDeckId.length > 0)
+                {
+                    const contentKeyBuffer = await resolvePaidContentKey(paidDeckId);
+                    if (!contentKeyBuffer)
+                    {
+                        continue;
+                    }
+                    outgoingData = PaidDeckSyncCrypto.encryptEntityContent(cfg.entityType, document.data, contentKeyBuffer);
+                }
+
                 serverChanges.push(
                 {
                     entityId:   document.data.id,
                     entityType: cfg.entityType,
-                    data:       document.data
+                    data:       outgoingData
                 });
 
                 const documentTimestamp = document.serverUpdatedAt.getTime();
@@ -365,6 +393,17 @@ async function handleSync(request, response)
         }
 
         bMorePending = overflowWatermarks.length > 0;
+
+        // Zero every unwrapped content key the pull derived — plaintext key
+        // bytes must not linger in process memory beyond the request.
+        for (const contentKeyBuffer of paidContentKeyByDeckId.values())
+        {
+            if (contentKeyBuffer)
+            {
+                contentKeyBuffer.fill(0);
+            }
+        }
+        paidContentKeyByDeckId.clear();
     }
 
     // When the pull is chunked, the cutoff for the *next* cycle is the
@@ -466,36 +505,163 @@ async function handleSync(request, response)
 }
 
 /**
- * Returns the set of all entity IDs that are part of the buyer's
- * paid-deck content (every deck node + every card / study material /
- * mock test inside any of their owned paid decks). Sync push filtering
- * drops any change targeting an ID in this set so paid-deck content
- * cannot leak into the plaintext sync collections via a hostile or
- * stale client.
+ * True iff a raw deckLicenses document is currently usable — status ACTIVE and
+ * either a FOREVER sentinel expiry (epoch-zero) or a future expiry. Mirrors
+ * KeyManagementService.isLicenseActive but reads the stored doc directly (the
+ * pull path has no DeckLicense model instance handy).
  */
-async function collectPaidDeckProtectedEntityIds(database, userId)
+function isPaidLicenseDocumentActive(licenseDocument)
 {
-    const protectedIds = new Set();
-    const userContentDocuments = await database
-        .collection(DatabaseConstants.PAID_DECK_USER_CONTENT_COLLECTION)
+    if (!licenseDocument || licenseDocument.status !== deckLicenseStatuses.ACTIVE)
+    {
+        return false;
+    }
+    const expiresAt = licenseDocument.expiresAt;
+    if (!expiresAt)
+    {
+        return true;
+    }
+    const expiryTimestampMs = new Date(expiresAt).getTime();
+    if (isNaN(expiryTimestampMs))
+    {
+        return true;
+    }
+    if (expiryTimestampMs <= 0)
+    {
+        return true; // FOREVER sentinel.
+    }
+    return expiryTimestampMs > Date.now();
+}
+
+/**
+ * Tombstone-on-lapse: for each of the user's paid-deck licenses that EXISTS but
+ * is no longer active (REVOKED, or a finite expiry now in the past), tears down
+ * the deck's seeded rows still sitting in the server collections so the client
+ * deletes its now-unlicensed copy instead of leaving it stranded on the home
+ * page (security req #6 — access must not persist past expiry). Deliberately
+ * scoped to existing-inactive licenses ONLY — never a merely-absent license,
+ * which can be a deck still mid-provision. Idempotent: once a deck's rows are
+ * gone, later pulls find none and do nothing.
+ */
+async function tombstoneLapsedPaidDeckRows(database, userId)
+{
+    const licenseDocuments = await database
+        .collection(DatabaseConstants.DECK_LICENSES_COLLECTION)
         .find({ userId: userId })
         .toArray();
 
-    for (const userContentDocument of userContentDocuments)
+    const lapsedDeckIds = licenseDocuments
+        .filter((licenseDocument) => !isPaidLicenseDocumentActive(licenseDocument))
+        .map((licenseDocument) => licenseDocument.deckId)
+        .filter((deckId) => typeof deckId === "string" && deckId.length > 0);
+
+    if (lapsedDeckIds.length === 0)
     {
-        if (userContentDocument?.contentByEntityId && typeof userContentDocument.contentByEntityId === "object")
+        return;
+    }
+
+    const lapsedDeckRows = await database
+        .collection(DatabaseConstants.DECKS_COLLECTION)
+        .find({ userId: userId, "data.additionalData.paidDeckId": { $in: lapsedDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
+        .toArray();
+
+    const deletionChanges = lapsedDeckRows
+        .filter((row) => row?.data?.id)
+        .map((row) => ({ entityId: row.data.id, entityType: entityTypes.DECK }));
+
+    if (deletionChanges.length > 0)
+    {
+        // bulkRecordDeletions cascades each instance root to its cards /
+        // materials / mock tests / popups and both tombstones and deletes them.
+        await SyncQueryEngine.bulkRecordDeletions(userId, database, deletionChanges);
+        console.log(`[Sync] Tombstoned ${deletionChanges.length} lapsed paid-deck root(s) for user ${userId}.`);
+    }
+}
+
+/**
+ * Server-side enforcement that paid-deck CONTENT is read-only on the device.
+ * For every incoming paid entity (a card / study material / mock test / deck
+ * whose server-stored copy carries additionalData.paidDeckId), overlay the
+ * server's authoritative plaintext content back onto the push so a client's
+ * ciphertext (or tampered) content can never overwrite it; force the
+ * paidDeckId tag to the server's value so it can't be stripped; and drop any
+ * attempt by a client to author a brand-new paid entity (the server is the
+ * sole author of paid content). Only progress / lifecycle / history survive
+ * from a paid push.
+ */
+async function preservePaidContentOnPush(database, userId, byType)
+{
+    const protectedTypeCollections =
+    [
+        { entityType: entityTypes.DECK,            collectionName: DatabaseConstants.DECKS_COLLECTION            },
+        { entityType: entityTypes.CARD,            collectionName: DatabaseConstants.CARDS_COLLECTION            },
+        { entityType: entityTypes.STUDY_MATERIAL,  collectionName: DatabaseConstants.STUDY_MATERIALS_COLLECTION  },
+        { entityType: entityTypes.MOCK_TEST,       collectionName: DatabaseConstants.MOCK_TESTS_COLLECTION       }
+    ];
+
+    let droppedAuthoredPaidCount = 0;
+
+    for (const { entityType, collectionName } of protectedTypeCollections)
+    {
+        const incomingArray = byType[entityType];
+        if (!incomingArray || incomingArray.length === 0)
         {
-            for (const entityIdKey of Object.keys(userContentDocument.contentByEntityId))
+            continue;
+        }
+
+        const incomingIds = incomingArray.map((data) => data?.id).filter((id) => typeof id === "string" && id.length > 0);
+        if (incomingIds.length === 0)
+        {
+            continue;
+        }
+
+        const existingDocuments = await database.collection(collectionName).find({ userId: userId, "data.id": { $in: incomingIds } }).toArray();
+        const existingDataById = new Map();
+        for (const existingDocument of existingDocuments)
+        {
+            if (existingDocument?.data?.id)
             {
-                protectedIds.add(entityIdKey);
+                existingDataById.set(existingDocument.data.id, existingDocument.data);
             }
         }
-        if (typeof userContentDocument?.deckId === "string" && userContentDocument.deckId.length > 0)
+
+        const keptArray = [];
+        for (const incomingData of incomingArray)
         {
-            protectedIds.add(userContentDocument.deckId);
+            const existingData = existingDataById.get(incomingData?.id);
+            const existingIsPaid = typeof existingData?.additionalData?.paidDeckId === "string" && existingData.additionalData.paidDeckId.length > 0;
+            const incomingClaimsPaid = typeof incomingData?.additionalData?.paidDeckId === "string" && incomingData.additionalData.paidDeckId.length > 0;
+
+            if (existingIsPaid)
+            {
+                // Known paid entity: keep the server's plaintext content + tag.
+                const restoredData = PaidDeckSyncCrypto.restorePlaintextContent(entityType, incomingData, existingData);
+                if (!restoredData.additionalData || typeof restoredData.additionalData !== "object")
+                {
+                    restoredData.additionalData = {};
+                }
+                restoredData.additionalData.paidDeckId = existingData.additionalData.paidDeckId;
+                keptArray.push(restoredData);
+            }
+            else if (incomingClaimsPaid)
+            {
+                // Client trying to author a paid entity the server doesn't have:
+                // reject (only provisioning may create paid content).
+                droppedAuthoredPaidCount++;
+            }
+            else
+            {
+                keptArray.push(incomingData);
+            }
         }
+
+        byType[entityType] = keptArray;
     }
-    return protectedIds;
+
+    if (droppedAuthoredPaidCount > 0)
+    {
+        console.warn(`[Sync] Dropped ${droppedAuthoredPaidCount} client-authored paid entity push(es) — paid content is server-authored only.`);
+    }
 }
 
 module.exports = { handleSync };

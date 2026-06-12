@@ -2,6 +2,7 @@ const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnec
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const PaidDeckPricingEngine = require("../../Globals/Classes/Pricing/PaidDeckPricingEngine");
 const RegionResolver = require("../../Globals/Classes/Pricing/RegionResolver");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function browsePaidDeckLibrary(request, response)
 {
@@ -50,7 +51,7 @@ async function browsePaidDeckLibrary(request, response)
         enrichedDecks.push(deckPayload);
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         region: region,

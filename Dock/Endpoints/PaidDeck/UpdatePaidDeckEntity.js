@@ -2,6 +2,7 @@ const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnec
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const { entityTypes } = require("../../Globals/Enumerations/EntityTypes");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
  * POST /PaidDecks/Entities/Update
@@ -22,7 +23,7 @@ async function updatePaidDeckEntity(request, response)
 {
     if (!KeyManagementService.isReady())
     {
-        response.statusCode = 503;
+        response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
         response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
         return;
     }
@@ -42,7 +43,7 @@ async function updatePaidDeckEntity(request, response)
 
     if (typeof deckId !== "string" || deckId.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_DECK_ID" });
         return;
     }
@@ -50,21 +51,21 @@ async function updatePaidDeckEntity(request, response)
     const allowedEntityTypeValues = new Set([entityTypes.CARD, entityTypes.STUDY_MATERIAL, entityTypes.MOCK_TEST, entityTypes.DECK]);
     if (!allowedEntityTypeValues.has(entityType))
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "UNSUPPORTED_ENTITY_TYPE" });
         return;
     }
 
     if (typeof entityId !== "string" || entityId.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_ENTITY_ID" });
         return;
     }
 
     if (!plaintextValue || typeof plaintextValue !== "object")
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_PLAINTEXT" });
         return;
     }
@@ -74,54 +75,66 @@ async function updatePaidDeckEntity(request, response)
 
     if (!KeyManagementService.isLicenseActive(license))
     {
-        response.statusCode = 403;
+        response.statusCode = httpStatus.FORBIDDEN;
         response.sendJson({ error: "NO_ACTIVE_LICENSE" });
         return;
     }
 
     const database = await DatabaseConnector.getDatabase();
-    const userContentCollection = database.collection(DatabaseConstants.PAID_DECK_USER_CONTENT_COLLECTION);
-    const userContentDocument = await userContentCollection.findOne({ userId: userId, deckId: deckId });
+    const userContentEntitiesCollection = database.collection(DatabaseConstants.PAID_DECK_USER_CONTENT_ENTITIES_COLLECTION);
 
-    if (!userContentDocument)
-    {
-        response.statusCode = 404;
-        response.sendJson({ error: "USER_CONTENT_NOT_SEEDED" });
-        return;
-    }
+    // Look up the entity in the per-entity store, falling back to the legacy
+    // embedded contentByEntityId map for buyers seeded before the migration.
+    let existingEntityRecord = await userContentEntitiesCollection.findOne({ userId: userId, deckId: deckId, entityId: entityId });
 
-    const existingEntityRecord = userContentDocument.contentByEntityId?.[entityId];
     if (!existingEntityRecord)
     {
-        response.statusCode = 404;
+        const legacyDocument = await database
+            .collection(DatabaseConstants.PAID_DECK_USER_CONTENT_COLLECTION)
+            .findOne({ userId: userId, deckId: deckId });
+
+        if (!legacyDocument)
+        {
+            response.statusCode = httpStatus.NOT_FOUND;
+            response.sendJson({ error: "USER_CONTENT_NOT_SEEDED" });
+            return;
+        }
+
+        existingEntityRecord = legacyDocument.contentByEntityId?.[entityId] || null;
+    }
+
+    if (!existingEntityRecord)
+    {
+        response.statusCode = httpStatus.NOT_FOUND;
         response.sendJson({ error: "ENTITY_NOT_IN_DECK" });
         return;
     }
 
     if (existingEntityRecord.entityType !== entityType)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "ENTITY_TYPE_MISMATCH" });
         return;
     }
 
-    const updatedEntityRecord =
-    {
-        entityType: entityType,
-        parentDeckId: existingEntityRecord.parentDeckId,
-        plaintext: plaintextValue
-    };
-
-    await userContentCollection.updateOne
+    // Upsert the single per-entity doc (also migrates a legacy buyer's entity
+    // into the per-entity store on first edit).
+    await userContentEntitiesCollection.updateOne
     (
-        { userId: userId, deckId: deckId },
+        { userId: userId, deckId: deckId, entityId: entityId },
         {
             $set:
             {
-                [`contentByEntityId.${entityId}`]: updatedEntityRecord,
+                userId: userId,
+                deckId: deckId,
+                entityId: entityId,
+                entityType: entityType,
+                parentDeckId: existingEntityRecord.parentDeckId ?? null,
+                plaintext: plaintextValue,
                 updatedAt: new Date()
             }
-        }
+        },
+        { upsert: true }
     );
 
     const contentKeyBytes = KeyManagementService.unwrapPaidDeckContentKeyWithServerKek
@@ -133,7 +146,7 @@ async function updatePaidDeckEntity(request, response)
     const encryptedEntity = KeyManagementService.encryptPaidDeckEntityPlaintext(plaintextValue, contentKeyBytes);
     contentKeyBytes.fill(0);
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         deckId: deckId,

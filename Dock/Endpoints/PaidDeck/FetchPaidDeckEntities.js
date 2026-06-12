@@ -2,6 +2,7 @@ const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnec
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const LicenseConstants = require("../../Globals/Constants/LicenseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
  * POST /PaidDecks/Entities/Fetch
@@ -23,7 +24,7 @@ async function fetchPaidDeckEntities(request, response)
 {
     if (!KeyManagementService.isReady())
     {
-        response.statusCode = 503;
+        response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
         response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
         return;
     }
@@ -41,21 +42,21 @@ async function fetchPaidDeckEntities(request, response)
 
     if (typeof deckId !== "string" || deckId.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_DECK_ID" });
         return;
     }
 
     if (requestedEntityIds.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_ENTITY_IDS" });
         return;
     }
 
     if (requestedEntityIds.length > LicenseConstants.PAID_DECK_ENTITY_FETCH_BATCH_LIMIT)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "BATCH_LIMIT_EXCEEDED" });
         return;
     }
@@ -65,21 +66,48 @@ async function fetchPaidDeckEntities(request, response)
 
     if (!KeyManagementService.isLicenseActive(license))
     {
-        response.statusCode = 403;
+        response.statusCode = httpStatus.FORBIDDEN;
         response.sendJson({ error: "NO_ACTIVE_LICENSE" });
         return;
     }
 
     const database = await DatabaseConnector.getDatabase();
-    const userContentDocument = await database
-        .collection(DatabaseConstants.PAID_DECK_USER_CONTENT_COLLECTION)
-        .findOne({ userId: userId, deckId: deckId });
 
-    if (!userContentDocument || !userContentDocument.contentByEntityId)
+    // Per-entity store (one doc per entity). Fall back to the legacy embedded
+    // contentByEntityId map for buyers seeded before the per-entity migration,
+    // filling in only the ids not already found in the per-entity collection.
+    const entityDocuments = await database
+        .collection(DatabaseConstants.PAID_DECK_USER_CONTENT_ENTITIES_COLLECTION)
+        .find({ userId: userId, deckId: deckId, entityId: { $in: requestedEntityIds } })
+        .toArray();
+
+    const recordsByEntityId = new Map(entityDocuments.map((entityDocument) => [entityDocument.entityId, entityDocument]));
+    const missingEntityIds = requestedEntityIds.filter((entityId) => !recordsByEntityId.has(entityId));
+
+    if (missingEntityIds.length > 0)
     {
-        response.statusCode = 404;
-        response.sendJson({ error: "USER_CONTENT_NOT_SEEDED" });
-        return;
+        const legacyDocument = await database
+            .collection(DatabaseConstants.PAID_DECK_USER_CONTENT_COLLECTION)
+            .findOne({ userId: userId, deckId: deckId });
+
+        if (!legacyDocument && recordsByEntityId.size === 0)
+        {
+            response.statusCode = httpStatus.NOT_FOUND;
+            response.sendJson({ error: "USER_CONTENT_NOT_SEEDED" });
+            return;
+        }
+
+        if (legacyDocument && legacyDocument.contentByEntityId)
+        {
+            for (const entityId of missingEntityIds)
+            {
+                const legacyRecord = legacyDocument.contentByEntityId[entityId];
+                if (legacyRecord)
+                {
+                    recordsByEntityId.set(entityId, legacyRecord);
+                }
+            }
+        }
     }
 
     const contentKeyBytes = KeyManagementService.unwrapPaidDeckContentKeyWithServerKek
@@ -94,7 +122,7 @@ async function fetchPaidDeckEntities(request, response)
     {
         for (const requestedEntityId of requestedEntityIds)
         {
-            const entityRecord = userContentDocument.contentByEntityId[requestedEntityId];
+            const entityRecord = recordsByEntityId.get(requestedEntityId);
             if (!entityRecord)
             {
                 continue;
@@ -115,7 +143,7 @@ async function fetchPaidDeckEntities(request, response)
         contentKeyBytes.fill(0);
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         deckId: deckId,

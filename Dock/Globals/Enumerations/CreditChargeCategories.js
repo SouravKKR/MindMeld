@@ -1,0 +1,8 @@
+const creditChargeCategories =
+{
+  UNKNOWN: 0,
+  MONGODB_STORAGE: 1,
+  STORAGE_BUCKET: 2,
+}
+
+module.exports = { creditChargeCategories };

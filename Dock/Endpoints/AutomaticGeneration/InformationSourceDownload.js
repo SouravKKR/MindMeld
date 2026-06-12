@@ -4,6 +4,7 @@ const AuthenticationQueryEngine = require("../../Globals/Classes/Database/Authen
 const Persistence = require("../../Globals/Classes/Persistence");
 const { storageTargets } = require("../../Globals/Enumerations/StorageTargets");
 const path = require("path");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
  * Downloads the file for an information source by fetching it from persistence.
@@ -26,7 +27,7 @@ async function handleInformationSourceDownload(request, response)
 
     if (informationSource === null)
     {
-        response.statusCode = 404;
+        response.statusCode = httpStatus.NOT_FOUND;
         response.end("Information source not found.");
         return;
     }
@@ -35,7 +36,7 @@ async function handleInformationSourceDownload(request, response)
 
     if (!userOwnsSource)
     {
-        response.statusCode = 403;
+        response.statusCode = httpStatus.FORBIDDEN;
         response.end("You do not have permission to access this information source.");
         return;
     }

@@ -1,6 +1,7 @@
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const { purchaseStatuses } = require("../../Globals/Enumerations/PurchaseStatuses");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function getRevenueStats(request, response)
 {
@@ -46,7 +47,7 @@ async function getRevenueStats(request, response)
         .aggregate(pipeline)
         .toArray();
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         from: fromDate.toISOString(),

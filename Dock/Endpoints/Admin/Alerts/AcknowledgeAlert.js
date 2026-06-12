@@ -1,4 +1,5 @@
 const AlertQueryEngine = require("../../../Globals/Classes/Database/AlertQueryEngine");
+const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
 
 /**
  * POST /Admin/Alerts/Acknowledge
@@ -16,7 +17,7 @@ async function acknowledgeAlert(request, response)
     }
     catch (bodyError)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "Malformed JSON body." });
         return;
     }
@@ -24,7 +25,7 @@ async function acknowledgeAlert(request, response)
     const alertId = typeof body?.id === "string" ? body.id : "";
     if (alertId.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "id is required." });
         return;
     }
@@ -38,13 +39,13 @@ async function acknowledgeAlert(request, response)
             response.sendJson({ error: result.reason });
             return;
         }
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson({ ok: true });
     }
     catch (acknowledgeError)
     {
         console.error(`[AcknowledgeAlert] ${acknowledgeError.message}`);
-        response.statusCode = 500;
+        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
         response.sendJson({ error: "Failed to acknowledge alert." });
     }
 }

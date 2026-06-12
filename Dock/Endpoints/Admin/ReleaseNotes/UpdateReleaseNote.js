@@ -1,4 +1,5 @@
 const ReleaseNoteQueryEngine = require("../../../Globals/Classes/Database/ReleaseNoteQueryEngine");
+const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -28,7 +29,7 @@ async function updateReleaseNote(request, response)
     }
     catch (bodyError)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "Malformed JSON body." });
         return;
     }
@@ -36,7 +37,7 @@ async function updateReleaseNote(request, response)
     const noteId = typeof body?.id === "string" ? body.id.trim() : "";
     if (noteId.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "id is required." });
         return;
     }
@@ -48,7 +49,7 @@ async function updateReleaseNote(request, response)
         const note = await ReleaseNoteQueryEngine.update(noteId, updates);
         if (!note)
         {
-            response.statusCode = 404;
+            response.statusCode = httpStatus.NOT_FOUND;
             response.sendJson({ error: "Release note not found." });
             return;
         }
@@ -57,7 +58,7 @@ async function updateReleaseNote(request, response)
     catch (updateError)
     {
         console.error(`[UpdateReleaseNote] ${updateError.message}`);
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: updateError.message || "Failed to update release note." });
     }
 }

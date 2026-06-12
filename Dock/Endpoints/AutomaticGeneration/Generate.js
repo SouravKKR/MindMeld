@@ -13,9 +13,12 @@ const { validateGenerationSettings } = require("../Helpers/ValidateGenerationSet
 const { normalizeInformationSources } = require("../Helpers/NormalizeInformationSources");
 const TaskManager = require("../../Globals/Classes/Task/TaskManager");
 const TaskHistoryQueryEngine = require("../../Globals/Classes/Database/TaskHistoryQueryEngine");
+const CreditPreflight = require("../../Globals/Classes/Credits/CreditPreflight");
+const TaskStateManager = require("../../Globals/Classes/Task/TaskStateManager");
 const { taskExecutionTargets } = require("../../Globals/Enumerations/TaskExecutionTargets");
 const { getUser } = require("../Helpers/GetUser");
 const { moveToDatabase } = require("../Helpers/MoveToDatabase");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 const VIRTUAL_WEB_SOURCE_TYPES = [
@@ -46,7 +49,7 @@ async function handleGenerate(request, response)
 
     if (!user)
     {
-        response.statusCode = 401;
+        response.statusCode = httpStatus.UNAUTHORIZED;
         response.end("Unauthorised.");
         return;
     }
@@ -54,7 +57,7 @@ async function handleGenerate(request, response)
     const { userRoles } = require("../../Globals/Enumerations/UserRoles");
     if (user.getRole() !== userRoles.ADMIN && user.getRole() !== userRoles.CREATOR)
     {
-        response.statusCode = 403;
+        response.statusCode = httpStatus.FORBIDDEN;
         response.end("Generation is restricted to authorized roles.");
         return;
     }
@@ -90,7 +93,7 @@ async function handleGenerate(request, response)
 
     if (flashcardGenerationSettings === null && studyMaterialGenerationSettings === null && mockTestGenerationSettings === null)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.end("No generation settings provided.");
         return;
     }
@@ -106,8 +109,28 @@ async function handleGenerate(request, response)
     }
     catch (error)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.end(error.message || String(error));
+        return;
+    }
+
+    // Best-effort credit gate on the pipeline's entry task. The Agent
+    // charges each task authoritatively; this just refuses an obviously
+    // unaffordable generation up front.
+    const creditPreflight = await CreditPreflight.check(userId, taskTypes.PREPARE_FOR_GENERATION);
+    if (!creditPreflight.allowed)
+    {
+        // Out-of-credits is recoverable: save a resumable task state so the
+        // user can resume this exact generation after topping up. A disabled
+        // service is a permanent refusal, so it is NOT saved.
+        const bIsResumable = creditPreflight.reason === "INSUFFICIENT_CREDITS";
+        if (bIsResumable)
+        {
+            try { await TaskStateManager.save({ userId: userId, taskType: taskTypes.PREPARE_FOR_GENERATION, route: "/Generate", payload: body, pausedReason: creditPreflight.reason }); }
+            catch (saveError) { console.warn(`[Generate] Failed to save resumable task state: ${saveError.message}`); }
+        }
+        response.statusCode = httpStatus.PAYMENT_REQUIRED;
+        response.sendJson({ error: creditPreflight.reason, balance: creditPreflight.balance, required: creditPreflight.required, resumable: bIsResumable });
         return;
     }
 

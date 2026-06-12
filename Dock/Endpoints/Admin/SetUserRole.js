@@ -1,6 +1,7 @@
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function setUserRole(request, response)
 {
@@ -10,14 +11,14 @@ async function setUserRole(request, response)
 
     if (!targetUserId || roleValue === undefined)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_USER_ID_OR_ROLE" });
         return;
     }
 
     if (!Object.values(userRoles).includes(roleValue))
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "INVALID_ROLE" });
         return;
     }
@@ -27,7 +28,7 @@ async function setUserRole(request, response)
         .collection(DatabaseConstants.USERS_COLLECTION)
         .updateOne({ id: targetUserId }, { $set: { role: roleValue } });
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ success: true, matchedCount: result.matchedCount, modifiedCount: result.modifiedCount });
 }
 

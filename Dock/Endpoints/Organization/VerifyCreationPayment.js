@@ -3,6 +3,7 @@ const OrganizationPaymentQueryEngine = require("../../Globals/Classes/Organizati
 const OrgAdminVerificationManager = require("../../Globals/Classes/Authentication/OrgAdminVerificationManager");
 const PaymentProviderFactory = require("../../Globals/Classes/Payments/PaymentProviderFactory");
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -23,7 +24,7 @@ async function verifyCreationPayment(request, response)
 
     if (!organizationId || !providerOrderId || !providerPaymentId || !signature)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "MISSING_FIELDS" });
         return;
     }
@@ -31,13 +32,13 @@ async function verifyCreationPayment(request, response)
     const organization = await OrganizationQueryEngine.getOrganizationById(organizationId);
     if (!organization)
     {
-        response.statusCode = 404;
+        response.statusCode = httpStatus.NOT_FOUND;
         response.sendJson({ success: false, error: "ORG_NOT_FOUND" });
         return;
     }
     if (organization.getStatus() === organizationStatus.ACTIVE)
     {
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson({ success: true, organizationId: organizationId, alreadyActive: true });
         return;
     }
@@ -45,7 +46,7 @@ async function verifyCreationPayment(request, response)
     const paymentRow = await OrganizationPaymentQueryEngine.findByOrderId(providerOrderId);
     if (!paymentRow || paymentRow.getOrganizationId() !== organizationId)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "PAYMENT_ROW_NOT_FOUND" });
         return;
     }
@@ -55,7 +56,7 @@ async function verifyCreationPayment(request, response)
     if (!verification.verified)
     {
         await OrganizationPaymentQueryEngine.markFailed(providerOrderId);
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "PAYMENT_NOT_VERIFIED", reason: verification.reason });
         return;
     }
@@ -77,7 +78,7 @@ async function verifyCreationPayment(request, response)
         }
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ success: true, organizationId: organizationId, alreadyActive: !captureResult.transitioned });
 }
 

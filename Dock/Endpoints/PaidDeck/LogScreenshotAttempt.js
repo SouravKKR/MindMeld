@@ -1,5 +1,6 @@
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function logScreenshotAttempt(request, response)
 {
@@ -27,7 +28,7 @@ async function logScreenshotAttempt(request, response)
             timestamp: new Date()
         });
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ success: true });
 }
 

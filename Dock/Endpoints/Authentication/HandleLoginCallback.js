@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const PacketronResponse = require("@gamiumgamers/packetron/PacketronResponse");
 const {authenticationProviders }= require("../../Globals/Enumerations/AuthenticationProviders");
 const User = require("../../Globals/Model/User");
@@ -15,12 +16,31 @@ async function handleLoginCallback(request, response)
     const provider = await request.getCookie("provider");
 
     console.log(`${request.headers.host}`);
-    
+
     console.log(await request.getCookies());
 
     console.log(`provider: ${provider}`);
+
+    // OAuth login-CSRF / session-fixation guard: the state Google echoed back
+    // must equal the single-use token HandleLogin stored in the httpOnly
+    // loginState cookie. A missing or mismatched value means this callback was
+    // not initiated by this browser's login attempt — reject it before any
+    // token exchange or session creation happens.
+    const expectedLoginState = await request.getCookie("loginState");
+    const receivedLoginState = queryParams["state"];
+
+    if (!isMatchingLoginState(expectedLoginState, receivedLoginState))
+    {
+        console.warn("[HandleLoginCallback] Rejected callback: login state mismatch.");
+        response.clearCookie("loginState");
+        response.clearCookie("provider");
+        response.setHeader("Location", App.getOrigin());
+        response.sendStatusCode(302);
+        return;
+    }
+
     const code = queryParams["code"];
-    
+
     let user = null;
 
 
@@ -28,7 +48,7 @@ async function handleLoginCallback(request, response)
     {
         case authenticationProviders.GOOGLE:
         {
-            const params = new URLSearchParams(
+            const parameters = new URLSearchParams(
             {
                 code,
                 client_id: App.getClientId(authenticationProviders.GOOGLE),
@@ -44,7 +64,7 @@ async function handleLoginCallback(request, response)
                 {
                     "Content-Type": "application/x-www-form-urlencoded"
                 },
-                body: params
+                body: parameters
             });
 
             const tokenData = await tokenResponse.json();
@@ -59,11 +79,13 @@ async function handleLoginCallback(request, response)
 
             const userJson = await userResponse.json();
             const normalisedEmail = typeof userJson.email === "string" ? userJson.email.trim().toLowerCase() : "";
+            // The signup credit grant is applied through CreditLedger after
+            // the user row exists (see below) so the welcome bonus is
+            // admin-configurable and idempotent — not a hardcoded balance.
             const additionalData =
             {
                 "displayPicture": userJson.picture,
-                "email": normalisedEmail,
-                "credits": 5
+                "email": normalisedEmail
             }
 
             // Join date will be obtained from the database later on... defaulted to now
@@ -97,6 +119,10 @@ async function handleLoginCallback(request, response)
         }
     }
 
+    // Whether this is a brand-new account decides if the one-time signup
+    // credit grant applies (existing users keep their current balance).
+    const bIsNewUser = !existingUser;
+
     if(existingUser)
     {
         const freshData = user.getAdditionalData();
@@ -120,6 +146,31 @@ async function handleLoginCallback(request, response)
     await UserRoleReconciliator.reconcile(user);
 
     await AuthenticationQueryEngine.createUser(user);
+
+    // One-time, admin-configurable signup grant. Idempotent on the
+    // signup:{userId} reference key, so a replayed login never grants twice.
+    if (bIsNewUser)
+    {
+        try
+        {
+            const CreditConfigurationStore = require("../../Globals/Classes/Credits/CreditConfigurationStore");
+            const CreditLedger = require("../../Globals/Classes/Credits/CreditLedger");
+            const { creditTransactionTypes } = require("../../Globals/Enumerations/CreditTransactionTypes");
+
+            const creditConfiguration = await CreditConfigurationStore.load();
+            await CreditLedger.grant(
+                user.getId(),
+                creditConfiguration.getSignupGrant(),
+                creditTransactionTypes.SIGNUP_GRANT,
+                `signup:${user.getId()}`,
+                {}
+            );
+        }
+        catch (signupGrantError)
+        {
+            console.warn(`[HandleLoginCallback] signup grant failed for ${user.getId()}: ${signupGrantError.message}`);
+        }
+    }
 
     // Back-fill the userId on any memberships keyed by this email so
     // downstream queries (e.g. expansion to userId-based joins) work
@@ -177,11 +228,41 @@ async function handleLoginCallback(request, response)
         secure: true,
         sameSite: "lax"
     });
+    response.clearCookie("loginState");
     response.clearCookie("provider");
-    
+
     response.setHeader("Location", App.getOrigin());
     response.sendStatusCode(302);
-  
+
+}
+
+/**
+ * Constant-time comparison of the echoed OAuth state against the value
+ * stored in the loginState cookie. Both must be non-empty and of equal
+ * length; the timing-safe compare avoids leaking the expected token via
+ * response-time differences.
+ */
+function isMatchingLoginState(expectedLoginState, receivedLoginState)
+{
+    if (typeof expectedLoginState !== "string" || expectedLoginState.length === 0)
+    {
+        return false;
+    }
+
+    if (typeof receivedLoginState !== "string" || receivedLoginState.length === 0)
+    {
+        return false;
+    }
+
+    const expectedBuffer = Buffer.from(expectedLoginState, "utf8");
+    const receivedBuffer = Buffer.from(receivedLoginState, "utf8");
+
+    if (expectedBuffer.length !== receivedBuffer.length)
+    {
+        return false;
+    }
+
+    return crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
 }
 
 module.exports = { handleLoginCallback };

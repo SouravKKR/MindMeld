@@ -1,5 +1,6 @@
 const ReleaseNoteQueryEngine = require("../../../Globals/Classes/Database/ReleaseNoteQueryEngine");
 const { semVerBumpTypes } = require("../../../Globals/Enumerations/SemVerBumpTypes");
+const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -28,7 +29,7 @@ async function createReleaseNote(request, response)
     }
     catch (bodyError)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "Malformed JSON body." });
         return;
     }
@@ -40,21 +41,21 @@ async function createReleaseNote(request, response)
 
     if (title.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "Title is required." });
         return;
     }
 
     if (title.length > 256)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "Title must be at most 256 characters." });
         return;
     }
 
     if (contentHtml.length > 200000)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "Content exceeds 200000 characters." });
         return;
     }
@@ -62,7 +63,7 @@ async function createReleaseNote(request, response)
     const allowedBumpValues = Object.values(semVerBumpTypes);
     if (!allowedBumpValues.includes(bumpType))
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "Invalid bump type." });
         return;
     }
@@ -75,7 +76,7 @@ async function createReleaseNote(request, response)
     catch (createError)
     {
         console.error(`[CreateReleaseNote] ${createError.message}`);
-        response.statusCode = 500;
+        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
         response.sendJson({ error: createError.message || "Failed to create release note." });
     }
 }

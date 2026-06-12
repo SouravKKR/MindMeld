@@ -1,6 +1,8 @@
 const { PacketronPlugin } = require("@gamiumgamers/packetron");
 const { getUser } = require("../Helpers/GetUser");
+const { slideSessionExpiry } = require("../Helpers/SlideSessionExpiry");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
+const AdminActionAuditor = require("../../Globals/Classes/Security/AdminActionAuditor");
 
 /**
  * Permits requests from users whose role is either ORG_ADMIN or ADMIN
@@ -15,6 +17,10 @@ const ensureOrgAdmin = new PacketronPlugin
     {
         const user = await getUser(request);
 
+        // Org-admin member-management is a privileged action on user data; record
+        // it in the same audit trail (including blocked attempts) as super-admin.
+        await AdminActionAuditor.attach(request, response, userRoles.ORG_ADMIN);
+
         if (!user)
         {
             response.sendStatusCode(401);
@@ -28,6 +34,7 @@ const ensureOrgAdmin = new PacketronPlugin
         }
 
         request.user = user;
+        await slideSessionExpiry(request, response);
         return false;
     }
 });

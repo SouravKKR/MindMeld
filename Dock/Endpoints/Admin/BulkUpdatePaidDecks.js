@@ -1,5 +1,6 @@
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
  * BulkUpdatePaidDecks
@@ -41,7 +42,7 @@ async function bulkUpdatePaidDecks(request, response)
 
     if (!deckIds || deckIds.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_DECK_IDS" });
         return;
     }
@@ -93,7 +94,7 @@ async function bulkUpdatePaidDecks(request, response)
 
     if (Object.keys(updateDocument).length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "NO_VALID_FIELDS_TO_APPLY" });
         return;
     }
@@ -103,7 +104,7 @@ async function bulkUpdatePaidDecks(request, response)
         .collection(DatabaseConstants.PAID_DECKS_COLLECTION)
         .updateMany({ id: { $in: deckIds } }, updateDocument);
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         success: true,

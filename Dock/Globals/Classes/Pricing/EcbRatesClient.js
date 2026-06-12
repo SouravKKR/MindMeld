@@ -1,11 +1,11 @@
-const FxRatesCache = require("./FxRatesCache");
+const ForeignExchangeRatesCache = require("./ForeignExchangeRatesCache");
 const Alerts = require("../Alerts/Alerts");
 
 /**
  * EcbRatesClient
  *
  * Fetches the European Central Bank daily reference rates and stores them in
- * FxRatesCache. The feed is EUR-based; EUR is the implicit base (rate 1) and
+ * ForeignExchangeRatesCache. The feed is EUR-based; EUR is the implicit base (rate 1) and
  * is therefore not present in the XML.
  *
  * The feed is a tiny, flat XML document, so it is parsed with a regex rather
@@ -138,7 +138,7 @@ class EcbRatesClient
                 return false;
             }
 
-            await FxRatesCache.storeSnapshot({ rates: parsed.rates, sourceDate: parsed.sourceDate });
+            await ForeignExchangeRatesCache.storeSnapshot({ rates: parsed.rates, sourceDate: parsed.sourceDate });
             console.log(`[EcbRatesClient] Stored ECB rates for ${parsed.sourceDate || "unknown date"} (${Object.keys(parsed.rates).length} currencies).`);
             return true;
         }

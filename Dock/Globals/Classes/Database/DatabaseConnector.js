@@ -1,4 +1,4 @@
-const { MongoClient, Db, ServerApiVersion } = require('mongodb');
+const { MongoClient, Db } = require('mongodb');
 const App = require('../App');
 const DatabaseConstants = require('../../Constants/DatabaseConstants');
 
@@ -18,15 +18,7 @@ class DatabaseConnector
 
     static async #connect()
     {
-        DatabaseConnector.#mongoClient = new MongoClient(App.getDatabaseUrl(),
-        {
-            serverApi:
-            {
-                version: ServerApiVersion.v1,
-                strict: true,
-                deprecationErrors: true,
-            }
-        });
+        DatabaseConnector.#mongoClient = new MongoClient(App.getDatabaseUrl());
 
         try
         {
@@ -324,10 +316,34 @@ class DatabaseConnector
         const paidDeckPricingsCollection = database.collection(DatabaseConstants.PAID_DECK_PRICINGS_COLLECTION);
         await paidDeckPricingsCollection.createIndex({ deckId: 1, region: 1, effectiveFrom: -1 });
 
-        // ── Paid deck assets ───────────────────────────────────────────────────
-        // Encrypted blob lookup is always by (deckId, keyVersion).
+        // ── Paid deck assets (master meta) ─────────────────────────────────────
+        // Small per-(deckId, keyVersion) meta doc: wrapped deck content key +
+        // manifest. The encrypted CONTENT lives per-entity in
+        // paidDeckMasterEntities (below) so a large deck is never one document.
         const paidDeckAssetsCollection = database.collection(DatabaseConstants.PAID_DECK_ASSETS_COLLECTION);
         await paidDeckAssetsCollection.createIndex({ deckId: 1, keyVersion: 1 }, { unique: true });
+
+        // ── Paid deck master entities ──────────────────────────────────────────
+        // One encrypted doc per entity of the seller's master copy, keyed by
+        // (deckId, keyVersion, entityId). Bulk read/delete by (deckId, keyVersion)
+        // on purchase-clone and key rotation.
+        const paidDeckMasterEntitiesCollection = database.collection(DatabaseConstants.PAID_DECK_MASTER_ENTITIES_COLLECTION);
+        await paidDeckMasterEntitiesCollection.createIndex({ deckId: 1, keyVersion: 1, entityId: 1 }, { unique: true });
+        await paidDeckMasterEntitiesCollection.createIndex({ deckId: 1, keyVersion: 1 });
+
+        // ── Paid deck user content (manifest) ──────────────────────────────────
+        // One small per-(userId, deckId) doc holding the buyer's manifest. The
+        // per-entity plaintext lives in paidDeckUserContentEntities (below).
+        const paidDeckUserContentCollection = database.collection(DatabaseConstants.PAID_DECK_USER_CONTENT_COLLECTION);
+        await paidDeckUserContentCollection.createIndex({ userId: 1, deckId: 1 }, { unique: true });
+
+        // ── Paid deck user content entities ────────────────────────────────────
+        // One plaintext doc per entity of the buyer's editable copy, keyed by
+        // (userId, deckId, entityId). Per-entity fetch ($in entityIds) + update
+        // ride the unique index; bulk seed/teardown by (userId, deckId).
+        const paidDeckUserContentEntitiesCollection = database.collection(DatabaseConstants.PAID_DECK_USER_CONTENT_ENTITIES_COLLECTION);
+        await paidDeckUserContentEntitiesCollection.createIndex({ userId: 1, deckId: 1, entityId: 1 }, { unique: true });
+        await paidDeckUserContentEntitiesCollection.createIndex({ userId: 1, deckId: 1 });
 
         // ── Deck licenses ──────────────────────────────────────────────────────
         // Per-user, per-deck license. Lookups: "my licenses" (userId),
@@ -478,6 +494,45 @@ class DatabaseConnector
         await alertsCollection.createIndex({ lastSeenAt: -1 });
         await alertsCollection.createIndex({ acknowledged: 1, lastSeenAt: -1 });
         await alertsCollection.createIndex({ source: 1, title: 1, acknowledged: 1 });
+
+        // ── Rate-limit events ───────────────────────────────────────────────────
+        // Server-side 429 log; admin reviews recent events and per-identity
+        // abuse. TTL prunes the collection so it never grows unbounded.
+        const rateLimitEventsCollection = database.collection(DatabaseConstants.RATE_LIMIT_EVENTS_COLLECTION);
+        await rateLimitEventsCollection.createIndex({ id: 1 }, { unique: true });
+        await rateLimitEventsCollection.createIndex({ occurredAt: -1 });
+        await rateLimitEventsCollection.createIndex({ identityKey: 1, occurredAt: -1 });
+        await rateLimitEventsCollection.createIndex({ occurredAt: 1 }, { expireAfterSeconds: DatabaseConstants.RATE_LIMIT_EVENTS_TTL_DAYS * 24 * 60 * 60 });
+
+        // ── Admin audit events ──────────────────────────────────────────────────
+        // Persistent trail of privileged actions (who hit which admin endpoint,
+        // with what outcome). actorUserId/occurredAt power the newest-first and
+        // per-admin listings; TTL prunes the collection so it never grows
+        // unbounded (retained longer than rate-limit events — audit relevance).
+        const adminAuditEventsCollection = database.collection(DatabaseConstants.ADMIN_AUDIT_EVENTS_COLLECTION);
+        await adminAuditEventsCollection.createIndex({ id: 1 }, { unique: true });
+        await adminAuditEventsCollection.createIndex({ occurredAt: -1 });
+        await adminAuditEventsCollection.createIndex({ actorUserId: 1, occurredAt: -1 });
+        await adminAuditEventsCollection.createIndex({ occurredAt: 1 }, { expireAfterSeconds: DatabaseConstants.ADMIN_AUDIT_EVENTS_TTL_DAYS * 24 * 60 * 60 });
+
+        // ── Credit transactions ────────────────────────────────────────────────
+        // Append-only ledger. The unique referenceKey index is load-bearing:
+        // it is the idempotency guard that makes every charge / grant safe
+        // against task retries and replays. The per-user, newest-first index
+        // powers the in-app transaction history view.
+        const creditTransactionsCollection = database.collection(DatabaseConstants.CREDIT_TRANSACTIONS_COLLECTION);
+        await creditTransactionsCollection.createIndex({ referenceKey: 1 }, { unique: true });
+        await creditTransactionsCollection.createIndex({ userId: 1, createdAt: -1 });
+
+        // ── Task states (pause / resume) ────────────────────────────────────────
+        // A paused task a user can resume after, e.g., topping up credits. The
+        // unique userId index enforces AT MOST ONE per user (so this can't be
+        // abused as general storage); the TTL on expiresAt auto-deletes a stale
+        // state after a week. The full state content lives in the GCS bucket;
+        // this collection is the lean index + lifecycle owner.
+        const taskStatesCollection = database.collection(DatabaseConstants.TASK_STATES_COLLECTION);
+        await taskStatesCollection.createIndex({ userId: 1 }, { unique: true });
+        await taskStatesCollection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
     }
 }
 

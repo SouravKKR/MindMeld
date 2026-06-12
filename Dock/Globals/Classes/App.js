@@ -57,11 +57,17 @@ class App
         return "";
     }
 
-    static getAuthenticationUrl(provider)
+    static getAuthenticationUrl(provider, state)
     {
 
         console.log(`provider: ${provider}`);
-        
+
+        // `state` is an opaque, single-use random token minted by HandleLogin and
+        // stored in an httpOnly cookie. Google echoes it back to the callback,
+        // where it must match the cookie — this binds the callback to the browser
+        // that started the flow and defeats OAuth login-CSRF / session fixation.
+        const stateParameter = typeof state === "string" ? state : "";
+
         switch(provider)
         {
             case authenticationProviders.GOOGLE:
@@ -70,7 +76,8 @@ class App
                 "?response_type=code" +
                 "&client_id=" + App.getClientId(provider) +
                 "&redirect_uri=" + encodeURIComponent(App.getRedirectUri(provider)) +
-                "&scope=" + encodeURIComponent("openid email profile");
+                "&scope=" + encodeURIComponent("openid email profile") +
+                "&state=" + encodeURIComponent(stateParameter);
             }
         }
     }

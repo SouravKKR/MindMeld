@@ -4,8 +4,12 @@ const { taskTypes } = require("../../Globals/Enumerations/TaskTypes");
 const { taskStatus } = require("../../Globals/Enumerations/TaskStatus");
 const { taskExecutionTargets } = require("../../Globals/Enumerations/TaskExecutionTargets");
 const TaskHistoryQueryEngine = require("../../Globals/Classes/Database/TaskHistoryQueryEngine");
+const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
+const CreditPreflight = require("../../Globals/Classes/Credits/CreditPreflight");
+const TaskStateManager = require("../../Globals/Classes/Task/TaskStateManager");
 const { getUser } = require("../Helpers/GetUser");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -35,19 +39,8 @@ async function handleQueueDeckAnalysis(request, response)
 
     if (!user)
     {
-        response.statusCode = 401;
+        response.statusCode = httpStatus.UNAUTHORIZED;
         response.end("Unauthorised.");
-        return;
-    }
-
-    // AI features are admin-only during the closed-test phase. The frontend
-    // already gates the dispatcher + checkbox toggles, but a stale client
-    // (or a direct curl) can still reach here — enforce server-side so the
-    // LLM call never fires for a non-admin.
-    if (user.getRole() !== userRoles.ADMIN)
-    {
-        response.statusCode = 403;
-        response.end("AI features are restricted to authorized roles.");
         return;
     }
 
@@ -56,8 +49,34 @@ async function handleQueueDeckAnalysis(request, response)
 
     if (typeof deckId !== "string" || deckId.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.end("deckId is required.");
+        return;
+    }
+
+    // A paid request is identified by a non-empty paidDeckId in the body — the
+    // agent uses it to read the buyer's cards from paidDeckUserContentEntities
+    // and write results back into that same encrypted per-user store. Paid
+    // analysis is gated by an ACTIVE license (ownership); regular own-deck
+    // analysis stays admin-only during the closed-test phase. (A stale client
+    // or a direct curl can still reach here, so both checks are server-side.)
+    const paidDeckId = typeof body?.paidDeckId === "string" ? body.paidDeckId : "";
+    const isPaidDeckAnalysis = paidDeckId.length > 0;
+
+    if (isPaidDeckAnalysis)
+    {
+        const license = await KeyManagementService.getLicense(user.getId(), paidDeckId);
+        if (!KeyManagementService.isLicenseActive(license))
+        {
+            response.statusCode = httpStatus.FORBIDDEN;
+            response.sendJson({ error: "NO_ACTIVE_LICENSE" });
+            return;
+        }
+    }
+    else if (user.getRole() !== userRoles.ADMIN)
+    {
+        response.statusCode = httpStatus.FORBIDDEN;
+        response.end("AI features are restricted to authorized roles.");
         return;
     }
 
@@ -105,18 +124,45 @@ async function handleQueueDeckAnalysis(request, response)
         return;
     }
 
+    // Best-effort credit gate. The Agent is the authoritative charger, but
+    // rejecting an unaffordable run here gives immediate feedback instead of
+    // launching a pipeline the Agent would refuse at its first task.
+    const creditPreflight = await CreditPreflight.check(user.getId(), taskTypes.ANALYZE_DECK_PERFORMANCE);
+    if (!creditPreflight.allowed)
+    {
+        const bIsResumable = creditPreflight.reason === "INSUFFICIENT_CREDITS";
+        if (bIsResumable)
+        {
+            try { await TaskStateManager.save({ userId: user.getId(), taskType: taskTypes.ANALYZE_DECK_PERFORMANCE, route: "/Analysis/QueueDeckAnalysis", payload: body, pausedReason: creditPreflight.reason }); }
+            catch (saveError) { console.warn(`[QueueDeckAnalysis] Failed to save resumable task state: ${saveError.message}`); }
+        }
+        response.statusCode = httpStatus.PAYMENT_REQUIRED;
+        response.sendJson({ error: creditPreflight.reason, balance: creditPreflight.balance, required: creditPreflight.required, resumable: bIsResumable });
+        return;
+    }
+
+    const taskPayload =
+    {
+        deckId: deckId,
+        autoGenerateCuratedStudy: autoGenerateCuratedStudy,
+        force: force,
+        skipAnalysis: skipAnalysis,
+        regenerateTopics: regenerateTopics,
+    };
+
+    if (isPaidDeckAnalysis)
+    {
+        // Paid-source mode: the agent reads/writes the buyer's per-user
+        // plaintext store keyed by (userId, paidDeckId).
+        taskPayload.paidDeckId = paidDeckId;
+        taskPayload.userId = user.getId();
+    }
+
     const analyzeDeckPerformanceTask = new TaskDescriptor({
         type: taskTypes.ANALYZE_DECK_PERFORMANCE,
         executionTarget: taskExecutionTargets.LOCAL,
         userId: user.getId(),
-        payload:
-        {
-            deckId: deckId,
-            autoGenerateCuratedStudy: autoGenerateCuratedStudy,
-            force: force,
-            skipAnalysis: skipAnalysis,
-            regenerateTopics: regenerateTopics,
-        },
+        payload: taskPayload,
         nextTaskIds: [],
     });
 
@@ -125,7 +171,7 @@ async function handleQueueDeckAnalysis(request, response)
 
     const taskId = analyzeDeckPerformanceTask.getId();
 
-    response.statusCode = 202;
+    response.statusCode = httpStatus.ACCEPTED;
     response.sendJson({ taskId: taskId, bAlreadyRunning: false });
 
     TaskManager.execute(analyzeDeckPerformanceTask)

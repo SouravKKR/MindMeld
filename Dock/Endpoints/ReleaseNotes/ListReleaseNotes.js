@@ -1,6 +1,7 @@
 const ReleaseNoteQueryEngine = require("../../Globals/Classes/Database/ReleaseNoteQueryEngine");
 const { getUser } = require("../Helpers/GetUser");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -76,7 +77,7 @@ async function listReleaseNotes(request, response)
     catch (loadError)
     {
         console.error(`[ListReleaseNotes] ${loadError.message}`);
-        response.statusCode = 500;
+        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
         response.sendJson({ error: "Failed to load release notes." });
     }
 }

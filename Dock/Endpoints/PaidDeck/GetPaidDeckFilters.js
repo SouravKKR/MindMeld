@@ -1,10 +1,11 @@
 const PaidDeckSearchEngine = require("../../Globals/Classes/Search/PaidDeckSearchEngine");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function getPaidDeckFilters(request, response)
 {
     const filterMetadataList = await PaidDeckSearchEngine.listFilterMetadata();
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ filters: filterMetadataList });
 }
 

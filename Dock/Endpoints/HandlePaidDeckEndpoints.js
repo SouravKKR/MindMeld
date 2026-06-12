@@ -6,19 +6,17 @@ const { initiatePurchase } = require("./PaidDeck/InitiatePurchase");
 const { verifyPurchase } = require("./PaidDeck/VerifyPurchase");
 const { getMyPurchases } = require("./PaidDeck/GetMyPurchases");
 const { getPurchaseInvoice } = require("./PaidDeck/GetPurchaseInvoice");
-const { getPaidDeckContent } = require("./PaidDeck/GetPaidDeckContent");
 const { logScreenshotAttempt } = require("./PaidDeck/LogScreenshotAttempt");
 const { searchPaidDecks } = require("./PaidDeck/SearchPaidDecks");
 const { getPaidDeckFilters } = require("./PaidDeck/GetPaidDeckFilters");
-const { checkForContentUpdates } = require("./PaidDeck/CheckForContentUpdates");
-const { redownloadPaidDeck } = require("./PaidDeck/RedownloadPaidDeck");
-const { markVersionDownloaded } = require("./PaidDeck/MarkVersionDownloaded");
 const { setPaidDeckPassword } = require("./PaidDeck/SetPaidDeckPassword");
 const { unlockPaidDeckSession } = require("./PaidDeck/UnlockPaidDeckSession");
 const { changePaidDeckPassword } = require("./PaidDeck/ChangePaidDeckPassword");
 const { getPaidDeckManifest } = require("./PaidDeck/GetPaidDeckManifest");
 const { fetchPaidDeckEntities } = require("./PaidDeck/FetchPaidDeckEntities");
 const { updatePaidDeckEntity } = require("./PaidDeck/UpdatePaidDeckEntity");
+const { addPaidDeckCopy } = require("./PaidDeck/AddPaidDeckCopy");
+const { deletePaidDeckCopy } = require("./PaidDeck/DeletePaidDeckCopy");
 
 function handlePaidDeckEndpoints(server)
 {
@@ -80,42 +78,8 @@ function handlePaidDeckEndpoints(server)
 
     server.handle
     ({
-        routePath: `/PaidDecks/Content`,
-        handler: getPaidDeckContent,
-        method: PacketronRequestMethod.GET,
-        plugins: [ensureLogin]
-    });
-
-    server.handle
-    ({
         routePath: `/PaidDecks/ScreenshotAttempt`,
         handler: logScreenshotAttempt,
-        flags: PacketronHandlerFlags.JSON_BODY,
-        method: PacketronRequestMethod.POST,
-        plugins: [ensureLogin]
-    });
-
-    server.handle
-    ({
-        routePath: `/PaidDecks/CheckForContentUpdates`,
-        handler: checkForContentUpdates,
-        method: PacketronRequestMethod.GET,
-        plugins: [ensureLogin]
-    });
-
-    server.handle
-    ({
-        routePath: `/PaidDecks/Redownload`,
-        handler: redownloadPaidDeck,
-        flags: PacketronHandlerFlags.JSON_BODY,
-        method: PacketronRequestMethod.POST,
-        plugins: [ensureLogin]
-    });
-
-    server.handle
-    ({
-        routePath: `/PaidDecks/MarkVersionDownloaded`,
-        handler: markVersionDownloaded,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureLogin]
@@ -181,6 +145,29 @@ function handlePaidDeckEndpoints(server)
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureLogin, ecdhResponseEnvelope]
+    });
+
+    // ── Copies (multi-instance) ──────────────────────────────────────────
+    //
+    // A buyer can hold several independent copies of one owned paid deck
+    // (detached progress, shared immutable content + one license/content key).
+    // Plain success/failure replies (no key material) so no ECDH envelope.
+    server.handle
+    ({
+        routePath: `/PaidDecks/Copies/Add`,
+        handler: addPaidDeckCopy,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureLogin]
+    });
+
+    server.handle
+    ({
+        routePath: `/PaidDecks/Copies/Delete`,
+        handler: deletePaidDeckCopy,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureLogin]
     });
 }
 

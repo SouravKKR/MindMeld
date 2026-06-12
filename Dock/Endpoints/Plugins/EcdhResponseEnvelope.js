@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const { PacketronPlugin, PacketronRequest, PacketronResponse } = require("@gamiumgamers/packetron");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
  * EcdhResponseEnvelope
@@ -42,7 +43,7 @@ class EcdhResponseEnvelope
 
         if (typeof clientPublicKeyBase64 !== "string" || clientPublicKeyBase64.length === 0)
         {
-            response.statusCode = 400;
+            response.statusCode = httpStatus.BAD_REQUEST;
             response.sendJson({ error: "MISSING_CLIENT_EPHEMERAL_PUBLIC_KEY" });
             return true;
         }
@@ -60,7 +61,7 @@ class EcdhResponseEnvelope
         }
         catch (parseError)
         {
-            response.statusCode = 400;
+            response.statusCode = httpStatus.BAD_REQUEST;
             response.sendJson({ error: "MALFORMED_CLIENT_EPHEMERAL_PUBLIC_KEY" });
             return true;
         }

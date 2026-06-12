@@ -1,6 +1,7 @@
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
 const LicenseConstants = require("../../Globals/Constants/LicenseConstants");
 const DeviceLimitReachedError = require("../../Globals/Classes/Database/DeviceLimitReachedError");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -55,7 +56,7 @@ async function handleRegisterDevice(request, response)
     {
         if (resolveError instanceof DeviceLimitReachedError)
         {
-            response.statusCode = 409;
+            response.statusCode = httpStatus.CONFLICT;
             response.sendJson
             ({
                 error: "DEVICE_LIMIT_REACHED",
@@ -70,7 +71,7 @@ async function handleRegisterDevice(request, response)
     session.setDeviceId(device.getId());
     await AuthenticationQueryEngine.refreshSession(session);
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ device: device.toJson() });
 }
 

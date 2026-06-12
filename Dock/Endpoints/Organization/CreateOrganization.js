@@ -8,6 +8,7 @@ const PaymentProviderFactory = require("../../Globals/Classes/Payments/PaymentPr
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
 const { organizationPaymentKinds } = require("../../Globals/Enumerations/OrganizationPaymentKinds");
 const { organizationPaymentStatuses } = require("../../Globals/Enumerations/OrganizationPaymentStatuses");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 async function createOrganization(request, response)
@@ -23,25 +24,25 @@ async function createOrganization(request, response)
 
     if (name.length === 0 || name.length > 256)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "INVALID_NAME" });
         return;
     }
     if (!adminEmail || adminEmail.indexOf("@") < 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "INVALID_ADMIN_EMAIL" });
         return;
     }
     if (amountMinor < 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "INVALID_AMOUNT" });
         return;
     }
     if (maxMembers <= 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "INVALID_MAX_MEMBERS" });
         return;
     }
@@ -49,7 +50,7 @@ async function createOrganization(request, response)
     const tokenValid = await OrgAdminVerificationManager.isTokenValid(adminEmail, verificationToken);
     if (!tokenValid)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "INVALID_VERIFICATION_TOKEN" });
         return;
     }
@@ -61,7 +62,7 @@ async function createOrganization(request, response)
         const validation = OrganizationDeckPerkQueryEngine.validatePerk(perkInput);
         if (!validation.valid)
         {
-            response.statusCode = 400;
+            response.statusCode = httpStatus.BAD_REQUEST;
             response.sendJson({ success: false, error: "INVALID_PERK", reason: validation.reason, deckId: perkInput?.deckId });
             return;
         }
@@ -102,7 +103,7 @@ async function createOrganization(request, response)
         // Consume the verification token now — for free orgs there's no
         // downstream payment-verify hook that would otherwise consume it.
         await OrgAdminVerificationManager.consumeToken(adminEmail, verificationToken);
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson
         ({
             success: true,
@@ -122,7 +123,7 @@ async function createOrganization(request, response)
         // Roll back the org we just created so we don't strand a
         // PENDING row with no order behind it.
         await OrganizationQueryEngine.deleteOrganization(created.getId());
-        response.statusCode = 503;
+        response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
         response.sendJson({ success: false, error: "PAYMENT_PROVIDER_NOT_CONFIGURED" });
         return;
     }
@@ -159,7 +160,7 @@ async function createOrganization(request, response)
     });
     await OrganizationPaymentQueryEngine.createPayment(paymentRow);
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         success: true,

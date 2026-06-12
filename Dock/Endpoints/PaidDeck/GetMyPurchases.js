@@ -1,5 +1,7 @@
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
+const LicenseClientView = require("../../Globals/Classes/Security/LicenseClientView");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function getMyPurchases(request, response)
 {
@@ -25,11 +27,13 @@ async function getMyPurchases(request, response)
         .limit(2000)
         .toArray();
 
-    response.statusCode = 200;
+    // Licenses carry secret key material (wrapped content keys, salt, hash) that
+    // the client must never receive or persist — strip it via LicenseClientView.
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         purchases: purchases.map(purchase => { delete purchase._id; return purchase; }),
-        licenses: licenses.map(license => { delete license._id; return license; })
+        licenses: LicenseClientView.sanitizeMany(licenses)
     });
 }
 

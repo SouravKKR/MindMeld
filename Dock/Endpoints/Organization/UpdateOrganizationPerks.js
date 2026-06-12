@@ -2,6 +2,7 @@ const OrganizationQueryEngine = require("../../Globals/Classes/Organization/Orga
 const OrganizationDeckPerkQueryEngine = require("../../Globals/Classes/Organization/OrganizationDeckPerkQueryEngine");
 const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/OrganizationAutoAssigner");
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 async function updateOrganizationPerks(request, response)
@@ -12,7 +13,7 @@ async function updateOrganizationPerks(request, response)
 
     if (!organizationId)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "MISSING_ORGANIZATION_ID" });
         return;
     }
@@ -20,13 +21,13 @@ async function updateOrganizationPerks(request, response)
     const organization = await OrganizationQueryEngine.getOrganizationById(organizationId);
     if (!organization)
     {
-        response.statusCode = 404;
+        response.statusCode = httpStatus.NOT_FOUND;
         response.sendJson({ success: false, error: "ORG_NOT_FOUND" });
         return;
     }
     if (organization.getStatus() !== organizationStatus.ACTIVE)
     {
-        response.statusCode = 409;
+        response.statusCode = httpStatus.CONFLICT;
         response.sendJson({ success: false, error: "ORG_NOT_ACTIVE" });
         return;
     }
@@ -36,7 +37,7 @@ async function updateOrganizationPerks(request, response)
         const validation = OrganizationDeckPerkQueryEngine.validatePerk(perkInput);
         if (!validation.valid)
         {
-            response.statusCode = 400;
+            response.statusCode = httpStatus.BAD_REQUEST;
             response.sendJson({ success: false, error: "INVALID_PERK", reason: validation.reason, deckId: perkInput?.deckId });
             return;
         }
@@ -59,7 +60,7 @@ async function updateOrganizationPerks(request, response)
         totalAutoAssigned += propagateResult.granted;
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         success: true,

@@ -4,6 +4,7 @@ const Persistence = require("../../Globals/Classes/Persistence");
 const PersistenceConstants = require("../../Globals/Constants/PersistenceConstants");
 const { taskTypes } = require("../../Globals/Enumerations/TaskTypes");
 const { taskExecutionTargets } = require("../../Globals/Enumerations/TaskExecutionTargets");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 const BEAUTIFIED_OUTPUT_FILE_NAME = "BeautifiedShortNames.json";
 const MAX_DECK_CHAINS_PER_REQUEST = 500;
@@ -56,7 +57,7 @@ async function beautifyDeckShortNames(request, response)
 
     if (!requestedChains || requestedChains.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_DECK_CHAINS" });
         return;
     }
@@ -73,14 +74,14 @@ async function beautifyDeckShortNames(request, response)
 
     if (sanitizedChains.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "NO_VALID_DECK_CHAINS" });
         return;
     }
 
     if (sanitizedChains.length > MAX_DECK_CHAINS_PER_REQUEST)
     {
-        response.statusCode = 413;
+        response.statusCode = httpStatus.PAYLOAD_TOO_LARGE;
         response.sendJson({ error: "TOO_MANY_DECK_CHAINS", limit: MAX_DECK_CHAINS_PER_REQUEST });
         return;
     }
@@ -109,7 +110,7 @@ async function beautifyDeckShortNames(request, response)
 
         if (executed === false)
         {
-            response.statusCode = 500;
+            response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
             response.sendJson({ error: "BEAUTIFY_TASK_FAILED" });
             return;
         }
@@ -145,7 +146,7 @@ async function beautifyDeckShortNames(request, response)
         // 503 / quota / blocked content — re-run usually works.
         if (bFileMissing || Object.keys(beautifiedMap).length === 0)
         {
-            response.statusCode = 503;
+            response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
             response.sendJson({
                 error: "BEAUTIFY_LLM_UNAVAILABLE",
                 message: "The AI service did not return any short names. The model may be temporarily overloaded — please try again in a minute."
@@ -153,7 +154,7 @@ async function beautifyDeckShortNames(request, response)
             return;
         }
 
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson({ shortNamesByKey: beautifiedMap });
     }
     finally

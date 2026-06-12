@@ -1,5 +1,6 @@
 const { PacketronPlugin, PacketronRequest, PacketronResponse } = require("@gamiumgamers/packetron");
 const { getSession } = require("../Helpers/GetSession");
+const { slideSessionExpiry } = require("../Helpers/SlideSessionExpiry");
 
 const ensureLogin = new PacketronPlugin
 ({
@@ -24,6 +25,7 @@ const ensureLogin = new PacketronPlugin
         else
         {
             request.session = session;
+            await slideSessionExpiry(request, response);
             return false;
         }
     }

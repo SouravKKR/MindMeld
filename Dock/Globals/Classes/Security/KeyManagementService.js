@@ -1,8 +1,12 @@
 const crypto = require("crypto");
+const BSON = require("bson");
 const DatabaseConnector = require("../Database/DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
 const LicenseConstants = require("../../Constants/LicenseConstants");
+const GrantSources = require("../../Constants/GrantSources");
 const DeckLicense = require("../../Model/DeckLicense");
+const PaidDeckUserContentCloner = require("../PaidDeck/PaidDeckUserContentCloner");
+const PaidDeckEntityTooLargeError = require("./PaidDeckEntityTooLargeError");
 const { deckLicenseStatuses } = require("../../Enumerations/DeckLicenseStatuses");
 
 class KeyManagementService
@@ -13,6 +17,31 @@ class KeyManagementService
     static #DECK_KEY_BYTES = 32;
     static #IV_BYTES = 12;
     static #ALGORITHM = "aes-256-gcm";
+
+    // Flush a write batch once the accumulated plaintext reaches this many
+    // bytes, so memory stays bounded no matter how large the deck is.
+    static #MASTER_ENTITY_BATCH_BYTES = 12 * 1024 * 1024;
+    // Hard per-document ceiling (Mongo's 16MB BSON limit, with headroom).
+    static #MAX_ENTITY_DOCUMENT_BYTES = 15 * 1024 * 1024;
+
+    // AES-256-GCM authentication tag length and the random salt length used
+    // for paid-deck password derivation, in bytes.
+    static #GCM_AUTH_TAG_BYTES = 16;
+    static #PASSWORD_SALT_BYTES = 16;
+
+    // HKDF/PBKDF2 salt + info labels. These are baked into every derived key
+    // and verification hash, so the literal values must never change once any
+    // paid deck has been encrypted.
+    static #LICENSE_KEK_SALT_LABEL = "paid-deck-license";
+    static #SERVER_KEK_SALT_PREFIX = "paid-deck-server-kek:";
+    static #CONTENT_KEY_INFO_LABEL = "paid-deck-content-key";
+    static #PASSWORD_VERIFY_SALT_PREFIX = "verify:";
+
+    // Internal result codes returned by the rotation / license-issue flows.
+    static #REASON_DECK_NOT_FOUND = "DECK_NOT_FOUND";
+    static #REASON_PREVIOUS_ASSET_NOT_FOUND = "PREVIOUS_ASSET_NOT_FOUND";
+    static #REASON_ASSET_NOT_FOUND = "ASSET_NOT_FOUND";
+    static #REASON_EXCEPTION = "EXCEPTION";
 
     static initialize()
     {
@@ -81,8 +110,8 @@ class KeyManagementService
     {
         const initializationVector = Buffer.from(ivBase64, "base64");
         const combined = Buffer.from(ciphertextBase64, "base64");
-        const authenticationTag = combined.slice(combined.length - 16);
-        const ciphertext = combined.slice(0, combined.length - 16);
+        const authenticationTag = combined.slice(combined.length - KeyManagementService.#GCM_AUTH_TAG_BYTES);
+        const ciphertext = combined.slice(0, combined.length - KeyManagementService.#GCM_AUTH_TAG_BYTES);
 
         const decipher = crypto.createDecipheriv(KeyManagementService.#ALGORITHM, keyBuffer, initializationVector);
         decipher.setAuthTag(authenticationTag);
@@ -95,28 +124,163 @@ class KeyManagementService
         KeyManagementService.#ensureReady();
 
         const salt = Buffer.from(`${userId}:${keyVersion}`, "utf8");
-        const derived = crypto.hkdfSync("sha256", KeyManagementService.#masterKey, salt, Buffer.from("paid-deck-license"), 32);
+        const derived = crypto.hkdfSync("sha256", KeyManagementService.#masterKey, salt, Buffer.from(KeyManagementService.#LICENSE_KEK_SALT_LABEL), 32);
         return Buffer.from(derived);
     }
 
-    static encryptDeckPayload(plaintextJson)
+    /**
+     * Splits a flat entity list into byte-bounded batches (an async iterable),
+     * so the streaming writer never holds the whole deck in memory. Used for
+     * the upload path where the source is the in-memory cloner output.
+     */
+    static *#chunkEntitiesByBytes(entities)
+    {
+        let batch = [];
+        let batchBytes = 0;
+        for (const entity of entities)
+        {
+            const entityBytes = Buffer.byteLength(JSON.stringify(entity.plaintext ?? null), "utf8");
+            if (batch.length > 0 && (batchBytes + entityBytes) > KeyManagementService.#MASTER_ENTITY_BATCH_BYTES)
+            {
+                yield batch;
+                batch = [];
+                batchBytes = 0;
+            }
+            batch.push(entity);
+            batchBytes += entityBytes;
+        }
+        if (batch.length > 0)
+        {
+            yield batch;
+        }
+    }
+
+    /**
+     * Writes a paid deck's master copy (per-entity, encrypted at rest) by
+     * streaming `batchIterable` — anything async-iterable yielding arrays of
+     * { entityId, entityType, parentDeckId, plaintext }. A fresh deck content
+     * key encrypts every entity; each entity doc is size-checked against the
+     * 16MB ceiling (throws PaidDeckEntityTooLargeError naming the entity). The
+     * meta doc (wrapped key + manifest) is written LAST, so "meta exists ⇒
+     * fully written". Returns the wrapped content key for license issuance.
+     */
+    static async storeMasterEntitiesFromBatches(deckId, keyVersion, manifest, batchIterable)
     {
         KeyManagementService.#ensureReady();
+        const database = await DatabaseConnector.getDatabase();
+        const masterEntitiesCollection = database.collection(DatabaseConstants.PAID_DECK_MASTER_ENTITIES_COLLECTION);
 
         const contentKey = KeyManagementService.#generateDeckKey();
-        const plaintextBuffer = Buffer.from(JSON.stringify(plaintextJson), "utf8");
-        const encrypted = KeyManagementService.#encryptBuffer(contentKey, plaintextBuffer);
-
         const wrappedContentKey = KeyManagementService.#encryptBuffer(KeyManagementService.#masterKey, contentKey);
 
-        contentKey.fill(0);
+        // Replace any prior content at this (deckId, keyVersion) before streaming
+        // so an upload retry never leaves orphaned entities behind.
+        await masterEntitiesCollection.deleteMany({ deckId: deckId, keyVersion: keyVersion });
+
+        const writeTimestamp = new Date();
+        let entityCount = 0;
+        try
+        {
+            for await (const entityBatch of batchIterable)
+            {
+                const entityDocuments = entityBatch.map((entity) =>
+                {
+                    const encrypted = KeyManagementService.encryptPaidDeckEntityPlaintext(entity.plaintext, contentKey);
+                    return {
+                        deckId: deckId,
+                        keyVersion: keyVersion,
+                        entityId: entity.entityId,
+                        entityType: entity.entityType,
+                        parentDeckId: entity.parentDeckId ?? null,
+                        ivBase64: encrypted.ivBase64,
+                        ciphertextBase64: encrypted.ciphertextBase64,
+                        updatedAt: writeTimestamp
+                    };
+                });
+
+                KeyManagementService.#assertEntityDocumentsWithinLimit(entityDocuments);
+
+                if (entityDocuments.length > 0)
+                {
+                    await masterEntitiesCollection.insertMany(entityDocuments, { ordered: false });
+                    entityCount += entityDocuments.length;
+                }
+            }
+        }
+        finally
+        {
+            contentKey.fill(0);
+        }
+
+        await database.collection(DatabaseConstants.PAID_DECK_ASSETS_COLLECTION).updateOne
+        (
+            { deckId: deckId, keyVersion: keyVersion },
+            {
+                $set:
+                {
+                    deckId: deckId,
+                    keyVersion: keyVersion,
+                    wrappedContentKeyIvBase64: wrappedContentKey.ivBase64,
+                    wrappedContentKeyBase64: wrappedContentKey.ciphertextBase64,
+                    manifest: manifest,
+                    rootDeckId: manifest?.rootDeckId || "",
+                    entityCount: entityCount,
+                    updatedAt: writeTimestamp
+                },
+                // Drop legacy monolithic fields if this doc predates per-entity.
+                $unset: { ivBase64: "", ciphertextBase64: "" }
+            },
+            { upsert: true }
+        );
 
         return {
-            ivBase64: encrypted.ivBase64,
-            ciphertextBase64: encrypted.ciphertextBase64,
             wrappedContentKeyIvBase64: wrappedContentKey.ivBase64,
-            wrappedContentKeyBase64: wrappedContentKey.ciphertextBase64
+            wrappedContentKeyBase64: wrappedContentKey.ciphertextBase64,
+            entityCount: entityCount
         };
+    }
+
+    /**
+     * Throws PaidDeckEntityTooLargeError if any document exceeds the 16MB
+     * per-document ceiling — the one limit per-entity storage can't get under
+     * (a normal deck hits the same wall for such an entity). Naming the entity
+     * lets the upload endpoint surface a clear message instead of a raw BSON
+     * ERR_OUT_OF_RANGE.
+     */
+    static #assertEntityDocumentsWithinLimit(entityDocuments)
+    {
+        for (const entityDocument of entityDocuments)
+        {
+            const documentBytes = BSON.calculateObjectSize(entityDocument);
+            if (documentBytes > KeyManagementService.#MAX_ENTITY_DOCUMENT_BYTES)
+            {
+                throw new PaidDeckEntityTooLargeError(entityDocument.entityId, documentBytes);
+            }
+        }
+    }
+
+    /**
+     * Stores a paid deck's master copy from a deck export payload. Reuses
+     * PaidDeckUserContentCloner to walk the payload into a manifest + per-entity
+     * plaintext map, then streams it in byte-bounded batches.
+     */
+    static async storePaidDeckMaster(deckId, keyVersion, deckPayload)
+    {
+        const cloned = PaidDeckUserContentCloner.clone(deckPayload);
+        const entities = Object.entries(cloned.contentByEntityId).map(([entityId, record]) =>
+        ({
+            entityId: entityId,
+            entityType: record.entityType,
+            parentDeckId: record.parentDeckId ?? null,
+            plaintext: record.plaintext
+        }));
+        return await KeyManagementService.storeMasterEntitiesFromBatches
+        (
+            deckId,
+            keyVersion,
+            cloned.manifest,
+            KeyManagementService.#chunkEntitiesByBytes(entities)
+        );
     }
 
     static #unwrapContentKey(wrappedContentKeyIvBase64, wrappedContentKeyBase64)
@@ -159,7 +323,7 @@ class KeyManagementService
 
         const grantSource = typeof options.grantSource === "string" && options.grantSource.length > 0
             ? options.grantSource
-            : "PURCHASE";
+            : GrantSources.PURCHASE;
 
         const license = new DeckLicense
         ({
@@ -251,24 +415,150 @@ class KeyManagementService
         return document ? DeckLicense.fromJson(document) : null;
     }
 
-    static async storeAsset(deckId, encryptedPayload)
-    {
-        const database = await DatabaseConnector.getDatabase();
-        await database
-            .collection(DatabaseConstants.PAID_DECK_ASSETS_COLLECTION)
-            .updateOne
-            (
-                { deckId: deckId, keyVersion: encryptedPayload.keyVersion },
-                { $set: { deckId: deckId, ...encryptedPayload, updatedAt: new Date() } },
-                { upsert: true }
-            );
-    }
-
-    static async getAsset(deckId, keyVersion)
+    /**
+     * Reads the small master meta doc (wrapped deck content key + manifest)
+     * for a (deckId, keyVersion). The actual content lives per-entity in
+     * paidDeckMasterEntities.
+     */
+    static async getMasterMeta(deckId, keyVersion)
     {
         return await (await DatabaseConnector.getDatabase())
             .collection(DatabaseConstants.PAID_DECK_ASSETS_COLLECTION)
             .findOne({ deckId: deckId, keyVersion: keyVersion });
+    }
+
+    /**
+     * Returns just the master manifest for (deckId, keyVersion), or null when
+     * absent. Per-entity decks read it straight off the meta doc; a LEGACY
+     * monolithic asset is decrypted + walked to reproduce it.
+     */
+    static async getMasterManifest(deckId, keyVersion)
+    {
+        const meta = await KeyManagementService.getMasterMeta(deckId, keyVersion);
+        if (!meta)
+        {
+            return null;
+        }
+        if (meta.manifest && !meta.ciphertextBase64)
+        {
+            return meta.manifest;
+        }
+        if (meta.ciphertextBase64)
+        {
+            KeyManagementService.#ensureReady();
+            const legacyContentKey = KeyManagementService.#unwrapContentKey(meta.wrappedContentKeyIvBase64, meta.wrappedContentKeyBase64);
+            const plaintextBuffer = KeyManagementService.#decryptBuffer(legacyContentKey, meta.ivBase64, meta.ciphertextBase64);
+            legacyContentKey.fill(0);
+            try
+            {
+                return PaidDeckUserContentCloner.clone(JSON.parse(plaintextBuffer.toString("utf8"))).manifest;
+            }
+            finally
+            {
+                plaintextBuffer.fill(0);
+            }
+        }
+        return meta.manifest || { rootDeckId: meta.rootDeckId || "", entries: [] };
+    }
+
+    /**
+     * Async generator that streams a master copy's entities in byte-bounded
+     * batches of { entityId, entityType, parentDeckId, plaintext }, so a caller
+     * (purchase-clone, key rotation) never holds the whole deck in memory.
+     * Yields nothing when the deck has no meta.
+     *
+     * Per-entity decks stream via a Mongo cursor. A LEGACY monolithic asset is
+     * decrypted whole (always <16MB by definition) then walked + yielded in
+     * byte-sized chunks, so callers don't need to special-case it.
+     */
+    static async *iterateMasterEntitiesDecrypted(deckId, keyVersion)
+    {
+        KeyManagementService.#ensureReady();
+        const database = await DatabaseConnector.getDatabase();
+
+        const meta = await KeyManagementService.getMasterMeta(deckId, keyVersion);
+        if (!meta)
+        {
+            return;
+        }
+
+        // Legacy monolithic asset — decrypt whole, walk, yield in chunks.
+        if (meta.ciphertextBase64)
+        {
+            const legacyContentKey = KeyManagementService.#unwrapContentKey(meta.wrappedContentKeyIvBase64, meta.wrappedContentKeyBase64);
+            const plaintextBuffer = KeyManagementService.#decryptBuffer(legacyContentKey, meta.ivBase64, meta.ciphertextBase64);
+            legacyContentKey.fill(0);
+
+            let payloadJson;
+            try
+            {
+                payloadJson = JSON.parse(plaintextBuffer.toString("utf8"));
+            }
+            finally
+            {
+                plaintextBuffer.fill(0);
+            }
+
+            const cloned = PaidDeckUserContentCloner.clone(payloadJson);
+            const legacyEntities = Object.entries(cloned.contentByEntityId).map(([entityId, record]) =>
+            ({
+                entityId: entityId,
+                entityType: record.entityType,
+                parentDeckId: record.parentDeckId ?? null,
+                plaintext: record.plaintext
+            }));
+            yield* KeyManagementService.#chunkEntitiesByBytes(legacyEntities);
+            return;
+        }
+
+        const contentKey = KeyManagementService.#unwrapContentKey(meta.wrappedContentKeyIvBase64, meta.wrappedContentKeyBase64);
+        try
+        {
+            const cursor = database
+                .collection(DatabaseConstants.PAID_DECK_MASTER_ENTITIES_COLLECTION)
+                .find({ deckId: deckId, keyVersion: keyVersion });
+
+            let batch = [];
+            let batchBytes = 0;
+            for await (const entityDocument of cursor)
+            {
+                const plaintextBuffer = KeyManagementService.#decryptBuffer(contentKey, entityDocument.ivBase64, entityDocument.ciphertextBase64);
+                let plaintext;
+                try
+                {
+                    plaintext = JSON.parse(plaintextBuffer.toString("utf8"));
+                }
+                finally
+                {
+                    plaintextBuffer.fill(0);
+                }
+
+                batch.push
+                ({
+                    entityId: entityDocument.entityId,
+                    entityType: entityDocument.entityType,
+                    parentDeckId: entityDocument.parentDeckId ?? null,
+                    plaintext: plaintext
+                });
+                batchBytes += Buffer.byteLength(JSON.stringify(plaintext ?? null), "utf8");
+
+                if (batchBytes > KeyManagementService.#MASTER_ENTITY_BATCH_BYTES)
+                {
+                    yield batch;
+                    batch = [];
+                    batchBytes = 0;
+                }
+            }
+
+            if (batch.length > 0)
+            {
+                yield batch;
+            }
+        }
+        finally
+        {
+            contentKey.fill(0);
+        }
     }
 
     static async rotateKeysForDeck(deckId)
@@ -281,43 +571,28 @@ class KeyManagementService
 
         if (!deckDocument)
         {
-            return { success: false, reason: "DECK_NOT_FOUND" };
+            return { success: false, reason: KeyManagementService.#REASON_DECK_NOT_FOUND };
         }
 
         const currentKeyVersion = deckDocument.keyVersion || 1;
         const newKeyVersion = currentKeyVersion + 1;
 
-        const previousAsset = await KeyManagementService.getAsset(deckId, currentKeyVersion);
+        // Stream the master at the current version (per-entity, or a legacy
+        // monolithic asset) straight into a fresh content key at the new
+        // version — never holding the whole deck in memory.
+        const previousManifest = await KeyManagementService.getMasterManifest(deckId, currentKeyVersion);
 
-        if (!previousAsset)
+        if (!previousManifest)
         {
-            return { success: false, reason: "PREVIOUS_ASSET_NOT_FOUND" };
+            return { success: false, reason: KeyManagementService.#REASON_PREVIOUS_ASSET_NOT_FOUND };
         }
 
-        const previousContentKey = KeyManagementService.#unwrapContentKey
-        (
-            previousAsset.wrappedContentKeyIvBase64,
-            previousAsset.wrappedContentKeyBase64
-        );
-
-        const plaintextBuffer = KeyManagementService.#decryptBuffer
-        (
-            previousContentKey,
-            previousAsset.ivBase64,
-            previousAsset.ciphertextBase64
-        );
-
-        previousContentKey.fill(0);
-
-        const plaintextJson = JSON.parse(plaintextBuffer.toString("utf8"));
-        const reencrypted = KeyManagementService.encryptDeckPayload(plaintextJson);
-
-        plaintextBuffer.fill(0);
-
-        await KeyManagementService.storeAsset
+        const writeResult = await KeyManagementService.storeMasterEntitiesFromBatches
         (
             deckId,
-            { ...reencrypted, keyVersion: newKeyVersion }
+            newKeyVersion,
+            previousManifest,
+            KeyManagementService.iterateMasterEntitiesDecrypted(deckId, currentKeyVersion)
         );
 
         await paidDecksCollection.updateOne
@@ -325,6 +600,14 @@ class KeyManagementService
             { id: deckId },
             { $set: { keyVersion: newKeyVersion } }
         );
+
+        // Tear down the previous version's per-entity docs + meta.
+        await database
+            .collection(DatabaseConstants.PAID_DECK_MASTER_ENTITIES_COLLECTION)
+            .deleteMany({ deckId: deckId, keyVersion: currentKeyVersion });
+        await database
+            .collection(DatabaseConstants.PAID_DECK_ASSETS_COLLECTION)
+            .deleteOne({ deckId: deckId, keyVersion: currentKeyVersion });
 
         const licensesCollection = database.collection(DatabaseConstants.DECK_LICENSES_COLLECTION);
         const activeLicenseDocuments = await licensesCollection
@@ -344,15 +627,15 @@ class KeyManagementService
                 : new Date(0);
             const preservedGrantSource = typeof licenseDocument.grantSource === "string" && licenseDocument.grantSource.length > 0
                 ? licenseDocument.grantSource
-                : "PURCHASE";
+                : GrantSources.PURCHASE;
 
             const reissued = KeyManagementService.issueLicenseForUser
             (
                 licenseDocument.userId,
                 deckId,
                 newKeyVersion,
-                reencrypted.wrappedContentKeyIvBase64,
-                reencrypted.wrappedContentKeyBase64,
+                writeResult.wrappedContentKeyIvBase64,
+                writeResult.wrappedContentKeyBase64,
                 { expiresAt: preservedExpiresAt, grantSource: preservedGrantSource }
             );
 
@@ -397,7 +680,7 @@ class KeyManagementService
             catch (rotationError)
             {
                 console.error(`[KeyManagementService] Failed to rotate keys for deck ${document.id}:`, rotationError);
-                results.push({ deckId: document.id, success: false, reason: "EXCEPTION" });
+                results.push({ deckId: document.id, success: false, reason: KeyManagementService.#REASON_EXCEPTION });
             }
         }
 
@@ -413,14 +696,14 @@ class KeyManagementService
 
         if (!deckDocument)
         {
-            return { success: false, reason: "DECK_NOT_FOUND" };
+            return { success: false, reason: KeyManagementService.#REASON_DECK_NOT_FOUND };
         }
 
-        const asset = await KeyManagementService.getAsset(deckId, deckDocument.keyVersion);
+        const meta = await KeyManagementService.getMasterMeta(deckId, deckDocument.keyVersion);
 
-        if (!asset)
+        if (!meta)
         {
-            return { success: false, reason: "ASSET_NOT_FOUND" };
+            return { success: false, reason: KeyManagementService.#REASON_ASSET_NOT_FOUND };
         }
 
         const license = KeyManagementService.issueLicenseForUser
@@ -428,8 +711,8 @@ class KeyManagementService
             userId,
             deckId,
             deckDocument.keyVersion,
-            asset.wrappedContentKeyIvBase64,
-            asset.wrappedContentKeyBase64,
+            meta.wrappedContentKeyIvBase64,
+            meta.wrappedContentKeyBase64,
             options
         );
 
@@ -450,51 +733,6 @@ class KeyManagementService
             );
     }
 
-    /**
-     * Decrypts the master encrypted asset for a paid deck at a given
-     * key version. Used by VerifyPurchase to seed a buyer's per-user
-     * editable copy (paidDeckUserContent) — the master itself stays
-     * encrypted in paidDeckAssets; only the decrypted plaintext is
-     * cloned to the buyer's row.
-     *
-     * Returns the parsed deck-payload JSON or null when the asset
-     * cannot be found / decrypted.
-     */
-    static async decryptPaidDeckMasterPayload(deckId, keyVersion)
-    {
-        KeyManagementService.#ensureReady();
-
-        const asset = await KeyManagementService.getAsset(deckId, keyVersion);
-        if (!asset)
-        {
-            return null;
-        }
-
-        const contentKeyBytes = KeyManagementService.#unwrapContentKey
-        (
-            asset.wrappedContentKeyIvBase64,
-            asset.wrappedContentKeyBase64
-        );
-
-        const plaintextBuffer = KeyManagementService.#decryptBuffer
-        (
-            contentKeyBytes,
-            asset.ivBase64,
-            asset.ciphertextBase64
-        );
-
-        contentKeyBytes.fill(0);
-
-        try
-        {
-            return JSON.parse(plaintextBuffer.toString("utf8"));
-        }
-        finally
-        {
-            plaintextBuffer.fill(0);
-        }
-    }
-
     // ── Paid-deck content-key flow (per-deck server-derived KEK +
     //    per-user password-derived KEK). Used by /PaidDecks/UnlockSession,
     //    /PaidDecks/SetPassword, /PaidDecks/ChangePassword, the rotation
@@ -503,8 +741,8 @@ class KeyManagementService
     static #derivePaidDeckServerKek(deckId)
     {
         KeyManagementService.#ensureReady();
-        const salt = Buffer.from(`paid-deck-server-kek:${deckId}`, "utf8");
-        const info = Buffer.from("paid-deck-content-key", "utf8");
+        const salt = Buffer.from(`${KeyManagementService.#SERVER_KEK_SALT_PREFIX}${deckId}`, "utf8");
+        const info = Buffer.from(KeyManagementService.#CONTENT_KEY_INFO_LABEL, "utf8");
         const derivedBytes = crypto.hkdfSync("sha256", KeyManagementService.#masterKey, salt, info, KeyManagementService.#DECK_KEY_BYTES);
         return Buffer.from(derivedBytes);
     }
@@ -527,7 +765,7 @@ class KeyManagementService
         // Verification hash uses a salt prefixed with "verify:" so it
         // never collides with the KEK derivation above, even though both
         // share the same iteration count + algorithm.
-        const verificationSalt = Buffer.from(`verify:${passwordSaltBase64}`, "utf8");
+        const verificationSalt = Buffer.from(`${KeyManagementService.#PASSWORD_VERIFY_SALT_PREFIX}${passwordSaltBase64}`, "utf8");
         const hashBytes = crypto.pbkdf2Sync
         (
             passwordString,
@@ -539,9 +777,35 @@ class KeyManagementService
         return hashBytes.toString("base64");
     }
 
+    /**
+     * Constant-time comparison of two base64-encoded password hashes. Decoding
+     * to buffers and comparing with crypto.timingSafeEqual avoids the early-exit
+     * timing leak of a plain "===" on the strings. A length mismatch (which
+     * timingSafeEqual would throw on) is treated as a non-match without ever
+     * touching the bytes — the decoded hash length is fixed by the algorithm, so
+     * a mismatch only ever means malformed/forged input.
+     */
+    static safeEqualPaidDeckPasswordHash(submittedHashBase64, storedHashBase64)
+    {
+        if (typeof submittedHashBase64 !== "string" || typeof storedHashBase64 !== "string")
+        {
+            return false;
+        }
+
+        const submittedBuffer = Buffer.from(submittedHashBase64, "base64");
+        const storedBuffer = Buffer.from(storedHashBase64, "base64");
+
+        if (submittedBuffer.length !== storedBuffer.length || storedBuffer.length === 0)
+        {
+            return false;
+        }
+
+        return crypto.timingSafeEqual(submittedBuffer, storedBuffer);
+    }
+
     static generatePaidDeckPasswordSaltBase64()
     {
-        return crypto.randomBytes(16).toString("base64");
+        return crypto.randomBytes(KeyManagementService.#PASSWORD_SALT_BYTES).toString("base64");
     }
 
     static generatePaidDeckContentKey()
@@ -576,6 +840,45 @@ class KeyManagementService
         const encrypted = KeyManagementService.#encryptBuffer(contentKeyBuffer, plaintextBuffer);
         plaintextBuffer.fill(0);
         return encrypted;
+    }
+
+    /**
+     * Per-FIELD string encryption for the unified sync model: encrypts a single
+     * content string (Card.question, StudyMaterial HTML, a MockTest question
+     * field, ...) into a { ivBase64, ciphertextBase64 } envelope. The byte
+     * layout (12-byte IV, ciphertext||16-byte GCM tag, base64) is identical to
+     * the client's PaidDeckSession.encryptString, so a field encrypted here in
+     * the /Sync pull response decrypts on the client unchanged.
+     */
+    static encryptPaidDeckFieldString(plaintextString, contentKeyBuffer)
+    {
+        const plaintextBuffer = Buffer.from(String(plaintextString ?? ""), "utf8");
+        const encrypted = KeyManagementService.#encryptBuffer(contentKeyBuffer, plaintextBuffer);
+        plaintextBuffer.fill(0);
+        return encrypted;
+    }
+
+    /**
+     * Resolves the raw content-key buffer for (userId, deckId) from the user's
+     * ACTIVE license via the server-KEK unwrap — the key the /Sync pull uses to
+     * encrypt paid content on the wire. Returns null when the user holds no
+     * active license for the deck (so the caller skips/blocks delivery).
+     * Caller MUST zero the returned buffer after use.
+     */
+    static async getPaidDeckContentKeyBufferForUser(userId, deckId)
+    {
+        const license = await KeyManagementService.getLicense(userId, deckId);
+        if (!KeyManagementService.isLicenseActive(license))
+        {
+            return null;
+        }
+        const serverWrappedIvBase64 = license.getServerWrappedIvBase64();
+        const serverWrappedContentKeyBase64 = license.getServerWrappedContentKeyBase64();
+        if (!serverWrappedIvBase64 || !serverWrappedContentKeyBase64)
+        {
+            return null;
+        }
+        return KeyManagementService.unwrapPaidDeckContentKeyWithServerKek(serverWrappedIvBase64, serverWrappedContentKeyBase64, deckId);
     }
 
     /**

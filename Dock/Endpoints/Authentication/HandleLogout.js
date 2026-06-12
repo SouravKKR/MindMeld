@@ -1,4 +1,5 @@
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function handleLogout(request, response)
 {
@@ -7,7 +8,7 @@ async function handleLogout(request, response)
 
     await AuthenticationQueryEngine.deleteSession(sessionId);
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.end();
 }
 

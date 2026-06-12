@@ -1,10 +1,11 @@
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function rotatePaidDeckKey(request, response)
 {
     if (!KeyManagementService.isReady())
     {
-        response.statusCode = 503;
+        response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
         response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
         return;
     }
@@ -14,7 +15,7 @@ async function rotatePaidDeckKey(request, response)
 
     if (!deckId)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_DECK_ID" });
         return;
     }

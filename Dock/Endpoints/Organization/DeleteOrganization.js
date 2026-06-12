@@ -1,5 +1,6 @@
 const OrganizationQueryEngine = require("../../Globals/Classes/Organization/OrganizationQueryEngine");
 const UserRoleReconciliator = require("../../Globals/Classes/Authentication/UserRoleReconciliator");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 async function deleteOrganization(request, response)
@@ -9,7 +10,7 @@ async function deleteOrganization(request, response)
 
     if (!organizationId)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "MISSING_ORGANIZATION_ID" });
         return;
     }
@@ -17,7 +18,7 @@ async function deleteOrganization(request, response)
     const deleteResult = await OrganizationQueryEngine.deleteOrganization(organizationId);
     if (!deleteResult.deleted)
     {
-        response.statusCode = 404;
+        response.statusCode = httpStatus.NOT_FOUND;
         response.sendJson({ success: false, error: "ORG_NOT_FOUND" });
         return;
     }
@@ -30,7 +31,7 @@ async function deleteOrganization(request, response)
         await UserRoleReconciliator.revokeOrgAdminIfNoActiveOrgs(deleteResult.adminUserId);
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ success: true, organizationId: organizationId });
 }
 

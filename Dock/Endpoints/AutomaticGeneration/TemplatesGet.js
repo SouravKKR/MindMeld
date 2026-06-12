@@ -1,6 +1,7 @@
 const { PacketronRequest, PacketronResponse } = require("@gamiumgamers/packetron");
 const GenerationTemplateQueryEngine = require("../../Globals/Classes/Database/GenerationTemplateQueryEngine");
 const { getUser } = require("../Helpers/GetUser");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -35,7 +36,7 @@ async function handleTemplatesGet(request, response)
 
     if (!templateKey || typeof templateKey !== "string")
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.end("Missing `key` query parameter.");
         return;
     }
@@ -44,7 +45,7 @@ async function handleTemplatesGet(request, response)
 
     if (templateDocument === null)
     {
-        response.statusCode = 404;
+        response.statusCode = httpStatus.NOT_FOUND;
         response.end(`No template found with key "${templateKey}".`);
         return;
     }

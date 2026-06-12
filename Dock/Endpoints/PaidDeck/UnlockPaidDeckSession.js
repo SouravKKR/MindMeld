@@ -2,6 +2,7 @@ const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnec
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const DeckLicense = require("../../Globals/Model/DeckLicense");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
  * POST /PaidDecks/UnlockSession
@@ -27,7 +28,7 @@ async function unlockPaidDeckSession(request, response)
 {
     if (!KeyManagementService.isReady())
     {
-        response.statusCode = 503;
+        response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
         response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
         return;
     }
@@ -45,14 +46,14 @@ async function unlockPaidDeckSession(request, response)
 
     if (typeof deckId !== "string" || deckId.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_DECK_ID" });
         return;
     }
 
     if (typeof passwordString !== "string" || passwordString.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_PASSWORD" });
         return;
     }
@@ -62,7 +63,7 @@ async function unlockPaidDeckSession(request, response)
 
     if (!KeyManagementService.isLicenseActive(license))
     {
-        response.statusCode = 403;
+        response.statusCode = httpStatus.FORBIDDEN;
         response.sendJson({ error: "NO_ACTIVE_LICENSE" });
         return;
     }
@@ -72,15 +73,15 @@ async function unlockPaidDeckSession(request, response)
 
     if (typeof passwordSaltBase64 !== "string" || passwordSaltBase64.length === 0)
     {
-        response.statusCode = 409;
+        response.statusCode = httpStatus.CONFLICT;
         response.sendJson({ error: "PASSWORD_NOT_SET" });
         return;
     }
 
     const submittedHashBase64 = KeyManagementService.computePaidDeckPasswordHash(passwordString, passwordSaltBase64);
-    if (submittedHashBase64 !== passwordHashBase64)
+    if (!KeyManagementService.safeEqualPaidDeckPasswordHash(submittedHashBase64, passwordHashBase64))
     {
-        response.statusCode = 401;
+        response.statusCode = httpStatus.UNAUTHORIZED;
         response.sendJson({ error: "WRONG_PASSWORD" });
         return;
     }
@@ -91,7 +92,7 @@ async function unlockPaidDeckSession(request, response)
     // unwrap. The buyer can't recover without admin intervention.
     if (license.getServerWrappedContentKeyBase64().length === 0)
     {
-        response.statusCode = 500;
+        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
         response.sendJson({ error: "LICENSE_MISSING_SERVER_WRAP" });
         return;
     }
@@ -129,7 +130,7 @@ async function unlockPaidDeckSession(request, response)
         await KeyManagementService.persistLicense(license);
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         deckId: deckId,

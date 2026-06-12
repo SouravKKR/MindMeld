@@ -1,4 +1,5 @@
 const AdminEmailQueryEngine = require("../../../Globals/Classes/Database/AdminEmailQueryEngine");
+const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -27,7 +28,7 @@ async function addAdminEmail(request, response)
     }
     catch (bodyError)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "Malformed JSON body." });
         return;
     }
@@ -37,7 +38,7 @@ async function addAdminEmail(request, response)
 
     if (email.length === 0 || email.indexOf("@") < 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "Invalid email." });
         return;
     }
@@ -50,7 +51,7 @@ async function addAdminEmail(request, response)
     catch (addError)
     {
         console.error(`[AddAdminEmail] ${addError.message}`);
-        response.statusCode = 500;
+        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
         response.sendJson({ error: addError.message || "Failed to add admin email." });
     }
 }

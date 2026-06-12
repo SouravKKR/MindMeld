@@ -1,5 +1,6 @@
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function listPaidDecks(request, response)
 {
@@ -16,7 +17,7 @@ async function listPaidDecks(request, response)
         .limit(5000)
         .toArray();
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ decks: documents.map(doc => { delete doc._id; return doc; }) });
 }
 

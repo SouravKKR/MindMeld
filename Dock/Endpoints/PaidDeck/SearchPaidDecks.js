@@ -1,5 +1,6 @@
 const PaidDeckSearchEngine = require("../../Globals/Classes/Search/PaidDeckSearchEngine");
 const RegionResolver = require("../../Globals/Classes/Pricing/RegionResolver");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function searchPaidDecks(request, response)
 {
@@ -23,7 +24,7 @@ async function searchPaidDecks(request, response)
         includeUnpublished: false
     });
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson(searchResult);
 }
 

@@ -1,4 +1,5 @@
 const AdminEmailQueryEngine = require("../../../Globals/Classes/Database/AdminEmailQueryEngine");
+const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -18,7 +19,7 @@ async function listAdminEmails(request, response)
     catch (loadError)
     {
         console.error(`[ListAdminEmails] ${loadError.message}`);
-        response.statusCode = 500;
+        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
         response.sendJson({ error: "Failed to load admin emails." });
     }
 }

@@ -1,6 +1,7 @@
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
  * GET /PaidDecks/Manifest?deckId=...
@@ -24,7 +25,7 @@ async function getPaidDeckManifest(request, response)
 {
     if (!KeyManagementService.isReady())
     {
-        response.statusCode = 503;
+        response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
         response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
         return;
     }
@@ -41,7 +42,7 @@ async function getPaidDeckManifest(request, response)
 
     if (typeof deckId !== "string" || deckId.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_DECK_ID" });
         return;
     }
@@ -51,7 +52,7 @@ async function getPaidDeckManifest(request, response)
 
     if (!KeyManagementService.isLicenseActive(license))
     {
-        response.statusCode = 403;
+        response.statusCode = httpStatus.FORBIDDEN;
         response.sendJson({ error: "NO_ACTIVE_LICENSE" });
         return;
     }
@@ -63,7 +64,7 @@ async function getPaidDeckManifest(request, response)
 
     if (!userContentDocument || !userContentDocument.manifest)
     {
-        response.statusCode = 404;
+        response.statusCode = httpStatus.NOT_FOUND;
         response.sendJson({ error: "USER_CONTENT_NOT_SEEDED" });
         return;
     }
@@ -78,7 +79,7 @@ async function getPaidDeckManifest(request, response)
     const encryptedManifest = KeyManagementService.encryptPaidDeckEntityPlaintext(userContentDocument.manifest, contentKeyBytes);
     contentKeyBytes.fill(0);
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         deckId: deckId,

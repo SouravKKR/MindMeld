@@ -1,4 +1,5 @@
 const AdminEmailQueryEngine = require("../../../Globals/Classes/Database/AdminEmailQueryEngine");
+const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -33,7 +34,7 @@ async function removeAdminEmail(request, response)
     }
     catch (bodyError)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "Malformed JSON body." });
         return;
     }
@@ -41,7 +42,7 @@ async function removeAdminEmail(request, response)
     const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
     if (email.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "Email is required." });
         return;
     }
@@ -49,7 +50,7 @@ async function removeAdminEmail(request, response)
     const requesterEmail = (requester.getAdditionalData()?.email || "").toLowerCase();
     if (email === requesterEmail)
     {
-        response.statusCode = 409;
+        response.statusCode = httpStatus.CONFLICT;
         response.sendJson({ error: "Cannot remove the currently logged-in admin.", reason: "SELF_REMOVAL" });
         return;
     }
@@ -61,17 +62,17 @@ async function removeAdminEmail(request, response)
         {
             if (result.reason === "LAST_ADMIN_PROTECTED")
             {
-                response.statusCode = 409;
+                response.statusCode = httpStatus.CONFLICT;
                 response.sendJson({ error: "Cannot remove the last admin.", reason: result.reason });
                 return;
             }
             if (result.reason === "NOT_FOUND")
             {
-                response.statusCode = 404;
+                response.statusCode = httpStatus.NOT_FOUND;
                 response.sendJson({ error: "Admin email not found.", reason: result.reason });
                 return;
             }
-            response.statusCode = 500;
+            response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
             response.sendJson({ error: "Failed to remove admin.", reason: result.reason });
             return;
         }
@@ -81,7 +82,7 @@ async function removeAdminEmail(request, response)
     catch (removeError)
     {
         console.error(`[RemoveAdminEmail] ${removeError.message}`);
-        response.statusCode = 500;
+        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
         response.sendJson({ error: removeError.message || "Failed to remove admin email." });
     }
 }

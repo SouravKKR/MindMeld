@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function setPaidDeckBundle(request, response)
 {
@@ -10,7 +11,7 @@ async function setPaidDeckBundle(request, response)
 
     if (!bundleDeckId || !includedDecks)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_BUNDLE_DECK_ID_OR_INCLUDED_DECKS" });
         return;
     }
@@ -53,7 +54,7 @@ async function setPaidDeckBundle(request, response)
         { $set: { bundleChildIds: childIds } }
     );
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ success: true, childCount: childIds.length });
 }
 

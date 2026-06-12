@@ -5,6 +5,7 @@ const PaymentProviderFactory = require("../../Globals/Classes/Payments/PaymentPr
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
 const { organizationPaymentKinds } = require("../../Globals/Enumerations/OrganizationPaymentKinds");
 const { organizationPaymentStatuses } = require("../../Globals/Enumerations/OrganizationPaymentStatuses");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 async function initiateOrganizationExpansion(request, response)
@@ -16,19 +17,19 @@ async function initiateOrganizationExpansion(request, response)
 
     if (!organizationId)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "MISSING_ORGANIZATION_ID" });
         return;
     }
     if (additionalMembers <= 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "INVALID_ADDITIONAL_MEMBERS" });
         return;
     }
     if (amountMinor < 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "INVALID_AMOUNT" });
         return;
     }
@@ -36,13 +37,13 @@ async function initiateOrganizationExpansion(request, response)
     const organization = await OrganizationQueryEngine.getOrganizationById(organizationId);
     if (!organization)
     {
-        response.statusCode = 404;
+        response.statusCode = httpStatus.NOT_FOUND;
         response.sendJson({ success: false, error: "ORG_NOT_FOUND" });
         return;
     }
     if (organization.getStatus() !== organizationStatus.ACTIVE)
     {
-        response.statusCode = 409;
+        response.statusCode = httpStatus.CONFLICT;
         response.sendJson({ success: false, error: "ORG_NOT_ACTIVE" });
         return;
     }
@@ -51,7 +52,7 @@ async function initiateOrganizationExpansion(request, response)
     if (amountMinor === 0)
     {
         await OrganizationQueryEngine.extendMaxMembers(organizationId, additionalMembers);
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson
         ({
             success: true,
@@ -65,7 +66,7 @@ async function initiateOrganizationExpansion(request, response)
     const provider = PaymentProviderFactory.getDefaultProvider();
     if (!provider.isConfigured())
     {
-        response.statusCode = 503;
+        response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
         response.sendJson({ success: false, error: "PAYMENT_PROVIDER_NOT_CONFIGURED" });
         return;
     }
@@ -102,7 +103,7 @@ async function initiateOrganizationExpansion(request, response)
     });
     await OrganizationPaymentQueryEngine.createPayment(paymentRow);
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         success: true,

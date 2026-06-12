@@ -2,6 +2,7 @@ const AuthenticationQueryEngine = require("../../Globals/Classes/Database/Authen
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const LicenseConstants = require("../../Globals/Constants/LicenseConstants");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -45,7 +46,7 @@ async function handleListDevices(request, response)
         deviceSummaries.push(json);
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         devices: deviceSummaries,

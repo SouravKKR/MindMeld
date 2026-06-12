@@ -1,4 +1,5 @@
 const OrgAdminVerificationManager = require("../../Globals/Classes/Authentication/OrgAdminVerificationManager");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 async function sendAdminVerificationOtp(request, response)
@@ -9,7 +10,7 @@ async function sendAdminVerificationOtp(request, response)
 
     if (!submittedEmail || submittedEmail.indexOf("@") < 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "INVALID_EMAIL" });
         return;
     }
@@ -29,7 +30,7 @@ async function sendAdminVerificationOtp(request, response)
         return;
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ success: true, retryAfterSeconds: result.retryAfterSeconds });
 }
 

@@ -22,6 +22,7 @@ const { handleProfileEndpoints } = require("./Endpoints/HandleProfileEndpoints")
 const { handleBrowserLlmEndpoints } = require("./Endpoints/BrowserLlm/HandleBrowserLlmEndpoints");
 const { handleAskAiEndpoints } = require("./Endpoints/AskAi/HandleAskAiEndpoints");
 const { handleMockTestEndpoints } = require("./Endpoints/HandleMockTestEndpoints");
+const { handleTaskStateEndpoints } = require("./Endpoints/HandleTaskStateEndpoints");
 const { handleOrganizationEndpoints } = require("./Endpoints/HandleOrganizationEndpoints");
 const { handleWebhookEndpoints } = require("./Endpoints/HandleWebhookEndpoints");
 const Logger = require("./Globals/Classes/Logger");
@@ -29,9 +30,13 @@ const KeyManagementService = require("./Globals/Classes/Security/KeyManagementSe
 const KeyRotationScheduler = require("./Globals/Classes/Security/KeyRotationScheduler");
 const AuthenticationQueryEngine = require("./Globals/Classes/Database/AuthenticationQueryEngine");
 const { getSession } = require("./Endpoints/Helpers/GetSession");
-const FxRatesCache = require("./Globals/Classes/Pricing/FxRatesCache");
+const { rateLimitPlugin } = require("./Endpoints/Plugins/EnsureRateLimit");
+const { legalAcceptancePlugin } = require("./Endpoints/Plugins/EnsureLegalAcceptance");
+const { securityHeadersPlugin } = require("./Endpoints/Plugins/SecurityHeaders");
+const RateLimiter = require("./Globals/Classes/Security/RateLimiter");
+const ForeignExchangeRatesCache = require("./Globals/Classes/Pricing/ForeignExchangeRatesCache");
 const EcbRatesClient = require("./Globals/Classes/Pricing/EcbRatesClient");
-const FxRatesRefreshScheduler = require("./Globals/Classes/Pricing/FxRatesRefreshScheduler");
+const ForeignExchangeRatesRefreshScheduler = require("./Globals/Classes/Pricing/ForeignExchangeRatesRefreshScheduler");
 
 
 Logger.initialize();
@@ -42,15 +47,15 @@ KeyRotationScheduler.start();
 // Foreign-exchange rates: connect the Redis-backed cache, do one best-effort
 // initial fetch (so a fresh boot localizes prices immediately), then refresh
 // daily. Any failure is recorded as an admin Alert and never blocks boot.
-FxRatesCache.initialize()
+ForeignExchangeRatesCache.initialize()
     .then(() =>
     {
         EcbRatesClient.fetchAndStoreLatestRates().catch(() => {});
-        FxRatesRefreshScheduler.start();
+        ForeignExchangeRatesRefreshScheduler.start();
     })
-    .catch((fxInitializationError) =>
+    .catch((foreignExchangeInitializationError) =>
     {
-        console.error("[FxRates] Cache initialization failed; currency conversion will degrade gracefully:", fxInitializationError);
+        console.error("[ForeignExchangeRates] Cache initialization failed; currency conversion will degrade gracefully:", foreignExchangeInitializationError);
     });
 
 if (process.argv.includes("--logout"))
@@ -67,6 +72,49 @@ if (process.argv.includes("--logout"))
 }
 
 const server = new Packetron({ port: 3000, flags: PacketronServerFlags.START_IMMEDIATELY, maxThreads: 1 });
+
+// ── Security response headers ──────────────────────────────────────────────
+// A global plugin (highest priority, runs before everything) that stamps CSP,
+// X-Frame-Options, X-Content-Type-Options, Referrer-Policy and HSTS on every
+// response — endpoints, the SPA shell and static assets alike. The CSP is
+// compatibility-first (locks framing/base-uri/object-src while allowing the
+// https:/inline/wasm/blob sources AdSense, Razorpay, OAuth and the in-browser
+// LLMs require) so no existing functionality is affected. Everything is
+// overridable from the environment — see Endpoints/Plugins/SecurityHeaders.js.
+server.insertGlobalPlugin(securityHeadersPlugin);
+
+// ── Rate limiting ────────────────────────────────────────────────────────────
+// Two complementary dimensions, both excluding static resources:
+//   • Per-user — a global plugin (runs before routing) that counts each request
+//     against the caller's identity (session user, else IP) and 429s on excess.
+//     The same plugin attaches a "finish" listener that logs EVERY 429 the
+//     server emits (built-in cap, per-user cap, or handler cooldown) to the
+//     rate-limit event log for admin review.
+//   • Overall — Packetron's built-in per-endpoint maxRequestsPerSecond. Rather
+//     than annotate every server.handle(...) call, we wrap handle() once to
+//     inject a default cap on every endpoint that doesn't set its own. Static
+//     serve()/serveFile() routes are deliberately left untouched (excluded).
+server.insertGlobalPlugin(rateLimitPlugin);
+
+// ── Legal-acceptance gate ──────────────────────────────────────────────────
+// A global plugin (runs before routing, just below the rate limiter) that
+// blocks every protected endpoint with 403 LEGAL_ACCEPTANCE_REQUIRED while the
+// authenticated user still owes acceptance of a current Terms-of-Service /
+// Privacy-Policy version. This makes acceptance a SERVER-ENFORCED precondition
+// for app access — a non-standard client can no longer skip the consent step.
+// The login handshake, /GetUser, /Logout, /LegalDocuments, /Legal/Accept and
+// all static assets stay reachable so the user can read and accept.
+server.insertGlobalPlugin(legalAcceptancePlugin);
+
+const registerHandler = server.handle.bind(server);
+server.handle = (options = {}) =>
+{
+    if (options.maxRequestsPerSecond === undefined || options.maxRequestsPerSecond === null)
+    {
+        options.maxRequestsPerSecond = RateLimiter.DEFAULT_OVERALL_MAX_REQUESTS_PER_SECOND;
+    }
+    return registerHandler(options);
+};
 
 server.serve({ directory: path.join(__dirname, "Static"), plugins: [noCache] });
 
@@ -123,5 +171,6 @@ handleProfileEndpoints(server);
 handleBrowserLlmEndpoints(server);
 handleAskAiEndpoints(server);
 handleMockTestEndpoints(server);
+handleTaskStateEndpoints(server);
 handleOrganizationEndpoints(server);
 handleWebhookEndpoints(server);

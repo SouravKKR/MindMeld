@@ -1,4 +1,5 @@
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
  * POST /Admin/PaidDecks/RotateContentKey
@@ -20,7 +21,7 @@ async function rotatePaidDeckContentKey(request, response)
 {
     if (!KeyManagementService.isReady())
     {
-        response.statusCode = 503;
+        response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
         response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
         return;
     }
@@ -32,7 +33,7 @@ async function rotatePaidDeckContentKey(request, response)
 
     if (typeof deckId !== "string" || deckId.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_DECK_ID" });
         return;
     }
@@ -41,19 +42,19 @@ async function rotatePaidDeckContentKey(request, response)
     {
         if (typeof targetUserId !== "string" || targetUserId.length === 0)
         {
-            response.statusCode = 400;
+            response.statusCode = httpStatus.BAD_REQUEST;
             response.sendJson({ error: "MISSING_USER_ID" });
             return;
         }
         const license = await KeyManagementService.getLicense(targetUserId, deckId);
         if (!license)
         {
-            response.statusCode = 404;
+            response.statusCode = httpStatus.NOT_FOUND;
             response.sendJson({ error: "LICENSE_NOT_FOUND" });
             return;
         }
         await KeyManagementService.rotatePaidDeckContentKeyForLicense(license);
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson({ success: true, licensesRotated: 1 });
         return;
     }
@@ -62,7 +63,7 @@ async function rotatePaidDeckContentKey(request, response)
     {
         const rotationResults = await KeyManagementService.rotatePaidDeckContentKeyForAllLicensesOfDeck(deckId);
         const successCount = rotationResults.filter((rotationResult) => rotationResult.success).length;
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson
         ({
             success: true,
@@ -73,7 +74,7 @@ async function rotatePaidDeckContentKey(request, response)
         return;
     }
 
-    response.statusCode = 400;
+    response.statusCode = httpStatus.BAD_REQUEST;
     response.sendJson({ error: "UNSUPPORTED_MODE" });
 }
 

@@ -8,6 +8,9 @@ class LicenseConstants
     static PAID_DECK_ENTITY_FETCH_BATCH_LIMIT = 10;
     static OFFLINE_SESSION_HARD_EXPIRY_DAYS = 30;
     static HEARTBEAT_INTERVAL_MILLISECONDS = 300000;
+    static MAX_PAID_DECK_COPIES_PER_USER = 4;
+    static PAID_DECK_FIRST_INSTANCE_ID = '1';
+    static MAX_PAID_DECK_ENTITIES_PER_USER = 200000;
 }
 
 module.exports = LicenseConstants;

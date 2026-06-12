@@ -114,8 +114,50 @@ class AuthenticationQueryEngine
         );
 
         await AuthenticationQueryEngine.refreshSession(session);
+        await AuthenticationQueryEngine.#enforceSessionLimit(userId);
 
         return session;
+    }
+
+    /**
+     * Caps a user at UserSession.MAX_ACTIVE_SESSIONS_PER_USER concurrent
+     * sessions. Called right after a freshly-minted session is persisted:
+     * the new session always sorts first (its lastRefreshDate is "now"), so
+     * keeping the N most-recently-refreshed rows and deleting the rest
+     * evicts the oldest / least-recently-active sessions when the user signs
+     * in on an (N+1)th surface. Both login paths funnel through
+     * createSession, so this is the single chokepoint for the policy.
+     *
+     * @param {string} userId
+     */
+    static async #enforceSessionLimit(userId)
+    {
+        if (!userId)
+        {
+            return;
+        }
+
+        const collection = (await DatabaseConnector.getDatabase())
+            .collection(DatabaseConstants.SESSIONS_COLLECTION);
+
+        const sessions = await collection
+            .find({ userId: userId })
+            .sort({ lastRefreshDate: -1 })
+            .toArray();
+
+        if (sessions.length <= UserSession.MAX_ACTIVE_SESSIONS_PER_USER)
+        {
+            return;
+        }
+
+        const sessionIdsToEvict = sessions
+            .slice(UserSession.MAX_ACTIVE_SESSIONS_PER_USER)
+            .map(sessionDocument => sessionDocument.id);
+
+        if (sessionIdsToEvict.length > 0)
+        {
+            await collection.deleteMany({ id: { $in: sessionIdsToEvict } });
+        }
     }
 
     static async deleteSession(sessionId)

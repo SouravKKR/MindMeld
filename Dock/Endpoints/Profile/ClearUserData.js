@@ -35,7 +35,14 @@ async function clearUserData(request, response)
         DatabaseConstants.STUDY_MATERIALS_COLLECTION,
         DatabaseConstants.MOCK_TESTS_COLLECTION,
         DatabaseConstants.DELETIONS_COLLECTION,
-        DatabaseConstants.SYNC_DATA_COLLECTION
+        DatabaseConstants.SYNC_DATA_COLLECTION,
+        // The credit ledger is part of the user's data. The account-level
+        // balance (users.additionalData.credits) is intentionally left
+        // intact — clearing content must not erase earned/purchased credits —
+        // but the transaction history is removed alongside the rest. Clearing
+        // the signup:{userId} row also keeps the welcome grant re-applicable
+        // if the account is ever truly deleted and recreated.
+        DatabaseConstants.CREDIT_TRANSACTIONS_COLLECTION
     ];
 
     const wipeCounts = {};

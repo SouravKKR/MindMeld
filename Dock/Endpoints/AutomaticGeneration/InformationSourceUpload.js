@@ -10,6 +10,7 @@ const { joinPath } = require("../../Globals/UtilityFunctions.js/JoinPath");
 const OcrLocalFile = require("./Helpers/OcrLocalFile");
 const UploadQuotaManager = require("../../Globals/Classes/Quotas/UploadQuotaManager");
 const fs = require("fs");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 const uploadQuotaManager = new UploadQuotaManager();
 
@@ -41,7 +42,7 @@ async function handleInformationSourceUpload(request, response)
 
     if (!user)
     {
-        response.statusCode = 401;
+        response.statusCode = httpStatus.UNAUTHORIZED;
         response.end("Unauthorized.");
         return;
     }
@@ -63,7 +64,7 @@ async function handleInformationSourceUpload(request, response)
     const quotaCheck = await uploadQuotaManager.check(user.getId(), fileSizeBytes);
     if (!quotaCheck.allowed)
     {
-        response.statusCode = 429;
+        response.statusCode = httpStatus.TOO_MANY_REQUESTS;
         response.sendJson({
             error: "UPLOAD_QUOTA_EXCEEDED",
             reason: quotaCheck.reason,
@@ -82,6 +83,12 @@ async function handleInformationSourceUpload(request, response)
     informationSource.setUserId(user.getId());
     informationSource.setHash(contentAddressedKey);
 
+    // Persist the measured upload size so the storage-credit assessor can
+    // bill the GCS-bucket footprint without re-reading the blob. retentionMode
+    // arrives in the metadata JSON (TEMPORARY sources are exempt from storage
+    // billing); fromJson defaults it to PERMANENT when the client omits it.
+    informationSource.setFileSizeBytes(fileSizeBytes);
+
     const bIsDuplicate = await InformationSourceQueryEngine.doesUserAlreadyHaveInformationSourceWithSameContent(
         user.getId(),
         contentAddressedKey,
@@ -89,7 +96,7 @@ async function handleInformationSourceUpload(request, response)
 
     if (bIsDuplicate)
     {
-        response.statusCode = 409;
+        response.statusCode = httpStatus.CONFLICT;
         response.end("You have already uploaded a source with the same content.");
         return;
     }
@@ -124,7 +131,7 @@ async function handleInformationSourceUpload(request, response)
     catch (ocrError)
     {
         console.error(`[InformationSourceUpload] OCR failed: ${ocrError.message}`);
-        response.statusCode = 500;
+        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
         response.sendJson({ error: "OCR_FAILED", reason: ocrError.message });
         return;
     }
@@ -142,7 +149,7 @@ async function handleInformationSourceUpload(request, response)
     {
         try { fs.unlinkSync(ocrOutputPath); } catch (_) {}
         console.error(`[InformationSourceUpload] GCS upload failed: ${uploadError.message}`);
-        response.statusCode = 500;
+        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
         response.sendJson({ error: "GCS_UPLOAD_FAILED", reason: uploadError.message });
         return;
     }
@@ -165,13 +172,13 @@ async function handleInformationSourceUpload(request, response)
         if (bIsDuplicateKeyError)
         {
             console.warn(`[InformationSourceUpload] Concurrent upload race resolved by unique index for ${user.getId()}/${contentAddressedKey}.`);
-            response.statusCode = 409;
+            response.statusCode = httpStatus.CONFLICT;
             response.end("You have already uploaded a source with the same content.");
             return;
         }
 
         console.error(`[InformationSourceUpload] DB save failed after OCR + GCS upload: ${saveError.message}`);
-        response.statusCode = 500;
+        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
         response.sendJson({ error: "DB_SAVE_FAILED", reason: saveError.message });
         return;
     }

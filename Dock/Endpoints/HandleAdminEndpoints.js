@@ -31,6 +31,10 @@ const { deleteOrganization } = require("./Organization/DeleteOrganization");
 const { listAlerts } = require("./Admin/Alerts/ListAlerts");
 const { acknowledgeAlert } = require("./Admin/Alerts/AcknowledgeAlert");
 const { deleteAlert } = require("./Admin/Alerts/DeleteAlert");
+const { listRateLimitEvents } = require("./Admin/RateLimits/ListRateLimitEvents");
+const { listAdminAuditEvents } = require("./Admin/Audit/ListAdminAuditEvents");
+const { getCreditConfig } = require("./Admin/GetCreditConfig");
+const { setCreditConfig } = require("./Admin/SetCreditConfig");
 const { ensureAdmin } = require("./Plugins/EnsureAdmin");
 
 function handleAdminEndpoints(server)
@@ -312,6 +316,42 @@ function handleAdminEndpoints(server)
     ({
         routePath: `/Admin/Alerts/Delete`,
         handler: deleteAlert,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Rate limits (server-side 429 event log) ────────────────────────────
+    server.handle
+    ({
+        routePath: `/Admin/RateLimits/List`,
+        handler: listRateLimitEvents,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Audit log (persistent trail of privileged admin actions) ───────────
+    server.handle
+    ({
+        routePath: `/Admin/Audit/List`,
+        handler: listAdminAuditEvents,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Credits (spend-rule + storage + reward configuration) ──────────────
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Config`,
+        handler: getCreditConfig,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Config/Save`,
+        handler: setCreditConfig,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureAdmin]

@@ -1,5 +1,6 @@
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 const ALLOWED_FIELDS = new Set
 ([
@@ -27,7 +28,7 @@ async function updatePaidDeck(request, response)
 
     if (!deckId || !updates)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_ID_OR_UPDATES" });
         return;
     }
@@ -44,17 +45,20 @@ async function updatePaidDeck(request, response)
 
     if (Object.keys(setOperations).length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "NO_VALID_FIELDS" });
         return;
     }
+
+    // Stamp the "date modified" the details page shows on every real edit.
+    setOperations.updatedAt = new Date();
 
     const database = await DatabaseConnector.getDatabase();
     const result = await database
         .collection(DatabaseConstants.PAID_DECKS_COLLECTION)
         .updateOne({ id: deckId }, { $set: setOperations });
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ success: true, matchedCount: result.matchedCount, modifiedCount: result.modifiedCount });
 }
 

@@ -3,6 +3,7 @@ const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organizatio
 const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/OrganizationAutoAssigner");
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 async function addOrganizationMember(request, response)
@@ -13,13 +14,13 @@ async function addOrganizationMember(request, response)
 
     if (!organizationId)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "MISSING_ORGANIZATION_ID" });
         return;
     }
     if (!submittedEmail || submittedEmail.indexOf("@") < 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "INVALID_EMAIL" });
         return;
     }
@@ -27,7 +28,7 @@ async function addOrganizationMember(request, response)
     const organization = await OrganizationQueryEngine.getOrganizationById(organizationId);
     if (!organization)
     {
-        response.statusCode = 404;
+        response.statusCode = httpStatus.NOT_FOUND;
         response.sendJson({ success: false, error: "ORG_NOT_FOUND" });
         return;
     }
@@ -35,13 +36,13 @@ async function addOrganizationMember(request, response)
     const user = request.user;
     if (user.getRole() !== userRoles.ADMIN && organization.getAdminUserId() !== user.getId())
     {
-        response.statusCode = 403;
+        response.statusCode = httpStatus.FORBIDDEN;
         response.sendJson({ success: false, error: "NOT_ORG_ADMIN" });
         return;
     }
     if (organization.getStatus() !== organizationStatus.ACTIVE)
     {
-        response.statusCode = 409;
+        response.statusCode = httpStatus.CONFLICT;
         response.sendJson({ success: false, error: "ORG_NOT_ACTIVE" });
         return;
     }
@@ -54,7 +55,7 @@ async function addOrganizationMember(request, response)
     const capResult = await OrganizationQueryEngine.tryIncrementMemberCount(organizationId);
     if (!capResult.ok)
     {
-        response.statusCode = 409;
+        response.statusCode = httpStatus.CONFLICT;
         response.sendJson({ success: false, error: "CAP_REACHED" });
         return;
     }
@@ -68,7 +69,7 @@ async function addOrganizationMember(request, response)
     {
         await OrganizationQueryEngine.decrementMemberCountBy(organizationId, 1);
         console.error(`[AddOrganizationMember] addMember threw for org=${organizationId} email=${submittedEmail}: ${addError.message}`);
-        response.statusCode = 500;
+        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
         response.sendJson({ success: false, error: "ADD_MEMBER_FAILED" });
         return;
     }
@@ -76,7 +77,7 @@ async function addOrganizationMember(request, response)
     if (addResult.status === "ALREADY_MEMBER")
     {
         await OrganizationQueryEngine.decrementMemberCountBy(organizationId, 1);
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson
         ({
             success: true,
@@ -88,7 +89,7 @@ async function addOrganizationMember(request, response)
     if (addResult.status === "INVALID_EMAIL")
     {
         await OrganizationQueryEngine.decrementMemberCountBy(organizationId, 1);
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson
         ({
             success: true,
@@ -104,7 +105,7 @@ async function addOrganizationMember(request, response)
     // best-effort internally (catches its own errors).
     const autoAssignResult = await OrganizationAutoAssigner.applyFreePerksForMember(organizationId, submittedEmail);
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         success: true,

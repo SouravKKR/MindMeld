@@ -1,4 +1,5 @@
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function handleSignOutDevice(request, response)
 {
@@ -15,7 +16,7 @@ async function handleSignOutDevice(request, response)
 
     if (!targetDeviceId)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_DEVICE_ID" });
         return;
     }
@@ -34,7 +35,7 @@ async function handleSignOutDevice(request, response)
         return;
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ success: true });
 }
 

@@ -10,16 +10,26 @@ const User = require("../../Globals/Model/User");
  */
 async function getUser(request)
 {
-    const session = request.session || await getSession(request);
-
-    if(!session)
+    // Memoize on the request. The legal-acceptance gate, EnsureAdmin/EnsureLogin,
+    // and the handler itself can each resolve the user within one request, so a
+    // single cached lookup keeps it to one DB round-trip.
+    if(request.__userResolved)
     {
-        return null;
+        return request.__user;
     }
 
-    const user = await AuthenticationQueryEngine.getUserById(session.getUserId());
+    const session = request.session || await getSession(request);
 
-    return user || null;
+    let user = null;
+    if(session)
+    {
+        user = (await AuthenticationQueryEngine.getUserById(session.getUserId())) || null;
+    }
+
+    request.__user = user;
+    request.__userResolved = true;
+
+    return user;
 }
 
 module.exports = { getUser };

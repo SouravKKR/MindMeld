@@ -1,4 +1,5 @@
 const OrgAdminVerificationManager = require("../../Globals/Classes/Authentication/OrgAdminVerificationManager");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 async function verifyAdminVerificationOtp(request, response)
@@ -9,13 +10,13 @@ async function verifyAdminVerificationOtp(request, response)
 
     if (!submittedEmail || submittedEmail.indexOf("@") < 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "INVALID_EMAIL" });
         return;
     }
     if (!/^\d{6}$/.test(submittedCode))
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "INVALID_CODE" });
         return;
     }
@@ -24,7 +25,7 @@ async function verifyAdminVerificationOtp(request, response)
 
     if (!result.ok)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         const errorPayload = { success: false, error: result.reason || "UNKNOWN" };
         if (typeof result.attemptsRemaining === "number")
         {
@@ -34,7 +35,7 @@ async function verifyAdminVerificationOtp(request, response)
         return;
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ success: true, verificationToken: result.verificationToken });
 }
 

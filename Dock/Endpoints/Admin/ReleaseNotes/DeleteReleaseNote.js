@@ -1,4 +1,5 @@
 const ReleaseNoteQueryEngine = require("../../../Globals/Classes/Database/ReleaseNoteQueryEngine");
+const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -28,7 +29,7 @@ async function deleteReleaseNote(request, response)
     }
     catch (bodyError)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "Malformed JSON body." });
         return;
     }
@@ -36,7 +37,7 @@ async function deleteReleaseNote(request, response)
     const noteId = typeof body?.id === "string" ? body.id.trim() : "";
     if (noteId.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "id is required." });
         return;
     }
@@ -48,11 +49,11 @@ async function deleteReleaseNote(request, response)
         {
             if (result.reason === "NOT_FOUND")
             {
-                response.statusCode = 404;
+                response.statusCode = httpStatus.NOT_FOUND;
                 response.sendJson({ error: "Release note not found.", reason: result.reason });
                 return;
             }
-            response.statusCode = 500;
+            response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
             response.sendJson({ error: "Failed to delete release note.", reason: result.reason });
             return;
         }
@@ -61,7 +62,7 @@ async function deleteReleaseNote(request, response)
     catch (deleteError)
     {
         console.error(`[DeleteReleaseNote] ${deleteError.message}`);
-        response.statusCode = 500;
+        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
         response.sendJson({ error: deleteError.message || "Failed to delete release note." });
     }
 }

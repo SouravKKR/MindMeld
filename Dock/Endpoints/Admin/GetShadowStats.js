@@ -1,19 +1,19 @@
 const { getUser } = require("../Helpers/GetUser");
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
-
-const SHADOW_COLLECTION_NAME = "shadow_pairs";
+const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
+const ShadowComparisonConstants = require("../../Globals/Constants/ShadowComparisonConstants");
 
 
 function buildEmptyCellStats()
 {
     return {
-        totalPairs:        0,
-        judgedPairs:       0,
-        candidateWins:     0,
-        proWins:           0,
-        ties:              0,
-        unjudgedPairs:     0,
-        candidateWinRate:  0,
+        totalPairs: 0,
+        judgedPairs: 0,
+        candidateWins: 0,
+        proWins: 0,
+        ties: 0,
+        unjudgedPairs: 0,
+        candidateWinRate: 0,
     };
 }
 
@@ -24,7 +24,7 @@ function aggregateByCell(pairs)
 
     for (const pair of pairs)
     {
-        const cellKey = pair.cellKey || "__unkeyed__";
+        const cellKey = pair.cellKey || ShadowComparisonConstants.UNKEYED_CELL_KEY;
 
         if (!cellStatsByKey[cellKey])
         {
@@ -40,15 +40,15 @@ function aggregateByCell(pairs)
 
             const winner = pair.judgement.winner;
 
-            if (winner === "B")
+            if (winner === ShadowComparisonConstants.WINNER_CANDIDATE)
             {
                 stats.candidateWins++;
             }
-            else if (winner === "A")
+            else if (winner === ShadowComparisonConstants.WINNER_PRO)
             {
                 stats.proWins++;
             }
-            else if (winner === "tie")
+            else if (winner === ShadowComparisonConstants.WINNER_TIE)
             {
                 stats.ties++;
             }
@@ -91,31 +91,34 @@ async function handleGetShadowStats(request, response)
         return;
     }
 
-    const collection = database.collection(SHADOW_COLLECTION_NAME);
+    const collection = database.collection(DatabaseConstants.SHADOW_PAIRS_COLLECTION);
 
     const projection = {
-        cellKey:        1,
-        proModel:       1,
+        cellKey: 1,
+        proModel: 1,
         candidateModel: 1,
-        judged:         1,
+        judged: 1,
         "judgement.winner": 1,
-        createdAt:      1,
+        createdAt: 1,
     };
 
-    const pairs = await collection.find({}, { projection }).limit(50000).toArray();
+    const pairs = await collection.find({}, { projection }).limit(ShadowComparisonConstants.MAX_PAIRS_SCANNED).toArray();
 
     const cellStats = aggregateByCell(pairs);
 
     const totals = buildEmptyCellStats();
-    for (const cellKey of Object.keys(cellStats)) {
+
+    for (const cellKey of Object.keys(cellStats))
+    {
         const stats = cellStats[cellKey];
-        totals.totalPairs    += stats.totalPairs;
-        totals.judgedPairs   += stats.judgedPairs;
+        totals.totalPairs += stats.totalPairs;
+        totals.judgedPairs += stats.judgedPairs;
         totals.candidateWins += stats.candidateWins;
-        totals.proWins       += stats.proWins;
-        totals.ties          += stats.ties;
+        totals.proWins += stats.proWins;
+        totals.ties += stats.ties;
         totals.unjudgedPairs += stats.unjudgedPairs;
     }
+
     if (totals.judgedPairs > 0)
     {
         totals.candidateWinRate = (totals.candidateWins + totals.ties / 2) / totals.judgedPairs;

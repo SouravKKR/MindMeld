@@ -3,6 +3,7 @@ const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const DeckLicense = require("../../Globals/Model/DeckLicense");
 const { deckLicenseStatuses } = require("../../Globals/Enumerations/DeckLicenseStatuses");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
  * POST /PaidDecks/SetPassword
@@ -21,7 +22,7 @@ async function setPaidDeckPassword(request, response)
 {
     if (!KeyManagementService.isReady())
     {
-        response.statusCode = 503;
+        response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
         response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
         return;
     }
@@ -38,7 +39,7 @@ async function setPaidDeckPassword(request, response)
 
     if (typeof newPasswordString !== "string" || newPasswordString.length < 6)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "PASSWORD_TOO_SHORT" });
         return;
     }
@@ -58,7 +59,7 @@ async function setPaidDeckPassword(request, response)
 
     if (alreadyHasPassword)
     {
-        response.statusCode = 409;
+        response.statusCode = httpStatus.CONFLICT;
         response.sendJson({ error: "PASSWORD_ALREADY_SET" });
         return;
     }
@@ -96,7 +97,7 @@ async function setPaidDeckPassword(request, response)
         passwordKekBuffer.fill(0);
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ success: true, licensesUpdated: licenseDocuments.length });
 }
 

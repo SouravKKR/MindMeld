@@ -6,6 +6,7 @@ const OrganizationQueryEngine = require("./OrganizationQueryEngine");
 const OrganizationDeckPerkQueryEngine = require("./OrganizationDeckPerkQueryEngine");
 const OrganizationMemberQueryEngine = require("./OrganizationMemberQueryEngine");
 const Purchase = require("../../Model/Purchase");
+const GrantSources = require("../../Constants/GrantSources");
 const { organizationDeckPerkTypes } = require("../../Enumerations/OrganizationDeckPerkTypes");
 const { paymentProviders } = require("../../Enumerations/PaymentProviders");
 const { purchaseStatuses } = require("../../Enumerations/PurchaseStatuses");
@@ -311,7 +312,7 @@ class OrganizationAutoAssigner
             (
                 userId,
                 deckId,
-                { expiresAt: expiresAt, grantSource: "ORG_AUTO_ASSIGN" }
+                { expiresAt: expiresAt, grantSource: GrantSources.ORG_AUTO_ASSIGN }
             );
 
             return licenseResult.success === true;

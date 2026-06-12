@@ -1,4 +1,5 @@
 const { getUser } = require("../Helpers/GetUser");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function handleGetUser(request, response)
 {
@@ -10,7 +11,7 @@ async function handleGetUser(request, response)
         return;
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson(user.toJson());
 }
 

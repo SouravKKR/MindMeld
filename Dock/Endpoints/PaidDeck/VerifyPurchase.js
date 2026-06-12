@@ -1,14 +1,17 @@
-const crypto = require("crypto");
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const PaymentProviderFactory = require("../../Globals/Classes/Payments/PaymentProviderFactory");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const PaidDeckPricingEngine = require("../../Globals/Classes/Pricing/PaidDeckPricingEngine");
-const PaidDeckUserContentCloner = require("../../Globals/Classes/PaidDeck/PaidDeckUserContentCloner");
+const RegionResolver = require("../../Globals/Classes/Pricing/RegionResolver");
+const PendingOrderQueryEngine = require("../../Globals/Classes/Database/PendingOrderQueryEngine");
 const Purchase = require("../../Globals/Model/Purchase");
 const { getUser } = require("../Helpers/GetUser");
 const { purchaseStatuses } = require("../../Globals/Enumerations/PurchaseStatuses");
-const { deckLicenseStatuses } = require("../../Globals/Enumerations/DeckLicenseStatuses");
+const { seedProtectedContentForLicense, checkUserHasPaidDeckPassword } = require("./PaidDeckGrantHelpers");
+const LicenseClientView = require("../../Globals/Classes/Security/LicenseClientView");
+const GrantSources = require("../../Globals/Constants/GrantSources");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 const MILLISECONDS_PER_DAY = 86_400_000;
 
@@ -23,12 +26,34 @@ async function verifyPurchase(request, response)
     }
 
     const body = await request.getBody();
-    const { providerOrderId, providerPaymentId, signature, paymentProvider, deckIds, region, amountMinor, currency } = body || {};
+    // Only the payment-identifying fields are trusted from the client. The
+    // decks being granted, their amounts, region and currency are NEVER taken
+    // from the body — they come from the server-side pending-order row created
+    // at InitiatePurchase. This closes the bypass where a buyer pays for a
+    // cheap/free deck then claims licenses for arbitrary expensive decks.
+    const { providerOrderId, providerPaymentId, signature, paymentProvider } = body || {};
 
     if (!providerOrderId || !providerPaymentId || !signature)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_FIELDS" });
+        return;
+    }
+
+    // Resolve the server's binding for this order and assert it belongs to the
+    // authenticated buyer before doing anything else.
+    const pendingOrder = await PendingOrderQueryEngine.getByOrderId(providerOrderId);
+    if (!pendingOrder)
+    {
+        response.statusCode = httpStatus.BAD_REQUEST;
+        response.sendJson({ error: "ORDER_NOT_FOUND" });
+        return;
+    }
+
+    if (pendingOrder.userId !== session.getUserId())
+    {
+        response.statusCode = httpStatus.FORBIDDEN;
+        response.sendJson({ error: "ORDER_OWNER_MISMATCH" });
         return;
     }
 
@@ -37,47 +62,71 @@ async function verifyPurchase(request, response)
 
     if (!verification.verified)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "PAYMENT_NOT_VERIFIED", reason: verification.reason });
         return;
     }
 
-    // Re-evaluate pricing server-side. The client's amountMinor field
-    // is informational only — we trust the engine's per-deck breakdown
-    // for the actual amounts on each Purchase row AND for the perk
-    // metadata (durationDays) that drives license expiresAt.
+    const database = await DatabaseConnector.getDatabase();
+    const hasExistingPaidDeckPassword = await checkUserHasPaidDeckPassword(database, session.getUserId());
+
+    // Replay guard: a verified payment grants exactly once. A duplicate /
+    // replayed verify (Razorpay retries, double-clicks) short-circuits to an
+    // idempotent success rather than re-granting.
+    if (pendingOrder.status === PendingOrderQueryEngine.STATUS_CONSUMED)
+    {
+        response.statusCode = httpStatus.OK;
+        response.sendJson
+        ({
+            success: true,
+            alreadyProcessed: true,
+            licenses: [],
+            requiresPasswordSetup: !hasExistingPaidDeckPassword
+        });
+        return;
+    }
+
+    // The authoritative deck list is the server's record of what was ordered.
+    const authoritativeDeckIds = Array.isArray(pendingOrder.deckIds) ? pendingOrder.deckIds : [];
+    // Use the region captured at initiation (a Regions enum name) so recomputed
+    // amounts match what the buyer was actually charged; fall back to a fresh
+    // resolve only if the row somehow lacks it.
+    const hasStoredRegion = pendingOrder.region !== null && pendingOrder.region !== undefined && pendingOrder.region !== "";
+    const safeRegion = hasStoredRegion
+        ? pendingOrder.region
+        : RegionResolver.resolveRegion(request, null, null);
+
+    // Re-evaluate pricing server-side over the authoritative decks. The engine's
+    // per-deck breakdown drives both the recorded Purchase amounts and the perk
+    // metadata (durationDays) that sets each license's expiresAt.
     const user = await getUser(request);
-    const safeDeckIds = Array.isArray(deckIds) ? deckIds : [];
-    const safeRegion = (region || "IN").toUpperCase();
     const serverPricing = await PaidDeckPricingEngine.computeFinalPrice
     (
         session.getUserId(),
-        safeDeckIds,
+        authoritativeDeckIds,
         safeRegion,
-        user
+        user,
+        true
     );
-    const perkLookupByDeckId = new Map();
+
+    const breakdownByDeckId = new Map();
     for (const breakdownEntry of (serverPricing.breakdown || []))
     {
-        if (breakdownEntry.reason === "ORG_PERK")
-        {
-            perkLookupByDeckId.set(breakdownEntry.deckId, breakdownEntry);
-        }
+        breakdownByDeckId.set(breakdownEntry.deckId, breakdownEntry);
     }
 
-    const database = await DatabaseConnector.getDatabase();
     const issuedLicenses = [];
 
-    for (const deckId of safeDeckIds)
+    for (const deckId of authoritativeDeckIds)
     {
-        const perkBreakdown = perkLookupByDeckId.get(deckId);
-        const orgPerkActive = perkBreakdown !== undefined;
+        const perkBreakdown = breakdownByDeckId.get(deckId);
+        const orgPerkActive = perkBreakdown !== undefined && perkBreakdown.reason === "ORG_PERK";
         const purchaseAdditionalData = orgPerkActive
             ? { organizationId: perkBreakdown.organizationId, perkType: "ORG_PERK", durationDays: perkBreakdown.durationDays }
             : {};
-        const recordedAmountMinor = orgPerkActive
-            ? perkBreakdown.finalPriceMinor
-            : (amountMinor || 0);
+        // Recorded amount comes from the server pricing breakdown, never the
+        // client body.
+        const recordedAmountMinor = perkBreakdown ? (Number(perkBreakdown.finalPriceMinor) || 0) : 0;
 
         const purchase = new Purchase
         ({
@@ -87,8 +136,8 @@ async function verifyPurchase(request, response)
             providerOrderId: providerOrderId,
             providerPaymentId: providerPaymentId,
             amountMinor: recordedAmountMinor,
-            currency: currency || "INR",
-            region: region || "IN",
+            currency: serverPricing.currency || pendingOrder.currency || "INR",
+            region: safeRegion,
             purchaseDate: new Date(),
             refundedAt: new Date(0),
             status: purchaseStatuses.COMPLETED,
@@ -107,8 +156,8 @@ async function verifyPurchase(request, response)
         // License expiry: finite for org-perk grants (now + durationDays),
         // FOREVER sentinel for everything else.
         const licenseOptions = orgPerkActive && Number.isInteger(perkBreakdown.durationDays) && perkBreakdown.durationDays > 0
-            ? { expiresAt: new Date(Date.now() + perkBreakdown.durationDays * MILLISECONDS_PER_DAY), grantSource: "ORG_DISCOUNTED_PURCHASE" }
-            : { expiresAt: new Date(0), grantSource: orgPerkActive ? "ORG_DISCOUNTED_PURCHASE" : "PURCHASE" };
+            ? { expiresAt: new Date(Date.now() + perkBreakdown.durationDays * MILLISECONDS_PER_DAY), grantSource: GrantSources.ORG_DISCOUNTED_PURCHASE }
+            : { expiresAt: new Date(0), grantSource: orgPerkActive ? GrantSources.ORG_DISCOUNTED_PURCHASE : GrantSources.PURCHASE };
 
         const licenseResult = await KeyManagementService.issueLicenseForDeck(session.getUserId(), deckId, licenseOptions);
 
@@ -117,7 +166,7 @@ async function verifyPurchase(request, response)
             const seedResult = await seedProtectedContentForLicense(database, session.getUserId(), deckId, licenseResult.license);
             if (seedResult.success)
             {
-                issuedLicenses.push(licenseResult.license.toJson());
+                issuedLicenses.push(LicenseClientView.sanitize(licenseResult.license.toJson()));
             }
             else
             {
@@ -126,133 +175,19 @@ async function verifyPurchase(request, response)
         }
     }
 
-    const hasExistingPaidDeckPassword = await checkUserHasPaidDeckPassword(database, session.getUserId());
+    // Flip the order to CONSUMED only after grants complete, so a crash mid-grant
+    // leaves it PENDING and the buyer can safely retry (all grant writes above
+    // are idempotent upserts). The transition is atomic, so concurrent verifies
+    // still grant exactly once.
+    await PendingOrderQueryEngine.markConsumed(providerOrderId, session.getUserId());
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         success: true,
         licenses: issuedLicenses,
         requiresPasswordSetup: !hasExistingPaidDeckPassword
     });
-}
-
-/**
- * Seeds the per-user editable copy in paidDeckUserContent (by cloning
- * the decrypted master payload) AND fills in the new license's
- * server-wrapped content key. The password-wrap is left empty here —
- * the first /PaidDecks/UnlockSession lazily fills it using the
- * password the buyer types into the unlock prompt. To make that
- * lazy-fill path work even for the SECOND-and-onwards purchase (when
- * the buyer is past their password-setup step), we copy any existing
- * passwordHash + passwordSalt from a prior license onto this one — so
- * the unlock challenge has something to verify against. PasswordWrap
- * itself can't be copied (different content key per deck) and is
- * intentionally left for the lazy refill on first unlock.
- *
- * Returns { success, reason? } so the caller can drop a failed license
- * from the issuedLicenses array instead of returning a stale success.
- */
-async function seedProtectedContentForLicense(database, userId, deckId, license)
-{
-    const paidDeckDocument = await database
-        .collection(DatabaseConstants.PAID_DECKS_COLLECTION)
-        .findOne({ id: deckId });
-
-    if (!paidDeckDocument)
-    {
-        return { success: false, reason: "PAID_DECK_NOT_FOUND" };
-    }
-
-    const decryptedMasterPayload = await KeyManagementService.decryptPaidDeckMasterPayload(deckId, paidDeckDocument.keyVersion);
-    if (!decryptedMasterPayload)
-    {
-        return { success: false, reason: "MASTER_DECRYPT_FAILED" };
-    }
-
-    const cloned = PaidDeckUserContentCloner.clone(decryptedMasterPayload);
-    try
-    {
-        await database
-            .collection(DatabaseConstants.PAID_DECK_USER_CONTENT_COLLECTION)
-            .updateOne
-            (
-                { userId: userId, deckId: deckId },
-                {
-                    $set:
-                    {
-                        userId: userId,
-                        deckId: deckId,
-                        manifest: cloned.manifest,
-                        contentByEntityId: cloned.contentByEntityId,
-                        updatedAt: new Date()
-                    },
-                    $setOnInsert:
-                    {
-                        createdAt: new Date()
-                    }
-                },
-                { upsert: true }
-            );
-    }
-    catch (writeError)
-    {
-        return { success: false, reason: "USER_CONTENT_WRITE_FAILED" };
-    }
-
-    const newContentKeyBytes = KeyManagementService.generatePaidDeckContentKey();
-    try
-    {
-        const serverWrap = KeyManagementService.wrapPaidDeckContentKeyWithServerKek(newContentKeyBytes, deckId);
-        license.setServerWrappedIvBase64(serverWrap.ivBase64);
-        license.setServerWrappedContentKeyBase64(serverWrap.ciphertextBase64);
-        license.setContentKeyVersion(1);
-        license.setRotatedAt(new Date());
-
-        const existingPasswordedLicense = await database
-            .collection(DatabaseConstants.DECK_LICENSES_COLLECTION)
-            .findOne
-            ({
-                userId: userId,
-                deckId: { $ne: deckId },
-                status: deckLicenseStatuses.ACTIVE,
-                passwordHash: { $exists: true, $ne: "" }
-            });
-
-        if (existingPasswordedLicense)
-        {
-            license.setPasswordHash(existingPasswordedLicense.passwordHash);
-            license.setPasswordSalt(existingPasswordedLicense.passwordSalt);
-            // passwordWrappedContentKey is intentionally left empty
-            // (unlock's lazy-fill path picks it up using the same
-            // password the buyer already set).
-        }
-
-        await KeyManagementService.persistLicense(license);
-    }
-    catch (persistError)
-    {
-        return { success: false, reason: "LICENSE_PERSIST_FAILED" };
-    }
-    finally
-    {
-        newContentKeyBytes.fill(0);
-    }
-
-    return { success: true };
-}
-
-async function checkUserHasPaidDeckPassword(database, userId)
-{
-    const existingDocumentWithPassword = await database
-        .collection(DatabaseConstants.DECK_LICENSES_COLLECTION)
-        .findOne
-        ({
-            userId: userId,
-            status: deckLicenseStatuses.ACTIVE,
-            passwordHash: { $exists: true, $ne: "" }
-        });
-    return existingDocumentWithPassword !== null;
 }
 
 module.exports = { verifyPurchase };

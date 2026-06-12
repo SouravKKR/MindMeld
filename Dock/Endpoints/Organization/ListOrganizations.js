@@ -1,6 +1,7 @@
 const OrganizationQueryEngine = require("../../Globals/Classes/Organization/OrganizationQueryEngine");
 const OrganizationDeckPerkQueryEngine = require("../../Globals/Classes/Organization/OrganizationDeckPerkQueryEngine");
 const OrganizationPaymentQueryEngine = require("../../Globals/Classes/Organization/OrganizationPaymentQueryEngine");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 async function listOrganizations(request, response)
@@ -20,7 +21,7 @@ async function listOrganizations(request, response)
         });
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ success: true, organizations: rows });
 }
 

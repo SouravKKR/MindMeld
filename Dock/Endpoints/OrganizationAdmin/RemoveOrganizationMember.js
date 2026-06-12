@@ -1,6 +1,7 @@
 const OrganizationQueryEngine = require("../../Globals/Classes/Organization/OrganizationQueryEngine");
 const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 async function removeOrganizationMember(request, response)
@@ -11,7 +12,7 @@ async function removeOrganizationMember(request, response)
 
     if (!organizationId || !memberId)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "MISSING_FIELDS" });
         return;
     }
@@ -19,7 +20,7 @@ async function removeOrganizationMember(request, response)
     const organization = await OrganizationQueryEngine.getOrganizationById(organizationId);
     if (!organization)
     {
-        response.statusCode = 404;
+        response.statusCode = httpStatus.NOT_FOUND;
         response.sendJson({ success: false, error: "ORG_NOT_FOUND" });
         return;
     }
@@ -27,14 +28,14 @@ async function removeOrganizationMember(request, response)
     const user = request.user;
     if (user.getRole() !== userRoles.ADMIN && organization.getAdminUserId() !== user.getId())
     {
-        response.statusCode = 403;
+        response.statusCode = httpStatus.FORBIDDEN;
         response.sendJson({ success: false, error: "NOT_ORG_ADMIN" });
         return;
     }
 
     const removeResult = await OrganizationMemberQueryEngine.removeMember(organizationId, memberId);
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         success: true,

@@ -1,4 +1,5 @@
 const AlertQueryEngine = require("../../../Globals/Classes/Database/AlertQueryEngine");
+const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
 
 /**
  * GET /Admin/Alerts/List
@@ -18,13 +19,13 @@ async function listAlerts(request, response)
     try
     {
         const alerts = await AlertQueryEngine.list({ onlyUnacknowledged, since, limit });
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson({ alerts });
     }
     catch (listError)
     {
         console.error(`[ListAlerts] ${listError.message}`);
-        response.statusCode = 500;
+        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
         response.sendJson({ error: "Failed to list alerts." });
     }
 }

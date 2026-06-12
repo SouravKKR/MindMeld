@@ -5,6 +5,7 @@ const OrgAdminVerificationManager = require("../../Globals/Classes/Authenticatio
 const { paymentProviders } = require("../../Globals/Enumerations/PaymentProviders");
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
 const { organizationPaymentKinds } = require("../../Globals/Enumerations/OrganizationPaymentKinds");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -29,7 +30,7 @@ async function handleRazorpayWebhook(request, response)
 
     if (typeof rawBody !== "string" || rawBody.length === 0)
     {
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson({ acknowledged: true, reason: "EMPTY_BODY" });
         return;
     }
@@ -39,7 +40,7 @@ async function handleRazorpayWebhook(request, response)
     if (!verification.verified)
     {
         console.warn(`[HandleRazorpayWebhook] Signature verification failed: ${verification.reason}`);
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson({ acknowledged: true, reason: "INVALID_SIGNATURE" });
         return;
     }
@@ -52,7 +53,7 @@ async function handleRazorpayWebhook(request, response)
     catch (parseError)
     {
         console.warn(`[HandleRazorpayWebhook] Failed to parse JSON body: ${parseError.message}`);
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson({ acknowledged: true, reason: "INVALID_BODY" });
         return;
     }
@@ -64,7 +65,7 @@ async function handleRazorpayWebhook(request, response)
     //   order.paid       — fired alongside payment.captured for orders
     if (eventName !== "payment.captured" && eventName !== "order.paid")
     {
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson({ acknowledged: true, reason: "EVENT_IGNORED", event: eventName });
         return;
     }
@@ -76,7 +77,7 @@ async function handleRazorpayWebhook(request, response)
 
     if (!providerOrderId)
     {
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson({ acknowledged: true, reason: "MISSING_ORDER_ID" });
         return;
     }
@@ -86,7 +87,7 @@ async function handleRazorpayWebhook(request, response)
     {
         // The order belongs to a non-org payment flow (e.g. paid-deck
         // purchases) or to an org that was deleted before payment cleared.
-        response.statusCode = 200;
+        response.statusCode = httpStatus.OK;
         response.sendJson({ acknowledged: true, reason: "PAYMENT_ROW_NOT_FOUND" });
         return;
     }
@@ -123,7 +124,7 @@ async function handleRazorpayWebhook(request, response)
         }
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ acknowledged: true, transitioned: captureResult.transitioned });
 }
 

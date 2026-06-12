@@ -1,4 +1,4 @@
-const FxRatesCache = require("./FxRatesCache");
+const ForeignExchangeRatesCache = require("./ForeignExchangeRatesCache");
 const EcbRatesClient = require("./EcbRatesClient");
 const Alerts = require("../Alerts/Alerts");
 
@@ -28,41 +28,41 @@ class CurrencyConverter
     static async convertMinor(amountMinor, fromCurrency, toCurrency)
     {
         const safeAmount = Number(amountMinor) || 0;
-        const from = typeof fromCurrency === "string" ? fromCurrency.toUpperCase() : "";
-        const to = typeof toCurrency === "string" ? toCurrency.toUpperCase() : "";
+        const fromCurrencyCode = typeof fromCurrency === "string" ? fromCurrency.toUpperCase() : "";
+        const toCurrencyCode = typeof toCurrency === "string" ? toCurrency.toUpperCase() : "";
 
-        if (!from || !to || from === to)
+        if (!fromCurrencyCode || !toCurrencyCode || fromCurrencyCode === toCurrencyCode)
         {
-            return { amountMinor: safeAmount, currency: from || to || "INR", converted: from === to };
+            return { amountMinor: safeAmount, currency: fromCurrencyCode || toCurrencyCode || "INR", converted: fromCurrencyCode === toCurrencyCode };
         }
 
-        const snapshot = await FxRatesCache.getSnapshot();
+        const snapshot = await ForeignExchangeRatesCache.getSnapshot();
 
         // Opportunistically refresh for next time when empty/stale; do not
         // await — this call must stay fast.
-        if (!snapshot || FxRatesCache.isSnapshotStale(snapshot))
+        if (!snapshot || ForeignExchangeRatesCache.isSnapshotStale(snapshot))
         {
             EcbRatesClient.fetchAndStoreLatestRates().catch(() => {});
         }
 
         const rates = snapshot && snapshot.rates ? snapshot.rates : null;
-        const fromRate = rates ? rates[from] : undefined;
-        const toRate = rates ? rates[to] : undefined;
+        const fromCurrencyRate = rates ? rates[fromCurrencyCode] : undefined;
+        const toCurrencyRate = rates ? rates[toCurrencyCode] : undefined;
 
-        if (!Number.isFinite(fromRate) || !Number.isFinite(toRate) || fromRate <= 0)
+        if (!Number.isFinite(fromCurrencyRate) || !Number.isFinite(toCurrencyRate) || fromCurrencyRate <= 0)
         {
             await Alerts.warning
             (
                 CurrencyConverter.#SOURCE,
                 "Currency conversion unavailable — showing original currency",
-                `Missing ECB rate for ${from}->${to} (cache ${snapshot ? "present" : "empty"}). Prices in this currency are shown unconverted until rates are available.`,
-                { from, to, haveSnapshot: Boolean(snapshot) }
+                `Missing ECB rate for ${fromCurrencyCode}->${toCurrencyCode} (cache ${snapshot ? "present" : "empty"}). Prices in this currency are shown unconverted until rates are available.`,
+                { fromCurrency: fromCurrencyCode, toCurrency: toCurrencyCode, haveSnapshot: Boolean(snapshot) }
             );
-            return { amountMinor: safeAmount, currency: from, converted: false };
+            return { amountMinor: safeAmount, currency: fromCurrencyCode, converted: false };
         }
 
-        const convertedMinor = Math.round(safeAmount * (toRate / fromRate));
-        return { amountMinor: convertedMinor, currency: to, converted: true };
+        const convertedMinor = Math.round(safeAmount * (toCurrencyRate / fromCurrencyRate));
+        return { amountMinor: convertedMinor, currency: toCurrencyCode, converted: true };
     }
 }
 

@@ -22,7 +22,7 @@ class SyllabusFingerprintMatcher
      * Builds a Map<normalizedTopicChainKey, existingDeckId> for every
      * deck currently nested under `parentDeckId`. The key is the
      * topic-chain string joined with ` > ` and lowercased, matching
-     * the buildDeckHierarchy key scheme exactly so call sites can
+     * the DeckHierarchyBuilder key scheme exactly so call sites can
      * substitute new UUIDs for existing IDs in O(1).
      *
      * Returns null when the existing subtree contains so little overlap

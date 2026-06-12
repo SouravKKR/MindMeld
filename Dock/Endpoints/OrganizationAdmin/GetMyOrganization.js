@@ -2,6 +2,7 @@ const OrganizationQueryEngine = require("../../Globals/Classes/Organization/Orga
 const OrganizationDeckPerkQueryEngine = require("../../Globals/Classes/Organization/OrganizationDeckPerkQueryEngine");
 const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 async function getMyOrganization(request, response)
@@ -11,7 +12,7 @@ async function getMyOrganization(request, response)
 
     if (!organizationId)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: "MISSING_ORGANIZATION_ID" });
         return;
     }
@@ -19,7 +20,7 @@ async function getMyOrganization(request, response)
     const organization = await OrganizationQueryEngine.getOrganizationById(organizationId);
     if (!organization)
     {
-        response.statusCode = 404;
+        response.statusCode = httpStatus.NOT_FOUND;
         response.sendJson({ success: false, error: "ORG_NOT_FOUND" });
         return;
     }
@@ -27,7 +28,7 @@ async function getMyOrganization(request, response)
     const user = request.user;
     if (user.getRole() !== userRoles.ADMIN && organization.getAdminUserId() !== user.getId())
     {
-        response.statusCode = 403;
+        response.statusCode = httpStatus.FORBIDDEN;
         response.sendJson({ success: false, error: "NOT_ORG_ADMIN" });
         return;
     }
@@ -35,7 +36,7 @@ async function getMyOrganization(request, response)
     const perks = await OrganizationDeckPerkQueryEngine.listPerksForOrganization(organizationId);
     const members = await OrganizationMemberQueryEngine.listMembers(organizationId);
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         success: true,

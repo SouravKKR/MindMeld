@@ -3,6 +3,7 @@ const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const DeckLicense = require("../../Globals/Model/DeckLicense");
 const { deckLicenseStatuses } = require("../../Globals/Enumerations/DeckLicenseStatuses");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
  * POST /PaidDecks/ChangePassword
@@ -20,7 +21,7 @@ async function changePaidDeckPassword(request, response)
 {
     if (!KeyManagementService.isReady())
     {
-        response.statusCode = 503;
+        response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
         response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
         return;
     }
@@ -38,14 +39,14 @@ async function changePaidDeckPassword(request, response)
 
     if (typeof oldPasswordString !== "string" || oldPasswordString.length === 0)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "MISSING_OLD_PASSWORD" });
         return;
     }
 
     if (typeof newPasswordString !== "string" || newPasswordString.length < 6)
     {
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: "NEW_PASSWORD_TOO_SHORT" });
         return;
     }
@@ -60,7 +61,7 @@ async function changePaidDeckPassword(request, response)
 
     if (licenseDocuments.length === 0)
     {
-        response.statusCode = 404;
+        response.statusCode = httpStatus.NOT_FOUND;
         response.sendJson({ error: "NO_LICENSES" });
         return;
     }
@@ -72,7 +73,7 @@ async function changePaidDeckPassword(request, response)
 
     if (!referenceLicenseDocument)
     {
-        response.statusCode = 409;
+        response.statusCode = httpStatus.CONFLICT;
         response.sendJson({ error: "PASSWORD_NOT_SET" });
         return;
     }
@@ -81,9 +82,9 @@ async function changePaidDeckPassword(request, response)
     const expectedOldHashBase64 = referenceLicenseDocument.passwordHash;
     const submittedOldHashBase64 = KeyManagementService.computePaidDeckPasswordHash(oldPasswordString, oldSaltBase64);
 
-    if (submittedOldHashBase64 !== expectedOldHashBase64)
+    if (!KeyManagementService.safeEqualPaidDeckPasswordHash(submittedOldHashBase64, expectedOldHashBase64))
     {
-        response.statusCode = 401;
+        response.statusCode = httpStatus.UNAUTHORIZED;
         response.sendJson({ error: "WRONG_OLD_PASSWORD" });
         return;
     }
@@ -122,7 +123,7 @@ async function changePaidDeckPassword(request, response)
         newPasswordKekBuffer.fill(0);
     }
 
-    response.statusCode = 200;
+    response.statusCode = httpStatus.OK;
     response.sendJson({ success: true, licensesUpdated: licenseDocuments.length });
 }
 

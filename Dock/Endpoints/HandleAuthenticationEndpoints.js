@@ -12,6 +12,7 @@ const { handleRegisterDevice } = require("./Authentication/HandleRegisterDevice"
 const { handleRequestOtp } = require("./Authentication/HandleRequestOtp");
 const { handleVerifyOtp } = require("./Authentication/HandleVerifyOtp");
 const { ensureLogin } = require("./Plugins/EnsureLogin");
+const { ensureLoginRateLimit } = require("./Plugins/EnsureLoginRateLimit");
 
 function handleAuthenticationEndpoints(server)
 {
@@ -19,6 +20,7 @@ function handleAuthenticationEndpoints(server)
     ({
         routePath: `/Login`,
         handler: handleLogin,
+        plugins: [ensureLoginRateLimit]
     });
 
     function wrap(fn)
@@ -40,7 +42,8 @@ function handleAuthenticationEndpoints(server)
     server.handle
     ({
         routePath: `/Login/Callback`,
-        handler: wrap(handleLoginCallback)
+        handler: wrap(handleLoginCallback),
+        plugins: [ensureLoginRateLimit]
     });
 
     server.handle

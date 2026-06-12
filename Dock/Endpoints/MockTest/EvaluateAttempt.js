@@ -13,7 +13,11 @@ const { taskTypes } = require("../../Globals/Enumerations/TaskTypes");
 const { taskStatus } = require("../../Globals/Enumerations/TaskStatus");
 const { taskExecutionTargets } = require("../../Globals/Enumerations/TaskExecutionTargets");
 const { mockTestEvaluationStatuses } = require("../../Globals/Enumerations/MockTestEvaluationStatuses");
+const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
+const CreditPreflight = require("../../Globals/Classes/Credits/CreditPreflight");
+const TaskStateManager = require("../../Globals/Classes/Task/TaskStateManager");
 const { getUser } = require("../Helpers/GetUser");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 function joinPersistencePath(...segments)
@@ -25,15 +29,56 @@ function joinPersistencePath(...segments)
 }
 
 
+/**
+ * Reads / writes a mock test's JSON in the normal MOCK_TESTS_COLLECTION.
+ *
+ * In the unified model a paid deck's mock test is a normal row in this
+ * collection (plaintext server-side, tagged additionalData.paidDeckId), so paid
+ * and non-paid grading share one store. The server grades against the plaintext
+ * here; the /Sync pull encrypts the content fields on their way to the client.
+ * (`paidDeckId` is retained on the signature only to gate access by an active
+ * license in the handler; the store itself no longer branches on it.)
+ */
+function createMockTestStore(database, userId)
+{
+    const mockTestsCollection = database.collection(DatabaseConstants.MOCK_TESTS_COLLECTION);
+    return {
+        async load(mockTestId)
+        {
+            const mongoDocument = await mockTestsCollection.findOne({ userId: userId, "data.id": mockTestId });
+            return mongoDocument ? mongoDocument.data : null;
+        },
+        async save(mockTestId, mockTestJson)
+        {
+            await mockTestsCollection.updateOne
+            (
+                { userId: userId, "data.id": mockTestId },
+                { $set: { data: mockTestJson, serverUpdatedAt: new Date() } }
+            );
+        }
+    };
+}
+
+
+/**
+ * Ownership gate for paid-deck grading: the user must hold an ACTIVE,
+ * unexpired license for the deck. Reuses KeyManagementService.isLicenseActive
+ * so the expiry/sentinel logic stays identical to every other paid-deck gate
+ * (epoch-zero / non-positive timestamp = lifetime sentinel).
+ */
+async function hasActivePaidDeckLicense(userId, deckId)
+{
+    const license = await KeyManagementService.getLicense(userId, deckId);
+    return KeyManagementService.isLicenseActive(license);
+}
+
+
 async function handleEvaluateAttempt(request, response)
 {
-    console.log("[EvaluateAttempt] >>> request received");
-
     const user = await getUser(request);
     if (!user)
     {
-        console.warn("[EvaluateAttempt] rejected: no authenticated user");
-        response.statusCode = 401;
+        response.statusCode = httpStatus.UNAUTHORIZED;
         response.end("Unauthorised.");
         return;
     }
@@ -44,44 +89,45 @@ async function handleEvaluateAttempt(request, response)
     const userEvaluationInstructions = typeof body?.evaluationInstructions === "string" ? body.evaluationInstructions : "";
     const enableLlmMcqFeedback = body?.enableLlmMcqFeedback === true;
     const attemptSnapshot = (body && typeof body.attemptSnapshot === "object" && body.attemptSnapshot !== null) ? body.attemptSnapshot : null;
-
-    console.log(`[EvaluateAttempt] user=${user.getId()} mockTestId=${mockTestId} attemptId=${attemptId} enableLlmMcqFeedback=${enableLlmMcqFeedback} attemptSnapshotProvided=${attemptSnapshot !== null}`);
+    // When set, the mock test belongs to a purchased paid deck and is sourced
+    // from / written back to the buyer's encrypted per-user entity store.
+    const paidDeckId = (typeof body?.paidDeckId === "string" && body.paidDeckId.length > 0) ? body.paidDeckId : null;
 
     if (!mockTestId || !attemptId)
     {
-        console.warn("[EvaluateAttempt] rejected: missing mockTestId or attemptId");
-        response.statusCode = 400;
+        response.statusCode = httpStatus.BAD_REQUEST;
         response.end("mockTestId and attemptId are required.");
         return;
     }
 
     const userId = user.getId();
     const database = await DatabaseConnector.getDatabase();
-    const collection = database.collection(DatabaseConstants.MOCK_TESTS_COLLECTION);
-    const mongoDocument = await collection.findOne({ userId: userId, "data.id": mockTestId });
 
-    if (!mongoDocument)
+    if (paidDeckId && !(await hasActivePaidDeckLicense(userId, paidDeckId)))
     {
-        console.warn(`[EvaluateAttempt] rejected: mock test ${mockTestId} not found in Mongo for user ${userId}`);
-        response.statusCode = 404;
+        response.statusCode = httpStatus.FORBIDDEN;
+        response.end("No active license for this paid deck.");
+        return;
+    }
+
+    const store = createMockTestStore(database, userId);
+    const mockTestJson = await store.load(mockTestId);
+
+    if (!mockTestJson)
+    {
+        response.statusCode = httpStatus.NOT_FOUND;
         response.end("Mock test not found.");
         return;
     }
 
-    const mockTestJson = mongoDocument.data;
     let attemptJson = (mockTestJson.history || []).find((entry) => entry && entry.id === attemptId);
 
     if (!attemptJson)
     {
-        // The Mongo copy of the mockTest doesn't contain this attempt
-        // yet — most likely the sync push from the browser is still in
-        // flight. Fall back to the browser-supplied snapshot (if any)
-        // so we can proceed without waiting for the sync race to
-        // settle. We also stitch the snapshot into mockTestJson.history
-        // so any downstream consumer that walks the history sees it.
+        // The stored copy doesn't have this attempt yet (the browser's
+        // write may still be in flight). Fall back to the supplied snapshot.
         if (attemptSnapshot && attemptSnapshot.id === attemptId)
         {
-            console.log(`[EvaluateAttempt] attempt ${attemptId} not in Mongo yet — using attemptSnapshot from request body as fallback`);
             attemptJson = attemptSnapshot;
             if (!Array.isArray(mockTestJson.history))
             {
@@ -91,9 +137,8 @@ async function handleEvaluateAttempt(request, response)
         }
         else
         {
-            console.warn(`[EvaluateAttempt] rejected: attempt ${attemptId} not found on mock test ${mockTestId} and no usable attemptSnapshot in body`);
-            response.statusCode = 404;
-            response.end(`Attempt ${attemptId} not found on mock test ${mockTestId}. Sync from the browser may not have completed yet — retry in a moment, or POST with an attemptSnapshot in the body.`);
+            response.statusCode = httpStatus.NOT_FOUND;
+            response.end(`Attempt ${attemptId} not found on mock test ${mockTestId}. Retry in a moment, or POST with an attemptSnapshot in the body.`);
             return;
         }
     }
@@ -102,18 +147,13 @@ async function handleEvaluateAttempt(request, response)
     attemptJson.enableLlmMcqFeedback = enableLlmMcqFeedback;
 
     const buildResult = EvaluationPayloadBuilder.build(mockTestJson, attemptJson, userEvaluationInstructions, { enableLlmMcqFeedback });
-    console.log(`[EvaluateAttempt] build complete: offlineGradableCount=${buildResult.offlineGradableCount} llmGradableCount=${buildResult.llmGradableCount} requiresAgentTask=${buildResult.requiresAgentTask}`);
 
     if (!buildResult.requiresAgentTask)
     {
-        console.log("[EvaluateAttempt] taking offline-inline path (no Agent task spawn)");
         const gradedDocument = OfflineAttemptGrader.gradeAttempt(mockTestJson, attemptJson);
         GradedAttemptApplier.apply(mockTestJson, attemptId, gradedDocument);
 
-        await collection.updateOne(
-            { userId: userId, "data.id": mockTestId },
-            { $set: { data: mockTestJson, serverUpdatedAt: new Date() } }
-        );
+        await store.save(mockTestId, mockTestJson);
 
         response.sendJson({
             taskId: null,
@@ -121,17 +161,27 @@ async function handleEvaluateAttempt(request, response)
             totalScore: gradedDocument.totalScore,
             maxScore: gradedDocument.maxScore
         });
-        console.log(`[EvaluateAttempt] offline-inline complete: totalScore=${gradedDocument.totalScore} maxScore=${gradedDocument.maxScore}`);
         return;
     }
 
-    console.log("[EvaluateAttempt] taking Agent-task path");
-    attemptJson.evaluationStatus = mockTestEvaluationStatuses.GRADING;
+    // Only the LLM grading path reaches here (offline grading already
+    // returned above). Best-effort credit gate before queuing the agent task.
+    const creditPreflight = await CreditPreflight.check(userId, taskTypes.EVALUATE_MOCK_TEST_ATTEMPT);
+    if (!creditPreflight.allowed)
+    {
+        const bIsResumable = creditPreflight.reason === "INSUFFICIENT_CREDITS";
+        if (bIsResumable)
+        {
+            try { await TaskStateManager.save({ userId: userId, taskType: taskTypes.EVALUATE_MOCK_TEST_ATTEMPT, route: "/MockTest/EvaluateAttempt", payload: body, pausedReason: creditPreflight.reason }); }
+            catch (saveError) { console.warn(`[EvaluateAttempt] Failed to save resumable task state: ${saveError.message}`); }
+        }
+        response.statusCode = httpStatus.PAYMENT_REQUIRED;
+        response.sendJson({ error: creditPreflight.reason, balance: creditPreflight.balance, required: creditPreflight.required, resumable: bIsResumable });
+        return;
+    }
 
-    await collection.updateOne(
-        { userId: userId, "data.id": mockTestId },
-        { $set: { data: mockTestJson, serverUpdatedAt: new Date() } }
-    );
+    attemptJson.evaluationStatus = mockTestEvaluationStatuses.GRADING;
+    await store.save(mockTestId, mockTestJson);
 
     const evaluationTaskDescriptor = new TaskDescriptor({
         type: taskTypes.EVALUATE_MOCK_TEST_ATTEMPT,
@@ -140,7 +190,8 @@ async function handleEvaluateAttempt(request, response)
         payload:
         {
             mockTestId: mockTestId,
-            attemptId: attemptId
+            attemptId: attemptId,
+            paidDeckId: paidDeckId
         },
         nextTaskIds: []
     });
@@ -156,21 +207,18 @@ async function handleEvaluateAttempt(request, response)
 
     try
     {
-        console.log(`[EvaluateAttempt] writing Attempt.json to '${attemptPersistencePath}'`);
         await Persistence.write(attemptPersistencePath, JSON.stringify(buildResult.payload));
-        console.log(`[EvaluateAttempt] Attempt.json written OK`);
     }
     catch (writeError)
     {
         console.error(`[EvaluateAttempt] Failed to write attempt payload at '${attemptPersistencePath}':`, writeError);
-        response.statusCode = 500;
+        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
         response.end(`Failed to stage evaluation payload: ${writeError?.message || writeError}`);
         return;
     }
 
     await TaskManager.setTask(evaluationTaskDescriptor);
     await TaskManager.trackForUser(userId, evaluationTaskId);
-    console.log(`[EvaluateAttempt] TaskDescriptor ${evaluationTaskId} created + tracked for user ${userId}`);
 
     response.sendJson({
         taskId: evaluationTaskId,
@@ -178,22 +226,18 @@ async function handleEvaluateAttempt(request, response)
         sentToLlmCount: buildResult.llmGradableCount,
         offlineGradableCount: buildResult.offlineGradableCount
     });
-    console.log(`[EvaluateAttempt] response sent — Agent task ${evaluationTaskId} will now run in the background`);
 
-    console.log(`[EvaluateAttempt] launching TaskManager.execute for ${evaluationTaskId}`);
     TaskManager.execute(evaluationTaskDescriptor)
         .then(async () =>
         {
-            console.log(`[EvaluateAttempt] TaskManager.execute resolved successfully for ${evaluationTaskId}; running post-task hook`);
             try
             {
-                await applyGradedAttemptFromTask(userId, mockTestId, attemptId, evaluationTaskId);
+                await applyGradedAttemptFromTask(database, userId, paidDeckId, mockTestId, attemptId, evaluationTaskId);
                 const completedTask = await TaskManager.getTask(evaluationTaskId);
                 if (completedTask)
                 {
                     await TaskHistoryQueryEngine.recordCompletion(completedTask);
                 }
-                console.log(`[EvaluateAttempt] post-task hook complete for ${evaluationTaskId}`);
             }
             catch (postTaskError)
             {
@@ -209,7 +253,7 @@ async function handleEvaluateAttempt(request, response)
             console.error(`[EvaluateAttempt] Evaluation task ${evaluationTaskId} threw:`, taskError);
             try
             {
-                await markAttemptFailed(userId, mockTestId, attemptId);
+                await markAttemptFailed(database, userId, paidDeckId, mockTestId, attemptId);
                 const failedTask = await TaskManager.getTask(evaluationTaskId);
                 if (failedTask)
                 {
@@ -230,7 +274,7 @@ async function handleEvaluateAttempt(request, response)
 }
 
 
-async function applyGradedAttemptFromTask(userId, mockTestId, attemptId, evaluationTaskId)
+async function applyGradedAttemptFromTask(database, userId, paidDeckId, mockTestId, attemptId, evaluationTaskId)
 {
     const gradedPath = joinPersistencePath(
         PersistenceConstants.TASKS_DIRECTORY,
@@ -248,40 +292,32 @@ async function applyGradedAttemptFromTask(userId, mockTestId, attemptId, evaluat
     catch (readError)
     {
         console.error(`[EvaluateAttempt] Could not read graded attempt at '${gradedPath}': ${readError.message}`);
-        await markAttemptFailed(userId, mockTestId, attemptId);
+        await markAttemptFailed(database, userId, paidDeckId, mockTestId, attemptId);
         return;
     }
 
-    const database = await DatabaseConnector.getDatabase();
-    const collection = database.collection(DatabaseConstants.MOCK_TESTS_COLLECTION);
-    const mongoDocument = await collection.findOne({ userId: userId, "data.id": mockTestId });
+    const store = createMockTestStore(database, userId);
+    const mockTestJson = await store.load(mockTestId);
 
-    if (!mongoDocument)
+    if (!mockTestJson)
     {
         console.warn(`[EvaluateAttempt] Mock test ${mockTestId} disappeared before graded attempt could be applied.`);
         return;
     }
 
-    const mockTestJson = mongoDocument.data;
     GradedAttemptApplier.apply(mockTestJson, attemptId, gradedDocument);
-
-    await collection.updateOne(
-        { userId: userId, "data.id": mockTestId },
-        { $set: { data: mockTestJson, serverUpdatedAt: new Date() } }
-    );
+    await store.save(mockTestId, mockTestJson);
 }
 
 
-async function markAttemptFailed(userId, mockTestId, attemptId)
+async function markAttemptFailed(database, userId, paidDeckId, mockTestId, attemptId)
 {
-    const database = await DatabaseConnector.getDatabase();
-    const collection = database.collection(DatabaseConstants.MOCK_TESTS_COLLECTION);
-    const mongoDocument = await collection.findOne({ userId: userId, "data.id": mockTestId });
-    if (!mongoDocument)
+    const store = createMockTestStore(database, userId);
+    const mockTestJson = await store.load(mockTestId);
+    if (!mockTestJson)
     {
         return;
     }
-    const mockTestJson = mongoDocument.data;
     const attemptJson = (mockTestJson.history || []).find((entry) => entry && entry.id === attemptId);
     if (!attemptJson)
     {
@@ -292,10 +328,7 @@ async function markAttemptFailed(userId, mockTestId, attemptId)
     {
         mockTestJson.lifecycle.lastModified = new Date().toISOString();
     }
-    await collection.updateOne(
-        { userId: userId, "data.id": mockTestId },
-        { $set: { data: mockTestJson, serverUpdatedAt: new Date() } }
-    );
+    await store.save(mockTestId, mockTestJson);
 }
 
 
