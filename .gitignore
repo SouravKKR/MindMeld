@@ -387,9 +387,12 @@ Build/
 ADDTHISTOGITIGNORE.txt
 
 Common/Credentials/
+Common/Reports/
 
 test.pdf
 
 .claude/
 
 CLAUDE.md
+.vscode
+.vs

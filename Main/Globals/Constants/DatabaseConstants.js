@@ -3,6 +3,7 @@ class DatabaseConstants
     static SESSIONS_COLLECTION = 'sessions';
     static USERS_COLLECTION = 'users';
     static PURCHASES_COLLECTION = 'purchases';
+    static PENDING_ORDERS_COLLECTION = 'pendingOrders';
     static INFORMATION_SOURCES_COLLECTION = 'informationSources';
     static TEXT_EMBEDDINGS_COLLECTION = 'textEmbeddings';
     static DECKS_COLLECTION = 'decks';
@@ -19,8 +20,10 @@ class DatabaseConstants
     static PAID_DECKS_COLLECTION = 'paidDecks';
     static PAID_DECK_PRICINGS_COLLECTION = 'paidDeckPricings';
     static PAID_DECK_ASSETS_COLLECTION = 'paidDeckAssets';
+    static PAID_DECK_MASTER_ENTITIES_COLLECTION = 'paidDeckMasterEntities';
     static DECK_LICENSES_COLLECTION = 'deckLicenses';
     static PAID_DECK_USER_CONTENT_COLLECTION = 'paidDeckUserContent';
+    static PAID_DECK_USER_CONTENT_ENTITIES_COLLECTION = 'paidDeckUserContentEntities';
     static DEVICES_COLLECTION = 'devices';
     static UPLOAD_QUOTAS_COLLECTION = 'uploadQuotas';
     static BUNDLE_DISCOUNTS_COLLECTION = 'bundleDiscounts';
@@ -35,6 +38,15 @@ class DatabaseConstants
     static ORG_ADMIN_VERIFICATIONS_COLLECTION = 'orgAdminVerifications';
     static ORGANIZATION_PAYMENTS_COLLECTION = 'organizationPayments';
     static ALERTS_COLLECTION = 'alerts';
+    static RATE_LIMIT_EVENTS_COLLECTION = 'rateLimitEvents';
+    static RATE_LIMIT_EVENTS_TTL_DAYS = 30;
+    static ADMIN_AUDIT_EVENTS_COLLECTION = 'adminAuditEvents';
+    static ADMIN_AUDIT_EVENTS_TTL_DAYS = 90;
+    static SHADOW_PAIRS_COLLECTION = 'shadow_pairs';
+    static CREDIT_CONFIG_COLLECTION = 'creditConfig';
+    static CREDIT_TRANSACTIONS_COLLECTION = 'creditTransactions';
+    static TASK_STATES_COLLECTION = 'taskStates';
+    static TASK_STATES_TTL_DAYS = 7;
 }
 
 export default DatabaseConstants;

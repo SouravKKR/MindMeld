@@ -6,6 +6,7 @@ import sanitizeForJsPdf from "../../../Globals/UtilityFunctions/SanitizeForJsPdf
 import StudySession from "./StudySession.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
+import CreditNotice from "../../../Globals/Classes/Credits/CreditNotice.js";
 import TaskProgressTracker from "../../../Globals/Classes/Task/TaskProgressTracker.js";
 import MockTestAttempt from "../../../Globals/Model/MockTestEntities/MockTestAttempt.js";
 import MockTestItemFactory from "../../../Globals/Model/MockTestEntities/MockTestItemFactory.js";
@@ -169,6 +170,11 @@ class MockTestSession extends StudySession
             attempt.setAdditionalData(additionalData);
         }
 
+        // Paid-deck mock tests grade through the SAME pipeline, but the server
+        // sources/sinks the attempt from the buyer's encrypted per-user entity
+        // store (passed via paidDeckId) instead of the plaintext collection.
+        const paidDeckId = this.#mockTest.getDeck()?.getAdditionalData?.()?.paidDeckId || null;
+
         const isOfflineOnlyCandidate = MockTestSession.#attemptIsOfflineOnly(clonedItems);
         const dialogResult = await EvaluationInstructionsDialog.open({
             initialInstructions: "",
@@ -255,14 +261,33 @@ class MockTestSession extends StudySession
                     attemptId: attempt.getId(),
                     evaluationInstructions: dialogResult.instructions,
                     enableLlmMcqFeedback: dialogResult.enableLlmMcqFeedback === true,
+                    // Paid decks route grading through the buyer's encrypted
+                    // per-user entity store on the server.
+                    paidDeckId: paidDeckId,
                     // Belt-and-braces: include the attempt JSON in the body
                     // so the Dock can proceed even when our pre-evaluation
                     // sync push hasn't fully landed yet in Mongo. The Dock
-                    // prefers the Mongo copy when present and falls back
+                    // prefers the stored copy when present and falls back
                     // to this snapshot when the attempt isn't there yet.
                     attemptSnapshot: attempt.toJson()
                 })
             });
+
+            if (evaluationResponse.status === 402)
+            {
+                const insufficientDetail = await evaluationResponse.json().catch(() => ({}));
+                attempt.setEvaluationStatus(mockTestEvaluationStatuses.FAILED);
+                try { await this.#mockTest.save(); } catch (resaveError) { /* ignore */ }
+
+                if (document.fullscreenElement)
+                {
+                    try { await document.exitFullscreen(); } catch (exitError) { /* ignore */ }
+                }
+
+                await CreditNotice.showInsufficientCredits(insufficientDetail);
+                PageNavigator.clearAndOpen("mock-test-answer-key-page", this.#mockTest, attempt);
+                return;
+            }
 
             if (!evaluationResponse.ok)
             {
@@ -627,11 +652,11 @@ class MockTestSession extends StudySession
                     const optionTextWidthEstimate   = (CW - questionPrefixWidth) / 2 - 12;
                     doc.setFont("helvetica", "normal");
                     doc.setFontSize(8.5);
-                    for (let i = 0; i < options.length; i += 2)
+                    for (let optionIndex = 0; optionIndex < options.length; optionIndex += 2)
                     {
-                        const leftOptionLines   = doc.splitTextToSize(sanitizeForJsPdf(options[i]), optionTextWidthEstimate);
-                        const rightOptionLines  = i + 1 < options.length
-                            ? doc.splitTextToSize(sanitizeForJsPdf(options[i + 1]), optionTextWidthEstimate)
+                        const leftOptionLines   = doc.splitTextToSize(sanitizeForJsPdf(options[optionIndex]), optionTextWidthEstimate);
+                        const rightOptionLines  = optionIndex + 1 < options.length
+                            ? doc.splitTextToSize(sanitizeForJsPdf(options[optionIndex + 1]), optionTextWidthEstimate)
                             : [];
                         neededHeight += Math.max(leftOptionLines.length, rightOptionLines.length) * optionLineHeightEstimate + 3;
                     }
@@ -677,15 +702,15 @@ class MockTestSession extends StudySession
                     const rightColumnX          = questionX + columnWidth + 8;
 
                     // Process options in pairs so row height is max(left, right)
-                    for (let i = 0; i < options.length; i += 2)
+                    for (let optionIndex = 0; optionIndex < options.length; optionIndex += 2)
                     {
                         // Set font before splitting so metrics are correct
                         doc.setFont("helvetica", "normal");
                         doc.setFontSize(8.5);
 
-                        const leftOptionLines   = doc.splitTextToSize(sanitizeForJsPdf(options[i]), optionTextWidth);
-                        const rightOptionLines  = i + 1 < options.length
-                            ? doc.splitTextToSize(sanitizeForJsPdf(options[i + 1]), optionTextWidth)
+                        const leftOptionLines   = doc.splitTextToSize(sanitizeForJsPdf(options[optionIndex]), optionTextWidth);
+                        const rightOptionLines  = optionIndex + 1 < options.length
+                            ? doc.splitTextToSize(sanitizeForJsPdf(options[optionIndex + 1]), optionTextWidth)
                             : [];
 
                         const rowHeight = Math.max(leftOptionLines.length, rightOptionLines.length) * optionLineHeight + 3;
@@ -694,15 +719,15 @@ class MockTestSession extends StudySession
                         // Left option
                         doc.setFont("helvetica", "bold");
                         doc.setFontSize(8.5);
-                        doc.text(optionLabels[i] || `(${i + 1})`, leftColumnX, y + 3);
+                        doc.text(optionLabels[optionIndex] || `(${optionIndex + 1})`, leftColumnX, y + 3);
                         doc.setFont("helvetica", "normal");
                         doc.text(leftOptionLines, leftColumnX + 10, y + 3);
 
                         // Right option (if it exists)
-                        if (i + 1 < options.length)
+                        if (optionIndex + 1 < options.length)
                         {
                             doc.setFont("helvetica", "bold");
-                            doc.text(optionLabels[i + 1] || `(${i + 2})`, rightColumnX, y + 3);
+                            doc.text(optionLabels[optionIndex + 1] || `(${optionIndex + 2})`, rightColumnX, y + 3);
                             doc.setFont("helvetica", "normal");
                             doc.text(rightOptionLines, rightColumnX + 10, y + 3);
                         }
@@ -717,7 +742,7 @@ class MockTestSession extends StudySession
                 {
                     const blankLineCount = MockTestSession.#blankLinesByQuestionType.get(questionType) ?? 2;
 
-                    for (let i = 0; i < blankLineCount; i++)
+                    for (let blankLineIndex = 0; blankLineIndex < blankLineCount; blankLineIndex++)
                     {
                         guard(6);
                         drawDottedLine(questionX, M + CW, y + 5);

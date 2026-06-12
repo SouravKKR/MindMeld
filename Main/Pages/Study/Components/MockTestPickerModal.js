@@ -3,6 +3,7 @@ import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import { mockTestEvaluationStatuses } from "../../../Globals/Enumerations/MockTestEvaluationStatuses.js";
 import MockTestSession from "../Classes/MockTestSession.js";
 import MockTestStartDialog from "./MockTestStartDialog.js";
+import PaidDeckStudyGate from "../../../Globals/Classes/PaidDeckStudyGate.js";
 
 // Requires: Pages/Study/Styles/MockTestPickerModal.css
 
@@ -162,7 +163,7 @@ class MockTestPickerModal
 
     static #bindPickerEvents(dialog, mockTests)
     {
-        dialog.addEventListener("click", (event) =>
+        dialog.addEventListener("click", async (event) =>
         {
             const actionButton = event.target.closest("[data-action]");
             if (!actionButton) return;
@@ -172,6 +173,8 @@ class MockTestPickerModal
             const selectedMockTest = mockTests[cardIndex];
 
             if (!selectedMockTest) return;
+
+            const bIsPaidDeck = !!selectedMockTest.getDeck?.()?.getAdditionalData?.()?.paidDeckId;
 
             if (action === "take-test")
             {
@@ -184,6 +187,13 @@ class MockTestPickerModal
             }
             else if (action === "print")
             {
+                // Printing produces a shareable PDF of the questions — an export
+                // path. Block it for a paid deck (content stays on-device only).
+                if (bIsPaidDeck)
+                {
+                    DialogBox.alert("Not available", "Mock tests in a paid deck can't be printed or exported.");
+                    return;
+                }
                 // Same queue caveat as take-test: close the picker first so
                 // the print modal isn't enqueued behind it.
                 dialog.close();
@@ -192,6 +202,14 @@ class MockTestPickerModal
             else if (action === "view-key")
             {
                 dialog.close();
+                // Paid deck: unlock once per session before the answer key opens
+                // so it never renders [Locked] and is never reachable without the
+                // password. No-op for a normal/unlocked deck.
+                const bReady = await PaidDeckStudyGate.ensureReadyForStudy(selectedMockTest.getDeck());
+                if (!bReady)
+                {
+                    return;
+                }
                 PageNavigator.open("mock-test-answer-key-page", selectedMockTest);
             }
             else if (action === "edit")
@@ -252,7 +270,7 @@ class MockTestPickerModal
             dialogBoxInnerWrapper.style.flexDirection = "column";
         }
 
-        dialog.addEventListener("click", (event) =>
+        dialog.addEventListener("click", async (event) =>
         {
             const row = event.target.closest("[data-attempt-id]");
             if (!row)
@@ -266,6 +284,12 @@ class MockTestPickerModal
                 return;
             }
             dialog.close();
+            // Paid deck: unlock once per session before the answer key opens.
+            const bReady = await PaidDeckStudyGate.ensureReadyForStudy(mockTest.getDeck());
+            if (!bReady)
+            {
+                return;
+            }
             PageNavigator.open("mock-test-answer-key-page", mockTest, selectedAttempt);
         });
     }

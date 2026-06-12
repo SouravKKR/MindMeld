@@ -3,9 +3,12 @@ import { mockTestEvaluationStatuses } from "../../Globals/Enumerations/MockTestE
 import { questionTypes } from "../../Globals/Enumerations/QuestionTypes.js";
 import HeaderComponent from "../../CommonComponents/HeaderComponent.js";
 import PageNavigator from "../../Globals/Classes/PageNavigator.js";
+import HtmlSanitizer from "../../Globals/Classes/HtmlSanitizer.js";
 import DialogBox from "../../CommonComponents/DialogBox.js";
+import CreditNotice from "../../Globals/Classes/Credits/CreditNotice.js";
 import SyncEvents from "../../Globals/Events/SyncEvents.js";
 import Deck from "../../Globals/Model/Deck.js";
+import MockTest from "../../Globals/Model/MockTest.js";
 import TaskProgressTracker from "../../Globals/Classes/Task/TaskProgressTracker.js";
 import CuratedStudyProgressOverlay from "../Study/Components/CuratedStudyProgressOverlay.js";
 import EvaluationInstructionsDialog from "../Study/Components/EvaluationInstructionsDialog.js";
@@ -72,13 +75,20 @@ class MockTestAnswerKeyPage extends HTMLElement
         this.#backgroundPollTaskId = null;
     }
 
-    connectedCallback()
+    async connectedCallback()
     {
         if (!this.#mockTest)
         {
             this.innerHTML = `<header-component title="Answer Key"></header-component><div class="mock-test-answer-key-page-empty">No mock test loaded.</div>`;
             return;
         }
+
+        // Materialise plaintext question content for a paid deck before the
+        // synchronous render below, so the answer key never shows [Locked]
+        // placeholders. No-op for a normal deck; on a locked deck decrypt is a
+        // safe no-op (cache stays null) — but every entry point gates the
+        // unlock first, so by here the deck is unlocked.
+        await this.#mockTest.decryptForStudy();
 
         const title = this.#mockTest.getTitle() || "Mock Test";
         const totalMarks = MockTestAnswerKeyPage.#computeTotalMarks(this.#mockTest);
@@ -95,6 +105,16 @@ class MockTestAnswerKeyPage extends HTMLElement
             ? `<button class="mock-test-answer-key-page-delete-attempt-button" type="button">Delete attempt</button>`
             : "";
 
+        // A PDF download is an export path, so it is withheld for a paid deck —
+        // the answer key can be viewed on-screen but not extracted to a file.
+        const bIsPaidDeck = !!this.#mockTest.getDeck?.()?.getAdditionalData?.()?.paidDeckId;
+        const downloadButtonHtml = bIsPaidDeck
+            ? ""
+            : `<button class="mock-test-answer-key-page-download-button" type="button">
+                        <img class="mock-test-answer-key-page-download-icon" src="./Globals/Assets/Images/Icons/DownloadIcon.svg" alt="">
+                        Download PDF
+                    </button>`;
+
         this.innerHTML = `
             <header-component title="Answer Key: ${MockTestAnswerKeyPage.#escapeHtml(title)}"></header-component>
             <div class="mock-test-answer-key-page-toolbar">
@@ -108,10 +128,7 @@ class MockTestAnswerKeyPage extends HTMLElement
                     ${waitButtonHtml}
                     ${reEvaluateButtonHtml}
                     ${deleteAttemptButtonHtml}
-                    <button class="mock-test-answer-key-page-download-button" type="button">
-                        <img class="mock-test-answer-key-page-download-icon" src="./Globals/Assets/Images/Icons/DownloadIcon.svg" alt="">
-                        Download PDF
-                    </button>
+                    ${downloadButtonHtml}
                 </div>
             </div>
             ${attemptStatusBanner}
@@ -191,6 +208,11 @@ class MockTestAnswerKeyPage extends HTMLElement
                 // the attempt and re-render with scores. Explicitly call
                 // it here too in case sync was a no-op.
                 this.#backgroundPollTaskId = null;
+                // A paid deck's mock test (re-)decrypts its question content into
+                // the transient cache before re-rendering, so a fresh instance
+                // pulled in by sync never shows locked placeholders. No-op for a
+                // normal deck or a locked one.
+                await this.#mockTest?.decryptForStudy?.();
                 this.connectedCallback();
             }
         }
@@ -274,7 +296,7 @@ class MockTestAnswerKeyPage extends HTMLElement
         window.addEventListener(SyncEvents.COMPLETED, this.#boundSyncCompletedHandler);
     }
 
-    #handleSyncCompleted()
+    async #handleSyncCompleted()
     {
         if (!this.#mockTest)
         {
@@ -317,6 +339,11 @@ class MockTestAnswerKeyPage extends HTMLElement
         {
             this.#attempt = refreshedAttempt;
         }
+        // A sync pull replaces a paid mock test with a fresh instance whose
+        // question content is ciphertext — re-decrypt it into the transient
+        // cache before re-rendering so the answer key never shows locked
+        // placeholders. No-op for a normal deck or a locked one.
+        await this.#mockTest.decryptForStudy();
         // Tear down the previous listener registration; connectedCallback
         // re-installs it.
         if (this.#boundSyncCompletedHandler)
@@ -433,6 +460,11 @@ class MockTestAnswerKeyPage extends HTMLElement
             return;
         }
 
+        // Paid-deck mock tests grade through the same pipeline; the server
+        // sources/sinks the attempt from the buyer's encrypted per-user entity
+        // store (passed via paidDeckId).
+        const paidDeckId = this.#mockTest.getDeck()?.getAdditionalData?.()?.paidDeckId || null;
+
         const isOfflineOnlyCandidate = this.#attemptIsOfflineOnly();
         const dialogResult = await EvaluationInstructionsDialog.open({
             initialInstructions: this.#attempt.getEvaluationInstructions() || "",
@@ -491,12 +523,25 @@ class MockTestAnswerKeyPage extends HTMLElement
                     attemptId: this.#attempt.getId(),
                     evaluationInstructions: dialogResult.instructions,
                     enableLlmMcqFeedback: dialogResult.enableLlmMcqFeedback === true,
+                    // Paid decks route grading through the buyer's encrypted
+                    // per-user entity store on the server.
+                    paidDeckId: paidDeckId,
                     // Send the attempt JSON so the Dock can proceed even
                     // when the pre-evaluation sync push hasn't fully
                     // landed yet in Mongo.
                     attemptSnapshot: this.#attempt.toJson()
                 })
             });
+
+            if (evaluationResponse.status === 402)
+            {
+                const insufficientDetail = await evaluationResponse.json().catch(() => ({}));
+                this.#attempt.setEvaluationStatus(mockTestEvaluationStatuses.FAILED);
+                try { await this.#mockTest.save(); } catch (resaveError) { /* ignore */ }
+                await CreditNotice.showInsufficientCredits(insufficientDetail);
+                this.connectedCallback();
+                return;
+            }
 
             if (!evaluationResponse.ok)
             {
@@ -834,7 +879,7 @@ class MockTestAnswerKeyPage extends HTMLElement
 
     static #renderQuestionItem(questionItem, questionNumber, mockTest = null, sectionItem = null, gradedQuestion = null)
     {
-        const questionHtml = questionItem.getQuestion() || "";
+        const questionHtml = HtmlSanitizer.sanitize(questionItem.getQuestion() || "");
         const additionalData = questionItem.getAdditionalData ? questionItem.getAdditionalData() : {};
         const options = Array.isArray(additionalData.options) ? additionalData.options : [];
         const marks = MockTestAnswerKeyPage.#resolveQuestionMarks(mockTest, questionItem, sectionItem);
@@ -1211,7 +1256,12 @@ class MockTestAnswerKeyPage extends HTMLElement
 
         if (/<[a-zA-Z]/.test(text))
         {
-            return text;
+            // Already-HTML branch: this is LLM-generated / user-authored
+            // rich content (examiner remarks, answer reasons, solving steps,
+            // subjective answers) and must never reach innerHTML raw — route
+            // it through the sanitiser to strip scripts / handlers / unsafe
+            // URLs while keeping the formatting.
+            return HtmlSanitizer.sanitize(text);
         }
 
         const escaped = text

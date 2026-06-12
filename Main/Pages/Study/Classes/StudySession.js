@@ -1,4 +1,5 @@
 import Card from "../../../Globals/Model/Card.js";
+import HtmlSanitizer from "../../../Globals/Classes/HtmlSanitizer.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import ActiveEntityTracker from "../../../Globals/Classes/ActiveEntityTracker.js";
 import { entityTypes } from "../../../Globals/Enumerations/EntityTypes.js";
@@ -54,7 +55,7 @@ class StudySession
             };
         }
 
-        questionSection.innerHTML = card.getQuestion();
+        questionSection.innerHTML = HtmlSanitizer.sanitize(card.getQuestion());
         answerSection.innerHTML = "";
 
         showAnswerButton.style.display = "block";
@@ -85,7 +86,7 @@ class StudySession
             return;
         }
 
-        answerSection.innerHTML = this._current.getAnswer();
+        answerSection.innerHTML = HtmlSanitizer.sanitize(this._current.getAnswer());
         showAnswerButton.style.display = "none";
 
     }

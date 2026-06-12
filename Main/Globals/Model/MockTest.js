@@ -87,6 +87,50 @@ class MockTest
 
     setDeckId(deckId) { this.#deckId = deckId; }
 
+    /**
+     * Pre-decrypts the encrypted content of every question item for a paid
+     * deck's mock test, so the answer-key / attempt UI reads plaintext through
+     * the normal synchronous getters. No-op for a normal (plaintext) deck. The
+     * owning deck's paidDeckId is the unlock key id, passed down to each
+     * question (questions hold no deck reference).
+     */
+    async decryptForStudy()
+    {
+        const paidDeckId = this.getDeck()?.getAdditionalData?.()?.paidDeckId;
+        if (!paidDeckId)
+        {
+            return;
+        }
+
+        for (const item of this.#items)
+        {
+            if (typeof item?.decryptForStudy === "function")
+            {
+                await item.decryptForStudy(paidDeckId);
+            }
+        }
+    }
+
+    /**
+     * True when any question item has encrypted content not yet decrypted this
+     * session — used to size / skip the decrypt progress bar in the study gate.
+     */
+    needsDecryption()
+    {
+        if (!this.getDeck()?.getAdditionalData?.()?.paidDeckId)
+        {
+            return false;
+        }
+        for (const item of this.#items)
+        {
+            if (typeof item?.needsDecryption === "function" && item.needsDecryption())
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     setTitle(title) 
     { 
         this.#title = title; 
@@ -267,13 +311,17 @@ class MockTest
         return true;
     }
 
-    async save() 
+    async save()
     {
+        // Paid decks persist + sync like normal decks now — question content is
+        // already a ciphertext envelope inside each item, so this writes
+        // ciphertext at rest and the server preserves its plaintext blueprint,
+        // taking only attempt history / lifecycle from the push.
         await this.getDeck().save(false);
 
-        window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_CHANGED, 
+        window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_CHANGED,
         {
-            detail: 
+            detail:
             {
                 entityId: this.getId(),
                 entityType: entityTypes.MOCK_TEST,

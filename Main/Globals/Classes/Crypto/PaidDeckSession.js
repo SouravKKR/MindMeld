@@ -164,6 +164,67 @@ class PaidDeckSession
         };
     }
 
+    /**
+     * Per-FIELD string encryption (distinct from encryptForUpload, which
+     * JSON-encodes a whole entity). A content field — Card.question,
+     * StudyMaterial HTML, etc. — is a raw string; this encrypts the UTF-8
+     * bytes directly so the ciphertext is byte-compatible with the server's
+     * field cipher (12-byte IV, ciphertext||16-byte GCM tag, base64). Returns
+     * the bare { ivBase64, ciphertextBase64 } pair; the envelope marker is
+     * added by PaidDeckFieldCipher.
+     */
+    static async encryptString(deckId, plaintextString)
+    {
+        const contentCryptoKey = PaidDeckSession.#unlockedContentKeysByDeckId.get(deckId);
+        if (!contentCryptoKey)
+        {
+            throw new Error(`Paid deck ${deckId} is locked — call unlock() first.`);
+        }
+
+        const initializationVector = crypto.getRandomValues(new Uint8Array(12));
+        const plaintextBuffer = new TextEncoder().encode(String(plaintextString ?? ""));
+
+        const ciphertextBuffer = await crypto.subtle.encrypt
+        (
+            { name: "AES-GCM", iv: initializationVector },
+            contentCryptoKey,
+            plaintextBuffer
+        );
+
+        plaintextBuffer.fill(0);
+
+        return {
+            ivBase64: PaidDeckSession.#bytesToBase64(initializationVector),
+            ciphertextBase64: PaidDeckSession.#bytesToBase64(new Uint8Array(ciphertextBuffer))
+        };
+    }
+
+    /**
+     * Per-FIELD string decryption — the read counterpart to encryptString.
+     * Returns the decrypted UTF-8 string (NOT JSON.parse'd). Throws if the
+     * deck is locked so callers fall back to a locked placeholder.
+     */
+    static async decryptString(deckId, envelope)
+    {
+        const contentCryptoKey = PaidDeckSession.#unlockedContentKeysByDeckId.get(deckId);
+        if (!contentCryptoKey)
+        {
+            throw new Error(`Paid deck ${deckId} is locked — call unlock() first.`);
+        }
+
+        const initializationVector = PaidDeckSession.#base64ToBytes(envelope.ivBase64);
+        const ciphertextBytes = PaidDeckSession.#base64ToBytes(envelope.ciphertextBase64);
+
+        const plaintextBuffer = await crypto.subtle.decrypt
+        (
+            { name: "AES-GCM", iv: initializationVector },
+            contentCryptoKey,
+            ciphertextBytes
+        );
+
+        return new TextDecoder().decode(plaintextBuffer);
+    }
+
     static async #derivePasswordKekFromPbkdf2(passwordString, passwordSaltBase64, pbkdf2Iterations)
     {
         const passwordKeyMaterial = await crypto.subtle.importKey

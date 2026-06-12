@@ -10,6 +10,10 @@ import DeviceManagementDialog from "../../CommonComponents/DeviceManagementDialo
  * DEVICE_LIMIT_REACHED event so it can pop the DeviceManagementDialog
  * with the response payload pre-filled.
  *
+ * Purchased decks no longer need a home-shell builder: in the unified model
+ * they arrive as normal decks through the regular sync pipeline, so the deck
+ * tree already contains them.
+ *
  * Imported by index.html so it side-effects on script load — no
  * explicit boot call needed elsewhere.
  */

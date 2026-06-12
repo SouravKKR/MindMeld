@@ -45,7 +45,7 @@ automatic-generation-page[page]
     width: 18px;
     height: 18px;
     cursor: pointer;
-    accent-color: #0098C4;
+    accent-color: var(--gradient-start-color);
     flex-shrink: 0;
 }
 

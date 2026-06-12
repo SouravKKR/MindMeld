@@ -167,7 +167,7 @@ class CardEditorPage extends HTMLElement
             }
 
             this.initialize(null, this.#card.getDeck());
-            ActiveEntityTracker.set(this.#card.getId(), entityTypes.CARD);
+            ActiveEntityTracker.set(this.#card.getId(), entityTypes.CARD, true);
 
             // Reset all input elements
             this.querySelectorAll("rich-text-editor").forEach(editor => editor.clear());
@@ -209,13 +209,13 @@ class CardEditorPage extends HTMLElement
 
             const range = selection.getRangeAt(0);
 
-            for (let i = 0; i < items.length; i++)
+            for (let itemIndex = 0; itemIndex < items.length; itemIndex++)
             {
-                if (items[i].type.indexOf("image") !== -1)
+                if (items[itemIndex].type.indexOf("image") !== -1)
                 {
                     pasteEvent.preventDefault();
 
-                    const file = items[i].getAsFile();
+                    const file = items[itemIndex].getAsFile();
                     const reader = new FileReader();
 
                     reader.onload = (event) =>
@@ -248,6 +248,19 @@ class CardEditorPage extends HTMLElement
     {
         this.setAttribute("page", "");
 
+        // Paid-deck cards are server-authored and read-only on the device —
+        // the editor can't meaningfully edit them (content stays ciphertext and
+        // any change is discarded server-side), so refuse to open it.
+        if (this.#card?.getDeck?.()?.getAdditionalData?.()?.paidDeckId)
+        {
+            this.innerHTML =
+            `
+                <header-component title="Read-only"></header-component>
+                <p style="padding: 20px; text-align: center;">Cards in a paid deck are read-only and can't be edited.</p>
+            `;
+            return;
+        }
+
         this.innerHTML =
         `
             <header-component title="Edit Card"></header-component>
@@ -275,14 +288,14 @@ class CardEditorPage extends HTMLElement
         this.#setupInputs();
         this.#handleEvents();
 
-        ActiveEntityTracker.set(this.#card.getId(), entityTypes.CARD);
+        ActiveEntityTracker.set(this.#card.getId(), entityTypes.CARD, true);
     }
 
     onPageResumed()
     {
         if (this.#card)
         {
-            ActiveEntityTracker.set(this.#card.getId(), entityTypes.CARD);
+            ActiveEntityTracker.set(this.#card.getId(), entityTypes.CARD, true);
         }
     }
 }

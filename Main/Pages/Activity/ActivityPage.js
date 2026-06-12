@@ -1,10 +1,12 @@
 import HeaderComponent from "../../CommonComponents/HeaderComponent.js";
 import ActivityEntryComponent from "./Components/ActivityEntryComponent.js";
 import LocalDownloadActivitySource from "./Sources/LocalDownloadActivitySource.js";
+import PaidDeckUploadActivitySource from "./Sources/PaidDeckUploadActivitySource.js";
 import { activityEntryTypes } from "../../Globals/Enumerations/ActivityEntryTypes.js";
 import { activitySortFields } from "../../Globals/Enumerations/ActivitySortFields.js";
 import { taskStatus } from "../../Globals/Enumerations/TaskStatus.js";
 import BrowserLlmDownloadEvents from "../../Globals/Events/BrowserLlmDownloadEvents.js";
+import PaidDeckUploadEvents from "../../Globals/Events/PaidDeckUploadEvents.js";
 
 
 /**
@@ -35,12 +37,14 @@ class ActivityPage extends HTMLElement
     #currentTimestampUntil = "";
     #currentSortField = activitySortFields.TIMESTAMP;
     #currentSortDirection = -1;
-    #currentIncludeTypes = [activityEntryTypes.TASK, activityEntryTypes.PURCHASE, activityEntryTypes.DOWNLOAD];
+    #currentIncludeTypes = [activityEntryTypes.TASK, activityEntryTypes.PURCHASE, activityEntryTypes.DOWNLOAD, activityEntryTypes.UPLOAD];
     #currentOffset = 0;
     #latestSearchToken = 0;
     #searchDebounceTimeoutId = null;
     #boundCapabilityChangedHandler = null;
     #boundProgressHandler = null;
+    #boundUploadProgressHandler = null;
+    #lastUploadEntryPresent = false;
 
     async connectedCallback()
     {
@@ -131,6 +135,11 @@ class ActivityPage extends HTMLElement
             window.removeEventListener(BrowserLlmDownloadEvents.PROGRESS, this.#boundProgressHandler);
             this.#boundProgressHandler = null;
         }
+        if (this.#boundUploadProgressHandler)
+        {
+            window.removeEventListener(PaidDeckUploadEvents.PROGRESS, this.#boundUploadProgressHandler);
+            this.#boundUploadProgressHandler = null;
+        }
     }
 
     #wireDownloadStateListeners()
@@ -146,6 +155,21 @@ class ActivityPage extends HTMLElement
             this.#runSearch();
         };
         window.addEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundCapabilityChangedHandler);
+
+        // Paid-deck upload: re-run search only when the entry appears or
+        // disappears (so the row enters/leaves the list). Per-% updates are
+        // handled by ActivityEntryComponent's own subscription, so we avoid a
+        // full re-search (and its loading flicker) on every tick.
+        this.#boundUploadProgressHandler = () =>
+        {
+            const present = PaidDeckUploadActivitySource.getEntry() !== null;
+            if (present !== this.#lastUploadEntryPresent)
+            {
+                this.#lastUploadEntryPresent = present;
+                this.#runSearch();
+            }
+        };
+        window.addEventListener(PaidDeckUploadEvents.PROGRESS, this.#boundUploadProgressHandler);
     }
 
     #wireSearchBar()
@@ -225,7 +249,7 @@ class ActivityPage extends HTMLElement
                 }
                 else
                 {
-                    this.#currentIncludeTypes = [activityEntryTypes.TASK, activityEntryTypes.PURCHASE, activityEntryTypes.DOWNLOAD];
+                    this.#currentIncludeTypes = [activityEntryTypes.TASK, activityEntryTypes.PURCHASE, activityEntryTypes.DOWNLOAD, activityEntryTypes.UPLOAD];
                 }
 
                 this.#currentOffset = 0;
@@ -421,9 +445,38 @@ class ActivityPage extends HTMLElement
         };
     }
 
+    #spliceLocalUploadEntry(responseJson)
+    {
+        if (!PaidDeckUploadActivitySource.matchesIncludeTypes(this.#currentIncludeTypes))
+        {
+            return responseJson;
+        }
+
+        const localEntry = PaidDeckUploadActivitySource.getEntry();
+        if (!localEntry)
+        {
+            return responseJson;
+        }
+
+        if (this.#currentSearchQuery.length > 0
+            && !localEntry.title.toLowerCase().includes(this.#currentSearchQuery.toLowerCase()))
+        {
+            return responseJson;
+        }
+
+        const entries = Array.isArray(responseJson.entries) ? responseJson.entries.slice() : [];
+        entries.unshift(localEntry);
+
+        return {
+            ...responseJson,
+            entries,
+            totalCount: (responseJson.totalCount || 0) + 1
+        };
+    }
+
     #renderResults(rawResponseJson)
     {
-        const responseJson = this.#spliceLocalDownloadEntry(rawResponseJson);
+        const responseJson = this.#spliceLocalUploadEntry(this.#spliceLocalDownloadEntry(rawResponseJson));
 
         const listElement = this.querySelector('[data-role="list"]');
         const resultCountElement = this.querySelector('[data-role="result-count"]');

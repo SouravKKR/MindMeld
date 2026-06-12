@@ -60,7 +60,7 @@
     gap: 12px;
     padding: 14px 16px;
     border-radius: 10px;
-    border: 1px solid #2c2c2c;
+    border: 1px solid var(--tertiary-background-color);
     background-color: var(--secondary-background-color);
     box-sizing: border-box;
     transition: border-color 0.15s ease-in-out;
@@ -205,7 +205,7 @@
 .mock-test-picker-take-test-button
 {
     background: var(--primary-background-gradient);
-    color: #ffffff;
+    color: var(--primary-text-color);
 }
 
 .mock-test-picker-take-test-button:hover
@@ -308,7 +308,7 @@
     gap: 12px;
     padding: 12px 14px;
     border-radius: 8px;
-    border: 1px solid #2c2c2c;
+    border: 1px solid var(--tertiary-background-color);
     background-color: var(--secondary-background-color);
     color: var(--primary-text-color);
     cursor: pointer;
@@ -437,7 +437,7 @@
     gap: 7px;
     padding: 8px 16px;
     background: var(--primary-background-gradient);
-    color: #ffffff;
+    color: var(--primary-text-color);
     border: none;
     border-radius: 7px;
     font-size: 12px;
@@ -498,7 +498,7 @@
     justify-content: center;
     gap: 14px;
     padding: 24px;
-    background: #1a1a1a;
+    background: var(--primary-background-color);
     color: #e0e0e0;
     box-sizing: border-box;
     z-index: 1;
@@ -532,7 +532,7 @@
     width: min(280px, 70%);
     height: 6px;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--outline-color-subtle);
     overflow: hidden;
 }
 
@@ -541,7 +541,7 @@
     width: 0%;
     height: 100%;
     border-radius: 999px;
-    background: var(--primary-background-gradient, linear-gradient(90deg, #0098c4, #b55bd0));
+    background: var(--primary-background-gradient, linear-gradient(90deg, var(--gradient-start-color), var(--gradient-end-color)));
     transition: width 0.2s ease-out;
 }
 
@@ -568,7 +568,7 @@
     gap: 14px;
     padding: 24px;
     text-align: center;
-    background: #1a1a1a;
+    background: var(--primary-background-color);
     color: #cccccc;
     box-sizing: border-box;
 }
@@ -583,7 +583,7 @@
 {
     font-size: 15px;
     font-weight: 700;
-    color: #ffffff;
+    color: var(--primary-text-color);
     word-break: break-word;
 }
 
@@ -601,7 +601,7 @@
     padding: 12px 28px;
     border-radius: 8px;
     background: var(--primary-background-gradient);
-    color: #ffffff;
+    color: var(--primary-text-color);
     font-size: 14px;
     font-weight: 700;
     border: none;

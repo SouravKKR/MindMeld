@@ -2,10 +2,12 @@ import ContextMenu from "../../../CommonComponents/ContextMenu.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import DeckEvents from "../../../Globals/Events/DeckEvents.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
-import PaidDeckRegistry from "../../../Globals/Classes/PaidDeckRegistry.js";
 import { entityTypes } from "../../../Globals/Enumerations/EntityTypes.js";
 import HomePageContextMenu from "./HomePageContextMenu.js";
 import AiFeatureGate from "../../../Globals/Classes/AiFeatureGate.js";
+import LicenseConstants from "../../../Globals/Constants/LicenseConstants.js";
+import PaidDeckLicenseSyncer from "../../../Globals/Classes/Syncing/PaidDeckLicenseSyncer.js";
+import ManagePaidDeckCopiesDialog from "./ManagePaidDeckCopiesDialog.js";
 
 
 class DeckOptionsContextMenu extends ContextMenu
@@ -52,19 +54,8 @@ class DeckOptionsContextMenu extends ContextMenu
         const browseButton         = this.querySelector(".browse-button");
         const exportButton         = this.querySelector(".export-button");
         const generateWithAIButton = this.querySelector(".generate-with-ai-button");
-        const checkForPaidDeckUpdatesButton = this.querySelector(".check-for-paid-deck-updates-button");
 
         this.addEventListener("click", (event) => { event.stopPropagation(); });
-
-        if (checkForPaidDeckUpdatesButton)
-        {
-            checkForPaidDeckUpdatesButton.addEventListener("click", async () =>
-            {
-                DeckOptionsContextMenu.removeAll();
-                HomePageContextMenu.removeAll();
-                await this.#handleCheckForPaidDeckUpdates();
-            });
-        }
 
         if (insightsButton)
         {
@@ -81,6 +72,43 @@ class DeckOptionsContextMenu extends ContextMenu
             expandButton.addEventListener("click", () =>
             {
                 window.dispatchEvent(new CustomEvent(DeckEvents.EXPAND, { detail: { deck: this.#deck } }));
+            });
+        }
+
+        const hideFromHomeButton = this.querySelector(".hide-from-home-button");
+        if (hideFromHomeButton)
+        {
+            hideFromHomeButton.addEventListener("click", async () =>
+            {
+                DeckOptionsContextMenu.removeAll();
+                HomePageContextMenu.removeAll();
+                await this.#setCopyHidden(this.#deck.getAdditionalData?.()?.hidden !== true);
+            });
+        }
+
+        const deleteCopyButton = this.querySelector(".delete-copy-button");
+        if (deleteCopyButton)
+        {
+            deleteCopyButton.addEventListener("click", async () =>
+            {
+                DeckOptionsContextMenu.removeAll();
+                HomePageContextMenu.removeAll();
+                await this.#deleteThisCopy();
+            });
+        }
+
+        const manageCopiesButton = this.querySelector(".manage-copies-button");
+        if (manageCopiesButton)
+        {
+            manageCopiesButton.addEventListener("click", () =>
+            {
+                DeckOptionsContextMenu.removeAll();
+                HomePageContextMenu.removeAll();
+                const paidDeckId = this.#deck?.getAdditionalData?.()?.paidDeckId;
+                if (paidDeckId)
+                {
+                    ManagePaidDeckCopiesDialog.show(paidDeckId);
+                }
             });
         }
 
@@ -295,22 +323,110 @@ class DeckOptionsContextMenu extends ContextMenu
         });
     }
 
+    /**
+     * Toggles the synced "hidden" flag on this paid-deck copy's root and forces
+     * a full home-grid rebuild so the tile appears/disappears immediately.
+     * Hiding keeps the copy fully intact (content + progress) for re-showing.
+     */
+    async #setCopyHidden(bHidden)
+    {
+        const parentDeck = this.#deck.getParent();
+        this.#deck.setAdditionalDataField("hidden", bHidden === true);
+        await this.#deck.save();
+        window.dispatchEvent(new CustomEvent(DeckEvents.EXPAND, { detail: { deck: parentDeck } }));
+    }
+
+    /**
+     * Permanently deletes this copy: asks the server to drop it from the
+     * license registry + tombstone its rows, then tears it down locally. The
+     * purchase/license is kept so the buyer can add a fresh copy later.
+     */
+    async #deleteThisCopy()
+    {
+        const additionalData = this.#deck?.getAdditionalData?.() || {};
+        const paidDeckId = additionalData.paidDeckId;
+        const instanceId = additionalData.paidDeckInstanceId || LicenseConstants.PAID_DECK_FIRST_INSTANCE_ID;
+
+        if (!paidDeckId)
+        {
+            return;
+        }
+
+        const confirmed = await DialogBox.confirm
+        (
+            "Delete this copy?",
+            "This permanently removes this copy and its study progress from all your devices. Your purchase is kept — you can add a fresh copy any time while your access is valid."
+        );
+        if (!confirmed)
+        {
+            return;
+        }
+
+        const parentDeck = this.#deck.getParent();
+
+        let response;
+        try
+        {
+            response = await fetch("/PaidDecks/Copies/Delete",
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ deckId: paidDeckId, instanceId: instanceId })
+            });
+        }
+        catch (networkError)
+        {
+            await DialogBox.alert("Couldn't delete copy", `Network error: ${networkError.message}`);
+            return;
+        }
+
+        if (!response.ok)
+        {
+            const errorJson = await response.json().catch(() => ({}));
+            await DialogBox.alert("Couldn't delete copy", errorJson.error || `HTTP ${response.status}`);
+            return;
+        }
+
+        // Local teardown (cascades + emits tombstones via normal sync), then
+        // refresh the synced copy registry so the manage dialog / store reflect
+        // the removal.
+        await this.#deck.delete();
+        await PaidDeckLicenseSyncer.pullLicenses();
+
+        window.dispatchEvent(new CustomEvent(DeckEvents.EXPAND, { detail: { deck: parentDeck } }));
+    }
+
     connectedCallback()
     {
-        const isPaidDeck = this.#deck && PaidDeckRegistry.isLicensed(this.#deck.getId());
+        // A paid deck is any node carrying the paidDeckId tag (stamped on the
+        // bundle root AND every sub-deck at provisioning). Its content is owned
+        // by the seller and immutable on the device, so every option that would
+        // ADD / EDIT / GENERATE / EXPORT content is hidden — only Insights and
+        // Expand remain (study modes are reached from the tile's Study button).
+        // Hiding Export here is the primary enforcement that paid content can't
+        // be extracted to a shareable file.
+        const additionalData = this.#deck?.getAdditionalData?.() || {};
+        const isPaidDeck = typeof additionalData.paidDeckId === "string" && additionalData.paidDeckId.length > 0;
 
-        // Paid decks are read/edited through the dedicated browse page
-        // backed by PaidDeckContentClient — every option below that
-        // would mutate the local Deck instance (Add, Edit, Generate
-        // With AI, Export) is hidden because there is no local
-        // plaintext deck to mutate. "Clear Mock Test Attempts" now
-        // lives on the deck editor + the Browse > Mock Tests page so
-        // it stays close to where the attempts are visible.
+        // Per-copy controls only make sense on the ROOT of a paid copy (a
+        // top-level tile), not on its sub-decks — those still show just
+        // Insights + Expand like before.
+        const parentDeck = this.#deck?.getParent?.();
+        const isPaidCopyRoot = isPaidDeck && parentDeck && typeof parentDeck.isRoot === "function" && parentDeck.isRoot();
+        const isHiddenCopy = additionalData.hidden === true;
+        const paidCopyControls = isPaidCopyRoot
+            ? `
+                <button class="hide-from-home-button">${isHiddenCopy ? "Show on home" : "Hide from home"}</button>
+                <button class="delete-copy-button">Delete copy</button>
+                <button class="manage-copies-button">Manage copies…</button>
+            `
+            : "";
+
         this.innerHTML = isPaidDeck
             ? `
                 <button class="insights-button">Insights</button>
                 <button class="expand-button">Expand</button>
-                <button class="check-for-paid-deck-updates-button">Check for Updates</button>
+                ${paidCopyControls}
             `
             : `
                 <button class="insights-button">Insights</button>
@@ -324,43 +440,6 @@ class DeckOptionsContextMenu extends ContextMenu
 
         super.connectedCallback();
         this.#handleEvents();
-    }
-
-    async #handleCheckForPaidDeckUpdates()
-    {
-        const deckId = this.#deck.getId();
-        let updatesResponse;
-        try
-        {
-            updatesResponse = await fetch("/PaidDecks/CheckForContentUpdates");
-        }
-        catch (checkError)
-        {
-            await DialogBox.alert("Check failed", `Network error: ${checkError.message}`);
-            return;
-        }
-
-        if (!updatesResponse.ok)
-        {
-            await DialogBox.alert("Check failed", `HTTP ${updatesResponse.status}`);
-            return;
-        }
-
-        const responseJson = await updatesResponse.json();
-        const updatesList = Array.isArray(responseJson.updates) ? responseJson.updates : [];
-        const updateForThisDeck = updatesList.find((entry) => entry.deckId === deckId);
-
-        if (!updateForThisDeck)
-        {
-            await DialogBox.alert("Up to date", "You already have the latest version of this deck.");
-            return;
-        }
-
-        await DialogBox.alert
-        (
-            "Update available",
-            `Version ${updateForThisDeck.currentVersion} is available (you have v${updateForThisDeck.downloadedVersion}). Open the Paid Deck Library and view this deck to choose how to update.`
-        );
     }
 }
 

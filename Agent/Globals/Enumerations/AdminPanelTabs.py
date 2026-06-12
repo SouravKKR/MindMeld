@@ -8,3 +8,6 @@ class AdminPanelTabs(IntEnum):
     ORGANIZATIONS = 4
     ORGANIZATION_MEMBERS = 5
     ALERTS = 6
+    RATE_LIMITS = 7
+    AUDIT_LOG = 8
+    CREDITS = 9

@@ -1,8 +1,11 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
+import ProgressDialog from "../../../CommonComponents/ProgressDialog.js";
 import Deck from "../../../Globals/Model/Deck.js";
 import { deckPurchaseGranularity } from "../../../Globals/Enumerations/DeckPurchaseGranularity.js";
 import PaidDeckBadgeRegistry from "../../../Globals/Classes/PaidDeckBadgeRegistry.js";
 import RegionMetadata from "../../../Globals/Classes/RegionMetadata.js";
+import PaidDeckUploadActivitySource from "../../Activity/Sources/PaidDeckUploadActivitySource.js";
+import PaidDeckThumbnailPicker from "./PaidDeckThumbnailPicker.js";
 
 /**
  * PaidDeckUploadDialog
@@ -34,7 +37,13 @@ class PaidDeckUploadDialog
 
             PaidDeckUploadDialog.#wireBadgePicker(dialog);
             PaidDeckUploadDialog.#populateInstituteDatalist(dialog);
-            PaidDeckUploadDialog.#wireRegionalPriceEditor(dialog);
+            PaidDeckThumbnailPicker.wireField(dialog.querySelector('[data-role="bundle-thumbnail-field"]'));
+            const bundleRegionalBlock = dialog.querySelector('[data-role="regional-prices-block"]');
+            PaidDeckUploadDialog.#wireRegionalPriceEditor
+            (
+                bundleRegionalBlock?.querySelector('[data-role="regional-add"]'),
+                bundleRegionalBlock?.querySelector('[data-role="regional-prices-rows"]')
+            );
             const sourceDeckState = PaidDeckUploadDialog.#wireSourceDeckPicker(dialog, formElement);
 
             let bResolved = false;
@@ -68,7 +77,15 @@ class PaidDeckUploadDialog
                 }
 
                 const bundleId = PaidDeckUploadDialog.#generateUuid();
-                const checkedChildRows = PaidDeckUploadDialog.#collectCheckedChildRows(sourceDeckState);
+
+                // Sub-decks are only sold separately under INDIVIDUAL
+                // granularity. Under BUNDLE_ONLY the tree is hidden and any
+                // boxes ticked beforehand are ignored — the deck ships as one
+                // bundle, no per-sub-deck PaidDecks are created.
+                const bSellIndividually = Number(formElement.elements["granularity"]?.value) === deckPurchaseGranularity.INDIVIDUAL;
+                const checkedChildRows = bSellIndividually
+                    ? PaidDeckUploadDialog.#collectCheckedChildRows(sourceDeckState)
+                    : [];
 
                 // Validate every checked child row before any network
                 // call so we either upload the full set or none of it.
@@ -127,15 +144,25 @@ class PaidDeckUploadDialog
                 }
 
                 submitButton.disabled = true;
-                submitButton.textContent = childPayloads.length > 0
-                    ? `Uploading 1/${childPayloads.length + 1}…`
-                    : "Uploading…";
+                submitButton.textContent = "Uploading…";
+
+                const totalUploadCount = childPayloads.length + 1;
+                let uploadedCount = 0;
+
+                // Determinate progress modal (on top of this form) + a live
+                // entry in "View Activity" via the client-side upload source.
+                const progressDialog = ProgressDialog.show("Uploading paid deck");
+                PaidDeckUploadActivitySource.begin(bundlePayload.metadata.title || "Paid deck", totalUploadCount);
+
+                const reportProgress = () =>
+                {
+                    progressDialog.setProgress(uploadedCount / totalUploadCount, `Uploaded ${uploadedCount}/${totalUploadCount}…`);
+                    PaidDeckUploadActivitySource.update(uploadedCount);
+                };
+                reportProgress();
 
                 try
                 {
-                    let uploadedCount = 0;
-                    const totalUploadCount = childPayloads.length + 1;
-
                     // Children first so the bundle's bundleChildIds
                     // references rows already present in `paidDecks`.
                     // Server doesn't enforce FK constraints today, but
@@ -143,8 +170,6 @@ class PaidDeckUploadDialog
                     // when the bundle is fetched immediately.
                     for (const childPayload of childPayloads)
                     {
-                        uploadedCount++;
-                        submitButton.textContent = `Uploading ${uploadedCount}/${totalUploadCount}…`;
                         const childResponse = await fetch(PaidDeckUploadDialog.#UPLOAD_ENDPOINT,
                         {
                             method: "POST",
@@ -156,10 +181,10 @@ class PaidDeckUploadDialog
                             const childErrorJson = await childResponse.json().catch(() => ({}));
                             throw new Error(childErrorJson.error || `Sub-deck "${childPayload.metadata.title}" upload failed (HTTP ${childResponse.status}).`);
                         }
+                        uploadedCount++;
+                        reportProgress();
                     }
 
-                    uploadedCount++;
-                    submitButton.textContent = `Uploading ${uploadedCount}/${totalUploadCount}…`;
                     const bundleResponse = await fetch(PaidDeckUploadDialog.#UPLOAD_ENDPOINT,
                     {
                         method: "POST",
@@ -172,16 +197,21 @@ class PaidDeckUploadDialog
                         const bundleErrorJson = await bundleResponse.json().catch(() => ({}));
                         throw new Error(bundleErrorJson.error || `Bundle upload failed (HTTP ${bundleResponse.status}).`);
                     }
+                    uploadedCount++;
+                    reportProgress();
 
+                    PaidDeckUploadActivitySource.finish(true);
                     finalize(true);
                 }
                 catch (uploadError)
                 {
+                    PaidDeckUploadActivitySource.finish(false);
                     errorElement.textContent = uploadError.message;
                     errorElement.hidden = false;
                 }
                 finally
                 {
+                    progressDialog.close();
                     submitButton.disabled = false;
                     submitButton.textContent = "Upload";
                 }
@@ -307,7 +337,7 @@ class PaidDeckUploadDialog
         const state =
         {
             selectedDeck: null,
-            // Map<subDeckId, { subDeck, checkbox, titleInput, descriptionInput, thumbnailInput, priceInput }>
+            // Map<subDeckId, { subDeck, checkbox, titleInput, descriptionInput, thumbnailField, priceInput, regionalRowsContainer }>
             childRowsBySubDeckId: new Map()
         };
 
@@ -405,21 +435,55 @@ class PaidDeckUploadDialog
     }
 
     /**
-     * Wires the optional "Regional prices" editor: an "Add region" button
-     * appends a row (region picker + price + currency + remove). Picking a
-     * region pre-fills the currency with that region's display currency.
-     * These rows are read on submit by #collectRegionalPrices and persisted
-     * as per-region overrides; the bundle price remains the default.
+     * Returns the markup for an optional "Regional prices" editor — a heading,
+     * an (initially empty) rows container, and an "Add region" button. The
+     * SAME block backs both the bundle (in #getFormMarkup) and every sub-deck
+     * node (in #buildIndividualTreeNode), so the main deck and its sub-decks
+     * are priced identically. The data-role attributes repeat per editor; each
+     * editor is wired and read against its OWN container element so they never
+     * cross-contaminate.
      */
-    static #wireRegionalPriceEditor(dialog)
+    /**
+     * <option> list of the supported currencies (region display currencies),
+     * with `selectedCurrency` pre-selected. Backs every currency dropdown so
+     * an admin can only pick a currency the system can actually convert.
+     */
+    static #renderCurrencyOptions(selectedCurrency)
     {
-        const addButton = dialog.querySelector('[data-role="regional-add"]');
-        const rowsContainer = dialog.querySelector('[data-role="regional-prices-rows"]');
+        const selected = (selectedCurrency || "").toUpperCase();
+        return RegionMetadata.getSupportedCurrencies()
+            .map((code) => `<option value="${code}"${code === selected ? " selected" : ""}>${code}</option>`)
+            .join("");
+    }
+
+    static #renderRegionalPriceEditor(hintText)
+    {
+        return `
+            <div class="paid-deck-upload-tree-heading">
+                <span>Regional prices (optional)</span>
+                <small>${PaidDeckUploadDialog.#escape(hintText)}</small>
+            </div>
+            <div data-role="regional-prices-rows" class="paid-deck-regional-prices-rows"></div>
+            <button type="button" class="paid-deck-regional-add" data-role="regional-add">+ Add region</button>
+        `;
+    }
+
+    /**
+     * Wires one regional-price editor given its "Add region" button and rows
+     * container. The button appends a row (region picker + price + currency +
+     * remove); picking a region pre-fills the currency with that region's
+     * display currency. Rows are read on submit by
+     * #collectRegionalPricesFromContainer and persisted as per-region
+     * overrides; the deck's base price remains the default.
+     */
+    static #wireRegionalPriceEditor(addButton, rowsContainer)
+    {
         if (!addButton || !rowsContainer) return;
 
         const regionOptionsHtml = RegionMetadata.getAllRegions()
             .map((region) => `<option value="${region.code}">${PaidDeckUploadDialog.#escape(region.label)} (${PaidDeckUploadDialog.#escape(region.currency)})</option>`)
             .join("");
+        const currencyOptionsHtml = PaidDeckUploadDialog.#renderCurrencyOptions("");
 
         addButton.addEventListener("click", () =>
         {
@@ -428,7 +492,7 @@ class PaidDeckUploadDialog
             rowElement.innerHTML = `
                 <select data-role="regional-region" class="paid-deck-regional-region">${regionOptionsHtml}</select>
                 <input type="number" data-role="regional-price" class="paid-deck-regional-price" min="0" value="0" placeholder="Price (minor units)">
-                <input type="text" data-role="regional-currency" class="paid-deck-regional-currency" maxlength="8" placeholder="CUR">
+                <select data-role="regional-currency" class="paid-deck-regional-currency">${currencyOptionsHtml}</select>
                 <button type="button" data-role="regional-remove" class="paid-deck-regional-remove" aria-label="Remove region">×</button>
             `;
             rowsContainer.appendChild(rowElement);
@@ -448,14 +512,14 @@ class PaidDeckUploadDialog
     }
 
     /**
-     * Reads the regional-price rows into a deduped array of
+     * Reads one editor's regional-price rows into a deduped array of
      * { region, priceMinor, currency }. The last row wins when the same
      * region is listed twice; rows with a non-finite/negative price are
-     * dropped.
+     * dropped. Scoped to the passed container so a node's rows never pick up
+     * a descendant node's rows.
      */
-    static #collectRegionalPrices(dialog)
+    static #collectRegionalPricesFromContainer(rowsContainer)
     {
-        const rowsContainer = dialog.querySelector('[data-role="regional-prices-rows"]');
         if (!rowsContainer) return [];
 
         const byRegion = new Map();
@@ -473,6 +537,15 @@ class PaidDeckUploadDialog
             byRegion.set(region, { region, priceMinor: Math.round(priceMinor), currency });
         }
         return Array.from(byRegion.values());
+    }
+
+    /** Bundle-level regional prices — scoped to the bundle's own editor block. */
+    static #collectRegionalPrices(dialog)
+    {
+        return PaidDeckUploadDialog.#collectRegionalPricesFromContainer
+        (
+            dialog.querySelector('[data-role="regional-prices-block"] [data-role="regional-prices-rows"]')
+        );
     }
 
     /**
@@ -514,10 +587,14 @@ class PaidDeckUploadDialog
     }
 
     /**
-     * Builds one tree node (row + mini-form + nested children container) for
-     * `subDeck` at the given depth, registers its row state, and recurses
-     * into its sub-decks. Child nodes are rendered eagerly but their
-     * container starts collapsed; the caret toggles it.
+     * Builds one tree node (row + mini-form + children container) for
+     * `subDeck` at the given depth and registers its row state. Children are
+     * NOT built up front — they are built lazily, exactly one level at a
+     * time, the first time this node is expanded. A node expands when its
+     * checkbox is ticked (so checking a deck reveals the sub-decks directly
+     * beneath it) or via its caret (to drill in without selling the parent).
+     * Picking the source deck therefore shows only the first level; deeper
+     * levels appear on demand as the admin checks/expands into a branch.
      */
     static #buildIndividualTreeNode(subDeck, state, depth)
     {
@@ -551,10 +628,13 @@ class PaidDeckUploadDialog
                     <span>Description</span>
                     <textarea data-role="row-description" rows="2" maxlength="4096"></textarea>
                 </label>
-                <label class="paid-deck-upload-field paid-deck-upload-field-full">
-                    <span>Thumbnail URL</span>
-                    <input type="url" data-role="row-thumbnail" maxlength="2048">
-                </label>
+                <div class="paid-deck-upload-field paid-deck-upload-field-full">
+                    <span>Thumbnail</span>
+                    ${PaidDeckThumbnailPicker.renderField("row-thumbnail-field")}
+                </div>
+                <div class="paid-deck-upload-field paid-deck-upload-field-full">
+                    ${PaidDeckUploadDialog.#renderRegionalPriceEditor("Add a region to set this sub-deck's price there; regions you don't list use this sub-deck's price auto-converted.")}
+                </div>
             </div>
             <div class="paid-deck-individual-tree-children" data-role="row-children" hidden></div>
         `;
@@ -566,19 +646,26 @@ class PaidDeckUploadDialog
         const miniFormElement = nodeElement.querySelector('[data-role="row-mini-form"]');
         const titleInputElement = nodeElement.querySelector('[data-role="row-title"]');
         const descriptionInputElement = nodeElement.querySelector('[data-role="row-description"]');
-        const thumbnailInputElement = nodeElement.querySelector('[data-role="row-thumbnail"]');
+        const thumbnailFieldElement = nodeElement.querySelector('[data-role="row-thumbnail-field"]');
         const priceInputElement = nodeElement.querySelector('[data-role="row-price"]');
         const caretButton = nodeElement.querySelector('[data-role="row-caret"]');
         const childrenContainer = nodeElement.querySelector('[data-role="row-children"]');
 
+        // Per-sub-deck regional-price editor (scoped to this node's mini-form,
+        // which never contains a descendant node's editor).
+        const regionalRowsContainer = miniFormElement.querySelector('[data-role="regional-prices-rows"]');
+        PaidDeckUploadDialog.#wireRegionalPriceEditor
+        (
+            miniFormElement.querySelector('[data-role="regional-add"]'),
+            regionalRowsContainer
+        );
+
+        // Per-sub-deck thumbnail picker (scoped to this node's mini-form).
+        PaidDeckThumbnailPicker.wireField(thumbnailFieldElement);
+
         titleInputElement.value = subDeck.getName();
         const subDeckDescription = typeof subDeck.getDescription === "function" ? subDeck.getDescription() : "";
         if (typeof subDeckDescription === "string") descriptionInputElement.value = subDeckDescription;
-
-        checkboxInput.addEventListener("change", () =>
-        {
-            miniFormElement.hidden = !checkboxInput.checked;
-        });
 
         state.childRowsBySubDeckId.set(subDeckId,
         {
@@ -586,23 +673,49 @@ class PaidDeckUploadDialog
             checkbox: checkboxInput,
             titleInput: titleInputElement,
             descriptionInput: descriptionInputElement,
-            thumbnailInput: thumbnailInputElement,
-            priceInput: priceInputElement
+            thumbnailField: thumbnailFieldElement,
+            priceInput: priceInputElement,
+            regionalRowsContainer: regionalRowsContainer
+        });
+
+        // Build the DIRECT children (one level only) the first time this node
+        // is expanded. Each child is itself lazy, so deeper levels keep
+        // building on demand rather than all at once.
+        let bChildrenBuilt = false;
+        const buildChildrenIfNeeded = () =>
+        {
+            if (bChildrenBuilt || !hasChildren) return;
+            for (const childDeck of childDecks)
+            {
+                childrenContainer.appendChild(PaidDeckUploadDialog.#buildIndividualTreeNode(childDeck, state, depth + 1));
+            }
+            bChildrenBuilt = true;
+        };
+
+        const setExpanded = (bExpanded) =>
+        {
+            if (!hasChildren) return;
+            if (bExpanded) buildChildrenIfNeeded();
+            childrenContainer.hidden = !bExpanded;
+            caretButton.classList.toggle("paid-deck-individual-tree-caret-expanded", bExpanded);
+        };
+
+        checkboxInput.addEventListener("change", () =>
+        {
+            miniFormElement.hidden = !checkboxInput.checked;
+            // Ticking a deck reveals one level of its sub-decks so the admin
+            // can drill into exactly the branch they want to sell; unticking
+            // collapses them again. (The caret can still toggle visibility
+            // independently of the checkbox.)
+            setExpanded(checkboxInput.checked);
         });
 
         if (hasChildren)
         {
             caretButton.addEventListener("click", () =>
             {
-                const willExpand = childrenContainer.hidden;
-                childrenContainer.hidden = !willExpand;
-                caretButton.classList.toggle("paid-deck-individual-tree-caret-expanded", willExpand);
+                setExpanded(childrenContainer.hidden);
             });
-
-            for (const childDeck of childDecks)
-            {
-                childrenContainer.appendChild(PaidDeckUploadDialog.#buildIndividualTreeNode(childDeck, state, depth + 1));
-            }
         }
 
         return nodeElement;
@@ -666,10 +779,10 @@ class PaidDeckUploadDialog
                             <textarea name="description" rows="3" maxlength="4096"></textarea>
                         </label>
 
-                        <label class="paid-deck-upload-field paid-deck-upload-field-full">
-                            <span>Thumbnail URL</span>
-                            <input type="url" name="thumbnailUrl" maxlength="2048">
-                        </label>
+                        <div class="paid-deck-upload-field paid-deck-upload-field-full">
+                            <span>Thumbnail</span>
+                            ${PaidDeckThumbnailPicker.renderField("bundle-thumbnail-field")}
+                        </div>
 
                         <label class="paid-deck-upload-field paid-deck-upload-field-full">
                             <span>Tags (comma-separated)</span>
@@ -688,7 +801,7 @@ class PaidDeckUploadDialog
                     <div class="paid-deck-upload-section-body paid-deck-upload-grid">
                         <label class="paid-deck-upload-field">
                             <span>Currency</span>
-                            <input type="text" name="currency" value="INR" maxlength="8">
+                            <select name="currency">${PaidDeckUploadDialog.#renderCurrencyOptions("INR")}</select>
                         </label>
 
                         <label class="paid-deck-upload-field">
@@ -705,12 +818,7 @@ class PaidDeckUploadDialog
                         </label>
 
                         <div class="paid-deck-upload-field paid-deck-upload-field-full" data-role="regional-prices-block">
-                            <div class="paid-deck-upload-tree-heading">
-                                <span>Regional prices (optional)</span>
-                                <small>The bundle price above is the default. Add a region only to set a specific price there — buyers in regions you don't list see the default auto-converted into their local currency.</small>
-                            </div>
-                            <div data-role="regional-prices-rows" class="paid-deck-regional-prices-rows"></div>
-                            <button type="button" class="paid-deck-regional-add" data-role="regional-add">+ Add region</button>
+                            ${PaidDeckUploadDialog.#renderRegionalPriceEditor("The bundle price above is the default. Add a region only to set a specific price there — buyers in regions you don't list see the default auto-converted into their local currency.")}
                         </div>
 
                         <div class="paid-deck-upload-field paid-deck-upload-field-full" data-role="individual-tree-container" hidden>
@@ -756,7 +864,7 @@ class PaidDeckUploadDialog
                     <h3 class="paid-deck-upload-section-title">Publish</h3>
                     <div class="paid-deck-upload-section-body">
                         <label class="paid-deck-upload-field paid-deck-upload-field-checkbox">
-                            <input type="checkbox" name="isPublished">
+                            <input type="checkbox" name="isPublished" checked>
                             <span>Publish immediately (otherwise the deck is uploaded as a draft and stays hidden from the storefront).</span>
                         </label>
                     </div>
@@ -840,6 +948,15 @@ class PaidDeckUploadDialog
 
         const deckPayload = PaidDeckUploadDialog.serialiseDeckForUpload(selectedSourceDeck);
 
+        // Thumbnail: a built-in URL goes on thumbnailUrl; an uploaded image
+        // (a self-contained data URL) rides in additionalData.thumbnailImage,
+        // which the storefront resolves ahead of thumbnailUrl.
+        const bundleThumbnail = PaidDeckThumbnailPicker.readSelection(dialog.querySelector('[data-role="bundle-thumbnail-field"]'));
+        if (bundleThumbnail.thumbnailImage)
+        {
+            additionalData.thumbnailImage = bundleThumbnail.thumbnailImage;
+        }
+
         const metadata =
         {
             id: bundleId,
@@ -847,7 +964,7 @@ class PaidDeckUploadDialog
             category: getValue("category").trim(),
             description: getValue("description").trim(),
             sellerId: getValue("sellerId").trim(),
-            thumbnailUrl: getValue("thumbnailUrl").trim(),
+            thumbnailUrl: bundleThumbnail.thumbnailUrl,
             basePriceMinor: Number(getValue("basePriceMinor") || 0),
             currency: getValue("currency").trim().toUpperCase() || "INR",
             granularity: Number(getValue("granularity") || 0),
@@ -900,6 +1017,12 @@ class PaidDeckUploadDialog
             const childAdditionalData = {};
             if (sharedInstitute) childAdditionalData.institute = sharedInstitute;
 
+            const childThumbnail = PaidDeckThumbnailPicker.readSelection(childRow.thumbnailField);
+            if (childThumbnail.thumbnailImage)
+            {
+                childAdditionalData.thumbnailImage = childThumbnail.thumbnailImage;
+            }
+
             const childMetadata =
             {
                 id: childId,
@@ -907,7 +1030,7 @@ class PaidDeckUploadDialog
                 category: "",
                 description: childRow.descriptionInput.value.trim(),
                 sellerId: sharedSellerId,
-                thumbnailUrl: childRow.thumbnailInput.value.trim(),
+                thumbnailUrl: childThumbnail.thumbnailUrl,
                 basePriceMinor: Number(childRow.priceInput.value || 0),
                 currency: sharedCurrency,
                 granularity: deckPurchaseGranularity.INDIVIDUAL,
@@ -917,6 +1040,7 @@ class PaidDeckUploadDialog
                 parentBundleIds: [bundleId],
                 isPublished: sharedIsPublished,
                 featureBadges: sharedFeatureBadges,
+                regionalPrices: PaidDeckUploadDialog.#collectRegionalPricesFromContainer(childRow.regionalRowsContainer),
                 additionalData: childAdditionalData
             };
 

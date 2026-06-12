@@ -93,7 +93,7 @@ class DialogBox extends HTMLElement
         });
     }
 
-    static async prompt(title, message)
+    static async prompt(title, message, inputType = "text")
     {
         const dialog = document.createElement("dialog-box");
         dialog.innerHTML =
@@ -101,7 +101,7 @@ class DialogBox extends HTMLElement
             <div class="title-section">${title}</div>
             <div class="message-section">
                 ${message}<br><br>
-                <input type="text" placeholder="Enter Value..." class="input-field">
+                <input type="${inputType}" placeholder="Enter Value..." class="input-field">
             </div>
             <div class="button-section">
                 <button class="ok-button">Ok</button>

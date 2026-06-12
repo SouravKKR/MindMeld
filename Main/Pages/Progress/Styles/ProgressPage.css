@@ -86,7 +86,7 @@ progress-page
     align-items: center;
     justify-content: center;
     gap: 10px;
-    border: 1px dashed #2c2c2c;
+    border: 1px dashed var(--tertiary-background-color);
     border-radius: 12px;
     padding: 20px;
     background: #0d0d0d;
@@ -138,7 +138,7 @@ progress-page
 {
     background: #252525;
     border-color: #555555;
-    color: #ffffff;
+    color: var(--primary-text-color);
 }
 
 .progress-page-historical

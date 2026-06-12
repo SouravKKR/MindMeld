@@ -1,4 +1,5 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
+import HtmlSanitizer from "../../../Globals/Classes/HtmlSanitizer.js";
 import Deck from "../../../Globals/Model/Deck.js";
 import Card from "../../../Globals/Model/Card.js";
 import StudyMaterial from "../../../Globals/Model/StudyMaterial.js";
@@ -267,7 +268,10 @@ class AskAiPopupLink
         }
 
         const titleText = AskAiPopupLink.#escapeHtml(popupRecord.title || "Saved AI response");
-        const bodyContent = popupRecord.content || "";
+        // The saved body is LLM-authored and rides the deck's additionalData,
+        // so a synced / paid deck could carry attacker-crafted markup here —
+        // sanitise before it reaches the modal's innerHTML.
+        const bodyContent = HtmlSanitizer.sanitize(popupRecord.content || "");
 
         DialogBox.modal(`
             <div class="ask-ai-dialog">

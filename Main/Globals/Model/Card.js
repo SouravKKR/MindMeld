@@ -4,6 +4,7 @@ import Deck from "./Deck.js";
 import Lifecycle from "./Lifecycle.js";
 import Progress from "./Progress.js";
 import SyncEvents from "../Events/SyncEvents.js";
+import PaidDeckFieldCipher from "../Classes/Crypto/PaidDeckFieldCipher.js";
 import { entityTypes } from "../Enumerations/EntityTypes.js";
 
 class Card
@@ -17,6 +18,15 @@ class Card
     #progress = null;
     #lifecycle = null;
     #additionalData = {};
+
+    // Transient in-memory plaintext for a paid deck's encrypted content,
+    // populated by decryptForStudy() at study-open and NEVER serialised. For a
+    // normal (plaintext) deck #question / #answer are plain strings and these
+    // stay null. For a paid deck they hold the AES-GCM envelope objects until
+    // the deck is unlocked + decrypted, after which these caches feed the
+    // synchronous accessors.
+    #decryptedQuestion = null;
+    #decryptedAnswer = null;
      
     static #defaultBaseDifficulty = 1500;
 
@@ -79,12 +89,84 @@ class Card
 
     getQuestion()
     {
-        return this.#question;
+        return Card.#readContentField(this.#question, this.#decryptedQuestion);
     }
 
     getAnswer()
     {
-        return this.#answer;
+        return Card.#readContentField(this.#answer, this.#decryptedAnswer);
+    }
+
+    /**
+     * Resolves a content field to its display string. A plaintext field (normal
+     * deck) is returned as-is. An encrypted field (paid deck) returns the
+     * decrypted cache when the deck has been unlocked + decryptForStudy() has
+     * run, otherwise a locked placeholder — so paid content is never exposed in
+     * plaintext until the buyer unlocks the deck this session.
+     */
+    static #readContentField(storedValue, decryptedCache)
+    {
+        if (PaidDeckFieldCipher.isEncryptedField(storedValue))
+        {
+            return decryptedCache !== null ? decryptedCache : PaidDeckFieldCipher.LOCKED_PLACEHOLDER;
+        }
+        return storedValue;
+    }
+
+    /**
+     * Pre-decrypts this card's encrypted content fields into the transient
+     * in-memory caches the synchronous accessors read from. Called once when a
+     * study session (or Ask-AI / mock-test answer key / curated view) opens a
+     * paid deck, mirroring how the rest of the study UI consumes getQuestion()
+     * / getAnswer() synchronously. A no-op for a normal (plaintext) deck or a
+     * locked deck (decrypt throws -> cache stays null -> accessor shows the
+     * locked placeholder).
+     */
+    async decryptForStudy()
+    {
+        const paidDeckId = this.getDeck()?.getAdditionalData?.()?.paidDeckId;
+        if (!paidDeckId)
+        {
+            return;
+        }
+
+        // Idempotent: only decrypt fields not already cached this session, so a
+        // re-run (e.g. another Study click) is a no-op instead of re-running
+        // WebCrypto over the whole deck.
+        if (this.#decryptedQuestion === null && PaidDeckFieldCipher.isEncryptedField(this.#question))
+        {
+            try
+            {
+                this.#decryptedQuestion = await PaidDeckFieldCipher.decryptField(paidDeckId, this.#question);
+            }
+            catch (decryptError)
+            {
+                this.#decryptedQuestion = null;
+            }
+        }
+
+        if (this.#decryptedAnswer === null && PaidDeckFieldCipher.isEncryptedField(this.#answer))
+        {
+            try
+            {
+                this.#decryptedAnswer = await PaidDeckFieldCipher.decryptField(paidDeckId, this.#answer);
+            }
+            catch (decryptError)
+            {
+                this.#decryptedAnswer = null;
+            }
+        }
+    }
+
+    /**
+     * True when this card has encrypted content not yet decrypted this session
+     * — used to count real work before showing a decrypt progress bar (and to
+     * skip the bar entirely when everything is already cached).
+     */
+    needsDecryption()
+    {
+        return (this.#decryptedQuestion === null && PaidDeckFieldCipher.isEncryptedField(this.#question))
+            || (this.#decryptedAnswer === null && PaidDeckFieldCipher.isEncryptedField(this.#answer));
     }
 
     getTags()
@@ -153,12 +235,23 @@ class Card
 
     setQuestion(question)
     {
+        // Paid-deck content is server-authored and read-only on the device —
+        // refuse to overwrite it so no edit path can ever write plaintext into
+        // a paid card at rest (the encrypted envelope must stay intact).
+        if (this.getDeck()?.getAdditionalData?.()?.paidDeckId)
+        {
+            return;
+        }
         this.#question = question;
         this.#lifecycle?.touch();
     }
 
     setAnswer(answer)
     {
+        if (this.getDeck()?.getAdditionalData?.()?.paidDeckId)
+        {
+            return;
+        }
         this.#answer = answer;
         this.#lifecycle?.touch();
     }
@@ -245,16 +338,20 @@ class Card
 
     async save()
     {
+        // Paid decks now persist + sync exactly like normal decks: the content
+        // fields are already ciphertext envelopes (#question / #answer), so
+        // toJson() emits ciphertext and progress rides the normal pipeline. The
+        // server preserves its plaintext content and only takes the progress.
         await this.getDeck().save(false);
 
-        window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_CHANGED, 
-        { 
-            detail: 
-            { 
-                entityId: this.getId(), 
-                entityType: entityTypes.CARD, 
-                data: this.toJson() 
-            } 
+        window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_CHANGED,
+        {
+            detail:
+            {
+                entityId: this.getId(),
+                entityType: entityTypes.CARD,
+                data: this.toJson()
+            }
         }));
     }
 

@@ -69,7 +69,7 @@ generation-progress-component
 {
     height: 100%;
     border-radius: 6px;
-    background: linear-gradient(90deg, #0098C4, #B55BD0);
+    background: linear-gradient(90deg, var(--gradient-start-color), var(--gradient-end-color));
     transition: width 0.5s ease-out;
 }
 

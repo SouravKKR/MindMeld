@@ -174,6 +174,14 @@ class GenerateCuratedStudyMaterial(Workflow):
         source_card_ids_payload = payload.get("sourceCardIds", [])
         self.__source_card_ids  = [value for value in source_card_ids_payload if isinstance(value, str) and value] if isinstance(source_card_ids_payload, list) else []
 
+        # Paid-source tag: paid decks are now normal decks living in the normal
+        # sync collections, stored plaintext server-side. The ONLY paid-specific
+        # behaviour that remains is stamping additionalData.paidDeckId onto every
+        # generated StudyMaterial + curated card so the /Sync pull encrypts them
+        # for the buyer. Accept the legacy `attachDeckId` value as a fallback so
+        # any task queued before the rename still applies.
+        self.__paid_deck_id = payload.get("paidDeckId", "") or payload.get("attachDeckId", "") or ""
+
     async def run(self, args: dict = {}):
         if not self.__deck_id or not self.__user_id or not self.__topic_name:
             print("[GenerateCuratedStudyMaterial] Missing deckId, userId, or topicName — exiting.")
@@ -189,8 +197,9 @@ class GenerateCuratedStudyMaterial(Workflow):
         cards_collection           = database[DatabaseConstants.CARDS_COLLECTION]
         text_embeddings_collection = database[DatabaseConstants.TEXT_EMBEDDINGS_COLLECTION]
 
-        # Sync-collection docs are wrapped {userId, data: {...},
-        # serverUpdatedAt} — see Dock SyncQueryEngine.bulkUpsert.
+        # Paid and non-paid decks share the same normal read/write path. The
+        # deck lives in the normal sync collection wrapped as {userId, data:
+        # {...}, serverUpdatedAt} — see Dock SyncQueryEngine.bulkUpsert.
         target_deck = await asyncio.to_thread(deck_collection.find_one, {"data.id": self.__deck_id, "userId": self.__user_id}, {"_id": 0})
         if target_deck is None:
             print(f"[GenerateCuratedStudyMaterial] Deck {self.__deck_id} not found for user {self.__user_id} — exiting.")
@@ -212,55 +221,53 @@ class GenerateCuratedStudyMaterial(Workflow):
         now_iso           = datetime.now(timezone.utc).isoformat()
         now_datetime      = datetime.now(timezone.utc)
 
-        # Sync-collection inserts must be wrapped {userId, data: {...},
-        # serverUpdatedAt} — see Dock SyncQueryEngine.bulkUpsert.
-        study_material_document = {
-            "userId":          self.__user_id,
-            "serverUpdatedAt": now_datetime,
-            "data":
+        # The inner StudyMaterial JSON. SESSION_OUTCOME is intentionally left
+        # unset at creation — its absence implies the batch is IN_PROGRESS;
+        # the controller / AnalyzeDeckPerformance write a terminal outcome
+        # when archiving / superseding.
+        material_plaintext = {
+            "id":               study_material_id,
+            "deckId":           self.__deck_id,
+            "content":          html_content,
+            "syllabusPosition": 0,
+            "detailLevel":      GenerateCuratedStudyMaterial.STUDY_MATERIAL_STANDARD_DETAIL_LEVEL,
+            "lifecycle":
             {
-                "id":               study_material_id,
-                "deckId":           self.__deck_id,
-                "content":          html_content,
-                "syllabusPosition": 0,
-                "detailLevel":      GenerateCuratedStudyMaterial.STUDY_MATERIAL_STANDARD_DETAIL_LEVEL,
-                "lifecycle":
-                {
-                    "creationDate":      now_datetime,
-                    "lastModified":      now_datetime,
-                    "views":             0,
-                    "attempts":          0,
-                    "timeSpentInSeconds": 0,
-                },
-                # SESSION_OUTCOME is intentionally left unset at creation
-                # time — its absence implies the batch is IN_PROGRESS.
-                # The frontend's controller writes one of the terminal
-                # outcomes (COMPLETED_ALL_EASY / ENDED_WITH_HARDS /
-                # REPLACED_BY_REGEN) when archiving the batch, and
-                # AnalyzeDeckPerformance writes AUTO_REPLACED on auto-
-                # supersede.
-                "additionalData":
-                {
-                    CuratedStudyMaterialFields.B_CURATED:                 True,
-                    CuratedStudyMaterialFields.TOPIC_NAME:                self.__topic_name,
-                    CuratedStudyMaterialFields.TOPIC_STRENGTH:            self.__topic_strength.name,
-                    CuratedStudyMaterialFields.GENERATED_FOR_ANALYSIS_AT: self.__generated_for_analysis_at,
-                    CuratedStudyMaterialFields.BATCH_REVIEW_STATE:        CuratedBatchReviewStates.LIVE.name,
-                    CuratedStudyMaterialFields.TOPIC_INDEX:               self.__topic_index,
-                    CuratedStudyMaterialFields.READ_STATE:                "UNREAD",
-                    CuratedStudyMaterialFields.SOURCE_CARD_IDS:           self.__source_card_ids,
-                },
+                "creationDate":      now_datetime,
+                "lastModified":      now_datetime,
+                "views":             0,
+                "attempts":          0,
+                "timeSpentInSeconds": 0,
+            },
+            "additionalData":
+            {
+                CuratedStudyMaterialFields.B_CURATED:                 True,
+                CuratedStudyMaterialFields.TOPIC_NAME:                self.__topic_name,
+                CuratedStudyMaterialFields.TOPIC_STRENGTH:            self.__topic_strength.name,
+                CuratedStudyMaterialFields.GENERATED_FOR_ANALYSIS_AT: self.__generated_for_analysis_at,
+                CuratedStudyMaterialFields.BATCH_REVIEW_STATE:        CuratedBatchReviewStates.LIVE.name,
+                CuratedStudyMaterialFields.TOPIC_INDEX:               self.__topic_index,
+                CuratedStudyMaterialFields.READ_STATE:                "UNREAD",
+                CuratedStudyMaterialFields.SOURCE_CARD_IDS:           self.__source_card_ids,
             },
         }
 
-        await asyncio.to_thread(study_materials_collection.insert_one, study_material_document)
+        # Paid decks are normal decks: when a paidDeckId is present, stamp it onto
+        # additionalData so the /Sync pull encrypts this material for the buyer.
+        if self.__paid_deck_id:
+            material_plaintext["additionalData"]["paidDeckId"] = self.__paid_deck_id
+
+        # Sync-collection inserts must be wrapped {userId, data: {...},
+        # serverUpdatedAt} — see Dock SyncQueryEngine.bulkUpsert.
+        await asyncio.to_thread(
+            study_materials_collection.insert_one,
+            {"userId": self.__user_id, "serverUpdatedAt": now_datetime, "data": material_plaintext},
+        )
         print(f"[GenerateCuratedStudyMaterial] Persisted curated study material {study_material_id} for topic '{self.__topic_name}'.")
 
-        # Eager flashcard generation. The flashcards reference the
-        # material's id (`studyMaterialId`), so the material must be
-        # persisted first. Failures here log but do not roll back the
-        # material — a topic with no flashcards is still useful to read
-        # and the user can manually Regenerate later.
+        # Eager flashcard generation. The flashcards reference the material's
+        # id (`studyMaterialId`), so the material must be persisted first.
+        # Failures here log but do not roll back the material.
         await self.__generate_flashcards(cards_collection, study_material_id, html_content, merged_context)
 
         current_task = await TaskManager.get_current_task()
@@ -577,6 +584,11 @@ class GenerateCuratedStudyMaterial(Workflow):
         server caps and trims defensively. Failures here are logged
         but do not roll back the parent material — a topic with no
         flashcards is still useful as a read-only review.
+
+        Paid and non-paid cards take the same path: curated cards are
+        inserted into the normal sync cards collection. The paidDeckId
+        tag (when present) is stamped in __build_empty_curated_card_document
+        so the /Sync pull encrypts them for the buyer.
         """
         parsed_cards = await self.__call_gemini_for_flashcards(material_html, merged_context)
         if not parsed_cards:
@@ -692,6 +704,19 @@ class GenerateCuratedStudyMaterial(Workflow):
         """
         card_id = str(uuid.uuid4())
 
+        # Paid decks are normal decks: when a paidDeckId is present, stamp it onto
+        # the card's additionalData so the /Sync pull encrypts it for the buyer.
+        additional_data = {
+            CuratedFlashcardFields.B_CURATED:                  True,
+            CuratedFlashcardFields.STUDY_MATERIAL_ID:          study_material_id,
+            CuratedFlashcardFields.TOPIC_NAME:                 self.__topic_name,
+            CuratedFlashcardFields.GENERATED_FOR_ANALYSIS_AT:  self.__generated_for_analysis_at,
+            CuratedFlashcardFields.LAST_CURATED_GRADE:         CuratedFlashcardGrade.UNGRADED.name,
+            CuratedFlashcardFields.SYLLABUS_POSITION_IN_TOPIC: syllabus_position_in_topic,
+        }
+        if self.__paid_deck_id:
+            additional_data["paidDeckId"] = self.__paid_deck_id
+
         return {
             "userId":          self.__user_id,
             "serverUpdatedAt": now_datetime,
@@ -715,14 +740,6 @@ class GenerateCuratedStudyMaterial(Workflow):
                     "attempts":           0,
                     "timeSpentInSeconds": 0,
                 },
-                "additionalData":
-                {
-                    CuratedFlashcardFields.B_CURATED:                  True,
-                    CuratedFlashcardFields.STUDY_MATERIAL_ID:          study_material_id,
-                    CuratedFlashcardFields.TOPIC_NAME:                 self.__topic_name,
-                    CuratedFlashcardFields.GENERATED_FOR_ANALYSIS_AT:  self.__generated_for_analysis_at,
-                    CuratedFlashcardFields.LAST_CURATED_GRADE:         CuratedFlashcardGrade.UNGRADED.name,
-                    CuratedFlashcardFields.SYLLABUS_POSITION_IN_TOPIC: syllabus_position_in_topic,
-                },
+                "additionalData": additional_data,
             },
         }

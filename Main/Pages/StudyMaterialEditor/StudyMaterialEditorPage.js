@@ -134,7 +134,7 @@ class StudyMaterialEditorPage extends HTMLElement
             }
 
             this.initialize(null, this.#studyMaterial.getDeck());
-            ActiveEntityTracker.set(this.#studyMaterial.getId(), entityTypes.STUDY_MATERIAL);
+            ActiveEntityTracker.set(this.#studyMaterial.getId(), entityTypes.STUDY_MATERIAL, true);
 
             this.querySelectorAll("rich-text-editor").forEach((editor) => editor.clear());
 
@@ -219,14 +219,14 @@ class StudyMaterialEditorPage extends HTMLElement
         this.#setupInputs();
         this.#handleEvents();
 
-        ActiveEntityTracker.set(this.#studyMaterial.getId(), entityTypes.STUDY_MATERIAL);
+        ActiveEntityTracker.set(this.#studyMaterial.getId(), entityTypes.STUDY_MATERIAL, true);
     }
 
     onPageResumed()
     {
         if (this.#studyMaterial)
         {
-            ActiveEntityTracker.set(this.#studyMaterial.getId(), entityTypes.STUDY_MATERIAL);
+            ActiveEntityTracker.set(this.#studyMaterial.getId(), entityTypes.STUDY_MATERIAL, true);
         }
     }
 }

@@ -5,7 +5,6 @@ import { getRandomUuid } from "../../UtilityFunctions/GetRandomUuid.js";
 import { fetchPostJsonWithTimeout, fetchGetJsonWithTimeout } from "../../UtilityFunctions/FetchWithTimeout.js";
 import IndexedDbHelper from "../IndexedDbHelper.js";
 import Persistence from "../Persistence.js";
-import PaidDeckRegistry from "../PaidDeckRegistry.js";
 
 
 /**
@@ -145,54 +144,6 @@ class SyncTransport
     }
 
     // ── pendingChanges ────────────────────────────────────────────────
-
-    /**
-     * Drops every pending change that targets paid-deck content. Paid
-     * decks have a separate edit flow (PaidDeckContentClient →
-     * /PaidDecks/Entities/Update); letting these changes ride the
-     * plaintext /Sync wire would defeat the entire protection model.
-     * Server-side Sync.js applies the same filter as a backstop.
-     */
-    static async #filterOutPaidDeckChanges(changes)
-    {
-        // Ensures licenses are loaded from persistence on a cold boot
-        // (e.g., the first sync after page-load races registry init).
-        // Without this await, isLicensed returns false for every deck
-        // and the filter is silently bypassed.
-        await PaidDeckRegistry.initialize();
-
-        const filteredChanges = [];
-        let droppedCount = 0;
-        for (const change of changes)
-        {
-            const candidateIds = [];
-            if (typeof change?.data?.id === "string")     { candidateIds.push(change.data.id); }
-            if (typeof change?.data?.deckId === "string") { candidateIds.push(change.data.deckId); }
-            if (typeof change?.data?.parent === "string") { candidateIds.push(change.data.parent); }
-
-            let targetsPaidDeck = false;
-            for (const candidateId of candidateIds)
-            {
-                if (PaidDeckRegistry.isLicensed(candidateId))
-                {
-                    targetsPaidDeck = true;
-                    break;
-                }
-            }
-
-            if (targetsPaidDeck)
-            {
-                droppedCount++;
-                continue;
-            }
-            filteredChanges.push(change);
-        }
-        if (droppedCount > 0)
-        {
-            console.warn(`[SyncTransport] Dropped ${droppedCount} pending change(s) targeting paid-deck content.`);
-        }
-        return filteredChanges;
-    }
 
     static getPendingChanges()
     {
@@ -493,17 +444,15 @@ class SyncTransport
      */
     static async pushInChunks(changes, onChunkComplete = null)
     {
-        // Drop any change that targets paid-deck content before it can
-        // ride the plaintext sync wire. Paid-deck edits must go through
-        // /PaidDecks/Entities/Update (see PaidDeckContentClient).
-        // Awaits registry init so a cold-boot sync (registry hasn't
-        // hydrated yet) doesn't silently let paid-deck edits through.
-        const filteredChanges = await SyncTransport.#filterOutPaidDeckChanges(changes);
+        // Paid decks ride the normal sync wire now — their content is already
+        // ciphertext (envelopes) and the server preserves its plaintext copy,
+        // so there is nothing to filter out here. Progress on a paid card syncs
+        // exactly like progress on a normal card.
 
         // Sort upserts first, deletions last. Stable enough — sort key
         // is just the boolean `deleted` flag, and we don't depend on
         // any relative order within either group.
-        const orderedChanges = [...filteredChanges].sort((firstChange, secondChange) =>
+        const orderedChanges = [...changes].sort((firstChange, secondChange) =>
         {
             const firstIsDeletion  = firstChange?.deleted  ? 1 : 0;
             const secondIsDeletion = secondChange?.deleted ? 1 : 0;

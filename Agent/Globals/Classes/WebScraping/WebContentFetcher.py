@@ -13,6 +13,7 @@ from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt,
 from Globals.Classes.Generic.Persistence import Persistence
 from Globals.Classes.WebScraping.FetchedImage import FetchedImage
 from Globals.Classes.WebScraping.FetchedPage import FetchedPage
+from Globals.Classes.WebScraping.SafeUrlValidator import SafeUrlValidator
 from Globals.Constants.PersistenceConstants import PersistenceConstants
 from Globals.Utility.JoinPath import join_path
 
@@ -21,6 +22,11 @@ class WebContentFetcher:
 
     PAGE_TIMEOUT_SECONDS               = 20.0
     IMAGE_TIMEOUT_SECONDS              = 15.0
+    CONNECT_TIMEOUT_SECONDS            = 10.0
+    ROBOTS_TIMEOUT_SECONDS             = 10.0
+    MAX_REDIRECTS                      = 5
+    MAX_RESPONSE_BYTES                 = 10 * 1024 * 1024
+    REDIRECT_STATUS_CODES              = (301, 302, 303, 307, 308)
     MIN_IMAGE_DIMENSION_PX             = 100
     MAX_PAGE_TEXT_CHARS                = 12000
     IMAGE_ATTEMPT_MULTIPLIER           = 3
@@ -93,6 +99,104 @@ class WebContentFetcher:
         WebContentFetcher.__domain_last_fetched[domain] = time.time()
 
     @staticmethod
+    def __build_timeout(read_timeout_seconds: float) -> httpx.Timeout:
+        return httpx.Timeout(
+            connect = WebContentFetcher.CONNECT_TIMEOUT_SECONDS,
+            read    = read_timeout_seconds,
+            write   = read_timeout_seconds,
+            pool    = read_timeout_seconds,
+        )
+
+    @staticmethod
+    async def __safe_get(client: httpx.AsyncClient, url: str, timeout_seconds: float) -> tuple[int, bytes, str]:
+        """
+        SSRF-hardened GET that returns (status_code, body_bytes, content_type).
+
+        Every URL — the initial one and every redirect hop — is validated by
+        SafeUrlValidator (http/https only, ports 80/443, public IPs only,
+        metadata endpoints blocked). The connection is pinned to the exact IP
+        that was validated (the Host header and TLS SNI keep the original
+        hostname), so DNS rebinding cannot redirect the request to an internal
+        address after the check. Redirects are followed manually up to
+        MAX_REDIRECTS, and the response body is capped at MAX_RESPONSE_BYTES.
+
+        Raises SafeUrlValidator.UrlValidationError when any hop is unsafe, the
+        redirect budget is exhausted, or the body exceeds the size limit. Those
+        are deliberately NOT httpx transport errors, so the caller's retry logic
+        treats them as a hard skip rather than retrying.
+        """
+        current_url = url
+
+        for hop_index in range(WebContentFetcher.MAX_REDIRECTS + 1):
+            target = SafeUrlValidator.validate(current_url)
+
+            connect_host = f"[{target.connect_ip}]" if target.is_ipv6 else target.connect_ip
+            is_default_port = target.port == SafeUrlValidator.DEFAULT_PORT_BY_SCHEME[target.scheme]
+            host_header = target.host if is_default_port else f"{target.host}:{target.port}"
+
+            parsed = urlparse(current_url)
+            path_and_query = parsed.path or "/"
+            if parsed.query:
+                path_and_query = f"{path_and_query}?{parsed.query}"
+
+            # Connect to the validated IP literal; the Host header + SNI keep the
+            # original hostname so virtual hosting and TLS certificate validation
+            # still work exactly as they would for the real domain.
+            pinned_url = f"{target.scheme}://{connect_host}:{target.port}{path_and_query}"
+
+            request = client.build_request(
+                "GET",
+                pinned_url,
+                headers = {
+                    "Host":       host_header,
+                    "User-Agent": WebContentFetcher.__user_agent(),
+                },
+                extensions = {"sni_hostname": target.host},
+                timeout    = WebContentFetcher.__build_timeout(timeout_seconds),
+            )
+
+            response = await client.send(request, follow_redirects=False, stream=True)
+
+            try:
+                if response.status_code in WebContentFetcher.REDIRECT_STATUS_CODES:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise SafeUrlValidator.UrlValidationError("Redirect response had no Location header.")
+                    current_url = urljoin(current_url, location)
+                    continue
+
+                content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+
+                if response.status_code >= 400:
+                    # No need to download an error body; the caller only inspects
+                    # the status code for 4xx/5xx handling.
+                    return (response.status_code, b"", content_type)
+
+                declared_length = response.headers.get("content-length")
+                if declared_length is not None:
+                    try:
+                        if int(declared_length) > WebContentFetcher.MAX_RESPONSE_BYTES:
+                            raise SafeUrlValidator.UrlValidationError(
+                                f"Response Content-Length {declared_length} exceeds the {WebContentFetcher.MAX_RESPONSE_BYTES}-byte limit."
+                            )
+                    except ValueError:
+                        pass
+
+                collected = bytearray()
+                async for chunk in response.aiter_bytes():
+                    collected.extend(chunk)
+                    if len(collected) > WebContentFetcher.MAX_RESPONSE_BYTES:
+                        raise SafeUrlValidator.UrlValidationError(
+                            f"Response body exceeded the {WebContentFetcher.MAX_RESPONSE_BYTES}-byte limit."
+                        )
+
+                return (response.status_code, bytes(collected), content_type)
+            finally:
+                await response.aclose()
+
+        raise SafeUrlValidator.UrlValidationError(f"Exceeded the maximum of {WebContentFetcher.MAX_REDIRECTS} redirects.")
+
+    @staticmethod
     async def __is_allowed_by_robots(url: str) -> bool:
         domain = WebContentFetcher.__domain_of(url)
         if not domain:
@@ -105,13 +209,21 @@ class WebContentFetcher:
                 parser.set_url(robots_url)
 
                 try:
-                    async with httpx.AsyncClient(timeout=10.0) as client:
-                        response = await client.get(robots_url, headers={"User-Agent": WebContentFetcher.__user_agent()})
-                        if response.status_code == 200:
-                            parser.parse(response.text.splitlines())
+                    async with httpx.AsyncClient() as client:
+                        status_code, body_bytes, content_type = await WebContentFetcher.__safe_get(
+                            client, robots_url, WebContentFetcher.ROBOTS_TIMEOUT_SECONDS,
+                        )
+                        if status_code == 200:
+                            parser.parse(body_bytes.decode("utf-8", errors="replace").splitlines())
                         else:
                             # No robots.txt or unreadable — be permissive but log it
                             parser.parse([])
+                except SafeUrlValidator.UrlValidationError as robots_validation_error:
+                    # The robots.txt host itself is unsafe (private/blocked). Be
+                    # permissive here; the page fetch is independently validated
+                    # and will refuse the same host.
+                    print(f"[WebContentFetcher] robots.txt host for {domain} rejected as unsafe: {robots_validation_error}")
+                    parser.parse([])
                 except Exception as robots_error:
                     print(f"[WebContentFetcher] Could not fetch robots.txt for {domain}: {robots_error} — treating as permissive.")
                     parser.parse([])
@@ -151,23 +263,28 @@ class WebContentFetcher:
                 ):
                     with attempt:
                         attempts += 1
-                        async with httpx.AsyncClient(
-                            follow_redirects = True,
-                            timeout          = timeout_seconds,
-                            headers          = {"User-Agent": WebContentFetcher.__user_agent()},
-                        ) as client:
-                            response = await client.get(url)
+                        async with httpx.AsyncClient() as client:
+                            # SSRF-hardened: validates the URL and every redirect
+                            # hop, pins the connection to the validated IP, and
+                            # caps the body size. Raises UrlValidationError (not a
+                            # transport error) on any unsafe hop, so it is never
+                            # retried below.
+                            status_code, body_bytes, content_type = await WebContentFetcher.__safe_get(
+                                client, url, timeout_seconds,
+                            )
 
-                            if response.status_code >= 500:
+                            if status_code >= 500:
                                 # Retryable
-                                raise httpx.TransportError(f"HTTP {response.status_code}")
-                            if response.status_code >= 400:
+                                raise httpx.TransportError(f"HTTP {status_code}")
+                            if status_code >= 400:
                                 # Non-retryable — bail
-                                print(f"[WebContentFetcher] HTTP {response.status_code} on {url} — not retrying.")
+                                print(f"[WebContentFetcher] HTTP {status_code} on {url} — not retrying.")
                                 return None
 
-                            content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
-                            return (response.content, content_type)
+                            return (body_bytes, content_type)
+            except SafeUrlValidator.UrlValidationError as url_validation_error:
+                print(f"[WebContentFetcher] Blocked unsafe URL {url}: {url_validation_error}")
+                return None
             except Exception as fetch_error:
                 print(f"[WebContentFetcher] Final failure on {url} after {attempts} attempt(s): {fetch_error}")
                 return None

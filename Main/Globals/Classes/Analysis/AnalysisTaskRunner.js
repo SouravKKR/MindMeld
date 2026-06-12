@@ -157,9 +157,17 @@ class AnalysisTaskRunner
             ? additionalData[AutoAnalysisDeckFields.AUTO_GENERATE_CURATED_STUDY_ENABLED] === true
             : curatedFlags.autoGenerateCuratedStudyOverride === true;
 
+        // A paid deck is now a normal deck in the tree, so deck.getId() is its
+        // real server id — the deck the agent analyses + attaches curated
+        // content to. `paidDeckId` (the licensed deck tag) rides along so the
+        // server gates the run on an active license and the agent stamps the tag
+        // onto generated content (which /Sync then encrypts).
+        const paidDeckId = additionalData.paidDeckId || null;
+
         const requestBody = JSON.stringify
         ({
             deckId: deck.getId(),
+            paidDeckId: paidDeckId,
             autoGenerateCuratedStudy: autoGenerateCuratedStudy,
             force: curatedFlags.force === true,
             skipAnalysis: curatedFlags.skipAnalysis === true,
@@ -173,6 +181,21 @@ class AnalysisTaskRunner
             credentials: "same-origin",
             body: requestBody,
         });
+
+        // 402 INSUFFICIENT_CREDITS — tag a typed error so user-initiated
+        // callers can show a friendly "out of credits" dialog while the
+        // silent auto-analysis dispatcher can swallow it.
+        if (response.status === 402)
+        {
+            const insufficientDetail = await response.json().catch(() => ({}));
+            const insufficientError = new Error(insufficientDetail.error || "INSUFFICIENT_CREDITS");
+            insufficientError.insufficientCredits = true;
+            insufficientError.error = insufficientDetail.error;
+            insufficientError.balance = insufficientDetail.balance;
+            insufficientError.required = insufficientDetail.required;
+            insufficientError.resumable = insufficientDetail.resumable;
+            throw insufficientError;
+        }
 
         // 409 is the server's "force regen blocked by an already-running
         // task" signal — the response body still carries the existing

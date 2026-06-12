@@ -66,6 +66,17 @@ class AnalyzeDeckPerformance(Workflow):
     MAX_SOURCE_CARDS_PER_TOPIC                = 8
     ROOT_DECK_ID                              = "0"
 
+    # Glicko2 reference values used when a card has no recorded rating yet.
+    # GLICKO_MAX_RATING_DEVIATION doubles as the denominator that normalises a
+    # card's rating deviation into a 0..1 confidence factor.
+    GLICKO_MAX_RATING_DEVIATION = 350.0
+    GLICKO_DEFAULT_RATING = 1500.0
+    # Rating points below base difficulty at which the deficit signal saturates.
+    RATING_DEFICIT_NORMALIZER = 500.0
+    # Character caps applied to LLM-facing / persisted text fragments.
+    MAX_CARD_TEXT_LENGTH = 240
+    MAX_TOPIC_NAME_LENGTH = 120
+
     SYSTEM_PROMPT = (
         "You are an expert tutor identifying conceptual study topics from flashcard performance data. "
         "Given three groups of flashcards — ones the student answered poorly (WEAK), ones they answered "
@@ -102,6 +113,14 @@ class AnalyzeDeckPerformance(Workflow):
         self.__force                       = bool(payload.get("force", False))
         self.__skip_analysis               = bool(payload.get("skipAnalysis", False))
         self.__regenerate_topics           = payload.get("regenerateTopics") or []
+        # Paid-source pass-through. Paid decks now live in the normal
+        # decks/cards/studyMaterials sync collections (plaintext server-side),
+        # tagged with additionalData.paidDeckId. The agent reads and writes
+        # them through the SAME normal sync path as non-paid decks; the only
+        # paid-specific behaviour is stamping this id onto every generated
+        # StudyMaterial + curated card so the /Sync pull encrypts them for the
+        # buyer. It is therefore used ONLY as an output tag, never for reads.
+        self.__paid_deck_id                = payload.get("paidDeckId", "") or ""
 
     async def run(self, args: dict = {}):
         if not self.__deck_id:
@@ -120,6 +139,8 @@ class AnalyzeDeckPerformance(Workflow):
         # serverUpdatedAt} — see Dock/Globals/Classes/Database/
         # SyncQueryEngine.bulkUpsert. Every field selector and field
         # access on a deck / card doc therefore goes through `data.*`.
+        # Paid decks live in these same collections (plaintext), so this is
+        # the read/write path for paid and non-paid decks alike.
         root_deck = await asyncio.to_thread(deck_collection.find_one, {"data.id": self.__deck_id}, {"_id": 0})
         if root_deck is None:
             print(f"[AnalyzeDeckPerformance] Deck {self.__deck_id} not found — exiting.")
@@ -191,7 +212,7 @@ class AnalyzeDeckPerformance(Workflow):
         # below isn't a black box. Logs the deck scope size + first few
         # ids; on light decks the truncation is a no-op.
         preview_deck_ids = deck_ids_in_scope[:6]
-        print(f"[AnalyzeDeckPerformance] Scope userId={user_id} descendants={len(descendant_deck_ids)} totalDecks={len(deck_ids_in_scope)} sample={preview_deck_ids} force={self.__force} skipAnalysis={self.__skip_analysis}")
+        print(f"[AnalyzeDeckPerformance] Scope userId={user_id} paidDeckId={self.__paid_deck_id} descendants={len(deck_ids_in_scope) - 1} totalDecks={len(deck_ids_in_scope)} sample={preview_deck_ids} force={self.__force} skipAnalysis={self.__skip_analysis}")
 
         deck_chain = await self.__build_deck_chain(deck_collection, user_id, self.__deck_id)
 
@@ -259,11 +280,11 @@ class AnalyzeDeckPerformance(Workflow):
             )
 
             tier_counts = {
-                "WEAK":     sum(1 for entry in topics if entry["strength"] == TopicStrength.WEAK.name),
-                "STRONG":   sum(1 for entry in topics if entry["strength"] == TopicStrength.STRONG.name),
-                "VOLATILE": sum(1 for entry in topics if entry["strength"] == TopicStrength.VOLATILE.name),
+                TopicStrength.WEAK.name: sum(1 for entry in topics if entry["strength"] == TopicStrength.WEAK.name),
+                TopicStrength.STRONG.name: sum(1 for entry in topics if entry["strength"] == TopicStrength.STRONG.name),
+                TopicStrength.VOLATILE.name: sum(1 for entry in topics if entry["strength"] == TopicStrength.VOLATILE.name),
             }
-            print(f"[AnalyzeDeckPerformance] Stored analysis for deck {self.__deck_id}: {tier_counts['WEAK']} weak / {tier_counts['STRONG']} strong / {tier_counts['VOLATILE']} volatile topic(s).")
+            print(f"[AnalyzeDeckPerformance] Stored analysis for deck {self.__deck_id}: {tier_counts[TopicStrength.WEAK.name]} weak / {tier_counts[TopicStrength.STRONG.name]} strong / {tier_counts[TopicStrength.VOLATILE.name]} volatile topic(s).")
 
         spawnable_topics = [
             entry for entry in topics
@@ -300,7 +321,7 @@ class AnalyzeDeckPerformance(Workflow):
         if not is_continue_branch:
             await self.__set_live_batch_tag(deck_collection, generated_for_analysis_at, spawnable_topics)
 
-        await self.__spawn_curated_study_children(user_id, spawnable_topics, deck_chain, generated_for_analysis_at)
+        await self.__spawn_curated_study_children(user_id, spawnable_topics, deck_chain, generated_for_analysis_at, self.__paid_deck_id, self.__deck_id)
 
         current_task = await TaskManager.get_current_task()
         if current_task is not None:
@@ -387,63 +408,74 @@ class AnalyzeDeckPerformance(Workflow):
                 {"_id": 0},
             ),
         )
+        # Card docs are wrapped {userId, data: <Card>, serverUpdatedAt}
+        # by the sync layer — see SyncQueryEngine.bulkUpsert.
+        card_data_list = [card.get("data") or {} for card in cards]
 
         scored: list[dict] = []
-
         diagnostic_counts = {"never_studied": 0, "kept": 0}
 
-        for card in cards:
-            # Card docs are wrapped {userId, data: <Card>, serverUpdatedAt}
-            # by the sync layer — see SyncQueryEngine.bulkUpsert.
-            card_data       = card.get("data") or {}
-            progress_block  = card_data.get("progress") or {}
-            progress_points = progress_block.get("progressPoints") or []
-
-            # Eligibility floor — the user must have attempted this card
-            # at least once. Cards with an empty progress history have
-            # nothing to score off, so we drop them quietly.
-            if len(progress_points) < AnalyzeDeckPerformance.MIN_PROGRESS_POINTS_FOR_CARD_ELIGIBILITY:
+        for card_data in card_data_list:
+            scored_entry = AnalyzeDeckPerformance.__score_single_card(card_data)
+            if scored_entry is None:
                 diagnostic_counts["never_studied"] += 1
                 continue
-
-            latest_point = progress_points[-1]
-            fsrs_state   = latest_point.get("fsrs") or {}
-            glicko_state = latest_point.get("glicko") or {}
-            stability    = AnalyzeDeckPerformance.__coerce_float(fsrs_state.get("stability"), default=0.0)
             diagnostic_counts["kept"] += 1
-
-            r30_value = AnalyzeDeckPerformance.__compute_r30(stability)
-
-            rating_deviation = AnalyzeDeckPerformance.__coerce_float(glicko_state.get("ratingDeviation"), default=350.0)
-            confidence_factor = max(0.0, min(1.0, 1.0 - (rating_deviation / 350.0)))
-
-            current_rating = AnalyzeDeckPerformance.__coerce_float(glicko_state.get("rating"), default=1500.0)
-            base_difficulty = AnalyzeDeckPerformance.__coerce_float(card_data.get("baseDifficulty"), default=1500.0)
-            rating_deficit = max(0.0, base_difficulty - current_rating)
-            rating_deficit_signal = min(1.0, rating_deficit / 500.0)
-
-            total_attempts = len(progress_points)
-
-            weakness_score = (1.0 - r30_value) * (0.5 + 0.5 * confidence_factor) + rating_deficit_signal * 0.5
-
-            correctness_history = AnalyzeDeckPerformance.__compute_correctness_history(progress_points)
-            volatility_score = AnalyzeDeckPerformance.__compute_volatility_score(correctness_history, rating_deviation, total_attempts)
-
-            scored.append({
-                "id":               card_data.get("id"),
-                "question":         AnalyzeDeckPerformance.__strip_html(card_data.get("question") or ""),
-                "answer":           AnalyzeDeckPerformance.__strip_html(card_data.get("answer") or ""),
-                "weaknessScore":    weakness_score,
-                "volatilityScore":  volatility_score,
-                "r30":              r30_value,
-                "rating":           current_rating,
-                "ratingDeviation":  rating_deviation,
-                "totalAttempts":    total_attempts,
-            })
+            scored.append(scored_entry)
 
         print(f"[AnalyzeDeckPerformance] Eligibility breakdown — never_studied={diagnostic_counts['never_studied']}, kept={diagnostic_counts['kept']}")
 
         return scored
+
+    @staticmethod
+    def __score_single_card(card_data: dict) -> dict | None:
+        """
+        Scores one card's weakness + volatility from its progress points.
+        Returns None when the card has no study evidence (empty progress).
+        `card_data` is the inner Card JSON unwrapped from the sync `data`
+        wrapper.
+        """
+        progress_block  = card_data.get("progress") or {}
+        progress_points = progress_block.get("progressPoints") or []
+
+        # Eligibility floor — the user must have attempted this card at least
+        # once. Cards with an empty progress history have nothing to score off.
+        if len(progress_points) < AnalyzeDeckPerformance.MIN_PROGRESS_POINTS_FOR_CARD_ELIGIBILITY:
+            return None
+
+        latest_point = progress_points[-1]
+        fsrs_state   = latest_point.get("fsrs") or {}
+        glicko_state = latest_point.get("glicko") or {}
+        stability    = AnalyzeDeckPerformance.__coerce_float(fsrs_state.get("stability"), default=0.0)
+
+        r30_value = AnalyzeDeckPerformance.__compute_r30(stability)
+
+        rating_deviation = AnalyzeDeckPerformance.__coerce_float(glicko_state.get("ratingDeviation"), default=AnalyzeDeckPerformance.GLICKO_MAX_RATING_DEVIATION)
+        confidence_factor = max(0.0, min(1.0, 1.0 - (rating_deviation / AnalyzeDeckPerformance.GLICKO_MAX_RATING_DEVIATION)))
+
+        current_rating = AnalyzeDeckPerformance.__coerce_float(glicko_state.get("rating"), default=AnalyzeDeckPerformance.GLICKO_DEFAULT_RATING)
+        base_difficulty = AnalyzeDeckPerformance.__coerce_float(card_data.get("baseDifficulty"), default=AnalyzeDeckPerformance.GLICKO_DEFAULT_RATING)
+        rating_deficit = max(0.0, base_difficulty - current_rating)
+        rating_deficit_signal = min(1.0, rating_deficit / AnalyzeDeckPerformance.RATING_DEFICIT_NORMALIZER)
+
+        total_attempts = len(progress_points)
+
+        weakness_score = (1.0 - r30_value) * (0.5 + 0.5 * confidence_factor) + rating_deficit_signal * 0.5
+
+        correctness_history = AnalyzeDeckPerformance.__compute_correctness_history(progress_points)
+        volatility_score = AnalyzeDeckPerformance.__compute_volatility_score(correctness_history, rating_deviation, total_attempts)
+
+        return {
+            "id":               card_data.get("id"),
+            "question":         AnalyzeDeckPerformance.__strip_html(card_data.get("question") or ""),
+            "answer":           AnalyzeDeckPerformance.__strip_html(card_data.get("answer") or ""),
+            "weaknessScore":    weakness_score,
+            "volatilityScore":  volatility_score,
+            "r30":              r30_value,
+            "rating":           current_rating,
+            "ratingDeviation":  rating_deviation,
+            "totalAttempts":    total_attempts,
+        }
 
     @staticmethod
     def __compute_correctness_history(progress_points: list[dict]) -> list[bool]:
@@ -515,7 +547,7 @@ class AnalyzeDeckPerformance(Workflow):
     @staticmethod
     def __strip_html(html_text: str) -> str:
         without_tags = re.sub(r"<[^>]+>", " ", html_text)
-        return re.sub(r"\s+", " ", without_tags).strip()[:240]
+        return re.sub(r"\s+", " ", without_tags).strip()[:AnalyzeDeckPerformance.MAX_CARD_TEXT_LENGTH]
 
     @staticmethod
     def __format_card_block(label: str, tier_prefix: str, cards: list[dict]) -> str:
@@ -693,16 +725,16 @@ class AnalyzeDeckPerformance(Workflow):
                         break
 
             sanitized.append({
-                "name":               name_value.strip()[:120],
+                "name":               name_value.strip()[:AnalyzeDeckPerformance.MAX_TOPIC_NAME_LENGTH],
                 "strength":           normalized_strength,
-                "reason":             (reason_value.strip()[:240] if isinstance(reason_value, str) else ""),
+                "reason":             (reason_value.strip()[:AnalyzeDeckPerformance.MAX_CARD_TEXT_LENGTH] if isinstance(reason_value, str) else ""),
                 "sourceCardIndices":  cleaned_indices,
             })
             per_tier_counts[normalized_strength] += 1
 
         return sanitized
 
-    async def __spawn_curated_study_children(self, user_id: str, topics_to_cover: list[dict], deck_chain: list[str], generated_for_analysis_at: str) -> None:
+    async def __spawn_curated_study_children(self, user_id: str, topics_to_cover: list[dict], deck_chain: list[str], generated_for_analysis_at: str, paid_deck_id: str = "", attach_deck_id: str = "") -> None:
         """
         Spawns one GENERATE_CURATED_STUDY_MATERIAL child task per topic
         the user needs help on (WEAK foundational gaps and VOLATILE
@@ -769,6 +801,14 @@ class AnalyzeDeckPerformance(Workflow):
                     "generatedForAnalysisAt": generated_for_analysis_at,
                     "hardCards":              hard_cards,
                     "sourceCardIds":          source_card_ids,
+                    # Paid-source tag: "" for normal decks. When set the child
+                    # writes its generated material/cards through the SAME normal
+                    # sync collections, stamping additionalData.paidDeckId on each
+                    # so the /Sync pull encrypts them for the buyer. attachDeckId
+                    # is the deck the analysis was run on (bundle root or a chosen
+                    # sub-deck) that the child attaches the content under.
+                    "paidDeckId":             paid_deck_id,
+                    "attachDeckId":           attach_deck_id,
                 },
                 next_task_ids=[],
                 parent_task_id=current_task.get_id(),
@@ -935,9 +975,9 @@ class AnalyzeDeckPerformance(Workflow):
                 source_card_ids_value = [value for value in source_card_ids_value if isinstance(value, str) and value]
 
             sanitized.append({
-                "name":           name_value.strip()[:120],
+                "name":           name_value.strip()[:AnalyzeDeckPerformance.MAX_TOPIC_NAME_LENGTH],
                 "strength":       normalized_strength,
-                "reason":         (reason_value.strip()[:240] if isinstance(reason_value, str) else ""),
+                "reason":         (reason_value.strip()[:AnalyzeDeckPerformance.MAX_CARD_TEXT_LENGTH] if isinstance(reason_value, str) else ""),
                 "topicIndex":     entry.get("topicIndex"),
                 "hardCards":      hard_cards_value,
                 "sourceCardIds":  source_card_ids_value,

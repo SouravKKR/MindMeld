@@ -71,9 +71,9 @@ class PriorityQueue
 
     #buildHeap()
     {
-        for (let i = PriorityQueue.parent(this.#heap.length - 1); i >= 0; i--)
+        for (let index = PriorityQueue.parent(this.#heap.length - 1); index >= 0; index--)
         {
-            this.#heapifyDown(i);
+            this.#heapifyDown(index);
         }
     }
 

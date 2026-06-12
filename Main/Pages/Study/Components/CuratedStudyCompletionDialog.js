@@ -1,4 +1,5 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
+import { curatedFlashcardGrade } from "../../../Globals/Enumerations/CuratedFlashcardGrade.js";
 
 
 /**
@@ -20,6 +21,12 @@ import DialogBox from "../../../CommonComponents/DialogBox.js";
  */
 class CuratedStudyCompletionDialog
 {
+    // The persisted lastCuratedGrade carries the enum key name (e.g. "HARD"),
+    // so resolve that name from the enum rather than hard-coding the literal.
+    static #HARD_GRADE_NAME = Object.keys(curatedFlashcardGrade).find(
+        gradeName => curatedFlashcardGrade[gradeName] === curatedFlashcardGrade.HARD
+    );
+
     static showAllEasy()
     {
         return new Promise((resolve) =>
@@ -61,7 +68,7 @@ class CuratedStudyCompletionDialog
                 const topicName = CuratedStudyCompletionDialog.#escapeHtml(topicGroup.topicName || "");
                 const hardCount = (topicGroup.cards || []).filter((card) =>
                 {
-                    return card.getAdditionalData?.()?.lastCuratedGrade === "HARD";
+                    return card.getAdditionalData?.()?.lastCuratedGrade === CuratedStudyCompletionDialog.#HARD_GRADE_NAME;
                 }).length;
                 return `<li><strong>${topicName}</strong> — ${hardCount} hard flashcard${hardCount === 1 ? "" : "s"}</li>`;
             }).join("");

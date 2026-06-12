@@ -3,12 +3,13 @@ import SyncEvents from "../Globals/Events/SyncEvents.js";
 /**
  * SyncBlockingOverlay
  *
- * A full-screen non-dismissable overlay that becomes visible only when
- * the active entity is being mutated by a *substantial* pull — i.e. a
- * chunked drain. Small one-off incremental sync pulls never raise this
- * overlay (SyncOrchestrator scopes the ACTIVE_ENTITY_SYNC_STARTED event
- * to drain cycles), so studying is not interrupted by every minor
- * change that happens to land on the deck the user has open.
+ * A full-screen non-dismissable overlay that becomes visible only when a
+ * pull touches the entity the user is currently EDITING (an open editor
+ * page that may hold unsaved edits). SyncOrchestrator scopes the
+ * ACTIVE_ENTITY_SYNC_STARTED event to those edit sessions only — read-only
+ * study / viewing sessions register the active entity with bEditing=false
+ * (see ActiveEntityTracker), so studying is never interrupted by a minor
+ * incremental change that happens to land on the deck the user has open.
  *
  * Safety net: in addition to the matched STARTED/ENDED pairs, the
  * overlay also hides on SyncEvents.COMPLETED / FAILED. If a bug ever

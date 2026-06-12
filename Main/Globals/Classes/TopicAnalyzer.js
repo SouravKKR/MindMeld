@@ -40,33 +40,33 @@ class TopicAnalyzer
         {
             const cardGroups = await this.#assignCardsToTopics(allStudied, topicNames, onProgress);
             topics = [];
-            for (let i = 0; i < topicNames.length; i++)
+            for (let topicIndex = 0; topicIndex < topicNames.length; topicIndex++)
             {
-                const group = cardGroups[i];
+                const group = cardGroups[topicIndex];
                 if (group.length === 0) continue;
                 topics.push({
-                    name:       topicNames[i],
+                    name:       topicNames[topicIndex],
                     mastery:    this.#computeGroupMastery(group),
                     cardCount:  group.length,
-                    isVolatile: group.filter(c => this.#isVolatile(c)).length >= TopicAnalyzer.#VOLATILE_MIN_CARDS,
+                    isVolatile: group.filter(card => this.#isVolatile(card)).length >= TopicAnalyzer.#VOLATILE_MIN_CARDS,
                 });
             }
         }
 
         // Phase 3 — classify by mastery threshold; volatile is orthogonal to weak/strong
         const weak = topics
-            .filter(t => t.mastery < MASTERY_WEAK_THRESHOLD)
+            .filter(topic => topic.mastery < MASTERY_WEAK_THRESHOLD)
             .sort((a, b) => a.mastery - b.mastery)
-            .map(t => new TopicInsight(t.name, topicStrength.WEAK, t.mastery, t.cardCount));
+            .map(topic => new TopicInsight(topic.name, topicStrength.WEAK, topic.mastery, topic.cardCount));
 
         const strong = topics
-            .filter(t => t.mastery >= MASTERY_STRONG_THRESHOLD)
+            .filter(topic => topic.mastery >= MASTERY_STRONG_THRESHOLD)
             .sort((a, b) => b.mastery - a.mastery)
-            .map(t => new TopicInsight(t.name, topicStrength.STRONG, t.mastery, t.cardCount));
+            .map(topic => new TopicInsight(topic.name, topicStrength.STRONG, topic.mastery, topic.cardCount));
 
         const volatile = topics
-            .filter(t => t.isVolatile)
-            .map(t => new TopicInsight(t.name, topicStrength.VOLATILE, t.mastery, t.cardCount));
+            .filter(topic => topic.isVolatile)
+            .map(topic => new TopicInsight(topic.name, topicStrength.VOLATILE, topic.mastery, topic.cardCount));
 
         return { weak, strong, volatile };
     }
@@ -82,7 +82,7 @@ class TopicAnalyzer
             sorted.slice(0,         third).slice(0, TopicAnalyzer.#CARDS_PER_TIER),
             sorted.slice(third,  2 * third).slice(0, TopicAnalyzer.#CARDS_PER_TIER),
             sorted.slice(2 * third        ).slice(0, TopicAnalyzer.#CARDS_PER_TIER),
-        ].filter(t => t.length > 0);
+        ].filter(tier => tier.length > 0);
 
         const [systemPrompt, userPromptTemplate] = await Promise.all([
             PromptPool.get("TOPIC_DISCOVERY_SYSTEM"),
@@ -104,13 +104,13 @@ class TopicAnalyzer
     // Jaccard similarity on word sets: drop a name if it overlaps > 50% with any already accepted.
     #isDuplicateTopic(candidate, accepted)
     {
-        const tokenize = s => new Set(s.toLowerCase().replace(/[^a-z0-9 ]/g, "").split(/\s+/).filter(Boolean));
+        const tokenize = text => new Set(text.toLowerCase().replace(/[^a-z0-9 ]/g, "").split(/\s+/).filter(Boolean));
         const cWords   = tokenize(candidate);
 
         return accepted.some(existing =>
         {
             const eWords      = tokenize(existing);
-            const intersection = [...cWords].filter(w => eWords.has(w)).length;
+            const intersection = [...cWords].filter(word => eWords.has(word)).length;
             const union        = new Set([...cWords, ...eWords]).size;
             return union > 0 && intersection / union > 0.5;
         });
@@ -121,8 +121,8 @@ class TopicAnalyzer
     {
         const line = rawText
             .split("\n")
-            .map(l => l.trim())
-            .filter(l => l.length > 0)[0] ?? "";
+            .map(line => line.trim())
+            .filter(line => line.length > 0)[0] ?? "";
 
         return line
             .replace(/^\d+[.)]\s*/, "")
@@ -133,7 +133,7 @@ class TopicAnalyzer
     #getStudiedCards(deck)
     {
         return deck.getCards(true).filter(
-            c => c.getProgress().getCurrentProgressPoint().getFsrsState()["repetitions"] > 0
+            card => card.getProgress().getCurrentProgressPoint().getFsrsState()["repetitions"] > 0
         );
     }
 
@@ -155,7 +155,7 @@ class TopicAnalyzer
     #computeGroupMastery(cards)
     {
         if (cards.length === 0) return 0;
-        const sum = cards.reduce((acc, c) => acc + this.#scoreCard(c) * 100, 0);
+        const sum = cards.reduce((accumulator, card) => accumulator + this.#scoreCard(card) * 100, 0);
         return Math.round(sum / cards.length);
     }
 
@@ -164,11 +164,11 @@ class TopicAnalyzer
         const points = card.getProgress().getProgressPoints();
         if (points.length < 3) return false;
 
-        const r30s = points.map(p => TopicAnalyzer.#r30(p.getFsrsState().stability));
+        const r30s = points.map(point => TopicAnalyzer.#r30(point.getFsrsState().stability));
 
-        for (let i = 1; i < r30s.length; i++)
+        for (let pointIndex = 1; pointIndex < r30s.length; pointIndex++)
         {
-            if (Math.abs(r30s[i] - r30s[i - 1]) > TopicAnalyzer.#VOLATILITY_SWING_THRESHOLD)
+            if (Math.abs(r30s[pointIndex] - r30s[pointIndex - 1]) > TopicAnalyzer.#VOLATILITY_SWING_THRESHOLD)
                 return true;
         }
 
@@ -182,7 +182,7 @@ class TopicAnalyzer
 
     #formatCardsForExtraction(cards)
     {
-        return cards.map(c => this.#stripHtml(c.getAnswer())).join("\n");
+        return cards.map(card => this.#stripHtml(card.getAnswer())).join("\n");
     }
 
     #parseTopicIndex(rawText, topicCount)
@@ -199,17 +199,17 @@ class TopicAnalyzer
             PromptPool.get("TOPIC_ASSIGNMENT_USER"),
         ]);
 
-        const topicsList = topicNames.map((name, i) => `${i}: ${name}`).join("\n");
+        const topicsList = topicNames.map((name, topicIndex) => `${topicIndex}: ${name}`).join("\n");
         const groups     = Array.from({ length: topicNames.length }, () => []);
 
-        for (let i = 0; i < cards.length; i++)
+        for (let cardIndex = 0; cardIndex < cards.length; cardIndex++)
         {
-            onProgress?.(`Classifying cards… (${i + 1} / ${cards.length})`);
-            const answer     = this.#stripHtml(cards[i].getAnswer());
+            onProgress?.(`Classifying cards… (${cardIndex + 1} / ${cards.length})`);
+            const answer     = this.#stripHtml(cards[cardIndex].getAnswer());
             const userPrompt = PromptPool.fill(userPromptTemplate, { topics_list: topicsList, answer });
             const rawText    = await this.#llmClient.complete(systemPrompt, userPrompt);
             const index      = this.#parseTopicIndex(rawText, topicNames.length);
-            groups[index].push(cards[i]);
+            groups[index].push(cards[cardIndex]);
         }
 
         return groups;

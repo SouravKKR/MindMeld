@@ -6,6 +6,7 @@ import CuratedStudySession from "../Classes/CuratedStudySession.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import AutoAnalysisDeckFields from "../../../Globals/Classes/Analysis/AutoAnalysisDeckFields.js";
+import PaidDeckStudyGate from "../../../Globals/Classes/PaidDeckStudyGate.js";
 
 
 /**
@@ -32,6 +33,16 @@ class CuratedStudyEntryDialog
     static async show(deck)
     {
         if (!deck)
+        {
+            return;
+        }
+
+        // Belt-and-braces unlock: the study-mode chooser already gates a paid
+        // deck before reaching here, but this is a public entry point — ensure
+        // the deck is unlocked + decrypted so curated materials never render as
+        // locked placeholders. No-op for a normal or already-unlocked deck.
+        const bReady = await PaidDeckStudyGate.ensureReadyForStudy(deck);
+        if (!bReady)
         {
             return;
         }
@@ -217,13 +228,30 @@ class CuratedStudyEntryDialog
             // sees the fresh batch.
             if (result?.status !== undefined)
             {
-                CuratedStudyEntryDialog.show(deck);
+                // Paid decks aren't delivered by sync — the new batch was
+                // written into the buyer's encrypted per-user store, so
+                // re-hydrate the deck (no password re-prompt this session) to
+                // pull the fresh manifest + curated entities before re-opening.
+                const refreshedDeck = await CuratedStudyEntryDialog.#rehydratePaidDeckIfNeeded(deck);
+                CuratedStudyEntryDialog.show(refreshedDeck || deck);
             }
         }
         catch (regenerationError)
         {
             progressOverlay.showError("Regeneration failed", regenerationError?.message || String(regenerationError));
         }
+    }
+
+    /**
+     * In the unified model a paid deck is a normal synced deck, so a regen's
+     * fresh curated batch arrives through the regular sync pipeline that
+     * queueForceRegen already triggers (bTriggerSync). There is no separate
+     * per-user store to re-hydrate from, so this is a no-op kept only so the
+     * call site stays uniform — the existing in-tree deck instance is reused.
+     */
+    static async #rehydratePaidDeckIfNeeded(deck)
+    {
+        return null;
     }
 
     static #escapeHtml(value)

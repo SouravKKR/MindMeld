@@ -1,0 +1,13 @@
+Audits to run:
+
+1) Common/Audits/SecurityRequirements.txt
+2) Common/Audits/TechnicalRequirements.txt
+3) Common/Audits/CodeQualityRequirements.txt
+
+Instructions: 
+- Generate the PDF reports based on the paths given in the individual files.
+- Any new file created for testing (if stored somewhere) must be removed.
+- For each report, for each aspect, mention whether the objective is accomplished, paritally accomplished, or unaccomplished.
+- For each unaccomplished and partially unaccomplished objective make sure to mention why (the gap) and give the possible fixes/solutions in detail. Also mention whether the current state of the aspect is okay to leave as is or needs change or is it fine to leave them as is even if not fully accomplished.
+- At the end, give a rating on a scale of 1 to 10 considering all the aspects with appropriate importance and aggregating the findings.
+- If a requirement is partially fullfilled but not beneficial for the scope of this application, assume accomplished.

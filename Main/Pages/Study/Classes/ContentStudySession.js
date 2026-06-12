@@ -1,4 +1,5 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
+import HtmlSanitizer from "../../../Globals/Classes/HtmlSanitizer.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import StudySession from "./StudySession.js";
 import StudyMaterialEditorPage from "../../StudyMaterialEditor/StudyMaterialEditorPage.js";
@@ -140,8 +141,20 @@ class ContentStudySession extends StudySession
 
         ActiveEntityTracker.set(material.getId(), entityTypes.STUDY_MATERIAL);
 
-        container.innerHTML = material.getContent();
+        container.innerHTML = HtmlSanitizer.sanitize(material.getContent());
         this._studyPage.renderLatex();
+
+        // Each material is a fresh document, so start it at the top rather
+        // than inheriting the previous material's scroll offset. The
+        // .study-page-container is the scrolling ancestor (the content
+        // section itself has no overflow); reset the content section too so
+        // a future layout that makes it the scroller stays correct.
+        const scrollContainer = this._studyPage.querySelector(".study-page-container");
+        if(scrollContainer)
+        {
+            scrollContainer.scrollTop = 0;
+        }
+        container.scrollTop = 0;
 
         // Notify the bottom panel (and any other listener) that the
         // visible study material just changed.

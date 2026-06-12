@@ -4,6 +4,7 @@ import { dataFormats } from "../../../Globals/Enumerations/DataFormats.js";
 import { getRandomUuid } from "../../../Globals/UtilityFunctions/GetRandomUuid.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import Persistence from "../../../Globals/Classes/Persistence.js";
+import HtmlSanitizer from "../../../Globals/Classes/HtmlSanitizer.js";
 import MockTestItemFactory from "../../../Globals/Model/MockTestEntities/MockTestItemFactory.js";
 import RichTextEditor from "../../CardEditor/Components/RichTextEditor.js";
 
@@ -250,7 +251,7 @@ class MockTestRunner extends HTMLElement
     #renderQuestionItem(questionItem, questionNumber, isOffline, currentSection = null)
     {
         const questionId = questionItem.getId();
-        const questionHtml = questionItem.getQuestion() || "";
+        const questionHtml = HtmlSanitizer.sanitize(questionItem.getQuestion() || "");
         const marks = MockTestRunner.#resolveQuestionMarks(this.#mockTest, questionItem, currentSection);
         const additionalData = questionItem.getAdditionalData ? questionItem.getAdditionalData() : {};
         const resolvedQuestionType = additionalData.type ?? null;

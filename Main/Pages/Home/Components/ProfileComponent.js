@@ -24,7 +24,7 @@ class ProfileComponent extends HTMLElement
 
         this.innerHTML =
         `
-            <img class="profile-icon" src="${displayPicture}" alt="Profile Icon">
+            <img class="profile-icon" src="${displayPicture}" alt="Profile Icon" referrerpolicy="no-referrer">
             <div class="profile-display-name">${displayName}</div>
         `;
     }

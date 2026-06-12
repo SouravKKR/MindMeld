@@ -633,14 +633,14 @@ class DeckEditorPage extends HTMLElement
         this.#fillInputs();
         this.#handleEvents();
 
-        ActiveEntityTracker.set(this.#deck.getId(), entityTypes.DECK);
+        ActiveEntityTracker.set(this.#deck.getId(), entityTypes.DECK, true);
     }
 
     onPageResumed()
     {
         if (this.#deck)
         {
-            ActiveEntityTracker.set(this.#deck.getId(), entityTypes.DECK);
+            ActiveEntityTracker.set(this.#deck.getId(), entityTypes.DECK, true);
         }
     }
 

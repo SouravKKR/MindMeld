@@ -2,7 +2,9 @@ import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import { activityEntryTypes } from "../../../Globals/Enumerations/ActivityEntryTypes.js";
 import { taskStatus } from "../../../Globals/Enumerations/TaskStatus.js";
 import BrowserLlmDownloadEvents from "../../../Globals/Events/BrowserLlmDownloadEvents.js";
+import PaidDeckUploadEvents from "../../../Globals/Events/PaidDeckUploadEvents.js";
 import LocalDownloadActivitySource from "../../Activity/Sources/LocalDownloadActivitySource.js";
+import PaidDeckUploadActivitySource from "../../Activity/Sources/PaidDeckUploadActivitySource.js";
 
 
 /**
@@ -34,6 +36,7 @@ class ActivityPreviewComponent extends HTMLElement
     #boundHandleVisibility = null;
     #boundDownloadCapabilityHandler = null;
     #boundDownloadProgressHandler = null;
+    #boundUploadProgressHandler = null;
     #latestEntries = [];
     #bDisposed = false;
 
@@ -62,6 +65,10 @@ class ActivityPreviewComponent extends HTMLElement
         window.addEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundDownloadCapabilityHandler);
         window.addEventListener(BrowserLlmDownloadEvents.PROGRESS, this.#boundDownloadProgressHandler);
 
+        // Local paid-deck upload drives the badge the same way downloads do.
+        this.#boundUploadProgressHandler = () => this.#renderBadge();
+        window.addEventListener(PaidDeckUploadEvents.PROGRESS, this.#boundUploadProgressHandler);
+
         this.#pollOnce();
     }
 
@@ -86,6 +93,11 @@ class ActivityPreviewComponent extends HTMLElement
         {
             window.removeEventListener(BrowserLlmDownloadEvents.PROGRESS, this.#boundDownloadProgressHandler);
             this.#boundDownloadProgressHandler = null;
+        }
+        if (this.#boundUploadProgressHandler !== null)
+        {
+            window.removeEventListener(PaidDeckUploadEvents.PROGRESS, this.#boundUploadProgressHandler);
+            this.#boundUploadProgressHandler = null;
         }
     }
 
@@ -173,6 +185,14 @@ class ActivityPreviewComponent extends HTMLElement
             && localDownloadEntry.payload?.isLive === true)
         {
             inProgressEntries.unshift(localDownloadEntry);
+        }
+
+        // Same for an in-progress paid-deck upload.
+        const localUploadEntry = PaidDeckUploadActivitySource.getEntry();
+        if (localUploadEntry !== null
+            && localUploadEntry.payload?.isLive === true)
+        {
+            inProgressEntries.unshift(localUploadEntry);
         }
 
         if (inProgressEntries.length === 0)

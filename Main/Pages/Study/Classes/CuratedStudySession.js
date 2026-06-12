@@ -3,6 +3,7 @@ import CuratedStudyCompletionDialog from "../Components/CuratedStudyCompletionDi
 import CuratedStudyController from "../../../Globals/Classes/CuratedStudy/CuratedStudyController.js";
 import CuratedStudyProgressOverlay from "../Components/CuratedStudyProgressOverlay.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
+import HtmlSanitizer from "../../../Globals/Classes/HtmlSanitizer.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import StudySession from "./StudySession.js";
 import { curatedFlashcardGrade } from "../../../Globals/Enumerations/CuratedFlashcardGrade.js";
@@ -132,7 +133,7 @@ class CuratedStudySession extends StudySession
         {
             return;
         }
-        contentSection.innerHTML = flowState.currentMaterial.getContent?.() || "";
+        contentSection.innerHTML = HtmlSanitizer.sanitize(flowState.currentMaterial.getContent?.() || "");
         this._studyPage.renderLatex?.();
 
         const readButton = this._studyPage.querySelector(".curated-i-have-read-this-button");
@@ -180,7 +181,7 @@ class CuratedStudySession extends StudySession
         const cardPositionInTopic = (card.getAdditionalData()?.[CuratedFlashcardFields.SYLLABUS_POSITION_IN_TOPIC] ?? 0) + 1;
         this.#renderTopicBadge(liveBatchInfo, flowState, `Card ${cardPositionInTopic} of ${topicCardCount}`);
 
-        questionSection.innerHTML = card.getQuestion?.() || "";
+        questionSection.innerHTML = HtmlSanitizer.sanitize(card.getQuestion?.() || "");
         answerSection.innerHTML = "";
 
         // Reveal-and-grade flow: show-answer reveals the answer block
@@ -202,7 +203,7 @@ class CuratedStudySession extends StudySession
 
         freshShowAnswerButton.addEventListener("click", () =>
         {
-            answerSection.innerHTML = card.getAnswer?.() || "";
+            answerSection.innerHTML = HtmlSanitizer.sanitize(card.getAnswer?.() || "");
             this._studyPage.renderLatex?.();
             freshShowAnswerButton.style.display = "none";
             freshShowAnswerButton.hidden = true;

@@ -1,6 +1,7 @@
 import { askAiPromptModes } from "../../../Globals/Enumerations/AskAiPromptModes.js";
 import Card from "../../../Globals/Model/Card.js";
 import StudyMaterial from "../../../Globals/Model/StudyMaterial.js";
+import HtmlSanitizer from "../../../Globals/Classes/HtmlSanitizer.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import { getRandomUuid } from "../../../Globals/UtilityFunctions/GetRandomUuid.js";
@@ -855,7 +856,7 @@ class AskAiActionDispatcher
             const questionSection = studyPageElement.querySelector(".question-section");
             if (questionSection)
             {
-                questionSection.innerHTML = entity.getQuestion() || "";
+                questionSection.innerHTML = HtmlSanitizer.sanitize(entity.getQuestion() || "");
             }
             const answerSection = studyPageElement.querySelector(".answer-section");
             // Only refresh the answer if it's currently revealed —
@@ -864,7 +865,7 @@ class AskAiActionDispatcher
             // answer was shown.
             if (answerSection && (answerSection.textContent || "").trim().length > 0)
             {
-                answerSection.innerHTML = entity.getAnswer() || "";
+                answerSection.innerHTML = HtmlSanitizer.sanitize(entity.getAnswer() || "");
             }
             return;
         }
@@ -873,7 +874,7 @@ class AskAiActionDispatcher
             const materialContentSection = studyPageElement.querySelector(".study-material-content-section");
             if (materialContentSection)
             {
-                materialContentSection.innerHTML = entity.getContent() || "";
+                materialContentSection.innerHTML = HtmlSanitizer.sanitize(entity.getContent() || "");
                 // ContentStudySession re-runs LaTeX rendering after every
                 // content swap; mirror that here so any KaTeX-rendered
                 // math inside the new content displays correctly. The

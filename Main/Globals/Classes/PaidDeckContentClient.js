@@ -76,6 +76,22 @@ class PaidDeckContentClient
         return batchedResults[entityId] || null;
     }
 
+    /**
+     * Forces a fresh server fetch of a single entity, bypassing the IDB cache
+     * (used after a server-side mutation that doesn't bump the content-key
+     * version — e.g. a mock-test attempt graded server-side into the buyer's
+     * per-user copy). Returns the decrypted plaintext, or null.
+     */
+    static async refetchEntity(deckId, entityId)
+    {
+        if (!PaidDeckSession.isUnlocked(deckId))
+        {
+            return null;
+        }
+        const batchedResults = await PaidDeckContentClient.#fetchEntityBatch(deckId, [entityId]);
+        return batchedResults[entityId] || null;
+    }
+
     static async prefetchEntities(deckId, entityIds)
     {
         if (!PaidDeckSession.isUnlocked(deckId) || entityIds.length === 0)

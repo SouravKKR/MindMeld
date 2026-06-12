@@ -10,6 +10,7 @@ import AutomaticGenerationEvents from "../../Globals/Events/AutomaticGenerationE
 import PageNavigator from "../../Globals/Classes/PageNavigator.js";
 import GenerationTemplate from "../../Globals/Classes/GenerationTemplate.js";
 import AiFeatureGate from "../../Globals/Classes/AiFeatureGate.js";
+import CreditNotice from "../../Globals/Classes/Credits/CreditNotice.js";
 
 class AutomaticGenerationPage extends HTMLElement
 {
@@ -383,6 +384,15 @@ class AutomaticGenerationPage extends HTMLElement
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(generationSettingsMap)
                 });
+
+                if (response.status === 402)
+                {
+                    const insufficientDetail = await response.json().catch(() => ({}));
+                    await CreditNotice.showInsufficientCredits(insufficientDetail);
+                    generateButton.disabled = false;
+                    generateButton.textContent = "Start Generation";
+                    return;
+                }
 
                 if (!response.ok)
                 {

@@ -1,6 +1,9 @@
 import HeaderComponent from "../../CommonComponents/HeaderComponent.js";
 import PageNavigator from "../../Globals/Classes/PageNavigator.js";
 import PaidDeckFilterPanel from "./Components/PaidDeckFilterPanel.js";
+import PaidDeckThumbnails from "../../Globals/Classes/PaidDeckThumbnails.js";
+import PaidDeckRegistry from "../../Globals/Classes/PaidDeckRegistry.js";
+import PaidDeckPurchaseFlow from "../../Globals/Classes/PaidDeckPurchaseFlow.js";
 import RegionMetadata from "../../Globals/Classes/RegionMetadata.js";
 import { paidDeckSortFields } from "../../Globals/Enumerations/PaidDeckSortFields.js";
 import { sortDirections } from "../../Globals/Enumerations/SortDirections.js";
@@ -342,21 +345,31 @@ class PaidDeckLibraryPage extends HTMLElement
             // Prefer the per-deck currency the pricing engine stamped (already
             // converted into the buyer region's display currency).
             const currency = deck.computedPrice?.currency || deck.currency || "INR";
-            const ownedNote = deck.computedPrice?.reason === "ALREADY_OWNED"
-                ? `<div class="paid-deck-card-owned">Already owned</div>`
-                : "";
+
+            const isOwned = deck.computedPrice?.reason === "ALREADY_OWNED" || PaidDeckRegistry.isLicensed(deck.id);
+            const ownership = PaidDeckLibraryPage.#getOwnershipExpiry(deck.id);
+
+            // Owned decks show "Already purchased" in place of a price, plus an
+            // "Extend" action for time-limited (subscription) access.
+            const priceOrOwnedBlock = isOwned
+                ? `<div class="paid-deck-card-owned">Already purchased</div>${ownership.expiryText ? `<div class="paid-deck-card-expiry">${PaidDeckLibraryPage.#escape(ownership.expiryText)}</div>` : ""}`
+                : `<div class="paid-deck-card-price">${showStrike ? `<span class="paid-deck-card-strike">${currency} ${(baseMinor / 100).toFixed(2)}</span>` : ""}<span class="paid-deck-card-final">${currency} ${(finalMinor / 100).toFixed(2)}</span></div>`;
+
+            const actionsBlock = (isOwned && ownership.hasExpiry)
+                ? `<div class="paid-deck-card-actions"><button class="paid-deck-card-view" data-deck-index="${deckIndex}">View details</button><button class="paid-deck-card-extend" data-deck-index="${deckIndex}">Extend</button></div>`
+                : `<button class="paid-deck-card-view" data-deck-index="${deckIndex}">View details</button>`;
 
             return `
                 <div class="paid-deck-card" data-deck-index="${deckIndex}">
-                    <img class="paid-deck-card-thumb" src="${PaidDeckLibraryPage.#escape(deck.thumbnailUrl || '/Globals/Assets/Images/Icons/DeckIcon.svg')}" alt="">
-                    <div class="paid-deck-card-title">${PaidDeckLibraryPage.#escape(deck.title)}</div>
-                    <div class="paid-deck-card-description">${PaidDeckLibraryPage.#escape(deck.description || "")}</div>
-                    <div class="paid-deck-card-price">
-                        ${showStrike ? `<span class="paid-deck-card-strike">${currency} ${(baseMinor / 100).toFixed(2)}</span>` : ""}
-                        <span class="paid-deck-card-final">${currency} ${(finalMinor / 100).toFixed(2)}</span>
+                    <div class="paid-deck-card-thumb-wrap">
+                        <img class="paid-deck-card-thumb" src="${PaidDeckLibraryPage.#escape(PaidDeckThumbnails.resolveDeckThumbnail(deck))}" alt="" loading="lazy">
                     </div>
-                    ${ownedNote}
-                    <button class="paid-deck-card-view" data-deck-index="${deckIndex}">View details</button>
+                    <div class="paid-deck-card-body">
+                        <div class="paid-deck-card-title">${PaidDeckLibraryPage.#escape(deck.title)}</div>
+                        <div class="paid-deck-card-description">${PaidDeckLibraryPage.#escape(deck.description || "")}</div>
+                        ${priceOrOwnedBlock}
+                        ${actionsBlock}
+                    </div>
                 </div>
             `;
         }).join("");
@@ -369,6 +382,30 @@ class PaidDeckLibraryPage extends HTMLElement
                 if (!Number.isFinite(deckIndex)) return;
                 PageNavigator.open("paid-deck-details-page", decks[deckIndex], this.#resolvedRegion || this.#manualRegion);
                 clickEvent.stopPropagation();
+            });
+        }
+
+        for (const extendButton of this.querySelectorAll(".paid-deck-card-extend"))
+        {
+            extendButton.addEventListener("click", async (clickEvent) =>
+            {
+                // Don't let the click bubble to the card (which opens details).
+                clickEvent.stopPropagation();
+                const deckIndex = parseInt(extendButton.dataset.deckIndex, 10);
+                if (!Number.isFinite(deckIndex)) return;
+
+                extendButton.disabled = true;
+                extendButton.textContent = "Working…";
+                const extended = await PaidDeckPurchaseFlow.run(decks[deckIndex], this.#resolvedRegion || this.#manualRegion);
+                if (extended)
+                {
+                    this.#runSearch();
+                }
+                else
+                {
+                    extendButton.disabled = false;
+                    extendButton.textContent = "Extend";
+                }
             });
         }
 
@@ -419,6 +456,32 @@ class PaidDeckLibraryPage extends HTMLElement
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;");
+    }
+
+    /**
+     * Reads the buyer's license expiry. Epoch-zero (1970) / far-future
+     * sentinels mean lifetime access; a real future date is time-limited
+     * (subscription) access that can be extended.
+     */
+    static #getOwnershipExpiry(deckId)
+    {
+        const license = PaidDeckRegistry.getLicense(deckId);
+        if (!license || !license.expiresAt)
+        {
+            return { hasExpiry: false, expiryText: "" };
+        }
+        const expiryDate = new Date(license.expiresAt);
+        if (isNaN(expiryDate.getTime()))
+        {
+            return { hasExpiry: false, expiryText: "" };
+        }
+        const expiryYear = expiryDate.getFullYear();
+        if (expiryYear < 2001 || expiryYear > 9000)
+        {
+            return { hasExpiry: false, expiryText: "" };
+        }
+        const formatted = expiryDate.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+        return { hasExpiry: true, expiryText: `Access until ${formatted}` };
     }
 }
 

@@ -1,5 +1,7 @@
 import DialogBox from "../../CommonComponents/DialogBox.js";
+import ProgressDialog from "../../CommonComponents/ProgressDialog.js";
 import PaidDeckPasswordPrompt from "./PaidDeckPasswordPrompt.js";
+import PaidDeckLicenseSyncer from "./Syncing/PaidDeckLicenseSyncer.js";
 import { paymentProviders } from "../Enumerations/PaymentProviders.js";
 
 /**
@@ -23,17 +25,25 @@ class PaidDeckPurchaseFlow
         let initiateResponse;
         try
         {
-            initiateResponse = await fetch("/PaidDecks/Purchase/Initiate",
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify
-                ({
-                    deckIds: [deck.id],
-                    region: region,
-                    paymentProvider: paymentProviders.RAZORPAY
+            // For a free / fully-discounted deck the server seeds the buyer's
+            // encrypted copy inside this request, which can take a while for a
+            // large deck — show a progress bar over it.
+            initiateResponse = await PaidDeckPurchaseFlow.#runWithProgress
+            (
+                "Preparing your library",
+                "Setting things up…",
+                () => fetch("/PaidDecks/Purchase/Initiate",
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify
+                    ({
+                        deckIds: [deck.id],
+                        region: region,
+                        paymentProvider: paymentProviders.RAZORPAY
+                    })
                 })
-            });
+            );
         }
         catch (initiateError)
         {
@@ -52,7 +62,12 @@ class PaidDeckPurchaseFlow
 
         if (responseJson.requiresPayment === false)
         {
-            await DialogBox.alert("Acquired", "This deck has been added to your library.");
+            if (responseJson.requiresPasswordSetup)
+            {
+                await PaidDeckPurchaseFlow.#promptPasswordSetup();
+            }
+            await PaidDeckPurchaseFlow.#refreshLibraryAfterPurchase();
+            await DialogBox.alert("Acquired", "This deck has been added to your library. You'll find it on your home page.");
             return true;
         }
 
@@ -86,22 +101,29 @@ class PaidDeckPurchaseFlow
                 description: deck.title,
                 handler: async (razorpayResponse) =>
                 {
-                    const verifyResponse = await fetch("/PaidDecks/Purchase/Verify",
-                    {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify
-                        ({
-                            providerOrderId: razorpayResponse.razorpay_order_id,
-                            providerPaymentId: razorpayResponse.razorpay_payment_id,
-                            signature: razorpayResponse.razorpay_signature,
-                            paymentProvider: initiateResponse.provider,
-                            deckIds: [deck.id],
-                            region: region,
-                            amountMinor: order.amountMinor,
-                            currency: order.currency
+                    // The server seeds the buyer's encrypted copy inside Verify
+                    // — show a progress bar over that "move to your library".
+                    const verifyResponse = await PaidDeckPurchaseFlow.#runWithProgress
+                    (
+                        "Adding to your library",
+                        "Finalising your copy…",
+                        () => fetch("/PaidDecks/Purchase/Verify",
+                        {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify
+                            ({
+                                providerOrderId: razorpayResponse.razorpay_order_id,
+                                providerPaymentId: razorpayResponse.razorpay_payment_id,
+                                signature: razorpayResponse.razorpay_signature,
+                                paymentProvider: initiateResponse.provider,
+                                deckIds: [deck.id],
+                                region: region,
+                                amountMinor: order.amountMinor,
+                                currency: order.currency
+                            })
                         })
-                    });
+                    );
 
                     if (verifyResponse.ok)
                     {
@@ -110,7 +132,8 @@ class PaidDeckPurchaseFlow
                         {
                             await PaidDeckPurchaseFlow.#promptPasswordSetup();
                         }
-                        await DialogBox.alert("Purchase complete", "Your deck has been added to your library.");
+                        await PaidDeckPurchaseFlow.#refreshLibraryAfterPurchase();
+                        await DialogBox.alert("Purchase complete", "Your deck has been added to your library. You'll find it on your home page.");
                         resolve(true);
                     }
                     else
@@ -129,6 +152,61 @@ class PaidDeckPurchaseFlow
             const razorpayInstance = new window.Razorpay(options);
             razorpayInstance.open();
         });
+    }
+
+    /**
+     * Runs an async step (the seeding round-trip) behind a progress bar. There
+     * is no server-side streaming, so the bar eases smoothly toward 90% while
+     * the request is in flight and snaps to 100% when it resolves — enough to
+     * show the user the deck is being copied into their account, not frozen.
+     */
+    static async #runWithProgress(title, statusText, performRequest)
+    {
+        const progressDialog = ProgressDialog.show(title);
+        let progressFraction = 0.06;
+        progressDialog.setProgress(progressFraction, statusText);
+
+        const intervalId = setInterval(() =>
+        {
+            progressFraction = progressFraction + (0.9 - progressFraction) * 0.1;
+            progressDialog.setProgress(Math.min(progressFraction, 0.9), statusText);
+        }, 350);
+
+        try
+        {
+            return await performRequest();
+        }
+        finally
+        {
+            clearInterval(intervalId);
+            try
+            {
+                progressDialog.setProgress(1, "Done");
+            }
+            catch (ignoredError)
+            {
+                // Dialog already gone — nothing to update.
+            }
+            progressDialog.close();
+        }
+    }
+
+    /**
+     * After a successful acquisition, pull the freshly-issued license so the
+     * registry + crypto keys update and PaidDeckLibraryPresenter materialises
+     * the home-page tile — making the deck appear without waiting for the next
+     * background sync or a reload.
+     */
+    static async #refreshLibraryAfterPurchase()
+    {
+        try
+        {
+            await PaidDeckLicenseSyncer.pullLicenses();
+        }
+        catch (refreshError)
+        {
+            console.warn("[PaidDeckPurchaseFlow] Post-purchase library refresh failed:", refreshError);
+        }
     }
 
     /**

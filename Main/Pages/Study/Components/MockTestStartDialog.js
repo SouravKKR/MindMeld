@@ -2,6 +2,7 @@ import DialogBox from "../../../CommonComponents/DialogBox.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import { mockTestItemTypes } from "../../../Globals/Enumerations/MockTestItemTypes.js";
 import MockTestSession from "../Classes/MockTestSession.js";
+import PaidDeckStudyGate from "../../../Globals/Classes/PaidDeckStudyGate.js";
 
 // Requires: Pages/Study/Styles/MockTestStartDialog.css
 
@@ -60,6 +61,19 @@ class MockTestStartDialog
 
         startButton.addEventListener("click", async () =>
         {
+            // Belt-and-braces unlock for a paid deck's mock test (no-op for a
+            // preview, a normal deck, or an already-unlocked deck) so the runner
+            // and answer key read decrypted question content. Preview mock tests
+            // are the author's own and are never paid.
+            if (!bPreviewMode)
+            {
+                const bReady = await PaidDeckStudyGate.ensureReadyForStudy(mockTest.getDeck());
+                if (!bReady)
+                {
+                    return;
+                }
+            }
+
             const selectedMode = onlineRadio.checked ? MockTestStartDialog.MODE_ONLINE : MockTestStartDialog.MODE_OFFLINE;
             const parsedMinutes = parseInt(durationInput.value, 10);
             const durationMinutes = Number.isFinite(parsedMinutes) && parsedMinutes >= MockTestStartDialog.MINIMUM_DURATION_MINUTES

@@ -13,6 +13,14 @@ class DeckInsights extends HTMLElement
     {
         this.#deck = Deck.getById(this.getAttribute("deck-id"))
 
+        // The deck may not be in the id map (e.g. a transient paid-study deck
+        // after a reload / identity change) — guard like the sibling widgets.
+        if (!this.#deck)
+        {
+            this.innerHTML = "";
+            return;
+        }
+
         const deckId = this.#deck.getId();
         const bAdmin = AiFeatureGate.isAdmin();
 

@@ -8,15 +8,23 @@ class DeckInsightsPage extends HTMLElement
         this.#deck = deck;
     }
 
-    connectedCallback() 
+    connectedCallback()
     {
-        this.innerHTML = 
+        // Guard against a missing deck (e.g. navigated here without initialize,
+        // or a deck that left the id map) so connectedCallback never throws.
+        if (!this.#deck)
+        {
+            this.innerHTML = `<header-component title="Deck not found"></header-component>`;
+            return;
+        }
+
+        this.innerHTML =
         `
             <header-component title="${this.#deck.getName()} Insights"></header-component>
-            
+
             <deck-insights deck-id="${this.#deck.getId()}"></deck-insights>
-            
-        `; 
+
+        `;
     }
 }
 

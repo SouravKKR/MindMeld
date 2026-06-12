@@ -23,7 +23,6 @@ import UserIdentityEvents from "../Events/UserIdentityEvents.js";
 import UserIdentityManager from "../Classes/UserIdentityManager.js";
 import AutoAnalysisDeckFields from "../Classes/Analysis/AutoAnalysisDeckFields.js";
 import CuratedFlashcardFields from "../Classes/Analysis/CuratedFlashcardFields.js";
-import PaidDeckRegistry from "../Classes/PaidDeckRegistry.js";
 import CuratedStudyMaterialFields from "../Classes/Analysis/CuratedStudyMaterialFields.js";
 import CuratedStudyMaterialMigration from "../Classes/Analysis/CuratedStudyMaterialMigration.js";
 import BrowserLlmDownloadConstants from "../Constants/BrowserLlmDownloadConstants.js";
@@ -213,9 +212,9 @@ class Deck
             allDecks.push(root);
         }
 
-        for(let i = 0; i < root.getSubDecks().length; i++)
+        for(let subDeckIndex = 0; subDeckIndex < root.getSubDecks().length; subDeckIndex++)
         {
-            allDecks = allDecks.concat(Deck.getAll(filter, root.getSubDecks()[i]));
+            allDecks = allDecks.concat(Deck.getAll(filter, root.getSubDecks()[subDeckIndex]));
         }
 
         return allDecks;
@@ -986,6 +985,12 @@ class Deck
      */
     async save(bRecursive = false, bSuppressDispatch = false)
     {
+        // Paid decks persist + sync exactly like normal decks now. Their
+        // sensitive card / material / mock-test CONTENT is stored as ciphertext
+        // envelopes (encrypted by the server on the sync wire), so writing the
+        // deck to local storage and queuing it for sync never exposes plaintext.
+        // The deck node itself (name / structure / additionalData) is plaintext
+        // by design — only the content fields are protected.
         const deckJson = this.toJson();
         const deckBson = serialize(deckJson);
 
@@ -1018,9 +1023,9 @@ class Deck
 
         if(bRecursive)
         {
-            for(let i = 0; i < this.#subDecks.length; i++)
+            for(let subDeckIndex = 0; subDeckIndex < this.#subDecks.length; subDeckIndex++)
             {
-                const subDeck = this.#subDecks[i];
+                const subDeck = this.#subDecks[subDeckIndex];
                 await subDeck.save(bRecursive, bSuppressDispatch);
             }
         }
@@ -1059,6 +1064,16 @@ class Deck
 
     getExportData(options = { bRecursive: true, bRetainProgress: true, bRetainAutoAnalysisSettings: false }, decks = [], onDeckCollected = null)
     {
+        // Defence in depth: never collect paid-deck content for export, even on a
+        // direct programmatic call that bypasses export()'s user-facing gate.
+        // Every paid node carries the paidDeckId tag, so this self-check —
+        // propagated through the recursion below — aborts the whole export if any
+        // node in the subtree is paid.
+        if (this.#additionalData && this.#additionalData.paidDeckId)
+        {
+            throw new Error("Paid-deck content cannot be exported.");
+        }
+
         const deckJson = this.toJson();
 
         // Curated study materials + curated flashcards are generated
@@ -1091,16 +1106,37 @@ class Deck
             for(let cardIndex = 0; cardIndex < cards.length; cardIndex++)
             {
                 cards[cardIndex].progress = new Progress().toJson();
+
+                // Drop the per-user "marked for review" study flag so a
+                // published / shared copy carries no personal study state.
+                if (cards[cardIndex].additionalData && typeof cards[cardIndex].additionalData === "object")
+                {
+                    delete cards[cardIndex].additionalData.review;
+                }
             }
 
             // Mock-test attempt history is "progress" for tests — the same
             // retain-progress toggle that wipes card FSRS state should also
             // wipe per-attempt answers/scores. The test definition itself
-            // (items, marking scheme, duration) is preserved.
+            // (items, marking scheme, duration) is preserved, but each
+            // question's recorded answer / awarded score / examiner remarks
+            // are attempt artifacts, so reset them too — only the authored
+            // question + expected-answer content survives.
             const mockTests = Array.isArray(deckJson.mockTests) ? deckJson.mockTests : [];
             for(let mockTestIndex = 0; mockTestIndex < mockTests.length; mockTestIndex++)
             {
                 mockTests[mockTestIndex].history = [];
+
+                const items = Array.isArray(mockTests[mockTestIndex].items) ? mockTests[mockTestIndex].items : [];
+                for (const item of items)
+                {
+                    if (item && typeof item === "object")
+                    {
+                        if ("answer" in item)  { item.answer = ""; }
+                        if ("score" in item)   { item.score = 0; }
+                        if ("remarks" in item) { item.remarks = ""; }
+                    }
+                }
             }
         }
 
@@ -1177,7 +1213,8 @@ class Deck
         let walker = this;
         while (walker !== null && walker !== undefined)
         {
-            if (PaidDeckRegistry.isLicensed(walker.getId()))
+            const walkerPaidDeckId = walker.getAdditionalData?.()?.paidDeckId;
+            if (typeof walkerPaidDeckId === "string" && walkerPaidDeckId.length > 0)
             {
                 return true;
             }
@@ -1192,7 +1229,8 @@ class Deck
         for (let subDeckIndex = 0; subDeckIndex < subDecks.length; subDeckIndex++)
         {
             const subDeck = subDecks[subDeckIndex];
-            if (PaidDeckRegistry.isLicensed(subDeck.getId()))
+            const subDeckPaidDeckId = subDeck.getAdditionalData?.()?.paidDeckId;
+            if (typeof subDeckPaidDeckId === "string" && subDeckPaidDeckId.length > 0)
             {
                 return true;
             }
@@ -1599,9 +1637,9 @@ class Deck
 
         const deck = new Deck(deckJson.id, deckJson.name, deckJson.shortName, deckJson.tags, cards, lifecycle, studyMaterials, mockTests, [], Deck.getById(deckJson.parent), deckJson.additionalData);
 
-        for(let i = 0; i < deckJson.subDecks.length; i++)
+        for(let subDeckIndex = 0; subDeckIndex < deckJson.subDecks.length; subDeckIndex++)
         {
-            const subDeckId = deckJson.subDecks[i];
+            const subDeckId = deckJson.subDecks[subDeckIndex];
             const subDeckJson = idJsonMap.get(subDeckId);
 
             if(!subDeckJson)
@@ -1620,9 +1658,9 @@ class Deck
             }
         }
 
-        for(let i = 0; i < cards.length; i++)
+        for(let cardIndex = 0; cardIndex < cards.length; cardIndex++)
         {
-            const card = cards[i];
+            const card = cards[cardIndex];
             card.setDeckId(deck.getId());
         }
 
@@ -1763,39 +1801,39 @@ class Deck
         if (!bSuppressDispatch)
         {
             const directCards = Array.from(this.#cards.values());
-            for(let i = 0; i < directCards.length; i++)
+            for(let cardIndex = 0; cardIndex < directCards.length; cardIndex++)
             {
                 window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_DELETED,
                 {
                     detail:
                     {
-                        entityId: directCards[i].getId(),
+                        entityId: directCards[cardIndex].getId(),
                         entityType: entityTypes.CARD
                     }
                 }));
             }
 
             const directStudyMaterials = Array.from(this.#studyMaterials.values());
-            for(let i = 0; i < directStudyMaterials.length; i++)
+            for(let materialIndex = 0; materialIndex < directStudyMaterials.length; materialIndex++)
             {
                 window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_DELETED,
                 {
                     detail:
                     {
-                        entityId: directStudyMaterials[i].getId(),
+                        entityId: directStudyMaterials[materialIndex].getId(),
                         entityType: entityTypes.STUDY_MATERIAL
                     }
                 }));
             }
 
             const directMockTests = Array.from(this.#mockTests.values());
-            for(let i = 0; i < directMockTests.length; i++)
+            for(let mockTestIndex = 0; mockTestIndex < directMockTests.length; mockTestIndex++)
             {
                 window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_DELETED,
                 {
                     detail:
                     {
-                        entityId: directMockTests[i].getId(),
+                        entityId: directMockTests[mockTestIndex].getId(),
                         entityType: entityTypes.MOCK_TEST
                     }
                 }));

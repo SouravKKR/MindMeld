@@ -20,9 +20,13 @@ import LegalDocumentPdfRenderer from "./LegalDocumentPdfRenderer.js";
  *      server, body is the server's contentHtml. Documents are shown
  *      sequentially in server order so the user never juggles two
  *      stacked modals.
- *   4. On Agree → POST `/UpdateUserAdditionalData` with the new
- *      `agreed<Key>Version` and `agreed<Key>At` keys. Mirror the change
- *      onto the in-memory User so subsequent sessions don't re-prompt.
+ *   4. On Agree → POST `/Legal/Accept` with the document key + version. The
+ *      server validates the version against the live document, records the
+ *      consent (server version + timestamp) and returns the updated
+ *      additionalData, which is mirrored onto the in-memory User so
+ *      subsequent sessions don't re-prompt. `/Legal/Accept` is the only
+ *      writer of consent state; the server's global legal-acceptance gate
+ *      blocks all other endpoints until this completes.
  *   5. On Decline → call /Logout and reload.
  *
  * Version-key naming convention: `agreedTermsOfServiceVersion`,
@@ -33,7 +37,7 @@ import LegalDocumentPdfRenderer from "./LegalDocumentPdfRenderer.js";
 class TermsAndConditionsManager
 {
     static #LEGAL_DOCUMENTS_ENDPOINT = "/LegalDocuments";
-    static #UPDATE_ENDPOINT          = "/UpdateUserAdditionalData";
+    static #ACCEPT_ENDPOINT          = "/Legal/Accept";
     static #LOGOUT_ENDPOINT          = "/Logout";
 
     static #AGREED_VERSION_KEY_PREFIX = "agreed";
@@ -302,23 +306,17 @@ class TermsAndConditionsManager
 
     static async #persistAgreement(user, legalDocument)
     {
-        const nowIsoString = new Date().toISOString();
-        const agreedVersionKey = TermsAndConditionsManager.#buildAgreedVersionKey(legalDocument.key);
-        const agreedAtKey      = TermsAndConditionsManager.#buildAgreedAtKey(legalDocument.key);
-
-        const partialAdditionalData =
-        {
-            [agreedVersionKey]: Number(legalDocument.version),
-            [agreedAtKey]:      nowIsoString
-        };
-
         try
         {
-            const response = await fetch(TermsAndConditionsManager.#UPDATE_ENDPOINT,
+            const response = await fetch(TermsAndConditionsManager.#ACCEPT_ENDPOINT,
             {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ partialAdditionalData })
+                body: JSON.stringify(
+                {
+                    documentKey: legalDocument.key,
+                    version:     Number(legalDocument.version)
+                })
             });
 
             if (!response.ok)
@@ -336,7 +334,13 @@ class TermsAndConditionsManager
             }
             else
             {
-                const merged = { ...(user.getAdditionalData() || {}), ...partialAdditionalData };
+                // Fallback mirror only if the server omitted the echo — the
+                // server is still the authority on the recorded version.
+                const agreedVersionKey = TermsAndConditionsManager.#buildAgreedVersionKey(legalDocument.key);
+                const agreedAtKey      = TermsAndConditionsManager.#buildAgreedAtKey(legalDocument.key);
+                const merged = { ...(user.getAdditionalData() || {}),
+                    [agreedVersionKey]: Number(legalDocument.version),
+                    [agreedAtKey]:      new Date().toISOString() };
                 user.setAdditionalData(merged);
             }
 

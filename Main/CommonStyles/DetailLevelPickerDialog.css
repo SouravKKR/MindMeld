@@ -32,12 +32,12 @@ dialog-box .detail-level-picker-row
 dialog-box .detail-level-picker-row:hover
 {
     background-color: var(--quaternary-background-color);
-    border-color: #0098C4;
+    border-color: var(--gradient-start-color);
 }
 
 dialog-box .detail-level-picker-row:has(.detail-level-picker-checkbox:checked)
 {
-    border-color: #0098C4;
+    border-color: var(--gradient-start-color);
     box-shadow: 0 0 0 1px rgba(0, 152, 196, 0.35);
 }
 
@@ -47,7 +47,7 @@ dialog-box .detail-level-picker-checkbox
     height: 18px;
     margin: 2px 0 0 0;
     cursor: pointer;
-    accent-color: #0098C4;
+    accent-color: var(--gradient-start-color);
     flex-shrink: 0;
 }
 

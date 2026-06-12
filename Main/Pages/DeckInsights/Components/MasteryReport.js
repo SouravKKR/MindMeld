@@ -85,7 +85,15 @@ class MasteryReport extends HTMLElement
     connectedCallback()
     {
         this.#deck = Deck.getById(this.getAttribute("deck-id"));
-        
+
+        // The deck may not be in the id map (e.g. a transient paid-study deck
+        // after a reload / identity change) — guard like StudyActivityHeatmap.
+        if (!this.#deck)
+        {
+            this.innerHTML = "";
+            return;
+        }
+
         const masteryScore = computeMastery(this.#deck, new Date());
         const today = new Date();
         const oneWeekAgo = new Date(today);

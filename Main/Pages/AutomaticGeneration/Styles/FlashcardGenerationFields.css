@@ -62,7 +62,7 @@ flashcard-generation-fields
     height: 17px;
     flex-shrink: 0;
     cursor: pointer;
-    accent-color: #0098C4;
+    accent-color: var(--gradient-start-color);
 }
 
 .question-type-container input[type="number"]

@@ -131,7 +131,7 @@
 .mock-test-marking-section-name-input:focus
 {
     outline: none;
-    border-color: #0098C4;
+    border-color: var(--gradient-start-color);
 }
 
 .mock-test-marking-type-override-list,
@@ -185,7 +185,7 @@
 .mock-test-marking-add-section-override-button:hover
 {
     background-color: var(--secondary-background-color);
-    border-color: #0098C4;
+    border-color: var(--gradient-start-color);
 }
 
 .mock-test-marking-override-remove-button,
@@ -269,7 +269,7 @@
 
 .mock-test-marking-section-type-checkbox input[type="checkbox"]
 {
-    accent-color: #0098C4;
+    accent-color: var(--gradient-start-color);
     cursor: pointer;
 }
 
@@ -403,7 +403,7 @@
 .mock-test-section-row-weight-input:focus
 {
     outline: none;
-    border-color: #0098C4;
+    border-color: var(--gradient-start-color);
 }
 
 .mock-test-section-mode-select
@@ -421,7 +421,7 @@
 .mock-test-section-mode-select:focus
 {
     outline: none;
-    border-color: #0098C4;
+    border-color: var(--gradient-start-color);
 }
 
 .mock-test-section-structure-summary

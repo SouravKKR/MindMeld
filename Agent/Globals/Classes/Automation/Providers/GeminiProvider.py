@@ -10,6 +10,7 @@ from Globals.Classes.Automation.AutomationRequest import AutomationRequest
 from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Generic.RedisSemaphore import RedisSemaphore
 from Globals.Classes.WebScraping.WebContentFetcher import WebContentFetcher
+from Globals.Classes.Credits.CreditMeter import CreditMeter
 from Globals.Constants.ApiConcurrencyLimits import ApiConcurrencyLimits
 
 import httpx
@@ -195,6 +196,10 @@ class GeminiProvider(AutomationProvider):
             config = config,
         )
 
+        # Capture token usage into the process-global meter so the credit
+        # system can apply per-token spend rules for this task.
+        usage_metadata = GeminiProvider.__record_token_usage(response)
+
         outputs = []
         if response.text:
             outputs.append(AutomationContent(AutomationContentTypes.TEXT, response.text))
@@ -210,7 +215,13 @@ class GeminiProvider(AutomationProvider):
                                     base64.b64decode(part.inline_data.data)
                                 ))
 
-        return AutomationResponse(outputs)
+        return AutomationResponse(outputs, usage_metadata)
+
+    @staticmethod
+    def __record_token_usage(response) -> dict:
+        # Delegates to the shared meter so the live, batch and image paths
+        # all extract usage identically.
+        return CreditMeter.record_from_response(response)
 
     async def stream_text(
         self,
@@ -554,11 +565,13 @@ class GeminiProvider(AutomationProvider):
                 poll_interval_seconds = ApiConcurrencyLimits.ACQUIRE_POLL_INTERVAL_SECONDS,
             ):
                 def stream_sync():
+                    last_chunk = None
                     for chunk in self.__client.models.generate_content_stream(
                         model = model,
                         contents = contents,
                         config = config,
                     ):
+                        last_chunk = chunk
                         if chunk.parts is None:
                             continue
                         for part in chunk.parts:
@@ -567,6 +580,11 @@ class GeminiProvider(AutomationProvider):
                                 buf.extend(part.inline_data.data)
                             elif hasattr(part, "text") and part.text:
                                 print(f"[GeminiProvider] stream text: {part.text}")
+
+                    # The final stream chunk carries the usage_metadata for the
+                    # whole image generation; record it for per-token billing.
+                    if last_chunk is not None:
+                        CreditMeter.record_from_response(last_chunk)
 
                 try:
                     await asyncio.to_thread(stream_sync)

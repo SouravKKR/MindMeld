@@ -4,6 +4,7 @@ import InformationSourceFileSelector from "./InformationSourceFileSelector.js";
 import InformationSourceExistingSelector from "./InformationSourceExistingSelector.js";
 import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
 import { informationSourceTypes } from "../../../Globals/Enumerations/InformationSourceTypes.js";
+import { contentRetentionModes } from "../../../Globals/Enumerations/ContentRetentionModes.js";
 
 class InformationSourceUploader extends HTMLElement
 {
@@ -172,6 +173,10 @@ class InformationSourceUploader extends HTMLElement
 
                 <div class="upload-new-modal-header">Upload New Source</div>
                 <div class="upload-new-modal-file-selector-container"></div>
+                <label class="upload-new-modal-retention-row" style="display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; font-size: 13px; cursor: pointer;">
+                    <input type="checkbox" class="upload-new-modal-keep-permanently" checked>
+                    Keep this source permanently (stored sources count toward storage credits; uncheck to keep it temporary)
+                </label>
                 <button class="upload-new-modal-upload-button">Upload</button>
             `
         );
@@ -188,12 +193,18 @@ class InformationSourceUploader extends HTMLElement
             const tags = informationSourceFileSelector.getTags();
             const sourceTypeKey = this.getAttribute("source-type-key");
 
+            const keepPermanentlyCheckbox = dialog.querySelector(".upload-new-modal-keep-permanently");
+            const retentionMode = (keepPermanentlyCheckbox === null || keepPermanentlyCheckbox.checked)
+                ? contentRetentionModes.PERMANENT
+                : contentRetentionModes.TEMPORARY;
+
             const informationSource = new InformationSource
             ({
                 name: name,
                 tags: tags,
                 sourceType: informationSourceTypes[sourceTypeKey],
-                mimeType: file !== null ? file.type : ''
+                mimeType: file !== null ? file.type : '',
+                retentionMode: retentionMode
             });
 
             const xhr = new XMLHttpRequest();

@@ -7,6 +7,7 @@ import { entityTypes } from "../../Globals/Enumerations/EntityTypes.js";
 import CardListItem from "./Components/CardListItem.js";
 import StudyMaterialListItem from "./Components/StudyMaterialListItem.js";
 import MockTestListItem from "./Components/MockTestListItem.js";
+import PaidDeckStudyGate from "../../Globals/Classes/PaidDeckStudyGate.js";
 
 class BrowserPage extends HTMLElement
 {
@@ -163,6 +164,24 @@ class BrowserPage extends HTMLElement
 
     connectedCallback()
     {
+        this.#renderWhenReady();
+    }
+
+    async #renderWhenReady()
+    {
+        // A paid deck must be unlocked + decrypted once this session before its
+        // cards / materials are listed, or every row (and the search index)
+        // would read the [Locked] placeholder instead of real content. No-op
+        // for a normal deck. If the user cancels the unlock, show a locked
+        // notice rather than a list of placeholders.
+        const bReady = await PaidDeckStudyGate.ensureReadyForStudy(this.#deck);
+        if (!bReady)
+        {
+            this.setAttribute("page", "");
+            this.innerHTML = `<header-component title="Locked"></header-component>`;
+            return;
+        }
+
         this.setAttribute("page", "");
 
         const showClearAttemptsButton = this.#entityType === entityTypes.MOCK_TEST;

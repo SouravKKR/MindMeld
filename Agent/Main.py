@@ -21,6 +21,9 @@ from Globals.Enumerations.TaskStatus import TaskStatus
 from Globals.Classes.Task.TaskDescriptor import TaskDescriptor
 from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Enumerations.TaskTypes import TaskTypes
+from Globals.Classes.Credits.CreditConfigurationStore import CreditConfigurationStore
+from Globals.Classes.Credits.CreditLedger import CreditLedger
+from Globals.Classes.Credits.TaskCreditCharger import TaskCreditCharger
 from Workflows.Workflow import Workflow
 
 from Globals.Utility.ArgumentParser import argument_parser
@@ -29,6 +32,52 @@ from Globals.Utility.SetupEnvironment import setup_environment
 import json
 
 load_dotenv()
+
+
+async def evaluate_credit_gate(task_descriptor: TaskDescriptor, task_type: TaskTypes) -> dict:
+    """
+    Decides what the credit subsystem should do for this task:
+      - {"action": "allow_free"}  — no rule configured → run unmetered.
+      - {"action": "deny", "error": ...}  — rule disabled (SERVICE_DISABLED) or
+        the user lacks the minimum balance to run (INSUFFICIENT_CREDITS).
+      - {"action": "charge", "charger": TaskCreditCharger}  — enabled rule.
+    Never raises — a credit-subsystem fault must not take a task down, so it
+    falls back to allowing the task.
+    """
+    try:
+        configuration = await CreditConfigurationStore.load()
+        if configuration is None:
+            return {"action": "allow_free"}
+
+        rule = configuration.get_rule_for_task(int(task_type.value))
+
+        # No rule configured at all → unmetered → run free.
+        if rule is None:
+            return {"action": "allow_free"}
+
+        # Rule present but disabled → the service is denied, not free.
+        if not rule.get_enabled():
+            return {"action": "deny", "error": "SERVICE_DISABLED"}
+
+        user_id = task_descriptor.get_user_id()
+
+        # Entry requirement: the user must already hold at least this much.
+        minimum_to_run = rule.get_minimum_balance_to_run()
+        if minimum_to_run > 0:
+            balance = await CreditLedger.get_balance(user_id)
+            if balance is None or balance < minimum_to_run:
+                return {"action": "deny", "error": "INSUFFICIENT_CREDITS"}
+
+        charger = TaskCreditCharger(
+            user_id = user_id,
+            task_id = task_descriptor.get_id(),
+            task_type = int(task_type.value),
+            rule = rule,
+        )
+        return {"action": "charge", "charger": charger}
+    except Exception as credit_error:
+        print(f"[Credits] gate evaluation failed: {credit_error}")
+        return {"action": "allow_free"}
 
 
 async def main():
@@ -45,6 +94,31 @@ async def main():
     # Mark as in progress before any work begins so the frontend shows the correct state
     task_descriptor.set_status(TaskStatus.IN_PROGRESS)
     await TaskManager.set_task(task_descriptor)
+
+    # ── Credits: gate + per-task charging ──────────────────────────────────
+    # The Agent subprocess is the only thing alive during the run, so all
+    # per-task deduction timings are driven from here. A disabled rule denies
+    # the task; an enabled one gates on the minimum-balance-to-run, then
+    # charges per its timing (ON_START up front, AT_INTERVALS via a background
+    # loop, ON_SUCCESS / ON_ANY_COMPLETION settled in the finally block).
+    credit_charger = None
+    credit_gate = await evaluate_credit_gate(task_descriptor, task_type)
+    if credit_gate["action"] == "deny":
+        print(f"Task denied by credit gate: {credit_gate['error']}")
+        task_descriptor.set_status(TaskStatus.FAILED)
+        task_descriptor.set_payload({"error": credit_gate["error"]})
+        await TaskManager.set_task(task_descriptor)
+        return
+    if credit_gate["action"] == "charge":
+        credit_charger = credit_gate["charger"]
+        bChargeAllowed = await credit_charger.charge_on_start()
+        if not bChargeAllowed:
+            print("Task refused before start: insufficient credits.")
+            task_descriptor.set_status(TaskStatus.FAILED)
+            task_descriptor.set_payload({"error": "INSUFFICIENT_CREDITS"})
+            await TaskManager.set_task(task_descriptor)
+            return
+        credit_charger.begin_interval_charging()
 
     bFailed = False
 
@@ -157,6 +231,14 @@ async def main():
         bFailed = True
 
     finally:
+        # Settle the completion-time charge (and stop any interval loop)
+        # before the task's final status is written.
+        if credit_charger is not None:
+            try:
+                await credit_charger.settle(bFailed)
+            except Exception as settle_error:
+                print(f"[Credits] settle failed: {settle_error}")
+
         if bFailed:
             task_descriptor.set_status(TaskStatus.FAILED)
         else:

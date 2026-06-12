@@ -3,6 +3,7 @@ import { getRandomUuid } from "../UtilityFunctions/GetRandomUuid.js";
 import Deck from "./Deck.js";
 import Lifecycle from "./Lifecycle.js";
 import SyncEvents from "../Events/SyncEvents.js";
+import PaidDeckFieldCipher from "../Classes/Crypto/PaidDeckFieldCipher.js";
 import { entityTypes } from "../Enumerations/EntityTypes.js";
 import { studyMaterialDetailLevels } from "../Enumerations/StudyMaterialDetailLevels.js";
 import CuratedStudyMaterialFields from "../Classes/Analysis/CuratedStudyMaterialFields.js";
@@ -16,6 +17,11 @@ class StudyMaterial
     #syllabusPosition = 0;
     #detailLevel = studyMaterialDetailLevels.STANDARD;
     #additionalData = {};
+
+    // Transient in-memory plaintext for a paid deck's encrypted HTML content,
+    // populated by decryptForStudy() and never serialised. Null for a normal
+    // (plaintext) deck or a locked paid deck.
+    #decryptedContent = null;
 
     /**
      * Creates a StudyMaterial instance from a plain JSON object.
@@ -75,7 +81,48 @@ class StudyMaterial
 
     getContent()
     {
+        if (PaidDeckFieldCipher.isEncryptedField(this.#content))
+        {
+            return this.#decryptedContent !== null ? this.#decryptedContent : PaidDeckFieldCipher.LOCKED_PLACEHOLDER;
+        }
         return this.#content;
+    }
+
+    /**
+     * Pre-decrypts this material's encrypted HTML into the transient in-memory
+     * cache the synchronous getContent() reads from. Called when a paid deck is
+     * opened for study / curated viewing. No-op for a normal (plaintext) deck or
+     * a locked deck (decrypt throws -> cache stays null -> locked placeholder).
+     */
+    async decryptForStudy()
+    {
+        const paidDeckId = this.getDeck()?.getAdditionalData?.()?.paidDeckId;
+        if (!paidDeckId)
+        {
+            return;
+        }
+
+        // Idempotent: skip when already decrypted this session.
+        if (this.#decryptedContent === null && PaidDeckFieldCipher.isEncryptedField(this.#content))
+        {
+            try
+            {
+                this.#decryptedContent = await PaidDeckFieldCipher.decryptField(paidDeckId, this.#content);
+            }
+            catch (decryptError)
+            {
+                this.#decryptedContent = null;
+            }
+        }
+    }
+
+    /**
+     * True when this material has encrypted content not yet decrypted this
+     * session — used to size / skip the decrypt progress bar.
+     */
+    needsDecryption()
+    {
+        return this.#decryptedContent === null && PaidDeckFieldCipher.isEncryptedField(this.#content);
     }
 
     getDeckId()
@@ -103,6 +150,13 @@ class StudyMaterial
 
     setContent(content)
     {
+        // Paid-deck content is server-authored and read-only on the device —
+        // refuse to overwrite it so no edit path can write plaintext into a
+        // paid study material at rest (the encrypted envelope must stay intact).
+        if (this.getDeck()?.getAdditionalData?.()?.paidDeckId)
+        {
+            return;
+        }
         this.#content = content;
         this.#lifecycle?.touch();
     }
@@ -206,6 +260,10 @@ class StudyMaterial
             return;
         }
 
+        // Paid decks persist + sync like normal decks now — the HTML content is
+        // already a ciphertext envelope, so this writes ciphertext at rest and
+        // the server preserves its plaintext copy, taking only read-state /
+        // lifecycle from the push.
         await owningDeck.save(false);
 
         window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_CHANGED,

@@ -1,0 +1,18 @@
+Report: Common/Reports/SecurityReport.pdf
+
+1) All users are required to login.
+2) Admin panel should only be accessible by admins of organizations and the main admins.
+3) Organization admins can just edit only the user related information, scoped within their organization and nothing else.
+4) Paid decks of an account must not be openable from another account.
+5) Paid decks must not be exportable or importable.
+6) Paid deck access must be limited based on the time for which the user purchased it (unless intentionally set forever) for and should not remain indefinitely.
+7) The contents of paid decks must not be obtainable through javascript.
+8) All server side AI features should require the user to have credits in their account.
+9) Rate limits per user and overall are enforced for all endpoints (excluding static resources).
+10) Any server side 429 errors are logged and admins can view it in the admin panel.
+11) User can only login upto 4 sessions at a time and other sessions are automatically terminated.
+12) User sessions must expire after one month of inactivity.
+13) User must have agreed to the Terms of Service and Privacy Policy before being able to use the application.
+14) Updates in Terms of Service and Privacy Policy must be visible to the user as soon as they open a new session.
+15) Each user has a limit to how much data they can own in the mongodb database as well as storage bucket.
+16) Check against OWASP 10 vulnerabilities.

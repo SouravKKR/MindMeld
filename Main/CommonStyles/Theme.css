@@ -8,7 +8,13 @@
     --quaternary-background-color: #555555;
     --primary-text-color: #ffffff;
     --secondary-text-color: #b8b8c4;
-    --primary-background-gradient: linear-gradient(45deg, #0098C4, #B55BD0);
+
+    /* Brand gradient stops. Exposed individually so single-colour accents
+       (links, active labels, dot markers) can reference the same cyan / purple
+       the gradient is built from instead of repeating the raw hex. */
+    --gradient-start-color: #0098C4;
+    --gradient-end-color: #B55BD0;
+    --primary-background-gradient: linear-gradient(45deg, var(--gradient-start-color), var(--gradient-end-color));
     --header-height: 60px;
 
     /* Outline colours used by hover / focus states. Keep these as

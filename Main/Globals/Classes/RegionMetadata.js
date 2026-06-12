@@ -101,6 +101,17 @@ class RegionMetadata
         }));
     }
 
+    /**
+     * The currencies prices may be set in — the distinct display currencies
+     * across all regions, sorted. Every one is in the ECB feed and has 2
+     * minor digits, so conversion + the minor-unit model stay valid. Used to
+     * populate currency dropdowns so an admin can't type an unsupported code.
+     */
+    static getSupportedCurrencies()
+    {
+        return Array.from(new Set(Object.values(RegionMetadata.#DISPLAY_CURRENCY))).sort();
+    }
+
     static #countryToRegion(countryCode)
     {
         if (typeof countryCode !== "string" || countryCode.length === 0)

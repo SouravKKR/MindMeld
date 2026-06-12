@@ -5,6 +5,8 @@ import { taskStatus } from "../../../Globals/Enumerations/TaskStatus.js";
 import BrowserLlmDownloadEvents from "../../../Globals/Events/BrowserLlmDownloadEvents.js";
 import BrowserLlmCapability from "../../../Globals/Classes/BrowserLlm/BrowserLlmCapability.js";
 import BrowserLlmDownloadManager from "../../../Globals/Classes/BrowserLlm/BrowserLlmDownloadManager.js";
+import PaidDeckUploadEvents from "../../../Globals/Events/PaidDeckUploadEvents.js";
+import PaidDeckUploadActivitySource from "../Sources/PaidDeckUploadActivitySource.js";
 
 
 /**
@@ -32,6 +34,7 @@ class ActivityEntryComponent extends HTMLElement
     #entry = null;
     #boundDownloadProgressHandler = null;
     #boundDownloadCapabilityHandler = null;
+    #boundUploadProgressHandler = null;
 
     initialize(entry)
     {
@@ -57,6 +60,14 @@ class ActivityEntryComponent extends HTMLElement
             window.addEventListener(BrowserLlmDownloadEvents.PROGRESS, this.#boundDownloadProgressHandler);
             window.addEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundDownloadCapabilityHandler);
         }
+
+        // UPLOAD entries are live too — re-render from the client-side upload
+        // source on each progress event so the row tracks the upload.
+        if (this.#entry.entryType === activityEntryTypes.UPLOAD)
+        {
+            this.#boundUploadProgressHandler = () => this.#refreshUploadEntry();
+            window.addEventListener(PaidDeckUploadEvents.PROGRESS, this.#boundUploadProgressHandler);
+        }
     }
 
     disconnectedCallback()
@@ -70,6 +81,28 @@ class ActivityEntryComponent extends HTMLElement
         {
             window.removeEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundDownloadCapabilityHandler);
             this.#boundDownloadCapabilityHandler = null;
+        }
+        if (this.#boundUploadProgressHandler)
+        {
+            window.removeEventListener(PaidDeckUploadEvents.PROGRESS, this.#boundUploadProgressHandler);
+            this.#boundUploadProgressHandler = null;
+        }
+    }
+
+    #refreshUploadEntry()
+    {
+        if (!this.#entry || this.#entry.entryType !== activityEntryTypes.UPLOAD)
+        {
+            return;
+        }
+        // Re-read the live entry from the source. When the upload has cleared
+        // the source returns null; keep the last render in that case — the
+        // parent ActivityPage drops the row on the same event.
+        const freshEntry = PaidDeckUploadActivitySource.getEntry();
+        if (freshEntry)
+        {
+            this.#entry = freshEntry;
+            this.#render();
         }
     }
 
@@ -105,11 +138,13 @@ class ActivityEntryComponent extends HTMLElement
         const entry = this.#entry;
         const isTask = entry.entryType === activityEntryTypes.TASK;
         const isPurchase = entry.entryType === activityEntryTypes.PURCHASE;
-        const isDownload = entry.entryType === activityEntryTypes.DOWNLOAD;
-        const iconText = isTask ? "⚙" : isPurchase ? "✓" : "⬇";
-        const iconKind = isTask ? "task" : isPurchase ? "purchase" : "download";
+        const isUpload = entry.entryType === activityEntryTypes.UPLOAD;
+        const iconText = isTask ? "⚙" : isPurchase ? "✓" : isUpload ? "⬆" : "⬇";
+        // Upload reuses the task icon styling (no bespoke CSS needed).
+        const iconKind = isTask || isUpload ? "task" : isPurchase ? "purchase" : "download";
         const timestampLabel = ActivityEntryComponent.#formatTimestamp(entry.timestamp);
-        const actionLabel = isTask ? "View" : isPurchase ? "Invoice" : ActivityEntryComponent.#downloadActionLabel(entry);
+        // The upload is a fire-and-forget client operation — no row action.
+        const actionLabel = isUpload ? "" : isTask ? "View" : isPurchase ? "Invoice" : ActivityEntryComponent.#downloadActionLabel(entry);
         const statusClass = ActivityEntryComponent.#statusClass(entry);
 
         this.innerHTML = `
@@ -122,14 +157,18 @@ class ActivityEntryComponent extends HTMLElement
                         <span class="activity-entry-timestamp">${ActivityEntryComponent.#escape(timestampLabel)}</span>
                     </div>
                 </div>
-                <button type="button" class="activity-entry-action" data-role="action">${ActivityEntryComponent.#escape(actionLabel)}</button>
+                ${actionLabel ? `<button type="button" class="activity-entry-action" data-role="action">${ActivityEntryComponent.#escape(actionLabel)}</button>` : ""}
             </div>
         `;
 
-        this.querySelector('[data-role="action"]').addEventListener("click", () =>
+        const actionButton = this.querySelector('[data-role="action"]');
+        if (actionButton)
         {
-            this.#handleAction();
-        });
+            actionButton.addEventListener("click", () =>
+            {
+                this.#handleAction();
+            });
+        }
     }
 
     static #downloadActionLabel(entry)
@@ -187,7 +226,8 @@ class ActivityEntryComponent extends HTMLElement
     static #statusClass(entry)
     {
         if (entry.entryType !== activityEntryTypes.TASK
-            && entry.entryType !== activityEntryTypes.DOWNLOAD)
+            && entry.entryType !== activityEntryTypes.DOWNLOAD
+            && entry.entryType !== activityEntryTypes.UPLOAD)
         {
             return "activity-entry-status-neutral";
         }

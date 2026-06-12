@@ -1257,24 +1257,26 @@ class SyncOrchestrator
 
         SyncOrchestrator.#bApplyingServerChanges = true;
 
-        // Raise the active-entity overlay for ANY pull that touches the
-        // entity the user is currently studying or editing — not just
-        // chunked drains. The earlier policy only triggered on
-        // "substantial" pulls (drain cycles), on the theory that small
-        // incremental pulls were fast enough not to matter. But a
-        // single-entity pull whose `data.lifecycle.lastModified` is
-        // newer than the local copy will overwrite the in-memory
+        // Raise the active-entity overlay for any pull that touches the
+        // entity the user is currently EDITING — not just chunked drains,
+        // but also NOT mere read-only study / viewing sessions. A
+        // single-entity pull whose `data.lifecycle.lastModified` is newer
+        // than the local copy will overwrite the in-memory
         // Card / StudyMaterial / MockTest object reference held by the
-        // editor page — and the editor's subsequent `save()` then
-        // writes the user's pre-pull edits back over the server's
-        // newer state, leaving both the editor and the server stuck on
-        // a stale value with no visible warning. Blocking on every
-        // affected pull is cheap (the overlay only stays up for the
-        // apply phase, typically a few hundred ms) and keeps the
-        // editor's reference stable until the user dismisses it. The
+        // editor page — and the editor's subsequent `save()` then writes
+        // the user's pre-pull edits back over the server's newer state,
+        // leaving both the editor and the server stuck on a stale value
+        // with no visible warning. Blocking that pull is cheap (the
+        // overlay only stays up for the apply phase, typically a few
+        // hundred ms) and keeps the editor's reference stable until the
+        // user dismisses it. When the same entity is only being studied
+        // (ActiveEntityTracker.isEditing() === false) there are no
+        // in-flight edits to clobber, so we let the pull apply silently
+        // rather than interrupt the study session with a modal. The
         // whole-DB bulk-snapshot path (`forcePullFromServer`) uses its
         // own SyncBlockingDialog so it doesn't rely on this event.
-        const bBlockingActiveEntity   = SyncApplier.isActiveEntityAffected(serverChanges, serverDeletions);
+        const bBlockingActiveEntity   = ActiveEntityTracker.isEditing()
+            && SyncApplier.isActiveEntityAffected(serverChanges, serverDeletions);
         const blockedActiveEntityId   = bBlockingActiveEntity ? ActiveEntityTracker.getId()   : null;
         const blockedActiveEntityType = bBlockingActiveEntity ? ActiveEntityTracker.getType() : null;
 

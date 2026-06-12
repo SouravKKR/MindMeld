@@ -12,6 +12,7 @@ import MockTestPickerModal from "../../Study/Components/MockTestPickerModal.js";
 import DetailLevelPickerDialog from "../../../CommonComponents/DetailLevelPickerDialog.js";
 import DeckMergeFlow from "./DeckMergeFlow.js";
 import FullscreenImageViewer from "../../../CommonComponents/FullscreenImageViewer.js";
+import PaidDeckStudyGate from "../../../Globals/Classes/PaidDeckStudyGate.js";
 
 class DeckTile extends HTMLElement
 {
@@ -118,90 +119,22 @@ class DeckTile extends HTMLElement
             event.preventDefault();
         });
 
-        studyButton.addEventListener("click", (event) =>
+        studyButton.addEventListener("click", async (event) =>
         {
             event.stopPropagation();
 
-            const studyModeSelectionPopup = DialogBox.modal
-            (`
-                <h2 align="center">Select Study Mode</h2>
-
-                <div class="study-mode-selection-container">
-                    <button class="content-study-button">Content Study</button>
-                    <button class="spaced-repetition-button">Spaced Repetition</button>
-                    <button class="revise-button">Revise</button>
-                    <button class="curated-study-button">Curated Study</button>
-                    <button class="mock-test-button">Mock Test</button>
-                </div>
-
-                <button class="learn-more-button">Learn More About Study Modes</button>
-            `);
-
-            const learnMoreButton        = studyModeSelectionPopup.querySelector(".learn-more-button");
-            const contentStudyButton     = studyModeSelectionPopup.querySelector(".content-study-button");
-            const spacedRepetitionButton = studyModeSelectionPopup.querySelector(".spaced-repetition-button");
-            const reviseButton           = studyModeSelectionPopup.querySelector(".revise-button");
-            const curatedStudyButton     = studyModeSelectionPopup.querySelector(".curated-study-button");
-            const mockTestButton         = studyModeSelectionPopup.querySelector(".mock-test-button");
-
-            spacedRepetitionButton.addEventListener("click", () =>
-            {
-                studyModeSelectionPopup.close();
-                PageNavigator.open("study-page", SpacedRepetitonSession, this.#deck);
-            });
-
-            curatedStudyButton.addEventListener("click", () =>
-            {
-                studyModeSelectionPopup.close();
-                CuratedStudyEntryDialog.show(this.#deck);
-            });
-
-            contentStudyButton.addEventListener("click", async () =>
-            {
-                studyModeSelectionPopup.close();
-
-                // Skip the detail-level picker entirely when the deck only
-                // has one (or zero) tier — the user has no meaningful
-                // choice to make.
-                const availableLevels = this.#deck.getAvailableStudyMaterialDetailLevels(true);
-                if (availableLevels.length <= 1)
-                {
-                    PageNavigator.open("study-page", ContentStudySession, this.#deck);
-                    return;
-                }
-
-                const selectedLevels = await DetailLevelPickerDialog.show(availableLevels);
-                if (selectedLevels === null)
-                {
-                    return;
-                }
-
-                PageNavigator.open("study-page", ContentStudySession, this.#deck, selectedLevels);
-            });
-
-            reviseButton.addEventListener("click", () =>
-            {
-                studyModeSelectionPopup.close();
-                PageNavigator.open("study-page", ReviseSession, this.#deck);
-            });
-
-            mockTestButton.addEventListener("click", () =>
-            {
-                studyModeSelectionPopup.close();
-                MockTestPickerModal.show(this.#deck);
-            });
-
-            // TODO: Create a full page with more info, for now just show the diagram.
-            learnMoreButton.addEventListener("click", () =>
-            {
-                FullscreenImageViewer.open
-                (
-                    "./Globals/Assets/Images/Diagrams/MindMeldKnowledgeConsolidationLifecycle.png",
-                    "Knowledge consolidation lifecycle"
-                );
-            });
-
             DeckOptionsContextMenu.removeAll();
+
+            // Paid decks unlock once per session + pre-decrypt before studying;
+            // a normal deck passes straight through. Abort silently if the user
+            // cancels the password prompt or it fails.
+            const bReadyForStudy = await PaidDeckStudyGate.ensureReadyForStudy(this.#deck);
+            if (!bReadyForStudy)
+            {
+                return;
+            }
+
+            this.#openStudyModeChooser(this.#deck);
         });
     }
 
@@ -408,6 +341,11 @@ class DeckTile extends HTMLElement
             this.setAttribute("data-is-tutorial-sample", "true");
         }
 
+        // A purchased paid deck is now a NORMAL deck in the tree (delivered by
+        // sync, content encrypted at rest). It renders like any other tile —
+        // drill-in, study modes, owner watermark — the only differences being
+        // the once-per-session unlock before studying (PaidDeckStudyGate) and
+        // the suppressed import/export/destructive options handled elsewhere.
         this.innerHTML =
         `
             <button class="deck-options-button" aria-label="Deck options" title="Deck options">&#x22EE;</button>
@@ -419,46 +357,143 @@ class DeckTile extends HTMLElement
         this.#handleEvents();
     }
 
+    #getPaidDeckId()
+    {
+        const additionalData = this.#deck.getAdditionalData?.() || {};
+        return (typeof additionalData.paidDeckId === "string" && additionalData.paidDeckId.length > 0)
+            ? additionalData.paidDeckId
+            : null;
+    }
+
+    /**
+     * The shared study-mode picker used by both normal and (hydrated) paid
+     * decks. Every mode operates on the passed-in `deck`. When `includeInsights`
+     * is set, a Deck Insights entry is added (used by paid decks).
+     */
+    #openStudyModeChooser(deck)
+    {
+        const studyModeSelectionPopup = DialogBox.modal
+        (`
+            <h2 align="center">Select Study Mode</h2>
+
+            <div class="study-mode-selection-container">
+                <button class="content-study-button">Content Study</button>
+                <button class="spaced-repetition-button">Spaced Repetition</button>
+                <button class="revise-button">Revise</button>
+                <button class="curated-study-button">Curated Study</button>
+                <button class="mock-test-button">Mock Test</button>
+            </div>
+
+            <button class="learn-more-button">Learn More About Study Modes</button>
+        `);
+
+        const learnMoreButton        = studyModeSelectionPopup.querySelector(".learn-more-button");
+        const contentStudyButton     = studyModeSelectionPopup.querySelector(".content-study-button");
+        const spacedRepetitionButton = studyModeSelectionPopup.querySelector(".spaced-repetition-button");
+        const reviseButton           = studyModeSelectionPopup.querySelector(".revise-button");
+        const curatedStudyButton     = studyModeSelectionPopup.querySelector(".curated-study-button");
+        const mockTestButton         = studyModeSelectionPopup.querySelector(".mock-test-button");
+
+        spacedRepetitionButton.addEventListener("click", () =>
+        {
+            studyModeSelectionPopup.close();
+            PageNavigator.open("study-page", SpacedRepetitonSession, deck);
+        });
+
+        curatedStudyButton.addEventListener("click", () =>
+        {
+            studyModeSelectionPopup.close();
+            CuratedStudyEntryDialog.show(deck);
+        });
+
+        contentStudyButton.addEventListener("click", async () =>
+        {
+            studyModeSelectionPopup.close();
+
+            // Skip the detail-level picker entirely when the deck only
+            // has one (or zero) tier — the user has no meaningful
+            // choice to make.
+            const availableLevels = deck.getAvailableStudyMaterialDetailLevels(true);
+            if (availableLevels.length <= 1)
+            {
+                PageNavigator.open("study-page", ContentStudySession, deck);
+                return;
+            }
+
+            const selectedLevels = await DetailLevelPickerDialog.show(availableLevels);
+            if (selectedLevels === null)
+            {
+                return;
+            }
+
+            PageNavigator.open("study-page", ContentStudySession, deck, selectedLevels);
+        });
+
+        reviseButton.addEventListener("click", () =>
+        {
+            studyModeSelectionPopup.close();
+            PageNavigator.open("study-page", ReviseSession, deck);
+        });
+
+        mockTestButton.addEventListener("click", () =>
+        {
+            studyModeSelectionPopup.close();
+            MockTestPickerModal.show(deck);
+        });
+
+        learnMoreButton.addEventListener("click", () =>
+        {
+            FullscreenImageViewer.open
+            (
+                "./Globals/Assets/Images/Diagrams/MindMeldKnowledgeConsolidationLifecycle.png",
+                "Knowledge consolidation lifecycle"
+            );
+        });
+    }
+
+    #escapeHtml(rawValue)
+    {
+        return String(rawValue ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+    }
+
     #renderPaidDeckOverlay()
     {
-        // Best-effort import — keep the watermark optional so a legacy build
-        // without PaidDeckRegistry still renders a deck tile.
-        import("../../../Globals/Classes/PaidDeckRegistry.js").then((module) =>
+        // A paid deck node (root or sub-deck) carries the paidDeckId tag. Brand
+        // its tile with the buyer's profile picture in the corner to signal
+        // ownership — the deck is, by definition, owned by this user.
+        if (!this.#getPaidDeckId())
         {
-            const PaidDeckRegistry = module.default;
-            if (!PaidDeckRegistry.isLicensed(this.#deck.getId()))
-            {
-                return;
-            }
+            return;
+        }
 
-            const buyerProfilePictureUrl = window["user"]?.getProfilePictureUrl?.()
-                || window["user"]?.getAdditionalData?.()?.displayPicture
-                || "";
+        const buyerProfilePictureUrl = window["user"]?.getProfilePictureUrl?.()
+            || window["user"]?.getAdditionalData?.()?.displayPicture
+            || "./Globals/Assets/Images/Icons/ProfileIcon.svg";
 
-            if (!buyerProfilePictureUrl)
-            {
-                return;
-            }
+        const watermarkElement = document.createElement("img");
+        watermarkElement.className = "paid-deck-owner-watermark";
+        // Google's googleusercontent.com avatars return HTTP 429 when a Referer
+        // header is sent — omit it so the buyer's profile picture loads.
+        watermarkElement.referrerPolicy = "no-referrer";
+        watermarkElement.src = buyerProfilePictureUrl;
+        watermarkElement.draggable = false;
+        watermarkElement.alt = "";
+        this.appendChild(watermarkElement);
 
-            const watermarkElement = document.createElement("img");
-            watermarkElement.className = "paid-deck-owner-watermark";
-            watermarkElement.src = buyerProfilePictureUrl;
-            watermarkElement.draggable = false;
-            watermarkElement.alt = "";
-            this.appendChild(watermarkElement);
-
-            // Provision for seller-side branding. Today the buyer overlay
-            // is the only enabled signal; the seller hook is reserved for
-            // a future creator-marketplace pass.
-            //
-            // if (deck.sellerProfilePictureUrl)
-            // {
-            //     const sellerOverlay = document.createElement("img");
-            //     sellerOverlay.className = "paid-deck-seller-watermark";
-            //     sellerOverlay.src = deck.sellerProfilePictureUrl;
-            //     this.appendChild(sellerOverlay);
-            // }
-        }).catch(() => {});
+        // Provision for seller-side branding. Today the buyer overlay is the
+        // only enabled signal; the seller hook is reserved for a future
+        // creator-marketplace pass.
+        //
+        // if (deck.sellerProfilePictureUrl)
+        // {
+        //     const sellerOverlay = document.createElement("img");
+        //     sellerOverlay.className = "paid-deck-seller-watermark";
+        //     sellerOverlay.src = deck.sellerProfilePictureUrl;
+        //     this.appendChild(sellerOverlay);
+        // }
     }
 }
 

@@ -7,6 +7,7 @@ import CreateOrganizationDialog from "./Components/CreateOrganizationDialog.js";
 import OrganizationDetailsDialog from "./Components/OrganizationDetailsDialog.js";
 import AddMembersDialog from "./Components/AddMembersDialog.js";
 import AlertNotifier from "./Components/AlertNotifier.js";
+import CreditConfigEditor from "./Components/CreditConfigEditor.js";
 import { userRoles } from "../../Globals/Enumerations/UserRoles.js";
 import { alertSeverity } from "../../Globals/Enumerations/AlertSeverity.js";
 import { adminPanelTabs } from "../../Globals/Enumerations/AdminPanelTabs.js";
@@ -18,11 +19,11 @@ import { organizationStatus } from "../../Globals/Enumerations/OrganizationStatu
  *
  * Tabbed admin UI: Decks (upload/edit/list/publish/rotate/bulk-apply —
  * regional pricing is authored inline in the upload dialog), Stats (revenue
- * aggregation), Admins, Release Notes, Organizations, and Alerts (the
- * operational alert log + browser-notification opt-in). All operations call
- * /Admin/* endpoints gated by the EnsureAdmin server plugin — the
- * client-side role check below is UX only; the server is the source
- * of truth.
+ * aggregation), Admins, Release Notes, Organizations, Alerts (the operational
+ * alert log + browser-notification opt-in), and Rate Limits (the server-side
+ * 429 event log). All operations call /Admin/* endpoints gated by the
+ * EnsureAdmin server plugin — the client-side role check below is UX only;
+ * the server is the source of truth.
  */
 class AdminPanelPage extends HTMLElement
 {
@@ -62,7 +63,10 @@ class AdminPanelPage extends HTMLElement
             { tab: adminPanelTabs.ADMINS, label: "Admins" },
             { tab: adminPanelTabs.RELEASE_NOTES, label: "Release Notes" },
             { tab: adminPanelTabs.ORGANIZATIONS, label: "Organizations" },
-            { tab: adminPanelTabs.ALERTS, label: "Alerts" }
+            { tab: adminPanelTabs.ALERTS, label: "Alerts" },
+            { tab: adminPanelTabs.RATE_LIMITS, label: "Rate Limits" },
+            { tab: adminPanelTabs.AUDIT_LOG, label: "Audit Log" },
+            { tab: adminPanelTabs.CREDITS, label: "Credits" }
         ];
         const organizationAdminTabs =
         [
@@ -102,7 +106,7 @@ class AdminPanelPage extends HTMLElement
         const currentUser = window["user"];
         const isSuperAdmin = currentUser && currentUser.getRole() === userRoles.ADMIN;
         const allowedTabs = isSuperAdmin
-            ? new Set([adminPanelTabs.DECKS, adminPanelTabs.STATS, adminPanelTabs.ADMINS, adminPanelTabs.RELEASE_NOTES, adminPanelTabs.ORGANIZATIONS, adminPanelTabs.ALERTS])
+            ? new Set([adminPanelTabs.DECKS, adminPanelTabs.STATS, adminPanelTabs.ADMINS, adminPanelTabs.RELEASE_NOTES, adminPanelTabs.ORGANIZATIONS, adminPanelTabs.ALERTS, adminPanelTabs.RATE_LIMITS, adminPanelTabs.AUDIT_LOG, adminPanelTabs.CREDITS])
             : new Set([adminPanelTabs.ORGANIZATION_MEMBERS]);
 
         if (!allowedTabs.has(this.#activeTab))
@@ -139,10 +143,28 @@ class AdminPanelPage extends HTMLElement
             case adminPanelTabs.ALERTS:
                 await this.#renderAlertsTab(content);
                 break;
+            case adminPanelTabs.RATE_LIMITS:
+                await this.#renderRateLimitsTab(content);
+                break;
+            case adminPanelTabs.AUDIT_LOG:
+                await this.#renderAuditLogTab(content);
+                break;
+            case adminPanelTabs.CREDITS:
+                this.#renderCreditsTab(content);
+                break;
             case adminPanelTabs.ORGANIZATION_MEMBERS:
                 await this.#renderOrganizationMembersTab(content);
                 break;
         }
+    }
+
+    #renderCreditsTab(content)
+    {
+        // The credits editor is a self-contained Web Component — it loads
+        // /Admin/Credits/Config, renders the per-task / storage / reward
+        // editors, and saves back via /Admin/Credits/Config/Save.
+        content.innerHTML = "";
+        content.appendChild(document.createElement("credit-config-editor"));
     }
 
     async #fetchPaidDecks()
@@ -531,7 +553,7 @@ class AdminPanelPage extends HTMLElement
                     <td>${alert.occurrenceCount || 1}</td>
                     <td>${AdminPanelPage.#escape(lastSeen)}</td>
                     <td class="admin-panel-alert-actions">
-                        <button data-role="ack-alert" data-alert-id="${AdminPanelPage.#escape(alert.id)}">Acknowledge</button>
+                        <button data-role="acknowledge-alert" data-alert-id="${AdminPanelPage.#escape(alert.id)}">Acknowledge</button>
                         <button data-role="delete-alert" data-alert-id="${AdminPanelPage.#escape(alert.id)}">Delete</button>
                     </td>
                 </tr>
@@ -541,7 +563,7 @@ class AdminPanelPage extends HTMLElement
 
     #bindAlertRowActions(content)
     {
-        for (const button of content.querySelectorAll('[data-role="ack-alert"]'))
+        for (const button of content.querySelectorAll('[data-role="acknowledge-alert"]'))
         {
             button.addEventListener("click", () => this.#postAlertAction("/Admin/Alerts/Acknowledge", button.dataset.alertId));
         }
@@ -568,6 +590,135 @@ class AdminPanelPage extends HTMLElement
         {
             await DialogBox.alert("Failed", `HTTP ${response.status}`);
         }
+    }
+
+    async #renderRateLimitsTab(content)
+    {
+        try
+        {
+            const response = await fetch("/Admin/RateLimits/List");
+            if (!response.ok)
+            {
+                content.innerHTML = `<div class="admin-panel-error">HTTP ${response.status}</div>`;
+                return;
+            }
+
+            const responseJson = await response.json();
+            const events = Array.isArray(responseJson.events) ? responseJson.events : [];
+            const summary = responseJson.summary || {};
+
+            content.innerHTML = `
+                <div class="admin-panel-ratelimits-summary">
+                    <span><strong>${summary.last24HourCount || 0}</strong> 429s in the last 24h</span>
+                    <span><strong>${summary.shown || events.length}</strong> shown</span>
+                    <span><strong>${summary.distinctIdentities || 0}</strong> distinct identities</span>
+                </div>
+                <table class="admin-panel-table admin-panel-ratelimits-table">
+                    <thead><tr><th>When</th><th>Scope</th><th>Endpoint</th><th>Method</th><th>Identity</th><th>Retry-After</th></tr></thead>
+                    <tbody>${this.#renderRateLimitRows(events)}</tbody>
+                </table>
+            `;
+        }
+        catch (rateLimitsError)
+        {
+            content.innerHTML = `<div class="admin-panel-error">${AdminPanelPage.#escape(rateLimitsError.message)}</div>`;
+        }
+    }
+
+    #renderRateLimitRows(events)
+    {
+        if (!events.length)
+        {
+            return `<tr><td colspan="6" class="admin-panel-ratelimits-empty">No rate-limit events recorded.</td></tr>`;
+        }
+
+        return events.map((event) =>
+        {
+            const occurredAt = event.occurredAt ? new Date(event.occurredAt).toLocaleString() : "";
+            const scopeLabel = event.scope === "PER_USER" ? "Per-user" : "Overall";
+            const scopeClass = event.scope === "PER_USER" ? "admin-panel-ratelimit-scope-user" : "admin-panel-ratelimit-scope-overall";
+            const identity = event.userId
+                ? `user ${event.userId}`
+                : (event.ipAddress ? `ip ${event.ipAddress}` : (event.identityKey || ""));
+            const retryAfter = event.retryAfterSeconds !== null && event.retryAfterSeconds !== undefined
+                ? `${event.retryAfterSeconds}s`
+                : "";
+
+            return `
+                <tr>
+                    <td>${AdminPanelPage.#escape(occurredAt)}</td>
+                    <td><span class="admin-panel-ratelimit-scope ${scopeClass}">${scopeLabel}</span></td>
+                    <td class="admin-panel-ratelimit-endpoint">${AdminPanelPage.#escape(event.endpoint || "")}</td>
+                    <td>${AdminPanelPage.#escape(event.method || "")}</td>
+                    <td>${AdminPanelPage.#escape(identity)}</td>
+                    <td>${AdminPanelPage.#escape(retryAfter)}</td>
+                </tr>
+            `;
+        }).join("");
+    }
+
+    async #renderAuditLogTab(content)
+    {
+        try
+        {
+            const response = await fetch("/Admin/Audit/List");
+            if (!response.ok)
+            {
+                content.innerHTML = `<div class="admin-panel-error">HTTP ${response.status}</div>`;
+                return;
+            }
+
+            const responseJson = await response.json();
+            const events = Array.isArray(responseJson.events) ? responseJson.events : [];
+            const summary = responseJson.summary || {};
+
+            content.innerHTML = `
+                <div class="admin-panel-ratelimits-summary">
+                    <span><strong>${summary.last24HourCount || 0}</strong> admin actions in the last 24h</span>
+                    <span><strong>${summary.shown || events.length}</strong> shown</span>
+                    <span><strong>${summary.distinctActors || 0}</strong> distinct admins</span>
+                </div>
+                <table class="admin-panel-table admin-panel-ratelimits-table">
+                    <thead><tr><th>When</th><th>Outcome</th><th>Admin</th><th>Action</th><th>Method</th><th>Status</th><th>IP</th></tr></thead>
+                    <tbody>${this.#renderAuditRows(events)}</tbody>
+                </table>
+            `;
+        }
+        catch (auditError)
+        {
+            content.innerHTML = `<div class="admin-panel-error">${AdminPanelPage.#escape(auditError.message)}</div>`;
+        }
+    }
+
+    #renderAuditRows(events)
+    {
+        if (!events.length)
+        {
+            return `<tr><td colspan="7" class="admin-panel-ratelimits-empty">No admin actions recorded.</td></tr>`;
+        }
+
+        return events.map((event) =>
+        {
+            const occurredAt = event.occurredAt ? new Date(event.occurredAt).toLocaleString() : "";
+            const isSuccess = event.outcome === "SUCCESS";
+            const outcomeLabel = isSuccess ? "Success" : "Blocked / Error";
+            const outcomeClass = isSuccess ? "admin-panel-ratelimit-scope-overall" : "admin-panel-ratelimit-scope-user";
+            const actor = event.actorEmail
+                ? event.actorEmail
+                : (event.actorUserId ? `user ${event.actorUserId}` : "anonymous");
+
+            return `
+                <tr>
+                    <td>${AdminPanelPage.#escape(occurredAt)}</td>
+                    <td><span class="admin-panel-ratelimit-scope ${outcomeClass}">${outcomeLabel}</span></td>
+                    <td>${AdminPanelPage.#escape(actor)}</td>
+                    <td class="admin-panel-ratelimit-endpoint">${AdminPanelPage.#escape(event.endpoint || "")}</td>
+                    <td>${AdminPanelPage.#escape(event.method || "")}</td>
+                    <td>${AdminPanelPage.#escape(String(event.statusCode || ""))}</td>
+                    <td>${AdminPanelPage.#escape(event.ipAddress || "")}</td>
+                </tr>
+            `;
+        }).join("");
     }
 
     async #renderStatsTab(content)

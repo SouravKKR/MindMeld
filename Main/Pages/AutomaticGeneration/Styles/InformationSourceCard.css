@@ -60,7 +60,7 @@ information-source-card.state-error
 
 information-source-card.state-uploading .information-source-card-status-label
 {
-    color: #0098C4;
+    color: var(--gradient-start-color);
 }
 
 information-source-card.state-complete .information-source-card-status-label
@@ -88,7 +88,7 @@ information-source-card.state-error .information-source-card-status-label
 {
     height: 100%;
     border-radius: 2px;
-    background: linear-gradient(90deg, #0098C4, #B55BD0);
+    background: linear-gradient(90deg, var(--gradient-start-color), var(--gradient-end-color));
     transition: width 0.15s ease-out;
     width: 0%;
 }
@@ -106,7 +106,7 @@ information-source-card.state-error .information-source-card-status-label
 {
     font-size: 11px;
     font-weight: 500;
-    color: #0098C4;
+    color: var(--gradient-start-color);
     background-color: rgba(0, 152, 196, 0.1);
     border: 1px solid rgba(0, 152, 196, 0.25);
     border-radius: 4px;

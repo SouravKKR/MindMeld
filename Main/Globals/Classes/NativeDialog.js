@@ -51,7 +51,7 @@ class NativeDialog
                 filters: extensions.length > 0
                     ? [{
                         name: "Files",
-                        extensions: extensions.map(e => e.replace(".", ""))
+                        extensions: extensions.map(extension => extension.replace(".", ""))
                     }]
                     : undefined
             });

@@ -667,6 +667,18 @@ dialog-box:has(.paid-deck-replace-form)
     gap: 8px;
 }
 
+/* The `hidden` attribute's UA `display:none` is overridden by the explicit
+   display:flex/grid these containers carry (author rules beat the UA sheet),
+   so a higher-specificity [hidden] rule is needed for hiding to actually
+   work — drives the individual-tree container (bundle-only), the per-row
+   mini-form (unchecked), and the collapsed children container. */
+.paid-deck-upload-field[hidden],
+.paid-deck-individual-tree-mini-form[hidden],
+.paid-deck-individual-tree-children[hidden]
+{
+    display: none;
+}
+
 .paid-deck-individual-tree-toggle
 {
     display: flex;
@@ -911,6 +923,258 @@ dialog-box:has(.paid-deck-replace-form)
     background-color: var(--tertiary-background-color);
 }
 
+/* Thumbnail picker (inline field + modal) --------------------- */
+
+.paid-deck-thumbnail-field
+{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+/* Light backdrop so the colourful built-in SVGs / uploaded artwork are
+   always clearly visible, never lost against a dark theme. */
+.paid-deck-thumbnail-field-preview
+{
+    width: 72px;
+    height: 72px;
+    flex-shrink: 0;
+    object-fit: contain;
+    padding: 6px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #fdfdff, #e9edf5);
+    outline: 1px solid var(--outline-color-subtle);
+    outline-offset: -1px;
+}
+
+.paid-deck-thumbnail-field-controls
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.paid-deck-thumbnail-field-button
+{
+    align-self: flex-start;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: none;
+    outline: 1px dashed var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.paid-deck-thumbnail-field-button:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.paid-deck-thumbnail-field-hint
+{
+    font-size: 12px;
+    color: var(--secondary-text-color);
+}
+
+.paid-deck-thumbnail-picker
+{
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: min(620px, 84vw);
+    max-width: 100%;
+}
+
+.paid-deck-thumbnail-picker-title
+{
+    margin: 0;
+    font-size: 1.2rem;
+}
+
+.paid-deck-thumbnail-picker-subtitle
+{
+    margin: 0;
+    font-size: 13px;
+    color: var(--secondary-text-color);
+}
+
+.paid-deck-thumbnail-picker-preview-row
+{
+    display: flex;
+    gap: 16px;
+    align-items: stretch;
+}
+
+.paid-deck-thumbnail-picker-preview
+{
+    width: 140px;
+    height: 140px;
+    flex-shrink: 0;
+    object-fit: contain;
+    padding: 12px;
+    box-sizing: border-box;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #fdfdff, #e9edf5);
+    outline: 1px solid var(--outline-color-subtle);
+    outline-offset: -1px;
+}
+
+.paid-deck-thumbnail-picker-preview-side
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    justify-content: center;
+    min-width: 0;
+}
+
+.paid-deck-thumbnail-picker-caption
+{
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary-text-color);
+}
+
+.paid-deck-thumbnail-picker-upload-button
+{
+    align-self: flex-start;
+    padding: 9px 16px;
+    border-radius: 8px;
+    background: var(--primary-background-gradient);
+    color: var(--primary-text-color);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.paid-deck-thumbnail-picker-clear
+{
+    align-self: flex-start;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: none;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.paid-deck-thumbnail-picker-clear:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.paid-deck-thumbnail-picker-status
+{
+    font-size: 12px;
+    color: var(--secondary-text-color);
+    min-height: 16px;
+}
+
+.paid-deck-thumbnail-picker-grid
+{
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 10px;
+    max-height: 320px;
+    overflow-y: auto;
+    padding: 4px;
+}
+
+.paid-deck-thumbnail-picker-tile
+{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 8px;
+    border: none;
+    border-radius: 10px;
+    outline: 1px solid var(--outline-color-subtle);
+    outline-offset: -1px;
+    background-color: var(--secondary-background-color);
+    cursor: pointer;
+    transition: outline-color 0.15s ease, transform 0.15s ease;
+}
+
+.paid-deck-thumbnail-picker-tile:hover
+{
+    outline-color: var(--outline-color-strong);
+    transform: translateY(-1px);
+}
+
+.paid-deck-thumbnail-picker-tile-selected
+{
+    outline: 2px solid var(--accent-color);
+    background-color: var(--accent-background-color);
+}
+
+.paid-deck-thumbnail-picker-tile-image
+{
+    width: 100%;
+    height: 64px;
+    object-fit: contain;
+    padding: 6px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #fdfdff, #e9edf5);
+}
+
+.paid-deck-thumbnail-picker-tile-label
+{
+    font-size: 11px;
+    color: var(--secondary-text-color);
+    text-align: center;
+    line-height: 1.2;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+}
+
+.paid-deck-thumbnail-picker-actions
+{
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.paid-deck-thumbnail-picker-cancel
+{
+    padding: 9px 18px;
+    border-radius: 8px;
+    border: none;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    cursor: pointer;
+}
+
+.paid-deck-thumbnail-picker-cancel:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.paid-deck-thumbnail-picker-confirm
+{
+    padding: 9px 18px;
+    border-radius: 8px;
+    border: none;
+    background: var(--primary-background-gradient);
+    color: var(--primary-text-color);
+    font-weight: 600;
+    cursor: pointer;
+}
+
 /* Alerts tab -------------------------------------------------- */
 
 .admin-panel-alerts-toolbar
@@ -1038,4 +1302,51 @@ dialog-box:has(.paid-deck-replace-form)
     {
         padding: 8px 6px;
     }
+}
+
+/* ── Rate Limits tab ──────────────────────────────────────────────────────── */
+.admin-panel-ratelimits-summary
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: var(--secondary-text-color);
+}
+
+.admin-panel-ratelimits-empty
+{
+    text-align: center;
+    color: var(--secondary-text-color);
+    font-style: italic;
+    padding: 18px;
+}
+
+.admin-panel-ratelimit-endpoint
+{
+    font-family: monospace;
+    word-break: break-word;
+}
+
+.admin-panel-ratelimit-scope
+{
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.admin-panel-ratelimit-scope-user
+{
+    background-color: var(--danger-background-color);
+    color: var(--danger-text-color);
+}
+
+.admin-panel-ratelimit-scope-overall
+{
+    background-color: var(--accent-background-color);
+    color: var(--accent-color);
 }

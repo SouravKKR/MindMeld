@@ -13,6 +13,7 @@ from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Generic.RedisSemaphore import RedisSemaphore
 from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Classes.Task.TaskDescriptor import TaskDescriptor
+from Globals.Classes.Credits.CreditMeter import CreditMeter
 from Globals.Constants.ApiConcurrencyLimits import ApiConcurrencyLimits
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
 
@@ -407,8 +408,13 @@ class BatchSubmitter:
                 results[key] = None
                 continue
 
+            # Record any per-response token usage the batch surfaced so
+            # per-token spend rules apply to batch-served tasks too. Many
+            # batch backends omit it; record_from_response returns None then.
+            usage_metadata = CreditMeter.record_from_response(response)
+
             outputs = [AutomationContent(AutomationContentTypes.TEXT, text_data)]
-            results[key] = AutomationResponse(outputs)
+            results[key] = AutomationResponse(outputs, usage_metadata)
 
         if len(results) < len(self.__entries):
             for entry in self.__entries:

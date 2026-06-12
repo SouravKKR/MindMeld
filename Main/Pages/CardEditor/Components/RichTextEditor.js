@@ -2,6 +2,7 @@ import { convertElementToColorPicker } from "../../../Globals/UtilityFunctions/C
 import { applyImageResizeDecorator } from "../../../Globals/UtilityFunctions/ApplyImageResizeDecorator.js";
 import { scaleDownImage } from "../../../Globals/UtilityFunctions/ScaleDownImage.js";
 import DrawingCanvasDialog from "../../../CommonComponents/DrawingCanvasDialog.js";
+import HtmlSanitizer from "../../../Globals/Classes/HtmlSanitizer.js";
 import TableEditingContextMenu from "./TableEditingContextMenu.js";
 
 class RichTextEditor extends HTMLElement
@@ -455,14 +456,22 @@ class RichTextEditor extends HTMLElement
 
     setInnerHtml(html)
     {
-        this.querySelector('[contenteditable]').innerHTML = html;
+        // This loads STORED content (a card / study material that may have
+        // been authored elsewhere, synced in, or imported) into a
+        // contenteditable. A contenteditable does not run <script>, but it
+        // DOES fire inline handlers like <img onerror=...>, so the stored
+        // markup is untrusted and must be sanitised before it touches the
+        // DOM. Live raw-HTML authoring goes through #toggleRawHtmlMode, not
+        // here, so the author's in-session editing stays fully permissive.
+        const sanitizedHtml = HtmlSanitizer.sanitize(html);
+        this.querySelector('[contenteditable]').innerHTML = sanitizedHtml;
         // Keep the raw-HTML mirror in sync so a subsequent toggle into
         // raw mode reflects the freshly-loaded content instead of
         // whatever the textarea held from a previous instance.
         const rawHtmlTextarea = this.querySelector(".raw-html-textarea");
         if (rawHtmlTextarea)
         {
-            rawHtmlTextarea.value = html;
+            rawHtmlTextarea.value = sanitizedHtml;
         }
     }
 

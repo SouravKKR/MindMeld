@@ -1,6 +1,7 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import AiFeatureGate from "../../../Globals/Classes/AiFeatureGate.js";
 import AnalysisTaskRunner from "../../../Globals/Classes/Analysis/AnalysisTaskRunner.js";
+import CreditNotice from "../../../Globals/Classes/Credits/CreditNotice.js";
 import Deck from "../../../Globals/Model/Deck.js";
 import AutoAnalysisDeckFields from "../../../Globals/Classes/Analysis/AutoAnalysisDeckFields.js";
 import { taskStatus } from "../../../Globals/Enumerations/TaskStatus.js";
@@ -139,9 +140,34 @@ class TopicInsights extends HTMLElement
 
                 if (runOutcome.status === taskStatus.COMPLETED)
                 {
-                    this.#setStatusMessage("Analysis complete — refreshing.");
-                    this.#render();
-                    this.#bindRunButton();
+                    // The post-task sync (awaited inside queueAndTrack) may have
+                    // replaced the in-tree deck instance — re-resolve so we read
+                    // the freshest additionalData.
+                    const refreshedDeck = Deck.getById(this.#deck.getId());
+                    if (refreshedDeck)
+                    {
+                        this.#deck = refreshedDeck;
+                    }
+
+                    const analysisBlock = this.#deck.getAdditionalData()?.[AutoAnalysisDeckFields.LAST_ANALYSIS_TOPICS];
+                    const bAnalysisLanded = analysisBlock && Array.isArray(analysisBlock.topics) && analysisBlock.topics.length > 0;
+
+                    if (bAnalysisLanded)
+                    {
+                        this.#setStatusMessage("Analysis complete.");
+                        this.#render();
+                        this.#bindRunButton();
+                    }
+                    else
+                    {
+                        // The task finished but wrote no topics. By far the most
+                        // common cause is that no card in this deck has been
+                        // studied yet — analysis needs at least one review per
+                        // card to score it — so say so instead of leaving the
+                        // generic "hasn't run yet" message.
+                        this.#setStatusMessage("Analysis finished, but found no topics — study a few cards in this deck first (each needs at least one review), then run it again.");
+                        runButton.disabled = false;
+                    }
                 }
                 else
                 {
@@ -152,7 +178,15 @@ class TopicInsights extends HTMLElement
             catch (runError)
             {
                 console.warn("[TopicInsights] Analysis run failed:", runError);
-                this.#setStatusMessage(`Analysis failed: ${runError.message || runError}`);
+                if (CreditNotice.isInsufficientCreditsError(runError))
+                {
+                    this.#setStatusMessage("You're out of credits for analysis.");
+                    await CreditNotice.showInsufficientCredits(runError);
+                }
+                else
+                {
+                    this.#setStatusMessage(`Analysis failed: ${runError.message || runError}`);
+                }
                 runButton.disabled = false;
             }
             finally

@@ -65,9 +65,14 @@ dialog-box .button-section
 
 dialog-box .message-section input
 {
-    padding: 5px;
+    display: block;
+    width: 80%;
+    margin: 10px auto 0;
+    box-sizing: border-box;
+    padding: 8px 10px;
     border-radius: 5px;
     background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
 }
 
 dialog-box .button-section .ok-button

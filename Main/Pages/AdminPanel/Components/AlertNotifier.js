@@ -174,12 +174,12 @@ class AlertNotifier
 
     static #notify(alert)
     {
-        const dedupeKey = `${alert.id}:${alert.lastSeenAt}`;
-        if (AlertNotifier.#notifiedKeys.has(dedupeKey))
+        const deduplicationKey = `${alert.id}:${alert.lastSeenAt}`;
+        if (AlertNotifier.#notifiedKeys.has(deduplicationKey))
         {
             return;
         }
-        AlertNotifier.#notifiedKeys.add(dedupeKey);
+        AlertNotifier.#notifiedKeys.add(deduplicationKey);
 
         const occurrenceSuffix = alert.occurrenceCount > 1 ? ` (x${alert.occurrenceCount})` : "";
         const title = `${alert.source || "Alert"}: ${alert.title || "Alert"}${occurrenceSuffix}`;

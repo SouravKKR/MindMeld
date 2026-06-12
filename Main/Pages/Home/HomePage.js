@@ -6,6 +6,7 @@ import DeckTile from "./Components/DeckTile.js";
 import NewDeckTile from "./Components/NewDeckTile.js";
 import HomePageContextMenu from "./Components/HomePageContextMenu.js";
 import HeaderComponent from "../../CommonComponents/HeaderComponent.js";
+import PausedTaskBanner from "../../CommonComponents/PausedTaskBanner.js";
 import ProfileComponent from "./Components/ProfileComponent.js";
 import SyncManager from "../../Globals/Classes/SyncManager.js";
 import SyncStatusComponent from "./Components/SyncStatusComponent.js";
@@ -189,6 +190,20 @@ class HomePage extends HTMLElement
         });
     }
 
+    /**
+     * True for a paid-deck copy whose root carries the synced "hidden" flag —
+     * the buyer removed it from the home grid (kept for re-adding later). Gated
+     * on paidDeckId so the flag only ever suppresses paid copies, never a normal
+     * deck.
+     */
+    static #isHiddenPaidCopy(deck)
+    {
+        const additionalData = (deck && typeof deck.getAdditionalData === "function") ? (deck.getAdditionalData() || {}) : {};
+        return typeof additionalData.paidDeckId === "string"
+            && additionalData.paidDeckId.length > 0
+            && additionalData.hidden === true;
+    }
+
     static #rebuildGrid(deckToOpen)
     {
         const activeHomePage = HomePage.#getActiveHomePage();
@@ -210,7 +225,18 @@ class HomePage extends HTMLElement
 
         for (let childIndex = 0; childIndex < deckChildren.length; childIndex++)
         {
-            const deckTile = DeckTile.create(deckChildren[childIndex]);
+            const childDeck = deckChildren[childIndex];
+
+            // A paid-deck copy the buyer chose to "Hide from home" stays fully
+            // present (synced, studyable, its progress intact) but is omitted
+            // from the home grid until they un-hide it. The flag rides as a
+            // normal synced field on the copy's root deck.
+            if (HomePage.#isHiddenPaidCopy(childDeck))
+            {
+                continue;
+            }
+
+            const deckTile = DeckTile.create(childDeck);
             decksContainer.appendChild(deckTile);
         }
 
@@ -279,6 +305,7 @@ class HomePage extends HTMLElement
         this.innerHTML =
         `
             <header-component title="MindMeld Home"></header-component>
+            <paused-task-banner></paused-task-banner>
             <button class="back-to-parent-button">Navigate to ${Deck.getCurrentDeck()?.getParent()?.getName() || ""}</button>
             <div class="decks-container"></div>
             <copyright-notice position="inline"></copyright-notice>

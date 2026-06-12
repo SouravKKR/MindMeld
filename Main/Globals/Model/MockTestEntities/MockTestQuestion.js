@@ -1,4 +1,5 @@
 import MockTestItem from "./MockTestItem.js";
+import PaidDeckFieldCipher from "../../Classes/Crypto/PaidDeckFieldCipher.js";
 import { mockTestItemTypes } from "../../Enumerations/MockTestItemTypes.js";
 
 class MockTestQuestion extends MockTestItem
@@ -22,6 +23,14 @@ class MockTestQuestion extends MockTestItem
     #remarks = "";
     #additionalData = {};
 
+    // Transient in-memory plaintext for a paid deck's encrypted content fields,
+    // populated by decryptForStudy() and never serialised. Keyed by field name
+    // (question / expectedAnswer / answerReason / solvingSteps / remarks). For a
+    // normal (plaintext) deck these stay absent and the getters return the raw
+    // fields. `answer`, `marks`, `score` are never encrypted (student answer +
+    // scoring metadata, not authored paid content).
+    #decryptedFields = {};
+
     constructor(id, question = "", expectedAnswer = "", answerReason = "", marks = 1, answer = "", score = 0, additionalData = {}, solvingSteps = "", remarks = "")
     {
         super(id, mockTestItemTypes.QUESTION);
@@ -36,19 +45,19 @@ class MockTestQuestion extends MockTestItem
         this.#remarks = remarks;
     }
 
-    getQuestion() { return this.#question; }
+    getQuestion() { return MockTestQuestion.#readContentField(this.#question, this.#decryptedFields.question); }
     setQuestion(value) { this.#question = value; }
 
     getAnswer() { return this.#answer; }
     setAnswer(value) { this.#answer = value; }
 
-    getExpectedAnswer() { return this.#expectedAnswer; }
+    getExpectedAnswer() { return MockTestQuestion.#readContentField(this.#expectedAnswer, this.#decryptedFields.expectedAnswer); }
     setExpectedAnswer(value) { this.#expectedAnswer = value; }
 
-    getAnswerReason() { return this.#answerReason; }
+    getAnswerReason() { return MockTestQuestion.#readContentField(this.#answerReason, this.#decryptedFields.answerReason); }
     setAnswerReason(value) { this.#answerReason = value; }
 
-    getSolvingSteps() { return this.#solvingSteps; }
+    getSolvingSteps() { return MockTestQuestion.#readContentField(this.#solvingSteps, this.#decryptedFields.solvingSteps); }
     setSolvingSteps(value) { this.#solvingSteps = value || ""; }
 
     getMarks() { return this.#marks; }
@@ -57,8 +66,79 @@ class MockTestQuestion extends MockTestItem
     getScore() { return this.#score; }
     setScore(value) { this.#score = value; }
 
-    getRemarks() { return this.#remarks; }
+    getRemarks() { return MockTestQuestion.#readContentField(this.#remarks, this.#decryptedFields.remarks); }
     setRemarks(value) { this.#remarks = value || ""; }
+
+    /**
+     * Resolves a content field to its display string: a plaintext field (normal
+     * deck) as-is; an encrypted field (paid deck) as the decrypted cache once
+     * decryptForStudy() has run on an unlocked deck, otherwise a locked
+     * placeholder.
+     */
+    static #readContentField(storedValue, decryptedValue)
+    {
+        if (PaidDeckFieldCipher.isEncryptedField(storedValue))
+        {
+            return (decryptedValue !== undefined && decryptedValue !== null) ? decryptedValue : PaidDeckFieldCipher.LOCKED_PLACEHOLDER;
+        }
+        return storedValue;
+    }
+
+    /**
+     * Pre-decrypts this question's encrypted content fields into the transient
+     * cache the synchronous getters read from. Called by MockTest.decryptForStudy()
+     * for each question when a paid deck's mock test is opened. The owning
+     * deck's paidDeckId (the unlock key id) is passed in since a question holds
+     * no deck reference. No-op for plaintext fields; a locked deck leaves the
+     * cache null so getters show the placeholder.
+     */
+    async decryptForStudy(paidDeckId)
+    {
+        for (const [fieldName, storedValue] of this.#protectedFieldPairs())
+        {
+            // Idempotent: skip a field already decrypted this session.
+            const cachedValue = this.#decryptedFields[fieldName];
+            if ((cachedValue === undefined || cachedValue === null) && PaidDeckFieldCipher.isEncryptedField(storedValue))
+            {
+                try
+                {
+                    this.#decryptedFields[fieldName] = await PaidDeckFieldCipher.decryptField(paidDeckId, storedValue);
+                }
+                catch (decryptError)
+                {
+                    this.#decryptedFields[fieldName] = null;
+                }
+            }
+        }
+    }
+
+    /**
+     * True when any protected field is still encrypted + undecrypted this
+     * session — lets MockTest.needsDecryption() size / skip the progress bar.
+     */
+    needsDecryption()
+    {
+        for (const [fieldName, storedValue] of this.#protectedFieldPairs())
+        {
+            const cachedValue = this.#decryptedFields[fieldName];
+            if ((cachedValue === undefined || cachedValue === null) && PaidDeckFieldCipher.isEncryptedField(storedValue))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    #protectedFieldPairs()
+    {
+        return [
+            ["question",       this.#question],
+            ["expectedAnswer", this.#expectedAnswer],
+            ["answerReason",   this.#answerReason],
+            ["solvingSteps",   this.#solvingSteps],
+            ["remarks",        this.#remarks]
+        ];
+    }
 
     getAdditionalData() { return this.#additionalData; }
     setAdditionalData(value) { this.#additionalData = value; }

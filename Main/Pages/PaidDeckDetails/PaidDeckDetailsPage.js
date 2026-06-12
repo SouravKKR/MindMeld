@@ -5,6 +5,9 @@ import PaidDeckPurchaseFlow from "../../Globals/Classes/PaidDeckPurchaseFlow.js"
 import PaidDeckRegistry from "../../Globals/Classes/PaidDeckRegistry.js";
 import PaidDeckBadgeChip from "./Components/PaidDeckBadgeChip.js";
 import PaidDeckTreePreview from "./Components/PaidDeckTreePreview.js";
+import PaidDeckThumbnails from "../../Globals/Classes/PaidDeckThumbnails.js";
+import ManagePaidDeckCopiesDialog from "../Home/Components/ManagePaidDeckCopiesDialog.js";
+import LicenseConstants from "../../Globals/Constants/LicenseConstants.js";
 
 /**
  * PaidDeckDetailsPage
@@ -58,7 +61,7 @@ class PaidDeckDetailsPage extends HTMLElement
         const deck = this.#deck;
         const escape = PaidDeckDetailsPage.#escape;
 
-        const thumbnailUrl = deck.thumbnailUrl || "./Globals/Assets/Images/Icons/DeckIcon.svg";
+        const thumbnailUrl = PaidDeckThumbnails.resolveDeckThumbnail(deck);
         const finalMinor = deck.computedPrice?.finalPriceMinor ?? deck.basePriceMinor ?? 0;
         const baseMinor = deck.computedPrice?.basePriceMinor ?? deck.basePriceMinor ?? 0;
         const showStrike = baseMinor > 0 && finalMinor < baseMinor;
@@ -106,16 +109,39 @@ class PaidDeckDetailsPage extends HTMLElement
             .map((tag) => `<span class="paid-deck-details-tag">#${escape(tag)}</span>`)
             .join("");
 
-        const instituteBlock = institute && typeof institute.name === "string" && institute.name.length > 0
-            ? `
-                <section class="paid-deck-details-section">
-                    <h3 class="paid-deck-details-section-heading">Institute</h3>
-                    <div class="paid-deck-details-institute">
-                        <div class="paid-deck-details-institute-name">${escape(institute.name)}</div>
-                        ${institute.location ? `<div class="paid-deck-details-institute-location">${escape(institute.location)}</div>` : ""}
-                    </div>
-                </section>
-            `
+        // Quick-facts shown right by the price: date modified + institute.
+        // updatedAt is the canonical "modified" stamp; older decks predate it,
+        // so fall back to the key-rotation / publish timestamps.
+        const lastUpdatedText = PaidDeckDetailsPage.#formatDate(deck.updatedAt || deck.lastKeyRotationAt || deck.publishedAt);
+
+        const metaItems = [];
+        if (lastUpdatedText)
+        {
+            metaItems.push(`
+                <div class="paid-deck-details-meta-item">
+                    <span class="paid-deck-details-meta-label">Last updated</span>
+                    <span class="paid-deck-details-meta-value">${escape(lastUpdatedText)}</span>
+                </div>
+            `);
+        }
+        if (institute && typeof institute.name === "string" && institute.name.length > 0)
+        {
+            const instituteText = institute.location
+                ? `${institute.name} · ${institute.location}`
+                : institute.name;
+            metaItems.push(`
+                <div class="paid-deck-details-meta-item">
+                    <span class="paid-deck-details-meta-label">Institute</span>
+                    <span class="paid-deck-details-meta-value">${escape(instituteText)}</span>
+                </div>
+            `);
+        }
+        const metaBlock = metaItems.length > 0
+            ? `<div class="paid-deck-details-meta">${metaItems.join("")}</div>`
+            : "";
+
+        const heroBadges = badgeChips
+            ? `<div class="paid-deck-details-hero-badges">${badgeChips}</div>`
             : "";
 
         return `
@@ -127,10 +153,12 @@ class PaidDeckDetailsPage extends HTMLElement
                         <h1 class="paid-deck-details-title">${escape(deck.title || "Untitled")}</h1>
                         ${deck.category ? `<div class="paid-deck-details-category">${escape(deck.category)}</div>` : ""}
                         ${summaryLine ? `<div class="paid-deck-details-summary">${summaryLine}</div>` : ""}
+                        ${metaBlock}
                         <div class="paid-deck-details-price">
                             ${showStrike ? `<span class="paid-deck-details-price-strike">${currency} ${(baseMinor / 100).toFixed(2)}</span>` : ""}
                             <span class="paid-deck-details-price-final">${currency} ${(finalMinor / 100).toFixed(2)}</span>
                         </div>
+                        ${callToActionState.expiryText ? `<div class="paid-deck-details-ownership-expiry">${escape(callToActionState.expiryText)}</div>` : ""}
                         <div class="paid-deck-details-cta-row">
                             <button
                                 class="paid-deck-details-cta paid-deck-details-cta-${callToActionState.variant}"
@@ -138,12 +166,23 @@ class PaidDeckDetailsPage extends HTMLElement
                                 ${callToActionState.disabled ? "disabled" : ""}>
                                 ${callToActionState.label}
                             </button>
+                            ${callToActionState.showExtend ? `
+                                <button class="paid-deck-details-cta paid-deck-details-cta-extend" data-role="extend">
+                                    Extend
+                                </button>
+                            ` : ""}
                             ${callToActionState.showOpenButton ? `
                                 <button class="paid-deck-details-cta paid-deck-details-cta-open" data-role="open-deck">
                                     Open deck
                                 </button>
                             ` : ""}
+                            ${callToActionState.showAddCopy ? `
+                                <button class="paid-deck-details-cta paid-deck-details-cta-add-copy" data-role="add-copy" ${callToActionState.addCopyDisabled ? "disabled" : ""}>
+                                    ${callToActionState.addCopyDisabled ? `Max ${callToActionState.maxCopies} copies` : "Add another copy"}
+                                </button>
+                            ` : ""}
                         </div>
+                        ${heroBadges}
                     </div>
                 </section>
 
@@ -154,21 +193,12 @@ class PaidDeckDetailsPage extends HTMLElement
                     </section>
                 ` : ""}
 
-                ${badgeChips ? `
-                    <section class="paid-deck-details-section">
-                        <h3 class="paid-deck-details-section-heading">Features</h3>
-                        <div class="paid-deck-details-badges">${badgeChips}</div>
-                    </section>
-                ` : ""}
-
                 ${(extraTagPills || tagPills) ? `
                     <section class="paid-deck-details-section">
                         <h3 class="paid-deck-details-section-heading">Tags</h3>
                         <div class="paid-deck-details-tags">${extraTagPills}${tagPills}</div>
                     </section>
                 ` : ""}
-
-                ${instituteBlock}
 
                 <section class="paid-deck-details-section">
                     <h3 class="paid-deck-details-section-heading">What's inside</h3>
@@ -205,18 +235,54 @@ class PaidDeckDetailsPage extends HTMLElement
             });
         }
 
+        // Extend re-runs the purchase flow, which re-grants the license with a
+        // fresh access period (the server applies the deck's grant terms).
+        const extendButton = this.querySelector('[data-role="extend"]');
+        if (extendButton)
+        {
+            extendButton.addEventListener("click", async () =>
+            {
+                extendButton.disabled = true;
+                extendButton.textContent = "Working…";
+                const extended = await PaidDeckPurchaseFlow.run(this.#deck, this.#region);
+                if (extended)
+                {
+                    this.connectedCallback();
+                }
+                else
+                {
+                    extendButton.disabled = false;
+                    extendButton.textContent = "Extend";
+                }
+            });
+        }
+
+        // Add another independent copy of an owned deck (up to the cap). The new
+        // copy's content arrives via the next sync; ManagePaidDeckCopiesDialog
+        // handles the request + sync, then we refresh the CTA (the copy count
+        // changed, so "Add" may now read "Max N copies").
+        const addCopyButton = this.querySelector('[data-role="add-copy"]');
+        if (addCopyButton && !addCopyButton.disabled)
+        {
+            addCopyButton.addEventListener("click", async () =>
+            {
+                addCopyButton.disabled = true;
+                addCopyButton.textContent = "Adding…";
+                const added = await ManagePaidDeckCopiesDialog.addCopy(this.#deck.id);
+                if (added)
+                {
+                    await DialogBox.alert("Copy added", "Another copy of this deck has been added to your library. You'll find it on your home page.");
+                }
+                this.connectedCallback();
+            });
+        }
+
         const ctaButton = this.querySelector('[data-role="cta"]');
         if (!ctaButton || ctaButton.disabled) return;
 
         ctaButton.addEventListener("click", async () =>
         {
             const state = this.#computeCallToActionState();
-
-            if (state.variant === "update")
-            {
-                await this.#handleUpdateAvailable();
-                return;
-            }
 
             if (state.variant === "buy")
             {
@@ -245,105 +311,46 @@ class PaidDeckDetailsPage extends HTMLElement
         if (deck.computedPrice?.reason === "ALREADY_OWNED" || PaidDeckRegistry.isLicensed(deck.id))
         {
             const license = PaidDeckRegistry.getLicense(deck.id);
-            const downloadedVersion = (license && Number(license.downloadedContentVersion)) || 0;
-            const currentVersion = Number(deck.contentSummary?.contentVersion) || 0;
+            const ownership = PaidDeckDetailsPage.#getOwnershipExpiry(license);
 
-            if (currentVersion > downloadedVersion && downloadedVersion > 0)
-            {
-                return { variant: "update", label: "Update available", disabled: false, showOpenButton: true };
-            }
-
-            return { variant: "owned", label: "Already owned", disabled: true, showOpenButton: true };
+            // Time-limited (subscription) access shows an Extend action; a
+            // lifetime license just reads "Already purchased". Content updates
+            // arrive automatically through the normal sync pipeline, so there is
+            // no separate "update available" / redownload action. An owned deck
+            // also offers adding another independent copy, up to the cap.
+            const copyCount = PaidDeckRegistry.getInstanceCount(deck.id);
+            const maxCopies = LicenseConstants.MAX_PAID_DECK_COPIES_PER_USER;
+            return { variant: "owned", label: "Already purchased", disabled: true, showOpenButton: true, showExtend: ownership.hasExpiry, expiryText: ownership.expiryText, showAddCopy: true, addCopyDisabled: copyCount >= maxCopies, maxCopies: maxCopies };
         }
 
         const finalMinor = deck.computedPrice?.finalPriceMinor ?? deck.basePriceMinor ?? 0;
         const currency = deck.computedPrice?.currency || deck.currency || "INR";
-        return { variant: "buy", label: `Buy for ${currency} ${(finalMinor / 100).toFixed(2)}`, disabled: false, showOpenButton: false };
+        return { variant: "buy", label: `Buy for ${currency} ${(finalMinor / 100).toFixed(2)}`, disabled: false, showOpenButton: false, showExtend: false, expiryText: "", showAddCopy: false, addCopyDisabled: false, maxCopies: 0 };
     }
 
-    async #handleUpdateAvailable()
+    /**
+     * Reads the buyer's license expiry. The grant model uses an epoch-zero
+     * (1970) sentinel for "forever / lifetime"; a real future date means
+     * time-limited access that can be extended.
+     */
+    static #getOwnershipExpiry(license)
     {
-        const choiceDialog = DialogBox.modal(`
-            <div class="paid-deck-update-choice">
-                <h2 class="paid-deck-update-choice-title">A newer version of this deck is available</h2>
-                <p class="paid-deck-update-choice-message">
-                    Choose how you'd like to receive the update. Your current copy stays on this device either way.
-                </p>
-                <div class="paid-deck-update-choice-buttons">
-                    <button type="button" class="paid-deck-update-choice-replace">Replace existing copy</button>
-                    <button type="button" class="paid-deck-update-choice-duplicate">Download as separate deck</button>
-                    <button type="button" class="paid-deck-update-choice-cancel">Cancel</button>
-                </div>
-            </div>
-        `);
-
-        const choicePromise = new Promise((resolve) =>
+        if (!license || !license.expiresAt)
         {
-            choiceDialog.querySelector(".paid-deck-update-choice-replace").addEventListener("click", () =>
-            {
-                choiceDialog.close();
-                resolve("REPLACE");
-            });
-            choiceDialog.querySelector(".paid-deck-update-choice-duplicate").addEventListener("click", () =>
-            {
-                choiceDialog.close();
-                resolve("DUPLICATE");
-            });
-            choiceDialog.querySelector(".paid-deck-update-choice-cancel").addEventListener("click", () =>
-            {
-                choiceDialog.close();
-                resolve(null);
-            });
-        });
-
-        const choice = await choicePromise;
-        if (!choice) return;
-
-        try
-        {
-            const redownloadResponse = await fetch("/PaidDecks/Redownload",
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ deckId: this.#deck.id })
-            });
-
-            if (!redownloadResponse.ok)
-            {
-                const errorJson = await redownloadResponse.json().catch(() => ({}));
-                await DialogBox.alert("Update failed", errorJson.error || `HTTP ${redownloadResponse.status}`);
-                return;
-            }
-
-            const redownloadJson = await redownloadResponse.json();
-            const newContentVersion = Number(redownloadJson.contentVersion) || 0;
-
-            await fetch("/PaidDecks/MarkVersionDownloaded",
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ deckId: this.#deck.id, contentVersion: newContentVersion })
-            });
-
-            // Reflect the new version in the local registry immediately
-            // so this page (and any other surface) shows "Already owned"
-            // before the next license sync round-trip.
-            await PaidDeckRegistry.markDownloadedVersion(this.#deck.id, newContentVersion);
-
-            const modeLabel = choice === "REPLACE" ? "replace your existing copy" : "download as a separate deck";
-            await DialogBox.alert
-            (
-                "Update queued",
-                `A new license at version ${newContentVersion} has been issued. The next sync will ${modeLabel} on this device.`
-            );
-
-            // Refresh the CTA so it flips back to "Already owned".
-            this.connectedCallback();
+            return { hasExpiry: false, expiryText: "" };
         }
-        catch (updateError)
+        const expiryDate = new Date(license.expiresAt);
+        if (isNaN(expiryDate.getTime()))
         {
-            await DialogBox.alert("Update failed", updateError.message);
+            return { hasExpiry: false, expiryText: "" };
         }
+        const expiryYear = expiryDate.getFullYear();
+        // < 2001 = epoch sentinel (lifetime); > 9000 = far-future sentinel.
+        if (expiryYear < 2001 || expiryYear > 9000)
+        {
+            return { hasExpiry: false, expiryText: "" };
+        }
+        return { hasExpiry: true, expiryText: `Access until ${PaidDeckDetailsPage.#formatDate(expiryDate)}` };
     }
 
     static #escape(rawValue)
@@ -354,6 +361,14 @@ class PaidDeckDetailsPage extends HTMLElement
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;");
+    }
+
+    static #formatDate(rawValue)
+    {
+        if (!rawValue) return "";
+        const date = new Date(rawValue);
+        if (isNaN(date.getTime())) return "";
+        return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
     }
 }
 

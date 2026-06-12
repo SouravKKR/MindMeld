@@ -4,6 +4,8 @@ import Deck from "../../../Globals/Model/Deck.js";
 import { deckPurchaseGranularity } from "../../../Globals/Enumerations/DeckPurchaseGranularity.js";
 import PaidDeckBadgeRegistry from "../../../Globals/Classes/PaidDeckBadgeRegistry.js";
 import PaidDeckUploadDialog from "./PaidDeckUploadDialog.js";
+import PaidDeckThumbnailPicker from "./PaidDeckThumbnailPicker.js";
+import RegionMetadata from "../../../Globals/Classes/RegionMetadata.js";
 
 /**
  * PaidDeckEditDialog
@@ -35,6 +37,15 @@ class PaidDeckEditDialog
             PaidDeckEditDialog.#wireBadgePicker(dialog, deck);
             PaidDeckEditDialog.#populateInstituteDatalist(dialog);
             PaidDeckEditDialog.#wireReplaceContentButton(dialog, deck, resolve);
+
+            const existingThumbnailImage = (deck.additionalData && typeof deck.additionalData === "object")
+                ? deck.additionalData.thumbnailImage
+                : "";
+            PaidDeckThumbnailPicker.wireField
+            (
+                dialog.querySelector('[data-role="edit-thumbnail-field"]'),
+                { thumbnailUrl: deck.thumbnailUrl || "", thumbnailImage: existingThumbnailImage || "" }
+            );
 
             let bResolved = false;
 
@@ -104,6 +115,22 @@ class PaidDeckEditDialog
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;");
+    }
+
+    /**
+     * <option> list of supported currencies with `currentCurrency` selected.
+     * If the deck's existing currency isn't in the supported set (e.g. legacy
+     * data), it's kept as an option so editing other fields never silently
+     * rewrites the currency.
+     */
+    static #renderCurrencyOptions(currentCurrency)
+    {
+        const current = (currentCurrency || "INR").toUpperCase();
+        const supported = RegionMetadata.getSupportedCurrencies();
+        const codes = supported.includes(current) ? supported : [current, ...supported];
+        return codes
+            .map((code) => `<option value="${code}"${code === current ? " selected" : ""}>${PaidDeckEditDialog.#escape(code)}</option>`)
+            .join("");
     }
 
     static async #populateInstituteDatalist(dialog)
@@ -411,10 +438,10 @@ class PaidDeckEditDialog
                         <textarea name="description" rows="3" maxlength="4096">${PaidDeckEditDialog.#escape(deck.description)}</textarea>
                     </label>
 
-                    <label class="paid-deck-upload-field">
-                        <span>Thumbnail URL</span>
-                        <input type="url" name="thumbnailUrl" maxlength="2048" value="${PaidDeckEditDialog.#escape(deck.thumbnailUrl)}">
-                    </label>
+                    <div class="paid-deck-upload-field paid-deck-upload-field-full">
+                        <span>Thumbnail</span>
+                        ${PaidDeckThumbnailPicker.renderField("edit-thumbnail-field")}
+                    </div>
 
                     <label class="paid-deck-upload-field">
                         <span>Base price (minor units)</span>
@@ -423,7 +450,9 @@ class PaidDeckEditDialog
 
                     <label class="paid-deck-upload-field">
                         <span>Currency</span>
-                        <input type="text" name="currency" maxlength="8" value="${PaidDeckEditDialog.#escape(deck.currency || "INR")}">
+                        <select name="currency">
+                            ${PaidDeckEditDialog.#renderCurrencyOptions(deck.currency || "INR")}
+                        </select>
                     </label>
 
                     <label class="paid-deck-upload-field">
@@ -551,11 +580,24 @@ class PaidDeckEditDialog
             delete mergedAdditionalData.institute;
         }
 
+        // Thumbnail: a built-in URL goes on thumbnailUrl; an uploaded image
+        // rides in additionalData.thumbnailImage (resolved ahead of the URL).
+        // Clear the stale image when the admin switches back to a URL/default.
+        const thumbnailSelection = PaidDeckThumbnailPicker.readSelection(dialog.querySelector('[data-role="edit-thumbnail-field"]'));
+        if (thumbnailSelection.thumbnailImage)
+        {
+            mergedAdditionalData.thumbnailImage = thumbnailSelection.thumbnailImage;
+        }
+        else
+        {
+            delete mergedAdditionalData.thumbnailImage;
+        }
+
         return {
             title: getValue("title").trim(),
             category: getValue("category").trim(),
             description: getValue("description").trim(),
-            thumbnailUrl: getValue("thumbnailUrl").trim(),
+            thumbnailUrl: thumbnailSelection.thumbnailUrl,
             basePriceMinor: Number(getValue("basePriceMinor") || 0),
             currency: getValue("currency").trim().toUpperCase() || "INR",
             granularity: Number(getValue("granularity") || 0),

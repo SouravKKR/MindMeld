@@ -30,7 +30,7 @@ general-generation-fields .template-picker-button
 general-generation-fields .template-picker-button:hover
 {
     background-color: var(--quaternary-background-color);
-    border-color: #0098C4;
+    border-color: var(--gradient-start-color);
 }
 
 general-generation-fields .template-picker-button-label

@@ -43,7 +43,7 @@ dialog-box .template-picker-search-input::placeholder
 dialog-box .template-picker-search-input:focus
 {
     outline: none;
-    border-color: #0098C4;
+    border-color: var(--gradient-start-color);
     background-color: var(--tertiary-background-color);
 }
 
@@ -75,13 +75,13 @@ dialog-box .template-picker-card
 dialog-box .template-picker-card:hover
 {
     background-color: var(--quaternary-background-color);
-    border-color: #0098C4;
+    border-color: var(--gradient-start-color);
 }
 
 dialog-box .template-picker-card--highlighted
 {
     background-color: var(--quaternary-background-color);
-    border-color: #0098C4;
+    border-color: var(--gradient-start-color);
     box-shadow: 0 0 0 2px rgba(0, 152, 196, 0.35);
 }
 

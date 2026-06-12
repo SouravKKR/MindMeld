@@ -71,7 +71,7 @@ study-material-generation-fields
     height: 18px;
     flex-shrink: 0;
     cursor: pointer;
-    accent-color: #0098C4;
+    accent-color: var(--gradient-start-color);
     margin-top: 2px;
 }
 
