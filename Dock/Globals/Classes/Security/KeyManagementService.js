@@ -313,13 +313,14 @@ class KeyManagementService
 
         // options.expiresAt is either a future Date for finite licenses
         // (org-perk grants with a durationDays window) or null / undefined
-        // / new Date(0) for the "forever" sentinel. The codegen's
-        // DeckLicense setExpiresAt coerces null → new Date(), so callers
-        // who want forever must pass new Date(0) explicitly. Anything
-        // <= epoch zero is treated as "never expires" by isLicenseActive.
+        // / DeckLicense.FOREVER for the "forever" sentinel. DeckLicense's
+        // setExpiresAt also coerces null / undefined to FOREVER, so a
+        // missing expiry can never silently become an already-expired
+        // license. Anything <= epoch zero is treated as "never expires"
+        // by isLicenseActive.
         const expiresAt = options.expiresAt instanceof Date
             ? options.expiresAt
-            : new Date(0);
+            : DeckLicense.FOREVER;
 
         const grantSource = typeof options.grantSource === "string" && options.grantSource.length > 0
             ? options.grantSource
@@ -620,11 +621,10 @@ class KeyManagementService
             // license so an org-perk-issued time-limited license keeps
             // its expiry through a key rotation. Without this, the
             // reissued license would default back to the FOREVER
-            // sentinel (new Date(0)) and effectively unlock the deck
-            // forever.
+            // sentinel and effectively unlock the deck forever.
             const preservedExpiresAt = licenseDocument.expiresAt
                 ? new Date(licenseDocument.expiresAt)
-                : new Date(0);
+                : DeckLicense.FOREVER;
             const preservedGrantSource = typeof licenseDocument.grantSource === "string" && licenseDocument.grantSource.length > 0
                 ? licenseDocument.grantSource
                 : GrantSources.PURCHASE;

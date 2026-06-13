@@ -19,6 +19,7 @@ const { taskExecutionTargets } = require("../../Globals/Enumerations/TaskExecuti
 const { getUser } = require("../Helpers/GetUser");
 const { moveToDatabase } = require("../Helpers/MoveToDatabase");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const MaintenanceGate = require("../../Globals/Classes/Maintenance/MaintenanceGate");
 
 
 const VIRTUAL_WEB_SOURCE_TYPES = [
@@ -59,6 +60,16 @@ async function handleGenerate(request, response)
     {
         response.statusCode = httpStatus.FORBIDDEN;
         response.end("Generation is restricted to authorized roles.");
+        return;
+    }
+
+    // Scheduled-maintenance gate. Blocks STARTING new work only — tasks already
+    // in flight are untouched (this runs at endpoint entry, never inside the DAG).
+    const activeMaintenanceWindow = await MaintenanceGate.getActiveWindow();
+    if (activeMaintenanceWindow !== null)
+    {
+        response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
+        response.sendJson(MaintenanceGate.buildMaintenanceResponsePayload(activeMaintenanceWindow));
         return;
     }
 

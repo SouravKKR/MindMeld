@@ -4,6 +4,12 @@ const { deckLicenseStatuses } = require('../Enumerations/DeckLicenseStatuses');
 
 class DeckLicense
 {
+    // Epoch-zero sentinel meaning "never expires". Date members declared
+    // with nullFallback "forever" coerce null / undefined / invalid values
+    // to this instead of "now", so a missing expiry can never silently
+    // become an already-expired timestamp.
+    static FOREVER = new Date(0);
+
     #id;
     #userId;
     #deckId;
@@ -24,7 +30,7 @@ class DeckLicense
     #contentKeyVersion;
     #additionalData;
 
-    constructor({userId = null, deckId = null, status = 1, keyVersion = 1, wrappedKeyBlob = '', issuedAt = new Date(), rotatedAt = new Date(), expiresAt = new Date(), grantSource = 'PURCHASE', downloadedContentVersion = 0, passwordHash = '', passwordSalt = '', passwordWrappedContentKeyBase64 = '', passwordWrappedIvBase64 = '', serverWrappedContentKeyBase64 = '', serverWrappedIvBase64 = '', contentKeyVersion = 0, additionalData = {}} = {})
+    constructor({userId = null, deckId = null, status = 1, keyVersion = 1, wrappedKeyBlob = '', issuedAt = new Date(), rotatedAt = new Date(), expiresAt = new Date(0), grantSource = 'PURCHASE', downloadedContentVersion = 0, passwordHash = '', passwordSalt = '', passwordWrappedContentKeyBase64 = '', passwordWrappedIvBase64 = '', serverWrappedContentKeyBase64 = '', serverWrappedIvBase64 = '', contentKeyVersion = 0, additionalData = {}} = {})
     {
         this.#id = crypto.randomUUID();
         this.setUserId(userId);
@@ -141,7 +147,7 @@ class DeckLicense
 
     setIssuedAt(value)
     {
-        if (value !== null)
+        if (value !== null && value !== undefined)
         {
             value = value instanceof Date ? value : new Date(value);
             if (isNaN(value.getTime()))
@@ -163,7 +169,7 @@ class DeckLicense
 
     setRotatedAt(value)
     {
-        if (value !== null)
+        if (value !== null && value !== undefined)
         {
             value = value instanceof Date ? value : new Date(value);
             if (isNaN(value.getTime()))
@@ -185,17 +191,17 @@ class DeckLicense
 
     setExpiresAt(value)
     {
-        if (value !== null)
+        if (value !== null && value !== undefined)
         {
             value = value instanceof Date ? value : new Date(value);
             if (isNaN(value.getTime()))
             {
-                value = new Date();
+                value = DeckLicense.FOREVER;
             }
         }
         else
         {
-            value = new Date();
+            value = DeckLicense.FOREVER;
         }
         this.#expiresAt = value;
     }

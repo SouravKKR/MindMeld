@@ -207,7 +207,7 @@ class OrganizationPayment
 
     setCreatedAt(value)
     {
-        if (value !== null)
+        if (value !== null && value !== undefined)
         {
             value = value instanceof Date ? value : new Date(value);
             if (isNaN(value.getTime()))
@@ -229,7 +229,7 @@ class OrganizationPayment
 
     setCapturedAt(value)
     {
-        if (value !== null)
+        if (value !== null && value !== undefined)
         {
             value = value instanceof Date ? value : new Date(value);
             if (isNaN(value.getTime()))

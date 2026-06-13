@@ -31,6 +31,9 @@ const taskTypes =
   ENHANCE_IMAGES: 28,
   GENERATION_FINALIZATION: 29,
   EVALUATE_MOCK_TEST_ATTEMPT: 30,
+  ASK_AI_BASIC: 31,
+  ASK_AI_PRO: 32,
+  ASK_AI_PRO_PLUS: 33,
 }
 
 module.exports = { taskTypes };

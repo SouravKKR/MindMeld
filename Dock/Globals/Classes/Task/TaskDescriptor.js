@@ -77,7 +77,7 @@ class TaskDescriptor
 
     setStartDate(value)
     {
-        if (value !== null)
+        if (value !== null && value !== undefined)
         {
             value = value instanceof Date ? value : new Date(value);
             if (isNaN(value.getTime()))
@@ -99,7 +99,7 @@ class TaskDescriptor
 
     setExpirationDate(value)
     {
-        if (value !== null)
+        if (value !== null && value !== undefined)
         {
             value = value instanceof Date ? value : new Date(value);
             if (isNaN(value.getTime()))

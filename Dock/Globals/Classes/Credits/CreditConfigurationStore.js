@@ -41,6 +41,15 @@ class CreditConfigurationStore
         else
         {
             configuration = new CreditConfiguration({});
+        }
+
+        // The AskAi tiers must never be silently free: an absent rule reads
+        // as "unmetered" to CreditPreflight, so backfill the default rules
+        // into both fresh and pre-existing configuration documents.
+        const bAddedAskAiRules = configuration.ensureAskAiTaskRules();
+
+        if (!document || bAddedAskAiRules)
+        {
             await collection.updateOne
             (
                 { _id: CreditConfigurationStore.#DOCUMENT_ID },

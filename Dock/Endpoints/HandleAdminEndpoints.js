@@ -18,6 +18,10 @@ const { createReleaseNote } = require("./Admin/ReleaseNotes/CreateReleaseNote");
 const { updateReleaseNote } = require("./Admin/ReleaseNotes/UpdateReleaseNote");
 const { deleteReleaseNote } = require("./Admin/ReleaseNotes/DeleteReleaseNote");
 const { listReleaseNotesAdmin } = require("./Admin/ReleaseNotes/ListReleaseNotesAdmin");
+const { listMaintenanceWindows } = require("./Admin/Maintenance/ListMaintenanceWindows");
+const { addMaintenanceWindow } = require("./Admin/Maintenance/AddMaintenanceWindow");
+const { updateMaintenanceWindow } = require("./Admin/Maintenance/UpdateMaintenanceWindow");
+const { removeMaintenanceWindow } = require("./Admin/Maintenance/RemoveMaintenanceWindow");
 const { sendAdminVerificationOtp } = require("./Organization/SendAdminVerificationOtp");
 const { verifyAdminVerificationOtp } = require("./Organization/VerifyAdminVerificationOtp");
 const { createOrganization } = require("./Organization/CreateOrganization");
@@ -35,6 +39,8 @@ const { listRateLimitEvents } = require("./Admin/RateLimits/ListRateLimitEvents"
 const { listAdminAuditEvents } = require("./Admin/Audit/ListAdminAuditEvents");
 const { getCreditConfig } = require("./Admin/GetCreditConfig");
 const { setCreditConfig } = require("./Admin/SetCreditConfig");
+const { previewCreditGrant } = require("./Admin/PreviewCreditGrant");
+const { applyCreditGrant } = require("./Admin/ApplyCreditGrant");
 const { ensureAdmin } = require("./Plugins/EnsureAdmin");
 
 function handleAdminEndpoints(server)
@@ -205,6 +211,42 @@ function handleAdminEndpoints(server)
         plugins: [ensureAdmin]
     });
 
+    // ── Scheduled maintenance windows ──────────────────────────────────────
+    server.handle
+    ({
+        routePath: `/Admin/Maintenance/List`,
+        handler: listMaintenanceWindows,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Maintenance/Add`,
+        handler: addMaintenanceWindow,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Maintenance/Update`,
+        handler: updateMaintenanceWindow,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Maintenance/Remove`,
+        handler: removeMaintenanceWindow,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
     // ── Organizations (B2B) ────────────────────────────────────────────────
     server.handle
     ({
@@ -352,6 +394,25 @@ function handleAdminEndpoints(server)
     ({
         routePath: `/Admin/Credits/Config/Save`,
         handler: setCreditConfig,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Credits (manual admin grants — B2B deals, known contacts) ──────────
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Grant/Preview`,
+        handler: previewCreditGrant,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Grant/Apply`,
+        handler: applyCreditGrant,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureAdmin]

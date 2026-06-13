@@ -25,6 +25,8 @@ const { handleMockTestEndpoints } = require("./Endpoints/HandleMockTestEndpoints
 const { handleTaskStateEndpoints } = require("./Endpoints/HandleTaskStateEndpoints");
 const { handleOrganizationEndpoints } = require("./Endpoints/HandleOrganizationEndpoints");
 const { handleWebhookEndpoints } = require("./Endpoints/HandleWebhookEndpoints");
+const { handleCreditEndpoints } = require("./Endpoints/HandleCreditEndpoints");
+const { handleMaintenanceEndpoints } = require("./Endpoints/HandleMaintenanceEndpoints");
 const Logger = require("./Globals/Classes/Logger");
 const KeyManagementService = require("./Globals/Classes/Security/KeyManagementService");
 const KeyRotationScheduler = require("./Globals/Classes/Security/KeyRotationScheduler");
@@ -37,12 +39,38 @@ const RateLimiter = require("./Globals/Classes/Security/RateLimiter");
 const ForeignExchangeRatesCache = require("./Globals/Classes/Pricing/ForeignExchangeRatesCache");
 const EcbRatesClient = require("./Globals/Classes/Pricing/EcbRatesClient");
 const ForeignExchangeRatesRefreshScheduler = require("./Globals/Classes/Pricing/ForeignExchangeRatesRefreshScheduler");
+const TaskQueueMode = require("./Globals/Classes/Task/TaskQueueMode");
+const LocalWorkerSupervisor = require("./Globals/Classes/Task/LocalWorkerSupervisor");
+const BurstAutoscaler = require("./Globals/Classes/Burst/BurstAutoscaler");
 
 
 Logger.initialize();
 TaskManager.initialize();
 KeyManagementService.initialize();
 KeyRotationScheduler.start();
+
+// ── Distributed task queue + burst fleet (production only) ──────────────────
+// When the server is started WITHOUT --debug and DOCK_USE_TASK_QUEUE is on:
+//   • LocalWorkerSupervisor keeps a warm baseline of worker processes on this
+//     (strong base) node, so queued tasks are always processed even with zero
+//     burst VMs.
+//   • BurstAutoscaler polls queue depth and scales cheap burst VMs up to a hard
+//     cap, then back down when idle. It first tears down any inherited burst VMs
+//     so a restart never starts with stray instances. All polling-based — it can
+//     never runaway-spend. In --debug, none of this runs and tasks execute as
+//     local subprocesses exactly as before.
+if (TaskQueueMode.isQueueEnabled())
+{
+    LocalWorkerSupervisor.start();
+
+    if (BurstAutoscaler.shouldRun())
+    {
+        BurstAutoscaler.startup().catch((burstStartupError) =>
+        {
+            console.error("[BurstAutoscaler] Startup failed; continuing without the burst fleet:", burstStartupError);
+        });
+    }
+}
 
 // Foreign-exchange rates: connect the Redis-backed cache, do one best-effort
 // initial fetch (so a fresh boot localizes prices immediately), then refresh
@@ -174,3 +202,5 @@ handleMockTestEndpoints(server);
 handleTaskStateEndpoints(server);
 handleOrganizationEndpoints(server);
 handleWebhookEndpoints(server);
+handleCreditEndpoints(server);
+handleMaintenanceEndpoints(server);

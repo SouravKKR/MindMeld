@@ -2,6 +2,8 @@ const PaymentProviderFactory = require("../../Globals/Classes/Payments/PaymentPr
 const OrganizationQueryEngine = require("../../Globals/Classes/Organization/OrganizationQueryEngine");
 const OrganizationPaymentQueryEngine = require("../../Globals/Classes/Organization/OrganizationPaymentQueryEngine");
 const OrgAdminVerificationManager = require("../../Globals/Classes/Authentication/OrgAdminVerificationManager");
+const PendingCreditOrderQueryEngine = require("../../Globals/Classes/Database/PendingCreditOrderQueryEngine");
+const CreditPurchaseCompletionService = require("../../Globals/Classes/Credits/CreditPurchaseCompletionService");
 const { paymentProviders } = require("../../Globals/Enumerations/PaymentProviders");
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
 const { organizationPaymentKinds } = require("../../Globals/Enumerations/OrganizationPaymentKinds");
@@ -14,10 +16,21 @@ const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
  * the HMAC over the exact bytes Razorpay signed instead of a re-
  * serialised JSON.
  *
+ * Completes two payment flows: organization payments (creation /
+ * expansion) and credit purchases. Credit purchases are ALSO completed
+ * by /Credits/Purchase/Verify from the buyer's browser — this webhook
+ * is the safety net for buyers who pay and then close the tab before
+ * Verify runs. Both paths share CreditPurchaseCompletionService, whose
+ * referenceKey idempotency guarantees exactly one grant regardless of
+ * which arrives first. (Paid-deck purchases remain verify-only by
+ * design and fall through to PAYMENT_ROW_NOT_FOUND here.)
+ *
  * Idempotent on providerOrderId — repeat deliveries (Razorpay retries
  * each event up to ~5 times) match the unique index on
  * organizationPayments.providerOrderId and short-circuit at the
- * "already CAPTURED" check inside OrganizationPaymentQueryEngine.
+ * "already CAPTURED" check inside OrganizationPaymentQueryEngine; the
+ * credit branch short-circuits on the CONSUMED status / duplicate
+ * referenceKey.
  *
  * Acks 200 even on benign errors (signature mismatch, unknown order)
  * — returning a 4xx would cause Razorpay to keep retrying. We log
@@ -85,6 +98,36 @@ async function handleRazorpayWebhook(request, response)
     const paymentRow = await OrganizationPaymentQueryEngine.findByOrderId(providerOrderId);
     if (!paymentRow)
     {
+        // Not an organization payment — try the credit-purchase flow before
+        // giving up. The pending row's own userId drives the grant (no
+        // session exists here); the verified HMAC signature is the auth.
+        const pendingCreditOrder = await PendingCreditOrderQueryEngine.getByOrderId(providerOrderId);
+
+        if (pendingCreditOrder)
+        {
+            if (pendingCreditOrder.status === PendingCreditOrderQueryEngine.STATUS_CONSUMED)
+            {
+                response.statusCode = httpStatus.OK;
+                response.sendJson({ acknowledged: true, reason: "CREDIT_ORDER_ALREADY_PROCESSED" });
+                return;
+            }
+
+            const completion = await CreditPurchaseCompletionService.complete
+            (
+                pendingCreditOrder,
+                { providerPaymentId: providerPaymentId, source: CreditPurchaseCompletionService.SOURCE_WEBHOOK }
+            );
+
+            response.statusCode = httpStatus.OK;
+            response.sendJson
+            ({
+                acknowledged: true,
+                creditOrderCompleted: completion.granted,
+                alreadyProcessed: completion.alreadyProcessed
+            });
+            return;
+        }
+
         // The order belongs to a non-org payment flow (e.g. paid-deck
         // purchases) or to an org that was deleted before payment cleared.
         response.statusCode = httpStatus.OK;

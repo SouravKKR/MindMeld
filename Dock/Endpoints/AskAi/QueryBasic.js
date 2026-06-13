@@ -1,5 +1,8 @@
 const AskAiStreamRunner = require("./Helpers/AskAiStreamRunner");
 const ModelTierMetadata = require("../../Globals/Constants/ModelTierMetadata");
+const { taskTypes } = require("../../Globals/Enumerations/TaskTypes");
+const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
+const { getUser } = require("../Helpers/GetUser");
 
 /**
  * POST /AskAi/Query/Basic
@@ -12,15 +15,29 @@ const ModelTierMetadata = require("../../Globals/Constants/ModelTierMetadata");
  * Model id and grounding flag come from the codegen-mirrored
  * ModelTierMetadata.BASIC entry — data-driven so a tier swap only
  * needs Common/Constants/ModelTierMetadata.json + setup.bat.
+ *
+ * The user is resolved here (not in the runner) so the credit
+ * preflight and the post-stream charge are attributed to a concrete
+ * userId before any Gemini work starts.
  */
 async function handleQueryBasic(request, response)
 {
+    const user = await getUser(request);
+    if (!user)
+    {
+        response.statusCode = httpStatus.UNAUTHORIZED;
+        response.end("Unauthorised.");
+        return;
+    }
+
     await AskAiStreamRunner.run
     ({
-        modelId:             ModelTierMetadata.BASIC.modelId,
+        taskType: taskTypes.ASK_AI_BASIC,
+        userId: user.getId(),
+        modelId: ModelTierMetadata.BASIC.modelId,
         bEnableGoogleSearch: ModelTierMetadata.BASIC.enableGoogleSearchGrounding,
-        request:             request,
-        response:            response,
+        request: request,
+        response: response,
     });
 }
 

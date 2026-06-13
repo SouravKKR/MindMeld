@@ -1,9 +1,15 @@
+const crypto = require("crypto");
 const { spawn } = require("child_process");
 const readline = require("readline");
 const path = require("path");
 const Logger = require("../../../Globals/Classes/Logger");
 const { getPythonExecutablePathFromVenv } = require("../../../Globals/UtilityFunctions.js/GetPythonExecutablePathFromVenv");
 const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
+const { creditTransactionTypes } = require("../../../Globals/Enumerations/CreditTransactionTypes");
+const CreditPreflight = require("../../../Globals/Classes/Credits/CreditPreflight");
+const CreditLedger = require("../../../Globals/Classes/Credits/CreditLedger");
+const CreditConfigurationStore = require("../../../Globals/Classes/Credits/CreditConfigurationStore");
+const MaintenanceGate = require("../../../Globals/Classes/Maintenance/MaintenanceGate");
 
 /**
  * AskAiStreamRunner
@@ -12,12 +18,20 @@ const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
  * Python worker, feeds the request body to its stdin, and forwards each
  * NDJSON line the worker writes to stdout as a chunked HTTP write to
  * the browser. Dock never parses Gemini events — it's a byte pipe with
- * a body validator and an admin gate.
+ * a body validator and a credit meter.
  *
  * The per-tier handlers (QueryBasic / QueryPro / QueryProPlus) all call
- * `AskAiStreamRunner.run(...)` with their model id + grounding flag.
- * Those two fields are the ONLY thing that differs between tiers, so the
- * runner stays a single class instead of three near-identical copies.
+ * `AskAiStreamRunner.run(...)` with their task type, model id and
+ * grounding flag. Those three fields are the ONLY thing that differs
+ * between tiers, so the runner stays a single class instead of three
+ * near-identical copies.
+ *
+ * Credit metering: AskAi is NOT a queued Workflow, so the Agent's task
+ * charging hooks never see it. The runner therefore meters it directly —
+ * a CreditPreflight check before the worker is spawned (402 when the
+ * user cannot afford the tier) and an idempotent CreditLedger charge
+ * when the stream completes successfully (a "done" event with no
+ * preceding "error" event).
  */
 class AskAiStreamRunner
 {
@@ -27,8 +41,35 @@ class AskAiStreamRunner
     static #MAX_IMAGE_BASE64_BYTES  = 8 * 1024 * 1024;
     static #MAX_INFORMATION_SOURCES = 8;
 
-    static async run({ modelId, bEnableGoogleSearch, request, response })
+    static async run({ taskType, userId, modelId, bEnableGoogleSearch, request, response })
     {
+        // The handlers resolve the user before calling us; a missing id here
+        // means a wiring bug, not a client mistake — refuse rather than run
+        // an unattributable (and therefore unchargeable) Gemini call.
+        if (typeof userId !== "string" || userId.length === 0)
+        {
+            response.sendStatusCode(httpStatus.UNAUTHORIZED);
+            return;
+        }
+
+        // Scheduled-maintenance gate. Blocks STARTING a new AskAi query — an
+        // already-streaming response is untouched.
+        const activeMaintenanceWindow = await MaintenanceGate.getActiveWindow();
+        if (activeMaintenanceWindow !== null)
+        {
+            response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
+            response.sendJson(MaintenanceGate.buildMaintenanceResponsePayload(activeMaintenanceWindow));
+            return;
+        }
+
+        const creditPreflight = await CreditPreflight.check(userId, taskType);
+        if (!creditPreflight.allowed)
+        {
+            response.statusCode = httpStatus.PAYMENT_REQUIRED;
+            response.sendJson({ error: creditPreflight.reason, balance: creditPreflight.balance, required: creditPreflight.required });
+            return;
+        }
+
         const requestBody = await AskAiStreamRunner.#readRequestBody(request);
         if (requestBody === null)
         {
@@ -43,6 +84,11 @@ class AskAiStreamRunner
             response.end(validationError);
             return;
         }
+
+        // One idempotency key per HTTP request: the close handler is the only
+        // charge site and fires once per child process, but the ledger's
+        // unique-referenceKey guard makes even an unexpected double fire safe.
+        const chargeReferenceKey = `askAi:${taskType}:${userId}:${crypto.randomUUID()}`;
 
         const agentServicePath = process.env.AGENT_SERVICE_PATH || path.join(__dirname, "../../../..", "Agent");
         const pythonInterpreterPath = getPythonExecutablePathFromVenv(path.join(agentServicePath, ".venv"));
@@ -63,11 +109,14 @@ class AskAiStreamRunner
         // Inject model + grounding flag into the payload Dock forwards on stdin.
         // The frontend never sends these — they're tier-locked server-side so a
         // tampered client can't ask for Pro Plus while hitting /Query/Basic.
+        // userId rides along for charge attribution in the worker's logs; the
+        // authoritative charge itself happens here in Dock on stream completion.
         const stdinPayload =
         {
             ...requestBody,
             modelId: modelId,
             bEnableGoogleSearch: bEnableGoogleSearch,
+            userId: userId,
         };
 
         childProcess.stdin.write(JSON.stringify(stdinPayload));
@@ -86,6 +135,7 @@ class AskAiStreamRunner
         }
 
         let bDoneEmitted = false;
+        let bErrorEmitted = false;
         let bResponseClosed = false;
 
         const stdoutLineReader = readline.createInterface({ input: childProcess.stdout });
@@ -100,7 +150,8 @@ class AskAiStreamRunner
                 return;
             }
             // Track the terminal "done" event so we can distinguish a
-            // clean stream end from a crash on the close-event path.
+            // clean stream end from a crash on the close-event path, and
+            // any "error" event so a failed stream is never charged.
             // Parse the line — substring matching is brittle against
             // whitespace variations (json.dumps emits `{"type": "done"}`
             // with a space after the colon, not `{"type":"done"}`).
@@ -110,6 +161,10 @@ class AskAiStreamRunner
                 if (parsedEvent && parsedEvent.type === "done")
                 {
                     bDoneEmitted = true;
+                }
+                if (parsedEvent && parsedEvent.type === "error")
+                {
+                    bErrorEmitted = true;
                 }
             }
             catch (parseError)
@@ -159,6 +214,17 @@ class AskAiStreamRunner
         {
             stdoutLineReader.close();
             stderrLineReader.close();
+
+            // Charge only a successful stream — the worker emitted its
+            // "done" sentinel without any preceding "error" event. This
+            // runs BEFORE the bResponseClosed early-return on purpose: a
+            // client that disconnects after the final token has still
+            // consumed the full Gemini call and must still be charged.
+            if (bDoneEmitted && !bErrorEmitted)
+            {
+                AskAiStreamRunner.#chargeForCompletedStream(userId, taskType, chargeReferenceKey)
+                    .catch((chargeError) => Logger.log(`[AskAi] credit charge failed for ${chargeReferenceKey}: ${chargeError.message}`, "DOCK"));
+            }
 
             if (bResponseClosed) return;
 
@@ -272,6 +338,50 @@ class AskAiStreamRunner
         }
 
         return null;
+    }
+
+    /**
+     * Deducts the tier's configured flat cost after a successful stream.
+     * AskAi bypasses the task queue, so this is the authoritative charge —
+     * there is no Agent-side hook that would otherwise meter it. A rule
+     * that has gone missing or been disabled since the preflight simply
+     * results in no charge (never a retroactive denial of a reply the
+     * user has already received).
+     * @param {string} userId
+     * @param {number} taskType — TaskTypes value of the tier
+     * @param {string} referenceKey — per-request idempotency key
+     */
+    static async #chargeForCompletedStream(userId, taskType, referenceKey)
+    {
+        const configuration = await CreditConfigurationStore.load();
+        const rule = configuration.getRuleForTask(taskType);
+        if (rule === null || !rule.getEnabled())
+        {
+            return;
+        }
+
+        const chargeAmount = rule.evaluate({});
+        if (chargeAmount <= 0)
+        {
+            return;
+        }
+
+        const chargeResult = await CreditLedger.charge
+        (
+            userId,
+            chargeAmount,
+            creditTransactionTypes.TASK_CHARGE,
+            referenceKey,
+            { taskType: taskType, source: "AskAi" },
+            rule.getMinimumBalanceFloor()
+        );
+
+        if (chargeResult.rejected)
+        {
+            // The stream already completed, so the reply cannot be revoked —
+            // log the floor breach for the admin instead of failing silently.
+            Logger.log(`[AskAi] charge of ${chargeAmount} rejected by balance floor for user ${userId} (${referenceKey}).`, "DOCK");
+        }
     }
 }
 

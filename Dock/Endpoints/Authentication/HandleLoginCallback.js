@@ -9,17 +9,14 @@ const SyncQueryEngine = require("../../Globals/Classes/Database/SyncQueryEngine"
 const UserRoleReconciliator = require("../../Globals/Classes/Authentication/UserRoleReconciliator");
 const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
 const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/OrganizationAutoAssigner");
+const Logger = require("../../Globals/Classes/Logger");
 
 async function handleLoginCallback(request, response)
 {
     const queryParams = await request.getQueryParams();
     const provider = await request.getCookie("provider");
 
-    console.log(`${request.headers.host}`);
-
-    console.log(await request.getCookies());
-
-    console.log(`provider: ${provider}`);
+    Logger.log(`[HandleLoginCallback] Callback received from host ${request.headers.host} (provider: ${provider}).`);
 
     // OAuth login-CSRF / session-fixation guard: the state Google echoed back
     // must equal the single-use token HandleLogin stored in the httpOnly

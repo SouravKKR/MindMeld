@@ -180,7 +180,7 @@ class Purchase
 
     setPurchaseDate(value)
     {
-        if (value !== null)
+        if (value !== null && value !== undefined)
         {
             value = value instanceof Date ? value : new Date(value);
             if (isNaN(value.getTime()))
@@ -202,7 +202,7 @@ class Purchase
 
     setRefundedAt(value)
     {
-        if (value !== null)
+        if (value !== null && value !== undefined)
         {
             value = value instanceof Date ? value : new Date(value);
             if (isNaN(value.getTime()))

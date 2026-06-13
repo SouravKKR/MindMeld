@@ -136,7 +136,7 @@ class TaskState
 
     setCreatedAt(value)
     {
-        if (value !== null)
+        if (value !== null && value !== undefined)
         {
             value = value instanceof Date ? value : new Date(value);
             if (isNaN(value.getTime()))
@@ -158,7 +158,7 @@ class TaskState
 
     setExpiresAt(value)
     {
-        if (value !== null)
+        if (value !== null && value !== undefined)
         {
             value = value instanceof Date ? value : new Date(value);
             if (isNaN(value.getTime()))

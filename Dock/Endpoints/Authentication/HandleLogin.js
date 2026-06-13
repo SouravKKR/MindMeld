@@ -3,6 +3,7 @@ const PacketronResponse = require("@gamiumgamers/packetron/PacketronResponse");
 const {authenticationProviders} = require("../../Globals/Enumerations/AuthenticationProviders");
 const App = require("../../Globals/Classes/App");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const Logger = require("../../Globals/Classes/Logger");
 
 async function handleLogin(request, response)
 {
@@ -17,7 +18,9 @@ async function handleLogin(request, response)
 
     const authenticationUrl = App.getAuthenticationUrl(authenticationProviders[provider], loginState);
 
-    console.log(`Redirecting to ${authenticationUrl}`);
+    // The authentication URL embeds the loginState token (the loginState
+    // cookie's value), so it must never be logged — even under --debug.
+    Logger.log(`[HandleLogin] Redirecting host ${request.headers.host} to the ${provider} authentication endpoint.`);
 
     //Redirect to the authentication URL
     response.statusCode = httpStatus.FOUND;
@@ -37,11 +40,7 @@ async function handleLogin(request, response)
         sameSite: "lax"
     });
 
-    console.log(`Setting provider cookie to ${provider}`);
-    console.log(`${request.headers.host}`);
     response.end();
-
-    console.log(`Redirected to ${authenticationUrl}`);
 }
 
 module.exports = { handleLogin };

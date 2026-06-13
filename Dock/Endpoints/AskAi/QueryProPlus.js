@@ -1,5 +1,8 @@
 const AskAiStreamRunner = require("./Helpers/AskAiStreamRunner");
 const ModelTierMetadata = require("../../Globals/Constants/ModelTierMetadata");
+const { taskTypes } = require("../../Globals/Enumerations/TaskTypes");
+const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
+const { getUser } = require("../Helpers/GetUser");
 
 /**
  * POST /AskAi/Query/ProPlus
@@ -10,15 +13,29 @@ const ModelTierMetadata = require("../../Globals/Constants/ModelTierMetadata");
  * require deep analysis.
  *
  * Model id and grounding flag come from ModelTierMetadata.PRO_PLUS.
+ *
+ * The user is resolved here (not in the runner) so the credit
+ * preflight and the post-stream charge are attributed to a concrete
+ * userId before any Gemini work starts.
  */
 async function handleQueryProPlus(request, response)
 {
+    const user = await getUser(request);
+    if (!user)
+    {
+        response.statusCode = httpStatus.UNAUTHORIZED;
+        response.end("Unauthorised.");
+        return;
+    }
+
     await AskAiStreamRunner.run
     ({
-        modelId:             ModelTierMetadata.PRO_PLUS.modelId,
+        taskType: taskTypes.ASK_AI_PRO_PLUS,
+        userId: user.getId(),
+        modelId: ModelTierMetadata.PRO_PLUS.modelId,
         bEnableGoogleSearch: ModelTierMetadata.PRO_PLUS.enableGoogleSearchGrounding,
-        request:             request,
-        response:            response,
+        request: request,
+        response: response,
     });
 }
 

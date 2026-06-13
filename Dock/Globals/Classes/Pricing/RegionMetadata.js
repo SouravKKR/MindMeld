@@ -124,6 +124,16 @@ class RegionMetadata
     }
 
     /**
+     * Distinct display currencies across all regions, sorted alphabetically.
+     * This is the set an admin can price credits in — every buyer currency
+     * resolves to one of these via getDisplayCurrency.
+     */
+    static getSupportedCurrencies()
+    {
+        return Array.from(new Set(Object.values(RegionMetadata.#DISPLAY_CURRENCY))).sort();
+    }
+
+    /**
      * Region list for the storefront switcher — code, label, and the
      * currency prices are shown in for that region. Ordered by the enum.
      */

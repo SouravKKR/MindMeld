@@ -1,5 +1,7 @@
 const CreditConfiguration = require("../../Globals/Classes/Credits/CreditConfiguration");
 const CreditConfigurationStore = require("../../Globals/Classes/Credits/CreditConfigurationStore");
+const CreditPurchasePricingEngine = require("../../Globals/Classes/Credits/CreditPurchasePricingEngine");
+const RegionMetadata = require("../../Globals/Classes/Pricing/RegionMetadata");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
@@ -29,9 +31,17 @@ async function setCreditConfig(request, response)
         const updatedByUserId = request.user ? request.user.getId() : "";
 
         const savedConfiguration = await CreditConfigurationStore.save(configuration, updatedByUserId);
+        const effectivePricing = await CreditPurchasePricingEngine.computeEffectivePrices(savedConfiguration);
 
+        // Echo the same enrichment GET returns so the editor's auto-converted
+        // placeholders refresh immediately after a save.
         response.statusCode = httpStatus.OK;
-        response.sendJson({ config: savedConfiguration.toJson() });
+        response.sendJson
+        ({
+            config: savedConfiguration.toJson(),
+            supportedCurrencies: RegionMetadata.getSupportedCurrencies(),
+            effectivePricing: effectivePricing
+        });
     }
     catch (saveError)
     {

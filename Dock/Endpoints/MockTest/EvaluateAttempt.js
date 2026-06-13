@@ -18,6 +18,7 @@ const CreditPreflight = require("../../Globals/Classes/Credits/CreditPreflight")
 const TaskStateManager = require("../../Globals/Classes/Task/TaskStateManager");
 const { getUser } = require("../Helpers/GetUser");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const MaintenanceGate = require("../../Globals/Classes/Maintenance/MaintenanceGate");
 
 
 function joinPersistencePath(...segments)
@@ -164,8 +165,18 @@ async function handleEvaluateAttempt(request, response)
         return;
     }
 
-    // Only the LLM grading path reaches here (offline grading already
-    // returned above). Best-effort credit gate before queuing the agent task.
+    // Only the LLM grading path reaches here (offline grading already returned
+    // above and is allowed during maintenance — it starts no agent task). The
+    // scheduled-maintenance gate blocks STARTING this new agent task only.
+    const activeMaintenanceWindow = await MaintenanceGate.getActiveWindow();
+    if (activeMaintenanceWindow !== null)
+    {
+        response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
+        response.sendJson(MaintenanceGate.buildMaintenanceResponsePayload(activeMaintenanceWindow));
+        return;
+    }
+
+    // Best-effort credit gate before queuing the agent task.
     const creditPreflight = await CreditPreflight.check(userId, taskTypes.EVALUATE_MOCK_TEST_ATTEMPT);
     if (!creditPreflight.allowed)
     {

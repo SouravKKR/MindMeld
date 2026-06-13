@@ -10,6 +10,7 @@ const TaskStateManager = require("../../Globals/Classes/Task/TaskStateManager");
 const { getUser } = require("../Helpers/GetUser");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const MaintenanceGate = require("../../Globals/Classes/Maintenance/MaintenanceGate");
 
 
 /**
@@ -121,6 +122,17 @@ async function handleQueueDeckAnalysis(request, response)
             bAlreadyRunning: true,
             reason: wasForcedAttempt ? "force_blocked_by_active_task" : "joined_existing_task",
         });
+        return;
+    }
+
+    // Scheduled-maintenance gate. Placed AFTER duplicate detection so a caller
+    // joining an already-running analysis is still served; only STARTING a brand
+    // new analysis task is blocked.
+    const activeMaintenanceWindow = await MaintenanceGate.getActiveWindow();
+    if (activeMaintenanceWindow !== null)
+    {
+        response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
+        response.sendJson(MaintenanceGate.buildMaintenanceResponsePayload(activeMaintenanceWindow));
         return;
     }
 

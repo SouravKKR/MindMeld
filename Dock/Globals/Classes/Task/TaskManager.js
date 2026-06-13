@@ -8,6 +8,7 @@ const { getPythonExecutablePathFromVenv } = require('../../UtilityFunctions.js/G
 const { taskStatus } = require('../../Enumerations/TaskStatus');
 const { taskTypes } = require('../../Enumerations/TaskTypes');
 const Logger = require('../Logger');
+const TaskQueueMode = require('./TaskQueueMode');
 
 
 class TaskManager
@@ -16,6 +17,47 @@ class TaskManager
     static #TASK_PREFIX = "Task/";
     static #TASK_TTL_SECONDS = 5 * 60 * 60;
     static #TASK_COMPLETION_SUFFIX = ":completion";
+
+    // ── Reliable polling queue ──────────────────────────────────────────────
+    // Producer side. Dock pushes a small JSON envelope onto the pending list;
+    // long-lived Agent workers (Agent/Worker.py) atomically move it to the
+    // processing list, run it, and acknowledge. These key names MUST stay
+    // identical to the Agent-side TaskManager.py.
+    static #TASK_QUEUE_PENDING_KEY = "TaskQueue/pending";
+    static #TASK_QUEUE_PROCESSING_KEY = "TaskQueue/processing";
+    // Poll cadence + ceiling for awaiting a queued task's terminal status. The
+    // timeout is kept safely below the 5h Task/<id> TTL so a blob never expires
+    // out from under an in-flight await.
+    static #QUEUE_AWAIT_POLL_INTERVAL_MILLISECONDS = TaskManager.#resolvePositiveIntegerSetting("TASK_QUEUE_AWAIT_POLL_MILLISECONDS", 1000);
+    static #QUEUE_AWAIT_TIMEOUT_MILLISECONDS = TaskManager.#resolvePositiveIntegerSetting("TASK_QUEUE_AWAIT_TIMEOUT_SECONDS", 3 * 60 * 60) * 1000;
+
+    /**
+     * Reads a strictly-positive integer from the environment, falling back when
+     * the value is missing or invalid. Mirrors RateLimiter's env helper.
+     *
+     * @param {string} environmentVariableName
+     * @param {number} fallbackValue
+     * @returns {number}
+     */
+    static #resolvePositiveIntegerSetting(environmentVariableName, fallbackValue)
+    {
+        const rawValue = process.env[environmentVariableName];
+
+        if (rawValue === undefined || rawValue === null || String(rawValue).trim() === "")
+        {
+            return fallbackValue;
+        }
+
+        const parsedValue = Number(rawValue);
+
+        if (!Number.isFinite(parsedValue) || parsedValue <= 0)
+        {
+            console.warn(`[TaskManager] Ignoring invalid ${environmentVariableName}="${rawValue}"; using default ${fallbackValue}.`);
+            return fallbackValue;
+        }
+
+        return Math.floor(parsedValue);
+    }
     static #POST_PIPELINE_PREFIX = "PostPipeline/";
     static #POST_PIPELINE_TASKS_PREFIX = "PostPipelineTasks/";
     static #SYNC_LOCK_TTL_SECONDS = 5 * 60;
@@ -108,6 +150,88 @@ class TaskManager
     }
 
     /**
+     * Pushes a task onto the pending queue for a worker to claim. The envelope
+     * carries the same context the local-subprocess path passes as CLI args
+     * (main + parent task ids) so workflows behave identically wherever they run.
+     * @param {string} taskId
+     * @param {string} mainTaskId
+     * @param {string} parentTaskId
+     */
+    static async enqueueTask(taskId, mainTaskId, parentTaskId)
+    {
+        // Reset the descriptor to a non-terminal state and clear any leftover
+        // atomic-completion value BEFORE enqueuing. Without this, a re-enqueue on
+        // retry would carry the previous attempt's COMPLETED/FAILED status, and
+        // awaitTerminalStatus could return that stale result before a worker
+        // re-claims the task — silently defeating retries.
+        const existingTask = await TaskManager.getTask(taskId);
+        if (existingTask !== null)
+        {
+            existingTask.setStatus(taskStatus.NOT_STARTED);
+            existingTask.setCompletion(0);
+            await TaskManager.updateTask(existingTask);
+        }
+        await TaskManager.#redisClient.del(TaskManager.#TASK_PREFIX + taskId + TaskManager.#TASK_COMPLETION_SUFFIX);
+
+        const envelope = JSON.stringify({
+            taskId: taskId,
+            mainTaskId: mainTaskId || taskId,
+            parentTaskId: parentTaskId || mainTaskId || taskId
+        });
+
+        await TaskManager.#redisClient.lPush(TaskManager.#TASK_QUEUE_PENDING_KEY, envelope);
+    }
+
+    /**
+     * Polls a queued task until it reaches a terminal status (COMPLETED/FAILED).
+     * Returns the final descriptor, or null if the task blob vanished (TTL) or
+     * the await timed out — both of which the caller treats as a failure, so the
+     * existing retry/false-propagation path in execute() still fires.
+     * @param {string} taskId
+     * @returns {Promise<TaskDescriptor|null>}
+     */
+    static async awaitTerminalStatus(taskId)
+    {
+        const deadline = Date.now() + TaskManager.#QUEUE_AWAIT_TIMEOUT_MILLISECONDS;
+
+        while (Date.now() < deadline)
+        {
+            const task = await TaskManager.getTask(taskId);
+
+            if (task === null)
+            {
+                // Blob expired or was never written — treat as failure.
+                return null;
+            }
+
+            const status = task.getStatus();
+            if (status === taskStatus.COMPLETED || status === taskStatus.FAILED)
+            {
+                return task;
+            }
+
+            await new Promise((resolve) => { setTimeout(resolve, TaskManager.#QUEUE_AWAIT_POLL_INTERVAL_MILLISECONDS); });
+        }
+
+        console.warn(`[TaskManager] awaitTerminalStatus timed out for task ${taskId}.`);
+        return null;
+    }
+
+    /**
+     * Returns the current queue depth for the autoscaler. `pending` are tasks
+     * waiting to be claimed; `processing` are tasks a worker has claimed but not
+     * yet acknowledged.
+     * @returns {Promise<{pending: number, processing: number}>}
+     */
+    static async getQueueDepth()
+    {
+        const pending = await TaskManager.#redisClient.lLen(TaskManager.#TASK_QUEUE_PENDING_KEY);
+        const processing = await TaskManager.#redisClient.lLen(TaskManager.#TASK_QUEUE_PROCESSING_KEY);
+
+        return { pending: pending, processing: processing };
+    }
+
+    /**
      * @param {TaskDescriptor} taskDescriptor
      * @param {number} retries
      * @param {TaskDescriptor|null} mainTask - The root task of the entire pipeline.
@@ -129,9 +253,43 @@ class TaskManager
             {
                 switch(taskDescriptor.getExecutionTarget())
                 {
+                    // LOCAL and REMOTE_QUEUE share one branch: the routing decision
+                    // is made at runtime by TaskQueueMode, not by the descriptor's
+                    // stamped target. In production with the queue enabled, both go
+                    // through the distributed worker pool; in --debug / dev, both run
+                    // as a local subprocess exactly as before.
                     case taskExecutionTargets.LOCAL:
+                    case taskExecutionTargets.REMOTE_QUEUE:
                     {
                         const taskTypeName = Object.keys(taskTypes).find(key => taskTypes[key] == taskDescriptor.getType());
+
+                        if (TaskQueueMode.isQueueEnabled())
+                        {
+                            Logger.log(`Enqueuing task for the worker pool: ${taskTypeName}`);
+
+                            await TaskManager.enqueueTask(taskDescriptor.getId(), mainTask.getId(), parentTaskId || mainTask.getId());
+
+                            const terminalTask = await TaskManager.awaitTerminalStatus(taskDescriptor.getId());
+
+                            if (terminalTask === null)
+                            {
+                                throw new Error(`Task ${taskTypeName} did not complete (expired or timed out while queued).`);
+                            }
+
+                            Logger.log(`Finished execution of task ${taskTypeName}.`);
+
+                            // Re-assign so the nextTaskIds walk below sees the worker-mutated descriptor.
+                            taskDescriptor = terminalTask;
+
+                            if (taskDescriptor.getStatus() === taskStatus.FAILED)
+                            {
+                                const error = taskDescriptor.getPayload()?.error ?? 'Task failed with no error message.';
+                                throw new Error(error);
+                            }
+
+                            break;
+                        }
+
                         Logger.log(`Executing task locally: ${taskTypeName}`);
 
                         const agentServicePath = process.env.AGENT_SERVICE_PATH || path.join(__dirname, "../../../..", "Agent");
