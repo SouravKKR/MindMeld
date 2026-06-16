@@ -2,6 +2,7 @@ const { PacketronHandlerFlags, PacketronRequestMethod } = require("@gamiumgamers
 const { ensureLogin } = require("./Plugins/EnsureLogin");
 const { getMyActivity } = require("./Activity/GetMyActivity");
 const { getActiveTaskProgress } = require("./Activity/GetActiveTaskProgress");
+const { getGenerationCreditSummary } = require("./Activity/GetGenerationCreditSummary");
 
 
 /**
@@ -29,6 +30,14 @@ function handleActivityEndpoints(server)
     ({
         routePath: `/Activity/Tasks/Progress`,
         handler: getActiveTaskProgress,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureLogin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Activity/Tasks/CreditSummary`,
+        handler: getGenerationCreditSummary,
         method: PacketronRequestMethod.GET,
         plugins: [ensureLogin]
     });

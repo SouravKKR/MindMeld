@@ -1,6 +1,7 @@
 const authenticationProviders = require("../Globals/Enumerations/AuthenticationProviders");
 const { Packetron, PacketronHandlerFlags, PacketronRequestMethod } = require("@gamiumgamers/packetron");
 const { handleGenerate } = require("./AutomaticGeneration/Generate");
+const { handleEstimateCost } = require("./AutomaticGeneration/EstimateCost");
 const { handleInformationSourceUpload } = require("./AutomaticGeneration/InformationSourceUpload");
 const { handleListInformationSourcesForUser } = require("./AutomaticGeneration/ListInformationSourcesForUser");
 const { handleInformationSourceDownload } = require("./AutomaticGeneration/InformationSourceDownload");
@@ -26,6 +27,15 @@ function handleAutomaticGenerationEndpoints(server)
     ({
         routePath: `/Generate`,
         handler: handleGenerate,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ ensureLogin ]
+    });
+
+    server.handle
+    ({
+        routePath: `/Generate/EstimateCost`,
+        handler: handleEstimateCost,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ ensureLogin ]

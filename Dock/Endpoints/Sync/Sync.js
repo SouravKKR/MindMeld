@@ -7,8 +7,11 @@ const TaskManager = require("../../Globals/Classes/Task/TaskManager");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const PaidDeckSyncCrypto = require("../../Globals/Classes/Security/PaidDeckSyncCrypto");
 const StorageCreditAssessor = require("../../Globals/Classes/Credits/StorageCreditAssessor");
+const AutoAnalysisDeckFields = require("../../Globals/Classes/Analysis/AutoAnalysisDeckFields");
+const CuratedStudyMaterialFields = require("../../Globals/Classes/Analysis/CuratedStudyMaterialFields");
 const { entityTypes } = require("../../Globals/Enumerations/EntityTypes");
 const { deckLicenseStatuses } = require("../../Globals/Enumerations/DeckLicenseStatuses");
+const { curatedBatchReviewStates } = require("../../Globals/Enumerations/CuratedBatchReviewStates");
 
 // ── Pull-phase chunking ────────────────────────────────────────────────
 //
@@ -137,6 +140,18 @@ async function handleSync(request, response)
     // author a brand-new paid entity. This is the server-side enforcement of
     // "content is read-only on the device".
     await preservePaidContentOnPush(db, userId, byType);
+
+    // Guard the agent-authored curated-study / analysis bookkeeping fields
+    // (lastCuratedBatchTag, lastAnalysisTopics, …) that live inside the
+    // otherwise client-owned deck blob. A client push replaces the WHOLE
+    // deck `data` (SyncQueryEngine.bulkUpsert), so a deck whose local copy
+    // predates the agent's server-side write would silently wipe these
+    // fields — orphaning a freshly-generated curated batch ("no live
+    // batch", even after restart). Overlay the server's authoritative
+    // values back onto any stale incoming deck while still honouring the
+    // client's legitimate clears. Runs AFTER preservePaidContentOnPush so
+    // it operates on the already paid-restored deck entries.
+    await preserveServerAuthoredAnalysisFieldsOnPush(db, userId, byType);
 
     // Single Node-clock timestamp for every doc written in this push.
     // Used both as `serverUpdatedAt` on the upserted docs and as the
@@ -332,8 +347,11 @@ async function handleSync(request, response)
                 overflowWatermarks.push(lastIncludedTimestamp);
             }
 
+            let sentCount     = 0;
+            let withheldCount = 0;
             for (const document of documents)
             {
+                const documentTimestamp = document.serverUpdatedAt.getTime();
                 let outgoingData = document.data;
 
                 // Paid entity: encrypt its content fields before they leave the
@@ -345,6 +363,19 @@ async function handleSync(request, response)
                     const contentKeyBuffer = await resolvePaidContentKey(paidDeckId);
                     if (!contentKeyBuffer)
                     {
+                        // Withhold unlicensed paid content — but STILL advance the
+                        // cursor past it. The client never receives this entity, so
+                        // leaving the cutoff behind it would re-fetch and re-skip it
+                        // every cycle forever — an infinite pull loop that hangs the
+                        // whole sync (this is what stalled curated-batch delivery).
+                        // Re-delivery after a license is granted is handled by
+                        // bumping the entity's serverUpdatedAt at grant time, not by
+                        // parking the cursor here.
+                        if (documentTimestamp > highestReturnedTimestamp)
+                        {
+                            highestReturnedTimestamp = documentTimestamp;
+                        }
+                        withheldCount++;
                         continue;
                     }
                     outgoingData = PaidDeckSyncCrypto.encryptEntityContent(cfg.entityType, document.data, contentKeyBuffer);
@@ -357,14 +388,17 @@ async function handleSync(request, response)
                     data:       outgoingData
                 });
 
-                const documentTimestamp = document.serverUpdatedAt.getTime();
                 if (documentTimestamp > highestReturnedTimestamp)
                 {
                     highestReturnedTimestamp = documentTimestamp;
                 }
+                sentCount++;
             }
 
-            console.log(`[Sync] Pulled ${documents.length} ${cfg.name}(s)${bCollectionOverflowed ? " (chunked — more pending)" : ""}`);
+            // Report what was actually sent, not documents.length — a withheld
+            // count of 0 reads identically to before, but a non-zero one makes a
+            // "pulled N but client shows nothing" situation visible in the logs.
+            console.log(`[Sync] Pulled ${sentCount} ${cfg.name}(s)${withheldCount > 0 ? ` (+${withheldCount} withheld — no license)` : ""}${bCollectionOverflowed ? " (chunked — more pending)" : ""}`);
         }
 
         if (pulledDeletions.length > MAX_PULL_DELETIONS)
@@ -410,18 +444,37 @@ async function handleSync(request, response)
     // smallest overflow watermark — any larger value would skip past
     // unsynced docs in a collection whose watermark came in below.
     //
-    // When the pull completed, the cutoff should advance to "now" so
-    // future writes are picked up — but never below the highest
-    // serverUpdatedAt we just returned. Otherwise a clock skew between
-    // Node and Mongo (or between Node and the documents' write time)
-    // would let the same docs match the next pull's `> lastSync`
-    // cutoff and we'd re-pull them in an infinite loop.
-    const nodeNow      = Date.now();
-    const pushFloor    = pushWriteTimestamp.getTime();
+    // When the pull completed, the cutoff advances ONLY to the high-water
+    // mark of what we actually returned (returnedTail), or the incoming
+    // cursor — whichever is higher. It must NEVER advance to any wall-clock
+    // "now" value.
+    //
+    // Why no wall clock (this was the actual bug):
+    //   A document written CONCURRENTLY with the pull — e.g. the multi-second
+    //   GENERATE_CURATED_STUDY_MATERIAL fan-out writing several materials over
+    //   ~8s — can land in the gap between the pull query's snapshot and "now".
+    //   Its serverUpdatedAt is <= wall-clock-now yet it was NOT in this result
+    //   set, so advancing the cursor to "now" makes the next pull's
+    //   `serverUpdatedAt > lastSync` filter step right over it, permanently,
+    //   until a full (lastSync=0) resync.
+    //
+    //   This bit twice: first via `Date.now()`, then via `pushWriteTimestamp`
+    //   (= `new Date()` at the top of EVERY request, line 146) which is also
+    //   "now" even on a 0-change push. Both are removed here.
+    //
+    // pushFloor is unnecessary: the client's own just-pushed docs are stamped
+    // with pushWriteTimestamp and are echoed back by this very pull (the pull
+    // filter is `serverUpdatedAt > lastSync` with no echo/device exclusion), so
+    // returnedTail already covers them and the client will not re-pull them.
+    // Anchoring strictly to returnedTail guarantees the cursor never advances
+    // past a document we did not actually hand to the client; genuinely newer
+    // writes (serverUpdatedAt > returnedTail) are picked up on the next pull.
+    // `lastSync` keeps the cursor from ever moving backward when a cycle
+    // returns nothing.
     const returnedTail = highestReturnedTimestamp > 0 ? highestReturnedTimestamp + 1 : 0;
     const serverTime   = bMorePending
         ? Math.min(...overflowWatermarks)
-        : Math.max(nodeNow, pushFloor, returnedTail);
+        : Math.max(lastSync, returnedTail);
 
     // When chunking, also report how many entities still wait beyond
     // this cycle's watermark so the client can render a true overall
@@ -662,6 +715,232 @@ async function preservePaidContentOnPush(database, userId, byType)
     {
         console.warn(`[Sync] Dropped ${droppedAuthoredPaidCount} client-authored paid entity push(es) — paid content is server-authored only.`);
     }
+}
+
+/**
+ * Server-side guard for the agent-authored curated-study / analysis
+ * bookkeeping fields that live inside the client-owned deck blob:
+ *   - lastCuratedBatchTag / lastCuratedBatchTopics  (the LIVE-batch pointer)
+ *   - lastAnalysisTopics / lastAnalyzedAt           (Insights snapshot)
+ *   - lastSkippedDueToInProgressAt                  (skipped-banner stamp)
+ *
+ * The agent writes these directly onto the server deck document, but a
+ * client push replaces the WHOLE deck `data` (SyncQueryEngine.bulkUpsert
+ * is whole-blob last-writer-wins on lifecycle.lastModified). A client
+ * whose local deck predates the agent's write therefore carries NONE of
+ * these keys, and a winning push silently wipes them — orphaning a
+ * freshly-generated curated batch so getLiveBatchInfo reports "no live
+ * batch" forever (the server copy is gone, so no pull restores it).
+ *
+ * Mirrors preservePaidContentOnPush: overlay the server's authoritative
+ * value onto each incoming deck, while still honouring the client's
+ * legitimate writes. Disambiguation, per field:
+ *
+ *   key ABSENT from the incoming additionalData
+ *       → the client never learned this field (its deck predates the
+ *         write); overlay the server value. This is the core fix and is
+ *         always safe — a client that knew the key would have shipped it.
+ *
+ *   key PRESENT (lastAnalysisTopics / lastAnalyzedAt /
+ *   lastSkippedDueToInProgressAt)
+ *       → honour the client (incl. an explicit `null` clear, e.g.
+ *         AnalysisTaskRunner.clearPreviousAnalysis).
+ *
+ *   lastCuratedBatchTag PRESENT and non-null
+ *       → if the server holds a STRICTLY NEWER tag (the tag is an ISO
+ *         timestamp), the client is asserting a stale/older batch —
+ *         overlay the server's tag + topics; otherwise honour the client.
+ *
+ *   lastCuratedBatchTag PRESENT and null (an explicit clear — all-easy /
+ *   End-session archive)
+ *       → honour the clear UNLESS the server still has a LIVE batch that
+ *         THIS push is not the one archiving (a stale clear racing a newer
+ *         batch from another device). The "is this push archiving that
+ *         batch" check reads the incoming materials directly because the
+ *         material ARCHIVE writes in this same bundle have not hit the DB
+ *         yet when this runs (bulkUpsert is downstream).
+ */
+async function preserveServerAuthoredAnalysisFieldsOnPush(database, userId, byType)
+{
+    const incomingDecks = byType[entityTypes.DECK];
+    if (!incomingDecks || incomingDecks.length === 0)
+    {
+        return;
+    }
+
+    const incomingDeckIds = incomingDecks
+        .map((deckData) => deckData?.id)
+        .filter((deckId) => typeof deckId === "string" && deckId.length > 0);
+    if (incomingDeckIds.length === 0)
+    {
+        return;
+    }
+
+    const existingDeckDocuments = await database
+        .collection(DatabaseConstants.DECKS_COLLECTION)
+        .find({ userId: userId, "data.id": { $in: incomingDeckIds } })
+        .toArray();
+
+    const existingDeckDataById = new Map();
+    for (const existingDeckDocument of existingDeckDocuments)
+    {
+        if (existingDeckDocument?.data?.id)
+        {
+            existingDeckDataById.set(existingDeckDocument.data.id, existingDeckDocument.data);
+        }
+    }
+
+    if (existingDeckDataById.size === 0)
+    {
+        // Every incoming deck is brand-new server-side — the agent has not
+        // authored anything on it yet, so there is nothing to preserve.
+        return;
+    }
+
+    const liveStateName = Object.keys(curatedBatchReviewStates)
+        .find((stateName) => curatedBatchReviewStates[stateName] === curatedBatchReviewStates.LIVE);
+
+    // Tags whose server-stored batch still carries at least one LIVE
+    // material — i.e. a batch that is genuinely in progress right now.
+    const serverBatchTags = [];
+    for (const existingDeckData of existingDeckDataById.values())
+    {
+        const serverTag = existingDeckData?.additionalData?.[AutoAnalysisDeckFields.LAST_CURATED_BATCH_TAG];
+        if (typeof serverTag === "string" && serverTag.length > 0)
+        {
+            serverBatchTags.push(serverTag);
+        }
+    }
+
+    const serverLiveBatchTags = new Set();
+    if (serverBatchTags.length > 0)
+    {
+        const liveMaterialDocuments = await database
+            .collection(DatabaseConstants.STUDY_MATERIALS_COLLECTION)
+            .find(
+            {
+                userId: userId,
+                ["data.additionalData." + CuratedStudyMaterialFields.GENERATED_FOR_ANALYSIS_AT]: { $in: serverBatchTags },
+                ["data.additionalData." + CuratedStudyMaterialFields.BATCH_REVIEW_STATE]: liveStateName
+            },
+            { projection: { ["data.additionalData." + CuratedStudyMaterialFields.GENERATED_FOR_ANALYSIS_AT]: 1, _id: 0 } })
+            .toArray();
+
+        for (const liveMaterialDocument of liveMaterialDocuments)
+        {
+            const liveTag = liveMaterialDocument?.data?.additionalData?.[CuratedStudyMaterialFields.GENERATED_FOR_ANALYSIS_AT];
+            if (typeof liveTag === "string" && liveTag.length > 0)
+            {
+                serverLiveBatchTags.add(liveTag);
+            }
+        }
+    }
+
+    // Batch tags that THIS push is archiving (any incoming material moving
+    // off the LIVE state). Lets a genuine clear be distinguished from a
+    // stale clear racing another device's newer batch.
+    const incomingArchivingTags = new Set();
+    for (const materialData of (byType[entityTypes.STUDY_MATERIAL] || []))
+    {
+        const materialAdditionalData = materialData?.additionalData;
+        const materialTag = materialAdditionalData?.[CuratedStudyMaterialFields.GENERATED_FOR_ANALYSIS_AT];
+        const materialState = materialAdditionalData?.[CuratedStudyMaterialFields.BATCH_REVIEW_STATE];
+        if (typeof materialTag === "string" && materialTag.length > 0 && materialState && materialState !== liveStateName)
+        {
+            incomingArchivingTags.add(materialTag);
+        }
+    }
+
+    const overlayWhenAbsentKeys =
+    [
+        AutoAnalysisDeckFields.LAST_ANALYSIS_TOPICS,
+        AutoAnalysisDeckFields.LAST_ANALYZED_AT,
+        AutoAnalysisDeckFields.LAST_SKIPPED_DUE_TO_IN_PROGRESS_AT
+    ];
+
+    for (const incomingDeckData of incomingDecks)
+    {
+        const existingDeckData = existingDeckDataById.get(incomingDeckData?.id);
+        if (!existingDeckData)
+        {
+            continue;
+        }
+
+        const serverAdditionalData = existingDeckData.additionalData || {};
+        if (!incomingDeckData.additionalData || typeof incomingDeckData.additionalData !== "object")
+        {
+            incomingDeckData.additionalData = {};
+        }
+        const incomingAdditionalData = incomingDeckData.additionalData;
+
+        for (const fieldKey of overlayWhenAbsentKeys)
+        {
+            const incomingHasKey = Object.prototype.hasOwnProperty.call(incomingAdditionalData, fieldKey);
+            const serverHasKey = Object.prototype.hasOwnProperty.call(serverAdditionalData, fieldKey);
+            if (!incomingHasKey && serverHasKey)
+            {
+                incomingAdditionalData[fieldKey] = serverAdditionalData[fieldKey];
+            }
+        }
+
+        const serverTag = serverAdditionalData[AutoAnalysisDeckFields.LAST_CURATED_BATCH_TAG];
+        const serverHasTag = typeof serverTag === "string" && serverTag.length > 0;
+        if (!serverHasTag)
+        {
+            // Nothing authoritative to protect — leave the client's tag
+            // pair untouched (absent stays absent; a client clear stays).
+            continue;
+        }
+
+        const incomingHasTagKey = Object.prototype.hasOwnProperty.call(incomingAdditionalData, AutoAnalysisDeckFields.LAST_CURATED_BATCH_TAG);
+        const incomingTag = incomingHasTagKey ? incomingAdditionalData[AutoAnalysisDeckFields.LAST_CURATED_BATCH_TAG] : undefined;
+        const incomingTagIsString = typeof incomingTag === "string" && incomingTag.length > 0;
+
+        let bKeepServerTag = false;
+        if (!incomingHasTagKey)
+        {
+            // Stale client that never learned the batch — always preserve.
+            bKeepServerTag = true;
+        }
+        else if (incomingTagIsString)
+        {
+            // Client asserts a tag; keep the server's only when it is
+            // strictly newer (client holds an older/superseded batch).
+            bKeepServerTag = batchTagToTimestamp(incomingTag) < batchTagToTimestamp(serverTag);
+        }
+        else
+        {
+            // Client cleared the tag (null/undefined value present). Honour
+            // the clear unless the server batch is still LIVE and this push
+            // is not the one archiving it (a stale clear from a device that
+            // never saw the newer batch).
+            bKeepServerTag = serverLiveBatchTags.has(serverTag) && !incomingArchivingTags.has(serverTag);
+        }
+
+        if (bKeepServerTag)
+        {
+            incomingAdditionalData[AutoAnalysisDeckFields.LAST_CURATED_BATCH_TAG] = serverTag;
+            if (Object.prototype.hasOwnProperty.call(serverAdditionalData, AutoAnalysisDeckFields.LAST_CURATED_BATCH_TOPICS))
+            {
+                incomingAdditionalData[AutoAnalysisDeckFields.LAST_CURATED_BATCH_TOPICS] = serverAdditionalData[AutoAnalysisDeckFields.LAST_CURATED_BATCH_TOPICS];
+            }
+        }
+    }
+}
+
+/**
+ * Parses a curated batch tag (an ISO-8601 generatedForAnalysisAt string)
+ * into epoch milliseconds, or 0 when it is missing / unparseable. Used to
+ * decide whether an incoming deck's tag is older than the server's.
+ */
+function batchTagToTimestamp(batchTag)
+{
+    if (typeof batchTag !== "string" || batchTag.length === 0)
+    {
+        return 0;
+    }
+    const parsed = Date.parse(batchTag);
+    return Number.isFinite(parsed) ? parsed : 0;
 }
 
 module.exports = { handleSync };

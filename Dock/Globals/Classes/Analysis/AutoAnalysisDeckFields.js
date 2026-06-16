@@ -30,4 +30,4 @@ class AutoAnalysisDeckFields
     }
 }
 
-export default AutoAnalysisDeckFields;
+module.exports = AutoAnalysisDeckFields;

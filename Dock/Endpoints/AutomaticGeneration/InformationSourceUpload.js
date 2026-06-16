@@ -4,6 +4,7 @@ const { getUser } = require("../Helpers/GetUser");
 const { computeFileSha512Hash } = require("../../Globals/UtilityFunctions.js/ComputeFileSha512Hash");
 const Persistence = require("../../Globals/Classes/Persistence");
 const { storageTargets } = require("../../Globals/Enumerations/StorageTargets");
+const { contentRetentionModes } = require("../../Globals/Enumerations/ContentRetentionModes");
 const InformationSourceQueryEngine = require("../../Globals/Classes/Database/InformationSourceQueryEngine");
 const PersistenceConstants = require("../../Globals/Constants/PersistenceConstants");
 const { joinPath } = require("../../Globals/UtilityFunctions.js/JoinPath");
@@ -77,6 +78,16 @@ async function handleInformationSourceUpload(request, response)
 
     const metadataJson = JSON.parse(queryParams.metadata);
     const informationSource = InformationSource.fromJson(metadataJson);
+
+    // retentionMode drives storage billing (TEMPORARY sources are exempt). The
+    // generated fromJson leaves it null when the client omits it, but the
+    // StorageCreditAssessor only counts PERMANENT (or legacy $exists:false)
+    // documents — a persisted null would silently escape billing. Default an
+    // omitted mode to PERMANENT so the contract documented below holds.
+    if (informationSource.getRetentionMode() === null)
+    {
+        informationSource.setRetentionMode(contentRetentionModes.PERMANENT);
+    }
 
     const contentAddressedKey = await computeFileSha512Hash(uploadedFilePath);
 

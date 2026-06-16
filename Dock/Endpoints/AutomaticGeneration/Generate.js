@@ -438,6 +438,47 @@ async function handleGenerate(request, response)
     TaskManager.execute(mainTaskDescriptor)
     .then(async () =>
     {
+        // If the pipeline stopped because the user ran out of credits mid-run,
+        // save a resumable snapshot of this exact generation and stop here.
+        // Partial output must NOT be persisted to the user's library, and the
+        // run is resumed (re-submitted) after a top-up via ProgressPage's
+        // out-of-credits flow or the PausedTaskBanner.
+        if (await TaskManager.hasInsufficientCreditsFailure(mainTaskId))
+        {
+            console.log(`[Generate] Task ${mainTaskId} paused — out of credits. Saving resumable state.`);
+
+            try
+            {
+                await TaskStateManager.save({
+                    userId: userId,
+                    taskType: taskTypes.PREPARE_FOR_GENERATION,
+                    route: "/Generate",
+                    payload: body,
+                    pausedReason: TaskManager.INSUFFICIENT_CREDITS_REASON,
+                });
+            }
+            catch (saveError)
+            {
+                console.warn(`[Generate] Failed to save resumable task state for ${mainTaskId}: ${saveError.message}`);
+            }
+
+            try
+            {
+                const pausedTask = await TaskManager.getTask(mainTaskId);
+                if (pausedTask)
+                {
+                    await TaskHistoryQueryEngine.recordCompletion(pausedTask);
+                }
+            }
+            catch (historyError)
+            {
+                console.error(`[Generate] Failed to record taskHistory (paused path) for ${mainTaskId}: ${historyError.message}`);
+            }
+
+            await TaskManager.untrackForUser(userId, mainTaskId);
+            return;
+        }
+
         console.log(`[Generate] Pipeline complete for task ${mainTaskId}. Moving to database...`);
 
         const completedTask = await TaskManager.getTask(mainTaskId);

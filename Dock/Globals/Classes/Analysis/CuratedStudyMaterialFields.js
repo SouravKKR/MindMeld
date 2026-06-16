@@ -36,4 +36,4 @@ class CuratedStudyMaterialFields
     }
 }
 
-export default CuratedStudyMaterialFields;
+module.exports = CuratedStudyMaterialFields;

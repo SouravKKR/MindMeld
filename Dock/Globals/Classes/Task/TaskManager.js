@@ -18,6 +18,12 @@ class TaskManager
     static #TASK_TTL_SECONDS = 5 * 60 * 60;
     static #TASK_COMPLETION_SUFFIX = ":completion";
 
+    // The error reason an Agent task records on its descriptor when the credit
+    // gate denies it for lack of balance. Must stay byte-identical to the value
+    // written by Agent/Globals/Classes/Task/TaskRunner.py and surfaced by
+    // CreditPreflight. Used to detect a mid-pipeline out-of-credits stop.
+    static INSUFFICIENT_CREDITS_REASON = "INSUFFICIENT_CREDITS";
+
     // ── Reliable polling queue ──────────────────────────────────────────────
     // Producer side. Dock pushes a small JSON envelope onto the pending list;
     // long-lived Agent workers (Agent/Worker.py) atomically move it to the
@@ -92,6 +98,48 @@ class TaskManager
      * @param {string} taskId
      * @return {Promise<TaskDescriptor|null>}
      */
+    /**
+     * Walks a live task subtree (from Redis) starting at taskId and returns
+     * true if any node stopped because the user ran out of credits — i.e. a
+     * FAILED node whose payload.error is INSUFFICIENT_CREDITS_REASON. Used by
+     * the Generate pipeline's completion handler to decide whether the run is
+     * resumable. Cycles are guarded by a visited set; a missing node is simply
+     * skipped (it may have rolled off Redis).
+     *
+     * @param {string} taskId
+     * @param {Set<string>} [visitedTaskIds]
+     * @returns {Promise<boolean>}
+     */
+    static async hasInsufficientCreditsFailure(taskId, visitedTaskIds = new Set())
+    {
+        if (!taskId || visitedTaskIds.has(taskId))
+        {
+            return false;
+        }
+        visitedTaskIds.add(taskId);
+
+        const task = await TaskManager.getTask(taskId);
+        if (!task)
+        {
+            return false;
+        }
+
+        if (task.getStatus() === taskStatus.FAILED && (task.getPayload()?.error === TaskManager.INSUFFICIENT_CREDITS_REASON))
+        {
+            return true;
+        }
+
+        for (const childTaskId of (task.getNextTaskIds() || []))
+        {
+            if (await TaskManager.hasInsufficientCreditsFailure(childTaskId, visitedTaskIds))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     static async getTask(taskId)
     {
         const buffer = await TaskManager.#redisClient.get(TaskManager.#TASK_PREFIX + taskId);
@@ -103,6 +151,18 @@ class TaskManager
 
         const deserialized = BSON.deserialize(buffer);
         const task = TaskDescriptor.fromJson(deserialized);
+
+        // The Redis key IS the canonical task id. If a deserialized blob ever
+        // yields a different id — e.g. TaskDescriptor.fromJson regenerated a
+        // random one because the stored `id` was momentarily absent — force it
+        // back to the key. Without this, a downstream recordCompletion archives
+        // the generation under a phantom id that none of its charges or children
+        // reference, which breaks the Activity credit-usage table and any other
+        // lookup that joins on the task id.
+        if (task.getId() !== taskId)
+        {
+            task._restoreId_id(taskId);
+        }
 
         // Python's increment_completion writes progress to a separate atomic key.
         // Read it here and override the BSON completion so the JS side stays in sync.

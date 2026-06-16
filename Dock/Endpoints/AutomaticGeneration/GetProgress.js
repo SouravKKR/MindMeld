@@ -28,8 +28,39 @@ async function buildTaskTree(taskId)
         status: task.getStatus(),
         completion: task.getCompletion(),
         parentTaskId: task.getParentTaskId() || null,
+        // Surface the failure reason so the client can distinguish an
+        // out-of-credits stop (recoverable — offer top-up / resume) from a
+        // generic failure. Null on every non-failed node.
+        error: task.getPayload()?.error || null,
         children
     };
+}
+
+/**
+ * Recursively scans a built progress tree and returns true if any node failed
+ * because the user ran out of credits. Lets the client show the out-of-credits
+ * resume flow instead of a generic "failed" banner.
+ * @param {object|null} treeNode
+ * @returns {boolean}
+ */
+function treeHasInsufficientCredits(treeNode)
+{
+    if (!treeNode)
+    {
+        return false;
+    }
+    if (treeNode.status === taskStatus.FAILED && treeNode.error === TaskManager.INSUFFICIENT_CREDITS_REASON)
+    {
+        return true;
+    }
+    for (const childNode of (treeNode.children || []))
+    {
+        if (treeHasInsufficientCredits(childNode))
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 async function handleGetProgress(request, response)
@@ -114,6 +145,11 @@ async function handleGetProgress(request, response)
             });
         }
     }
+
+    // Flag a mid-pipeline out-of-credits stop so the client can offer the
+    // top-up / resume flow rather than a dead-end failure. Computed after the
+    // post-pipeline subtrees are appended so a credit stop there counts too.
+    tree.outOfCredits = treeHasInsufficientCredits(tree);
 
     response.sendJson(tree);
 }
