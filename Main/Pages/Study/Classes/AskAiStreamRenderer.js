@@ -25,6 +25,11 @@ class AskAiStreamRenderer
         // table fits, we keep it.
         "table", "thead", "tbody", "tr", "th", "td",
         "figure", "figcaption", "div",
+        // Web images — only ever emitted by the Pro / Pro Plus prompt when
+        // google-search grounding is on. Kept <img>s are hardened in
+        // #enforceSafeImage (http(s) src only, src/alt/width/height attrs);
+        // AskAiResultView additionally drops any that fail to load.
+        "img",
     ]);
 
     static #STRIPPED_ATTRIBUTE_NAMES = new Set([
@@ -134,6 +139,40 @@ class AskAiStreamRenderer
             {
                 AskAiStreamRenderer.#unwrapElement(childNode);
             }
+            else if (tagName === "img")
+            {
+                AskAiStreamRenderer.#enforceSafeImage(childNode);
+            }
+        }
+    }
+
+    /**
+     * Hardens a kept <img>. The Pro prompt asks the model to embed real
+     * web images, but the URL is model-supplied and therefore untrusted:
+     *   - keep ONLY src / alt / width / height (drop srcset, loading,
+     *     referrerpolicy, etc. — nothing else has a reason to ride along);
+     *   - require an http(s) src — anything else (javascript:, data:,
+     *     relative, empty) means a malformed or hostile link, so the whole
+     *     element is removed rather than rendered.
+     * A surviving-but-dead URL is handled later in the view layer
+     * (AskAiResultView drops images that fail to load).
+     */
+    static #enforceSafeImage(imageElement)
+    {
+        const keptAttributeNames = new Set(["src", "alt", "width", "height"]);
+        const attributeNames = Array.from(imageElement.attributes).map((attribute) => attribute.name);
+        for (const attributeName of attributeNames)
+        {
+            if (!keptAttributeNames.has(attributeName.toLowerCase()))
+            {
+                imageElement.removeAttribute(attributeName);
+            }
+        }
+
+        const sourceValue = (imageElement.getAttribute("src") || "").trim();
+        if (!/^https?:\/\//i.test(sourceValue))
+        {
+            imageElement.remove();
         }
     }
 

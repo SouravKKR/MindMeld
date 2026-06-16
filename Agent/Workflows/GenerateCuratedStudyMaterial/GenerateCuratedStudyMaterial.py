@@ -178,9 +178,18 @@ class GenerateCuratedStudyMaterial(Workflow):
         # sync collections, stored plaintext server-side. The ONLY paid-specific
         # behaviour that remains is stamping additionalData.paidDeckId onto every
         # generated StudyMaterial + curated card so the /Sync pull encrypts them
-        # for the buyer. Accept the legacy `attachDeckId` value as a fallback so
-        # any task queued before the rename still applies.
-        self.__paid_deck_id = payload.get("paidDeckId", "") or payload.get("attachDeckId", "") or ""
+        # for the buyer.
+        #
+        # Read ONLY the paidDeckId field — NEVER fall back to attachDeckId.
+        # attachDeckId is "which deck to attach the generated content under" and
+        # is ALWAYS set (to the deck id) for every deck, paid or not. Using it as
+        # a paidDeckId fallback stamped a bogus paid tag onto every NORMAL deck's
+        # curated content; the incremental /Sync then treated that content as
+        # licensed, failed to find a content key, and silently dropped it from
+        # the pull — so AI-generated curated batches never reached the client.
+        # For a genuinely paid deck the caller always supplies a real paidDeckId,
+        # so no fallback is ever needed.
+        self.__paid_deck_id = payload.get("paidDeckId", "") or ""
 
     async def run(self, args: dict = {}):
         if not self.__deck_id or not self.__user_id or not self.__topic_name:

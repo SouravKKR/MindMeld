@@ -1,3 +1,4 @@
+import CardPreviewSession from "./Classes/CardPreviewSession.js";
 import ContentStudySession from "./Classes/ContentStudySession.js";
 import CuratedStudySession from "./Classes/CuratedStudySession.js";
 import MockTestSession from "./Classes/MockTestSession.js";
@@ -145,7 +146,7 @@ class StudyPage extends HTMLElement
         const editCardButton                = this.querySelector(".edit-card-button");
         const assistantToggleButton         = this.querySelector(".assistant-toggle-button");
 
-        if (this.#session instanceof SpacedRepetitonSession || this.#session instanceof ReviseSession)
+        if (this.#session instanceof SpacedRepetitonSession || this.#session instanceof ReviseSession || this.#session instanceof CardPreviewSession)
         {
             studyMaterialContentSection?.remove();
         }

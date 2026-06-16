@@ -135,6 +135,16 @@ class TopicInsights extends HTMLElement
                 {
                     bClearPreviousFirst: bHasAnalysis,
                     bTriggerSync:        true,
+                    // An explicit "Run analysis now" click is an explicit
+                    // override: it must run even when the deck has NOT opted
+                    // into unattended performance analysis (the UI offers this
+                    // button precisely as the alternative to enabling that
+                    // toggle). Without force=true the agent's opt-in gate
+                    // (AnalyzeDeckPerformance: "no longer opted in — exiting")
+                    // returns before scoring a single card, so the task
+                    // completes having written no topics and the user sees
+                    // "found no topics" even with plenty of studied cards.
+                    force:               true,
                     onStatusChange:      (statusUpdate) => this.#applyStatusUpdate(statusUpdate),
                 });
 

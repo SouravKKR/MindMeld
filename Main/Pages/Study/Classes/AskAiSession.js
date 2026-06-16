@@ -8,6 +8,7 @@ import Card from "../../../Globals/Model/Card.js";
 import StudyMaterial from "../../../Globals/Model/StudyMaterial.js";
 import AskAiResultView from "../Components/AskAiResultView.js";
 import AskAiActionDispatcher from "./AskAiActionDispatcher.js";
+import MaintenanceNotice from "../../../Globals/Classes/MaintenanceNotice.js";
 
 
 /**
@@ -50,13 +51,15 @@ class AskAiSession
     #attachedImages = [];
     #informationSources = [];
     #bUseInformationSources = false;
+    #selectedLanguage = "ENGLISH";
+    #combineWithEnglish = false;
 
     #dialogElement = null;
     #resultView = null;
     #abortController = null;
     #bUserClosedDialog = false;
 
-    constructor({ promptMode, chosenTier, contextEntity, selectedText, userQuery, attachedImages, informationSources, useInformationSources })
+    constructor({ promptMode, chosenTier, contextEntity, selectedText, userQuery, attachedImages, informationSources, useInformationSources, selectedLanguage, combineWithEnglish })
     {
         this.#promptMode = promptMode;
         this.#chosenTier = chosenTier;
@@ -66,6 +69,8 @@ class AskAiSession
         this.#attachedImages = Array.isArray(attachedImages) ? attachedImages : [];
         this.#informationSources = Array.isArray(informationSources) ? informationSources : [];
         this.#bUseInformationSources = Boolean(useInformationSources);
+        this.#selectedLanguage = selectedLanguage || "ENGLISH";
+        this.#combineWithEnglish = Boolean(combineWithEnglish);
     }
 
     async run()
@@ -110,6 +115,29 @@ class AskAiSession
                 body:        JSON.stringify(requestPayload),
             });
 
+            if (fetchResponse.status === 503)
+            {
+                // Scheduled maintenance — show the "check back at <time>" dialog
+                // and an inline notice instead of a bare status code.
+                const maintenanceHandled = await MaintenanceNotice.handleIfMaintenance(fetchResponse);
+                if (maintenanceHandled)
+                {
+                    this.#resultView?.renderError("AI is paused for scheduled maintenance. Please check back later.");
+                    return;
+                }
+            }
+
+            if (fetchResponse.status === 402)
+            {
+                // The credit preflight refused the tier — surface a
+                // human-readable shortfall instead of a bare status code.
+                const creditRefusal = await fetchResponse.json().catch(() => null);
+                const balance = typeof creditRefusal?.balance === "number" ? creditRefusal.balance : null;
+                this.#resultView?.renderError(balance !== null
+                    ? `Not enough credits for this AI tier (balance: ${balance}). Top up or switch to a cheaper tier.`
+                    : "Not enough credits for this AI tier. Top up or switch to a cheaper tier.");
+                return;
+            }
             if (!fetchResponse.ok)
             {
                 this.#resultView?.renderError(`Server returned ${fetchResponse.status} ${fetchResponse.statusText}.`);
@@ -186,6 +214,8 @@ class AskAiSession
             attachedImages:         this.#attachedImages,
             informationSources:     informationSourcesPayload,
             useInformationSources:  this.#bUseInformationSources,
+            selectedLanguage:       this.#selectedLanguage,
+            combineWithEnglish:     this.#combineWithEnglish,
         };
     }
 

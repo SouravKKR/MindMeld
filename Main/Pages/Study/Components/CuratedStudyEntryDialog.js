@@ -7,6 +7,7 @@ import DialogBox from "../../../CommonComponents/DialogBox.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import AutoAnalysisDeckFields from "../../../Globals/Classes/Analysis/AutoAnalysisDeckFields.js";
 import PaidDeckStudyGate from "../../../Globals/Classes/PaidDeckStudyGate.js";
+import Deck from "../../../Globals/Model/Deck.js";
 
 
 /**
@@ -37,6 +38,22 @@ class CuratedStudyEntryDialog
             return;
         }
 
+        // Re-resolve from the live deck tree. A sync (e.g. the one
+        // queueForceRegen awaits before this dialog re-opens, or any
+        // background sync since the caller captured its reference)
+        // REPLACES the in-tree deck instance rather than mutating it —
+        // the curated materials live in a per-instance #studyMaterials
+        // map and the LIVE-batch tag lives in per-instance
+        // additionalData, so a stale reference reports "No active batch"
+        // even when the fresh batch has fully landed. Always read the
+        // current registry instance; fall back to the passed reference
+        // if the id is somehow absent.
+        const liveDeck = Deck.getById(deck.getId?.());
+        if (liveDeck)
+        {
+            deck = liveDeck;
+        }
+
         // Belt-and-braces unlock: the study-mode chooser already gates a paid
         // deck before reaching here, but this is a public entry point — ensure
         // the deck is unlocked + decrypted so curated materials never render as
@@ -64,7 +81,32 @@ class CuratedStudyEntryDialog
         // cards and (very likely) emit the same topic list. Gate the
         // button on actual progress and surface the reason in its
         // description so the user understands what to do.
+        //
+        // BUT the no-new-evidence guard only makes sense as an
+        // anti-waste measure when a LIVE batch already exists that
+        // re-analysis would just reproduce. When there is no live batch,
+        // Regenerate is the ONLY path to a first curated batch — the
+        // "Latest" button literally points here when empty — so it must
+        // stay enabled regardless of new progress. Running analysis from
+        // the Insights page sets lastAnalyzedAt to "now", which would
+        // otherwise leave the user permanently locked out of generating
+        // curated study (all their reviews predate the analysis).
         const bHasNewProgress = CuratedStudyController.hasStudiedSinceLastAnalysis(deck);
+        const bCanRegenerate  = bHasNewProgress || !bHasLiveBatch;
+
+        let regenerateDescription;
+        if (!bCanRegenerate)
+        {
+            regenerateDescription = "Study a few cards before regenerating — there's no new evidence since the last analysis.";
+        }
+        else if (bHasLiveBatch)
+        {
+            regenerateDescription = "Re-analyse the deck and replace the current batch";
+        }
+        else
+        {
+            regenerateDescription = "Generate a curated study batch from the latest analysis";
+        }
 
         const skippedBannerHtml = lastSkippedAt
             ? `
@@ -88,9 +130,9 @@ class CuratedStudyEntryDialog
                     <span class="curated-entry-action-label">View archive</span>
                     <span class="curated-entry-action-description">${bHasArchive ? `${archivedBatches.length} past batch(es)` : "No archived batches yet"}</span>
                 </button>
-                <button class="curated-entry-regenerate-button" ${bHasNewProgress ? "" : "disabled"}>
+                <button class="curated-entry-regenerate-button" ${bCanRegenerate ? "" : "disabled"}>
                     <span class="curated-entry-action-label">Regenerate</span>
-                    <span class="curated-entry-action-description">${bHasNewProgress ? "Re-analyse the deck and replace the current batch" : "Study a few cards before regenerating — there's no new evidence since the last analysis."}</span>
+                    <span class="curated-entry-action-description">${regenerateDescription}</span>
                 </button>
             </div>
             <div class="curated-entry-cancel-row">

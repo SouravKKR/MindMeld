@@ -129,6 +129,7 @@ class MockTestAnswerKeyPage extends HTMLElement
                     ${reEvaluateButtonHtml}
                     ${deleteAttemptButtonHtml}
                     ${downloadButtonHtml}
+                    <button class="mock-test-answer-key-page-home-button" type="button">Home</button>
                 </div>
             </div>
             ${attemptStatusBanner}
@@ -431,6 +432,12 @@ class MockTestAnswerKeyPage extends HTMLElement
         if (deleteAttemptButton)
         {
             deleteAttemptButton.addEventListener("click", () => this.#deleteCurrentAttempt());
+        }
+
+        const homeButton = this.querySelector(".mock-test-answer-key-page-home-button");
+        if (homeButton)
+        {
+            homeButton.addEventListener("click", () => PageNavigator.clearAndOpen("home-page"));
         }
 
         const attemptSelect = this.querySelector(".mock-test-answer-key-page-attempt-select");
@@ -746,7 +753,7 @@ class MockTestAnswerKeyPage extends HTMLElement
             const failedQuestionCount = Number.isFinite(additionalData.evaluationFailedQuestionCount) ? additionalData.evaluationFailedQuestionCount : 0;
             if (failedQuestionCount > 0)
             {
-                return `<div class="mock-test-answer-key-page-banner mock-test-answer-key-page-banner-warning">The grader could not score ${failedQuestionCount} question(s) — those answers appear with score 0 below but were not actually evaluated. This is a server-side LLM failure, not a candidate failure. Click "Re-evaluate" to retry just those, or check the task log for diagnostics.</div>`;
+                return `<div class="mock-test-answer-key-page-banner mock-test-answer-key-page-banner-warning">The grader could not score ${failedQuestionCount} question(s) — those answers appear with score 0 below but were not actually evaluated. This is a server-side LLM failure, not a candidate failure. Click "Re-evaluate" to re-grade the entire attempt, or check the task log for diagnostics.</div>`;
             }
         }
         return "";
@@ -1017,6 +1024,33 @@ class MockTestAnswerKeyPage extends HTMLElement
             return trimmedValue;
         }
 
+        // MULTIPLE_CORRECT answers arrive as a JSON-stringified array of
+        // option indices (e.g. "[0, 2]"). Decode that into option letters
+        // directly — the comma/whitespace tokeniser below would otherwise
+        // split it into "[0" / "2]" and resolve neither, leaving the raw
+        // "[0, 2]" on screen instead of "A, C".
+        if (trimmedValue.startsWith("["))
+        {
+            try
+            {
+                const parsedIndices = JSON.parse(trimmedValue);
+                if (Array.isArray(parsedIndices))
+                {
+                    const letters = parsedIndices
+                        .filter((entry) => Number.isFinite(entry) && entry >= 0 && entry < optionsArray.length)
+                        .map((entry) => MockTestAnswerKeyPage.OPTION_LETTERS_UPPERCASE[entry]);
+                    if (letters.length > 0)
+                    {
+                        return letters.join(", ");
+                    }
+                }
+            }
+            catch (parseError)
+            {
+                // Not valid JSON — fall through to the token-based decoder.
+            }
+        }
+
         const tokens = trimmedValue.split(/[,;|\s/]+/).filter((token) => token.length > 0);
         if (tokens.length === 0)
         {
@@ -1095,7 +1129,7 @@ class MockTestAnswerKeyPage extends HTMLElement
 
     static #tokenToOptionLetter(token, optionsLength)
     {
-        const cleaned = token.replace(/[()\s]/g, "");
+        const cleaned = token.replace(/[()\[\]\s]/g, "");
         if (cleaned === "")
         {
             return null;
@@ -1126,7 +1160,7 @@ class MockTestAnswerKeyPage extends HTMLElement
         const tokens = String(rawValue).trim().split(/[,;|\s/]+/).filter((token) => token.length > 0);
         for (const token of tokens)
         {
-            const cleaned = token.replace(/[()\s]/g, "");
+            const cleaned = token.replace(/[()\[\]\s]/g, "");
             const asNumber = parseInt(cleaned, 10);
             if (Number.isFinite(asNumber) && asNumber === optionIndex)
             {

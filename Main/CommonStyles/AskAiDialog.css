@@ -113,6 +113,18 @@ ask-ai-result-view
     margin: 0 0 10px 0;
 }
 
+/* Web images embedded by the Pro / Pro Plus prompt. Constrain to the
+   dialog width and keep the aspect ratio so a large source image can't
+   overflow the streaming body. */
+.ask-ai-streaming-body img
+{
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 12px 0;
+    border-radius: 8px;
+}
+
 .ask-ai-streaming-body p:last-child
 {
     margin-bottom: 0;

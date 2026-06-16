@@ -269,32 +269,19 @@ class CuratedStudySession extends StudySession
     {
         await CuratedStudyCompletionDialog.showAllEasy();
 
-        const sameTopicsList = liveBatchInfo.topicGroups.map((topicGroup) =>
-        {
-            return {
-                name: topicGroup.topicName,
-                strength: topicGroup.topicStrength,
-                topicIndex: topicGroup.topicIndex,
-                hardCards: [],
-            };
-        });
-
         await CuratedStudyController.archiveBatch(
             this._deck,
             this.#batchTag,
             curatedSessionOutcomes.COMPLETED_ALL_EASY,
         );
 
-        // Fire-and-forget the same-topics regen so the next time the
-        // user opens Curated Study, a fresh batch on the same topics
-        // is waiting. We do not block on it — the user just saw a
-        // congrats screen and making them wait again here would feel
-        // weird.
-        CuratedStudyController.queueSameTopicsRegen(this._deck, sameTopicsList).catch((regenerationError) =>
-        {
-            console.warn("[CuratedStudySession] Failed to queue follow-up regen:", regenerationError);
-        });
-
+        // No follow-up regen here. A fresh curated batch must only ever
+        // come from an explicit user action (the Regenerate button) or
+        // the auto-analysis dispatcher (which enforces its own opt-in +
+        // 7-day cadence). Auto-queuing a new batch the moment a session
+        // finishes generated curated content "without the user's order"
+        // even when auto-analysis was switched off — the COMPLETED_ALL_EASY
+        // path archives the batch and returns, nothing more.
         PageNavigator.back();
     }
 

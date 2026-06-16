@@ -115,6 +115,61 @@ class AuthenticationEvents
         window.dispatchEvent(new CustomEvent(AuthenticationEvents.ON_USER_LOGGED_OUT));
     }
 
+    /**
+     * Re-fetches the authenticated user from the server and updates every
+     * cached copy in place (window state, sessionStorage, offline cache,
+     * mounted profile components). Server-side values such as the credit
+     * balance change outside this client, so callers that display them
+     * should refresh before rendering. Returns the fresh User on success,
+     * or null when the server is unreachable or the response is not OK.
+     * A 401 is authoritative — it clears the offline cache and fires
+     * ON_USER_LOGGED_OUT before returning null.
+     */
+    static async refreshUserFromServer()
+    {
+        let response = null;
+
+        try
+        {
+            response = await fetch("/GetUser");
+        }
+        catch (networkError)
+        {
+            console.warn("[AuthenticationEvents] /GetUser refresh failed — keeping cached user:", networkError);
+            return null;
+        }
+
+        if (response.status === 401)
+        {
+            await OfflineSessionManager.clearCachedSession();
+            window.dispatchEvent(new CustomEvent(AuthenticationEvents.ON_USER_LOGGED_OUT));
+            return null;
+        }
+
+        if (!response.ok)
+        {
+            return null;
+        }
+
+        const userJson = await response.json();
+        const user = User.fromJson(userJson);
+
+        sessionStorage.setItem("user", JSON.stringify(user.toJson()));
+        window["user"] = user;
+        window["sessionState"] = AuthenticationEvents.SESSION_STATE_FRESH;
+        await OfflineSessionManager.saveCachedSession(user);
+
+        document.querySelectorAll("profile-component").forEach((component) =>
+        {
+            if (typeof component.refresh === "function")
+            {
+                component.refresh();
+            }
+        });
+
+        return user;
+    }
+
     static #recheckScheduled = false;
 
     static #scheduleOnlineRecheck()
@@ -129,21 +184,7 @@ class AuthenticationEvents
         {
             try
             {
-                const response = await fetch("/GetUser");
-                if (response.status === 401)
-                {
-                    await OfflineSessionManager.clearCachedSession();
-                    window.dispatchEvent(new CustomEvent(AuthenticationEvents.ON_USER_LOGGED_OUT));
-                }
-                else if (response.ok)
-                {
-                    const userJson = await response.json();
-                    const user = User.fromJson(userJson);
-                    await OfflineSessionManager.saveCachedSession(user);
-                    window["user"] = user;
-                    window["sessionState"] = AuthenticationEvents.SESSION_STATE_FRESH;
-                    document.querySelectorAll("profile-component").forEach((component) => component.refresh());
-                }
+                await AuthenticationEvents.refreshUserFromServer();
             }
             catch (revalidateError)
             {

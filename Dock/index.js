@@ -3,10 +3,26 @@
 //   --logout    Wipe the sessions collection on boot, forcing every user
 //               to re-authenticate. Without this flag, existing sessions
 //               persist across server restarts (Mongo TTL governs expiry).
-require("dotenv").config();
+const path = require("path");
+
+// Load the environment file relative to THIS file, not the current working
+// directory. A bare dotenv.config() reads `<cwd>/.env`, so launching the server
+// from anywhere other than the Dock directory (e.g. `node Dock/index.js` from
+// the repo root, which CLAUDE.md documents, or the test orchestrator that
+// launches with cwd = repo root) would silently load nothing — leaving
+// MONGODB_URL and every other secret undefined and turning every
+// database-backed route into a 500. Anchoring to __dirname makes the launch
+// directory irrelevant.
+//
+// Which file we load depends on the run mode: with --debug we use the local
+// .env (development database); without it we use .production.env (the live
+// database). This guarantees a debug launch never talks to the production
+// database and a production launch never talks to the development one. The
+// Agent service makes the same choice via Globals/Utility/EnvironmentLoader.py.
+const environmentFileName = process.argv.includes("--debug") ? ".env" : ".production.env";
+require("dotenv").config({ path: path.join(__dirname, environmentFileName) });
 
 const { Packetron, PacketronServerFlags } = require("@gamiumgamers/packetron");
-const path = require("path");
 const { handleAuthenticationEndpoints } = require("./Endpoints/HandleAuthenticationEndpoints");
 const { handleAutomaticGenerationEndpoints } = require("./Endpoints/HandleAutomaticGenerationEndpoints");
 const TaskManager = require("./Globals/Classes/Task/TaskManager");

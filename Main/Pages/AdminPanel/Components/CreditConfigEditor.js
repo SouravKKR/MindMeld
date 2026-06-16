@@ -3,21 +3,25 @@ import { creditCostDimensions } from "../../../Globals/Enumerations/CreditCostDi
 import { creditDeductionTimings } from "../../../Globals/Enumerations/CreditDeductionTimings.js";
 import { creditEnforcementModes } from "../../../Globals/Enumerations/CreditEnforcementModes.js";
 import { creditChargeCategories } from "../../../Globals/Enumerations/CreditChargeCategories.js";
+import { creditAdminSections } from "../../../Globals/Enumerations/CreditAdminSections.js";
 import { enumerationToTitleCase } from "../../../Globals/UtilityFunctions/EnumerationToTitleCase.js";
 
 /**
  * CreditConfigEditor
  *
  * Self-contained admin editor for the global credit configuration. Loads
- * /Admin/Credits/Config, renders a spend-rule editor for every agent task
- * type and each storage category, a one-time reward-milestone list, and the
- * global settings, then saves the whole document back via
- * /Admin/Credits/Config/Save.
+ * /Admin/Credits/Config, renders ONE section at a time (pricing & packs,
+ * task rules, storage rules, milestones & global — selected via
+ * showSection, driven by AdminCreditsTabs), and saves the whole document
+ * back via /Admin/Credits/Config/Save.
  *
  * Editing strategy: the in-memory config object is the source of truth.
  * Plain numeric / select inputs are read back out of the DOM only when the
- * user clicks Save (or just before a structural add/remove that re-renders),
- * which avoids re-rendering — and losing input focus — on every keystroke.
+ * user clicks Save (or just before a structural add/remove or a section
+ * switch re-renders), which avoids re-rendering — and losing input focus —
+ * on every keystroke. Collection is section-safe: each list overwrite is
+ * guarded on its container being mounted, so switching sections never wipes
+ * the parts of the config that are currently off-screen.
  */
 class CreditConfigEditor extends HTMLElement
 {
@@ -28,7 +32,31 @@ class CreditConfigEditor extends HTMLElement
     static TASK_PARAMETERS = ["FLAT", "INPUT_TOKENS", "OUTPUT_TOKENS", "DURATION_SECONDS"];
     static STORAGE_PARAMETERS = ["FLAT", "STORAGE_MEGABYTES", "DURATION_SECONDS"];
 
+    static #RULE_BULLETS = [
+        `<li><strong>Enabled</strong> — when <em>on</em>, the service runs (charged per its terms). When <em>off</em>, the service is <em>denied</em> — the task is refused, not run for free. (Storage categories simply aren't billed when off.)</li>`,
+        `<li><strong>Timing</strong> — when credits are deducted: <em>On start</em> (before the task runs — flat terms only), <em>At intervals</em> (periodically while it runs), <em>On success</em> (only if it completes), or <em>On any completion</em> (success or failure).</li>`,
+        `<li><strong>Interval (seconds)</strong> — for <em>At intervals</em> timing only: how often to charge during a running task.</li>`,
+        `<li><strong>Min balance to run</strong> — the user must already hold at least this many credits for the task to start. <em>0</em> = no entry requirement.</li>`,
+        `<li><strong>Min balance floor</strong> — how far below zero this charge may push the balance. <em>0</em> = no negative allowed; a negative number = allowed down to that value; <em>blank</em> = unlimited.</li>`,
+        `<li><strong>Cost terms</strong> — total cost is the sum of all terms, where each term = <em>Credits × (parameter amount ÷ divisor)</em>. Each term picks one parameter — <em>Flat</em> (fixed credits) or per <em>input tokens / output tokens / duration / storage</em> — and each parameter can be used by only one term.</li>`,
+    ];
+
+    static #PRICING_BULLETS = [
+        `<li><strong>Per-currency pricing</strong> — what 1 credit costs a buyer, per currency. The <em>first</em> currency in the list is the base; every supported currency without an explicit price is auto-converted from the base using daily ECB rates at purchase time.</li>`,
+        `<li><strong>Packs</strong> — preset quantities buyers can pick with one click. A pack's discount applies whenever the purchased quantity exactly equals the pack size; custom amounts are never discounted.</li>`,
+        `<li><strong>Minimum purchase</strong> — the smallest credit quantity a buyer may order. Tiny orders are additionally raised to clear the payment provider's 1.00 minimum charge.</li>`,
+    ];
+
+    static #GLOBAL_BULLETS = [
+        `<li><strong>Signup grant</strong> — credits granted once to every new user.</li>`,
+        `<li><strong>Default enforcement</strong> — the balance-floor default applied to newly-created rules.</li>`,
+        `<li><strong>Reward milestones</strong> — a one-time bonus granted when a user's lifetime spend crosses the threshold.</li>`,
+    ];
+
     #config = null;
+    #activeSection = creditAdminSections.PRICING_AND_PACKS;
+    #supportedCurrencies = [];
+    #effectivePricing = null;
 
     async connectedCallback()
     {
@@ -44,6 +72,9 @@ class CreditConfigEditor extends HTMLElement
             }
             const responseJson = await response.json();
             this.#config = this.#normalizeConfig(responseJson.config || {});
+            this.#supportedCurrencies = Array.isArray(responseJson.supportedCurrencies) ? responseJson.supportedCurrencies : [];
+            this.#effectivePricing = responseJson.effectivePricing || null;
+            this.#ensureAllRules();
             this.#render();
         }
         catch (loadError)
@@ -52,16 +83,90 @@ class CreditConfigEditor extends HTMLElement
         }
     }
 
+    /**
+     * Switches the rendered section. Pending DOM edits are collected into the
+     * in-memory config first, so nothing typed is lost; Save always posts the
+     * WHOLE config regardless of which section is visible.
+     */
+    showSection(sectionValue)
+    {
+        const targetSection = Number(sectionValue);
+
+        if (!this.#config)
+        {
+            // Still loading — remember the choice; the post-load render uses it.
+            this.#activeSection = targetSection;
+            return;
+        }
+
+        if (targetSection === this.#activeSection)
+        {
+            return;
+        }
+
+        this.#collectFromDom();
+        this.#activeSection = targetSection;
+        this.#render();
+    }
+
     #normalizeConfig(rawConfig)
     {
+        const pricingEntries = [];
+        const seenCurrencies = new Set();
+        for (const rawEntry of (Array.isArray(rawConfig.creditPricing) ? rawConfig.creditPricing : []))
+        {
+            const currency = typeof rawEntry?.currency === "string" ? rawEntry.currency.trim().toUpperCase() : "";
+            const pricePerCredit = CreditConfigEditor.#parseNumber(rawEntry?.pricePerCredit, 0);
+            if (currency.length === 0 || seenCurrencies.has(currency))
+            {
+                continue;
+            }
+            seenCurrencies.add(currency);
+            // Zero-price rows are kept here (the admin may still be typing);
+            // the backend drops them on save.
+            pricingEntries.push({ currency: currency, pricePerCredit: pricePerCredit < 0 ? 0 : pricePerCredit });
+        }
+
+        const packs = [];
+        for (const rawPack of (Array.isArray(rawConfig.creditPacks) ? rawConfig.creditPacks : []))
+        {
+            const credits = Math.trunc(CreditConfigEditor.#parseNumber(rawPack?.credits, 0));
+            let discountPercent = CreditConfigEditor.#parseNumber(rawPack?.discountPercent, 0);
+            discountPercent = Math.min(100, Math.max(0, discountPercent));
+            packs.push({ credits: credits < 0 ? 0 : credits, discountPercent: discountPercent });
+        }
+
+        const minimumPurchaseCredits = Math.trunc(CreditConfigEditor.#parseNumber(rawConfig.minimumPurchaseCredits, 1));
+
         return {
             taskRules: rawConfig.taskRules && typeof rawConfig.taskRules === "object" ? rawConfig.taskRules : {},
             storageRules: rawConfig.storageRules && typeof rawConfig.storageRules === "object" ? rawConfig.storageRules : {},
             rewardMilestones: Array.isArray(rawConfig.rewardMilestones) ? rawConfig.rewardMilestones : [],
+            creditPricing: pricingEntries,
+            creditPacks: packs,
+            minimumPurchaseCredits: minimumPurchaseCredits < 1 ? 1 : minimumPurchaseCredits,
             defaultEnforcementMode: typeof rawConfig.defaultEnforcementMode === "number" ? rawConfig.defaultEnforcementMode : creditEnforcementModes.ALLOW_NEGATIVE,
             signupGrant: typeof rawConfig.signupGrant === "number" ? rawConfig.signupGrant : 5,
             version: rawConfig.version || 1,
         };
+    }
+
+    /**
+     * Seeds a default rule for every task type and storage category up front.
+     * Rendering is sectioned, so this can no longer happen lazily at render
+     * time — without it, saving from one section would persist a different
+     * rule set than saving from another.
+     */
+    #ensureAllRules()
+    {
+        for (const taskTypeName of Object.keys(taskTypes).filter(name => taskTypes[name] !== taskTypes.UNKNOWN))
+        {
+            this.#ensureRule(this.#config.taskRules, taskTypeName);
+        }
+        for (const categoryName of Object.keys(creditChargeCategories).filter(name => creditChargeCategories[name] !== creditChargeCategories.UNKNOWN))
+        {
+            this.#ensureRule(this.#config.storageRules, categoryName);
+        }
     }
 
     #defaultRule()
@@ -115,11 +220,21 @@ class CreditConfigEditor extends HTMLElement
         return normalizedTerms;
     }
 
+    #introBullets()
+    {
+        if (this.#activeSection === creditAdminSections.PRICING_AND_PACKS)
+        {
+            return CreditConfigEditor.#PRICING_BULLETS;
+        }
+        if (this.#activeSection === creditAdminSections.MILESTONES_AND_GLOBAL)
+        {
+            return CreditConfigEditor.#GLOBAL_BULLETS;
+        }
+        return CreditConfigEditor.#RULE_BULLETS;
+    }
+
     #render()
     {
-        const taskTypeNames = Object.keys(taskTypes).filter(name => taskTypes[name] !== taskTypes.UNKNOWN);
-        const storageCategoryNames = Object.keys(creditChargeCategories).filter(name => creditChargeCategories[name] !== creditChargeCategories.UNKNOWN);
-
         this.innerHTML = `
             <style>
                 credit-config-editor { display: block; padding: 2px 0 16px; color: var(--primary-text-color); }
@@ -318,6 +433,31 @@ class CreditConfigEditor extends HTMLElement
                 }
                 .credit-term-remove:hover { background-color: var(--danger-background-color); }
 
+                /* ── Pricing & packs ───────────────────────────────────── */
+                .credit-base-badge
+                {
+                    align-self: center;
+                    padding: 4px 12px;
+                    border-radius: 999px;
+                    background: var(--primary-background-gradient);
+                    color: var(--primary-text-color);
+                    font-size: 11px;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    letter-spacing: 0.05em;
+                }
+                .credit-make-base { align-self: center; padding: 7px 12px; font-size: 12px; }
+                .credit-pricing-readout
+                {
+                    margin-top: 14px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 6px;
+                    font-size: 12.5px;
+                    color: var(--secondary-text-color);
+                }
+                .credit-pricing-readout-note { font-style: italic; opacity: 0.8; }
+
                 /* ── Buttons ───────────────────────────────────────────── */
                 .credit-editor-button
                 {
@@ -358,59 +498,13 @@ class CreditConfigEditor extends HTMLElement
             </style>
 
             <div class="credit-editor-intro">
-                <div class="credit-editor-intro-title">How credit rules work</div>
+                <div class="credit-editor-intro-title">How this section works</div>
                 <ul class="credit-editor-intro-list">
-                    <li><strong>Enabled</strong> — when <em>on</em>, the service runs (charged per its terms). When <em>off</em>, the service is <em>denied</em> — the task is refused, not run for free. (Storage categories simply aren't billed when off.)</li>
-                    <li><strong>Timing</strong> — when credits are deducted: <em>On start</em> (before the task runs — flat terms only), <em>At intervals</em> (periodically while it runs), <em>On success</em> (only if it completes), or <em>On any completion</em> (success or failure).</li>
-                    <li><strong>Interval (seconds)</strong> — for <em>At intervals</em> timing only: how often to charge during a running task.</li>
-                    <li><strong>Min balance to run</strong> — the user must already hold at least this many credits for the task to start. <em>0</em> = no entry requirement.</li>
-                    <li><strong>Min balance floor</strong> — how far below zero this charge may push the balance. <em>0</em> = no negative allowed; a negative number = allowed down to that value; <em>blank</em> = unlimited.</li>
-                    <li><strong>Cost terms</strong> — total cost is the sum of all terms, where each term = <em>Credits × (parameter amount ÷ divisor)</em>. Each term picks one parameter — <em>Flat</em> (fixed credits) or per <em>input tokens / output tokens / duration / storage</em> — and each parameter can be used by only one term.</li>
-                    <li><strong>Signup grant</strong> — credits granted once to every new user.</li>
-                    <li><strong>Default enforcement</strong> — the balance-floor default applied to newly-created rules.</li>
-                    <li><strong>Reward milestones</strong> — a one-time bonus granted when a user's lifetime spend crosses the threshold.</li>
+                    ${this.#introBullets().join("")}
                 </ul>
             </div>
 
-            <div class="credit-editor-section">
-                <div class="credit-editor-section-title">Global Settings</div>
-                <div class="credit-rule-card">
-                    <div class="credit-rule-controls">
-                        <label class="credit-field">Signup grant
-                            <input class="credit-input" type="number" step="any" data-global="signupGrant" value="${this.#config.signupGrant}">
-                        </label>
-                        <label class="credit-field">Default enforcement
-                            <select class="credit-select" data-global="defaultEnforcementMode">
-                                ${this.#enforcementOptions(this.#config.defaultEnforcementMode)}
-                            </select>
-                        </label>
-                        <div class="credit-field">Config version
-                            <div class="credit-static-value">${this.#config.version}</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="credit-editor-section">
-                <div class="credit-editor-section-title">Storage Categories</div>
-                ${storageCategoryNames.map(name => this.#renderRuleCard("storage", name, this.#ensureRule(this.#config.storageRules, name), CreditConfigEditor.STORAGE_PARAMETERS)).join("")}
-            </div>
-
-            <div class="credit-editor-section">
-                <div class="credit-editor-section-title">Reward Milestones (one-time)</div>
-                <div class="credit-rule-card" data-role="milestones">
-                    <div data-role="milestone-list">
-                        ${this.#config.rewardMilestones.map((milestone, index) => this.#renderMilestoneRow(milestone, index)).join("")}
-                        ${this.#config.rewardMilestones.length === 0 ? `<div class="credit-terms-empty">No milestones configured.</div>` : ""}
-                    </div>
-                    <button class="credit-editor-button credit-editor-button-secondary credit-add-term" data-action="add-milestone">+ Add milestone</button>
-                </div>
-            </div>
-
-            <div class="credit-editor-section">
-                <div class="credit-editor-section-title">Agent Task Rules</div>
-                ${taskTypeNames.map(name => this.#renderRuleCard("task", name, this.#ensureRule(this.#config.taskRules, name), CreditConfigEditor.TASK_PARAMETERS)).join("")}
-            </div>
+            ${this.#renderActiveSectionBlocks()}
 
             <div class="credit-editor-savebar">
                 <button class="credit-editor-button" data-action="save">Save Configuration</button>
@@ -419,7 +513,257 @@ class CreditConfigEditor extends HTMLElement
         `;
 
         this.#bindEvents();
+        this.#updatePackPricePreviews();
     }
+
+    #renderActiveSectionBlocks()
+    {
+        if (this.#activeSection === creditAdminSections.TASK_RULES)
+        {
+            const taskTypeNames = Object.keys(taskTypes).filter(name => taskTypes[name] !== taskTypes.UNKNOWN);
+            return `
+                <div class="credit-editor-section">
+                    <div class="credit-editor-section-title">Agent Task Rules</div>
+                    ${taskTypeNames.map(name => this.#renderRuleCard("task", name, this.#ensureRule(this.#config.taskRules, name), CreditConfigEditor.TASK_PARAMETERS)).join("")}
+                </div>
+            `;
+        }
+
+        if (this.#activeSection === creditAdminSections.STORAGE_RULES)
+        {
+            const storageCategoryNames = Object.keys(creditChargeCategories).filter(name => creditChargeCategories[name] !== creditChargeCategories.UNKNOWN);
+            return `
+                <div class="credit-editor-section">
+                    <div class="credit-editor-section-title">Storage Categories</div>
+                    ${storageCategoryNames.map(name => this.#renderRuleCard("storage", name, this.#ensureRule(this.#config.storageRules, name), CreditConfigEditor.STORAGE_PARAMETERS)).join("")}
+                </div>
+            `;
+        }
+
+        if (this.#activeSection === creditAdminSections.MILESTONES_AND_GLOBAL)
+        {
+            return `
+                <div class="credit-editor-section">
+                    <div class="credit-editor-section-title">Global Settings</div>
+                    <div class="credit-rule-card">
+                        <div class="credit-rule-controls">
+                            <label class="credit-field">Signup grant (credits)
+                                <input class="credit-input" type="number" step="any" data-global="signupGrant" value="${this.#config.signupGrant}">
+                            </label>
+                            <label class="credit-field">Default enforcement
+                                <select class="credit-select" data-global="defaultEnforcementMode">
+                                    ${this.#enforcementOptions(this.#config.defaultEnforcementMode)}
+                                </select>
+                            </label>
+                            <div class="credit-field">Config version
+                                <div class="credit-static-value">${this.#config.version}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="credit-editor-section">
+                    <div class="credit-editor-section-title">Reward Milestones (one-time)</div>
+                    <div class="credit-rule-card" data-role="milestones">
+                        <div data-role="milestone-list">
+                            ${this.#config.rewardMilestones.map((milestone, index) => this.#renderMilestoneRow(milestone, index)).join("")}
+                            ${this.#config.rewardMilestones.length === 0 ? `<div class="credit-terms-empty">No milestones configured.</div>` : ""}
+                        </div>
+                        <button class="credit-editor-button credit-editor-button-secondary credit-add-term" data-action="add-milestone">+ Add milestone</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        return this.#renderPricingSection() + this.#renderPacksSection();
+    }
+
+    /* ── Pricing & packs section ───────────────────────────────────────── */
+
+    #renderPricingSection()
+    {
+        const usedCurrencies = this.#config.creditPricing.map(entry => entry.currency);
+        const hasUnusedCurrency = this.#supportedCurrencies.some(currency => !usedCurrencies.includes(currency));
+
+        return `
+            <div class="credit-editor-section">
+                <div class="credit-editor-section-title">Credit Pricing (per currency)</div>
+                <div class="credit-rule-card">
+                    <div class="credit-rule-controls" style="margin-bottom: 16px;">
+                        <label class="credit-field">Minimum purchase (credits)
+                            <input class="credit-input" type="number" step="1" min="1" data-global="minimumPurchaseCredits" value="${this.#config.minimumPurchaseCredits}">
+                        </label>
+                    </div>
+                    <div data-role="pricing-list">
+                        ${this.#config.creditPricing.map((entry, index) => this.#renderPricingRow(entry, index, usedCurrencies)).join("")}
+                        ${this.#config.creditPricing.length === 0 ? `<div class="credit-terms-empty">No prices configured — credit purchases are unavailable until at least one currency has a price.</div>` : ""}
+                    </div>
+                    <button class="credit-editor-button credit-editor-button-secondary credit-add-term" data-action="add-currency" ${hasUnusedCurrency ? "" : "disabled"}>+ Add currency</button>
+                    ${hasUnusedCurrency ? "" : `<span class="credit-terms-note">All supported currencies are priced.</span>`}
+                    ${this.#renderEffectivePricingReadout(usedCurrencies)}
+                </div>
+            </div>
+        `;
+    }
+
+    #renderPricingRow(entry, index, usedCurrencies)
+    {
+        // Options: every supported currency plus the row's own (in case a
+        // stored config carries one outside the current supported set).
+        const optionCurrencies = this.#supportedCurrencies.includes(entry.currency) || entry.currency === ""
+            ? this.#supportedCurrencies
+            : [entry.currency, ...this.#supportedCurrencies];
+
+        const baseControl = index === 0
+            ? `<span class="credit-base-badge" title="Unset currencies are auto-converted from this one">Base</span>`
+            : `<button class="credit-editor-button credit-editor-button-secondary credit-make-base" data-action="make-base-currency" title="Make this the base currency">Make base</button>`;
+
+        return `
+            <div class="credit-term-row" data-pricing-index="${index}">
+                <label class="credit-field">Currency
+                    <select class="credit-select" data-pricing-field="currency">
+                        ${optionCurrencies.map(currency =>
+                        {
+                            const isSelected = currency === entry.currency;
+                            const isUsedElsewhere = usedCurrencies.includes(currency) && !isSelected;
+                            return `<option value="${CreditConfigEditor.#escape(currency)}" ${isSelected ? "selected" : ""} ${isUsedElsewhere ? "disabled" : ""}>${CreditConfigEditor.#escape(currency)}</option>`;
+                        }).join("")}
+                    </select>
+                </label>
+                <label class="credit-field">Price for 1 credit${entry.currency ? ` (${CreditConfigEditor.#escape(entry.currency)})` : " (money)"}
+                    <input class="credit-input" type="number" step="any" min="0" data-pricing-field="pricePerCredit" value="${entry.pricePerCredit}">
+                </label>
+                ${baseControl}
+                <button class="credit-term-remove" data-action="remove-currency" title="Remove currency">✕</button>
+            </div>
+        `;
+    }
+
+    /**
+     * Read-only effective prices for every supported currency WITHOUT an
+     * explicit row — what buyers in those currencies actually pay, converted
+     * server-side from the base. Values come from the last saved config, so
+     * local unsaved edits are reflected only after a save.
+     */
+    #renderEffectivePricingReadout(usedCurrencies)
+    {
+        const unsetCurrencies = this.#supportedCurrencies.filter(currency => !usedCurrencies.includes(currency));
+        if (unsetCurrencies.length === 0)
+        {
+            return "";
+        }
+
+        const localBaseCurrency = this.#config.creditPricing.length > 0 ? this.#config.creditPricing[0].currency : null;
+        const savedBaseCurrency = this.#effectivePricing?.baseCurrency || localBaseCurrency;
+
+        if (!localBaseCurrency)
+        {
+            return `
+                <div class="credit-pricing-readout">
+                    <span class="credit-pricing-readout-note">Add at least one currency to enable credit purchases — other currencies will auto-convert from it.</span>
+                </div>
+            `;
+        }
+
+        const readoutLines = unsetCurrencies.map(currency =>
+        {
+            const effectiveEntry = this.#effectivePricing?.prices?.find(price => price.currency === currency);
+            if (effectiveEntry && effectiveEntry.converted && effectiveEntry.pricePerCredit !== null)
+            {
+                const roundedPrice = Math.round(effectiveEntry.pricePerCredit * 10000) / 10000;
+                return `<span>${CreditConfigEditor.#escape(currency)} ≈ ${roundedPrice} / credit (auto-converted from ${CreditConfigEditor.#escape(savedBaseCurrency)})</span>`;
+            }
+            if (effectiveEntry && !effectiveEntry.explicit && effectiveEntry.pricePerCredit === null)
+            {
+                return `<span>${CreditConfigEditor.#escape(currency)} — FX rate unavailable; these buyers are charged in ${CreditConfigEditor.#escape(savedBaseCurrency)}</span>`;
+            }
+            return `<span>${CreditConfigEditor.#escape(currency)} — auto-converted from ${CreditConfigEditor.#escape(localBaseCurrency)} (value shown after save)</span>`;
+        });
+
+        return `
+            <div class="credit-pricing-readout">
+                ${readoutLines.join("")}
+                <span class="credit-pricing-readout-note">Auto-converted values use the last saved configuration and daily ECB rates.</span>
+            </div>
+        `;
+    }
+
+    #renderPacksSection()
+    {
+        return `
+            <div class="credit-editor-section">
+                <div class="credit-editor-section-title">Credit Packs (discounted presets)</div>
+                <div class="credit-rule-card">
+                    <div data-role="pack-list">
+                        ${this.#config.creditPacks.map((pack, index) => this.#renderPackRow(pack, index)).join("")}
+                        ${this.#config.creditPacks.length === 0 ? `<div class="credit-terms-empty">No packs configured — buyers can still purchase custom amounts at the full unit price.</div>` : ""}
+                    </div>
+                    <button class="credit-editor-button credit-editor-button-secondary credit-add-term" data-action="add-pack">+ Add pack</button>
+                </div>
+            </div>
+        `;
+    }
+
+    #renderPackRow(pack, index)
+    {
+        return `
+            <div class="credit-term-row" data-pack-index="${index}">
+                <label class="credit-field">Pack size (credits)
+                    <input class="credit-input" type="number" step="1" min="1" data-pack-field="credits" value="${pack.credits}">
+                </label>
+                <label class="credit-field">Discount (%)
+                    <input class="credit-input" type="number" step="any" min="0" max="100" data-pack-field="discountPercent" value="${pack.discountPercent}">
+                </label>
+                <div class="credit-field">Pack price (base currency)
+                    <div class="credit-static-value" data-role="pack-price">—</div>
+                </div>
+                <button class="credit-term-remove" data-action="remove-pack" title="Remove pack">✕</button>
+            </div>
+        `;
+    }
+
+    /**
+     * Recomputes every pack row's price preview from the CURRENT inputs (the
+     * first pricing row is the live base). textContent-only updates — no
+     * re-render, so typing never loses focus.
+     */
+    #updatePackPricePreviews()
+    {
+        const packRows = this.querySelectorAll('[data-pack-index]');
+        if (packRows.length === 0)
+        {
+            return;
+        }
+
+        let baseCurrency = null;
+        let basePricePerCredit = 0;
+        const firstPricingRow = this.querySelector('[data-role="pricing-list"] [data-pricing-index="0"]');
+        if (firstPricingRow)
+        {
+            baseCurrency = firstPricingRow.querySelector('[data-pricing-field="currency"]').value;
+            basePricePerCredit = CreditConfigEditor.#parseNumber(firstPricingRow.querySelector('[data-pricing-field="pricePerCredit"]').value, 0);
+        }
+
+        for (const packRow of packRows)
+        {
+            const priceLabel = packRow.querySelector('[data-role="pack-price"]');
+            const credits = CreditConfigEditor.#parseNumber(packRow.querySelector('[data-pack-field="credits"]').value, 0);
+            let discountPercent = CreditConfigEditor.#parseNumber(packRow.querySelector('[data-pack-field="discountPercent"]').value, 0);
+            discountPercent = Math.min(100, Math.max(0, discountPercent));
+
+            if (!baseCurrency || basePricePerCredit <= 0 || credits <= 0)
+            {
+                priceLabel.textContent = "—";
+                continue;
+            }
+
+            const packPrice = credits * basePricePerCredit * (1 - discountPercent / 100);
+            const discountSuffix = discountPercent > 0 ? ` (−${discountPercent}%)` : "";
+            priceLabel.textContent = `${baseCurrency} ${packPrice.toFixed(2)}${discountSuffix}`;
+        }
+    }
+
+    /* ── Rule / milestone rendering (unchanged behavior) ───────────────── */
 
     #renderRuleCard(scope, key, rule, parameters)
     {
@@ -439,10 +783,10 @@ class CreditConfigEditor extends HTMLElement
                     <label class="credit-field" data-role="interval-field" style="${showInterval ? "" : "display:none;"}">Interval (seconds)
                         <input class="credit-input" type="number" step="any" data-field="intervalSeconds" value="${rule.intervalSeconds}">
                     </label>
-                    <label class="credit-field">Min balance to run
+                    <label class="credit-field">Min balance to run (credits)
                         <input class="credit-input" type="number" step="any" data-field="minimumBalanceToRun" value="${rule.minimumBalanceToRun ?? 0}" placeholder="0">
                     </label>
-                    <label class="credit-field">Min balance floor
+                    <label class="credit-field">Min balance floor (credits)
                         <input class="credit-input" type="number" step="any" data-field="minimumBalanceFloor" value="${rule.minimumBalanceFloor === null ? "" : rule.minimumBalanceFloor}" placeholder="unlimited">
                     </label>
                 </div>
@@ -476,11 +820,11 @@ class CreditConfigEditor extends HTMLElement
                         }).join("")}
                     </select>
                 </label>
-                <label class="credit-field">Credits
+                <label class="credit-field">Credits to charge
                     <input class="credit-input" type="number" step="any" data-term-field="credits" value="${term.credits ?? 0}">
                 </label>
                 ${currentParameter !== "FLAT" ? `
-                <label class="credit-field">Per ${CreditConfigEditor.#escape(unitWords)}
+                <label class="credit-field">Per this many ${CreditConfigEditor.#escape(unitWords.toLowerCase())}
                     <input class="credit-input" type="number" step="any" data-term-field="divisor" value="${divisorValue}" placeholder="1">
                 </label>` : ""}
                 <button class="credit-term-remove" data-action="remove-term" title="Remove term">✕</button>
@@ -507,11 +851,11 @@ class CreditConfigEditor extends HTMLElement
     {
         return `
             <div class="credit-milestone-row" data-milestone-index="${index}">
-                <label class="credit-field">Spend threshold
+                <label class="credit-field">Spend threshold (lifetime credits)
                     <input class="credit-input" type="number" step="any" data-milestone-field="spendThreshold" value="${milestone.spendThreshold ?? 0}">
                 </label>
                 <span class="credit-milestone-arrow">→</span>
-                <label class="credit-field">Reward credits
+                <label class="credit-field">Reward (credits)
                     <input class="credit-input" type="number" step="any" data-milestone-field="rewardCredits" value="${milestone.rewardCredits ?? 0}">
                 </label>
                 <button class="credit-term-remove" data-action="remove-milestone" title="Remove milestone">✕</button>
@@ -562,6 +906,24 @@ class CreditConfigEditor extends HTMLElement
             });
         }
 
+        // Changing a pricing row's currency re-renders so the other rows'
+        // disabled options and the auto-converted readout stay accurate.
+        for (const currencySelect of this.querySelectorAll('select[data-pricing-field="currency"]'))
+        {
+            currencySelect.addEventListener("change", () =>
+            {
+                this.#collectFromDom();
+                this.#render();
+            });
+        }
+
+        // Live pack-price previews: any pack input or the pricing inputs
+        // update the computed spans only (no re-render — no focus loss).
+        for (const previewInput of this.querySelectorAll('[data-pack-field], input[data-pricing-field="pricePerCredit"]'))
+        {
+            previewInput.addEventListener("input", () => this.#updatePackPricePreviews());
+        }
+
         for (const button of this.querySelectorAll('[data-action]'))
         {
             button.addEventListener("click", (clickEvent) => this.#handleAction(clickEvent.currentTarget));
@@ -609,6 +971,38 @@ class CreditConfigEditor extends HTMLElement
             const milestoneIndex = Number(button.closest(".credit-milestone-row").dataset.milestoneIndex);
             this.#config.rewardMilestones.splice(milestoneIndex, 1);
         }
+        else if (action === "add-currency")
+        {
+            const usedCurrencies = this.#config.creditPricing.map(entry => entry.currency);
+            const nextCurrency = this.#supportedCurrencies.find(currency => !usedCurrencies.includes(currency));
+            if (nextCurrency)
+            {
+                this.#config.creditPricing.push({ currency: nextCurrency, pricePerCredit: 0 });
+            }
+        }
+        else if (action === "remove-currency")
+        {
+            const pricingIndex = Number(button.closest(".credit-term-row").dataset.pricingIndex);
+            this.#config.creditPricing.splice(pricingIndex, 1);
+        }
+        else if (action === "make-base-currency")
+        {
+            const pricingIndex = Number(button.closest(".credit-term-row").dataset.pricingIndex);
+            const [promotedEntry] = this.#config.creditPricing.splice(pricingIndex, 1);
+            if (promotedEntry)
+            {
+                this.#config.creditPricing.unshift(promotedEntry);
+            }
+        }
+        else if (action === "add-pack")
+        {
+            this.#config.creditPacks.push({ credits: 0, discountPercent: 0 });
+        }
+        else if (action === "remove-pack")
+        {
+            const packIndex = Number(button.closest(".credit-term-row").dataset.packIndex);
+            this.#config.creditPacks.splice(packIndex, 1);
+        }
 
         this.#render();
     }
@@ -622,8 +1016,11 @@ class CreditConfigEditor extends HTMLElement
     }
 
     /**
-     * Reads every input back into this.#config so the in-memory model matches
-     * what the user sees before a save or a structural re-render.
+     * Reads every MOUNTED input back into this.#config so the in-memory model
+     * matches what the user sees before a save, a structural re-render or a
+     * section switch. Rendering is sectioned, so every list overwrite is
+     * guarded on its container's presence — collecting while a section is
+     * off-screen must never wipe that section's data.
      */
     #collectFromDom()
     {
@@ -636,6 +1033,12 @@ class CreditConfigEditor extends HTMLElement
         if (enforcementSelect)
         {
             this.#config.defaultEnforcementMode = Number(enforcementSelect.value);
+        }
+        const minimumPurchaseInput = this.querySelector('[data-global="minimumPurchaseCredits"]');
+        if (minimumPurchaseInput)
+        {
+            const minimumPurchaseCredits = Math.trunc(CreditConfigEditor.#parseNumber(minimumPurchaseInput.value, 1));
+            this.#config.minimumPurchaseCredits = minimumPurchaseCredits < 1 ? 1 : minimumPurchaseCredits;
         }
 
         for (const card of this.querySelectorAll('.credit-rule-card[data-scope]'))
@@ -675,15 +1078,52 @@ class CreditConfigEditor extends HTMLElement
             rule.terms = terms;
         }
 
-        const milestones = [];
-        for (const milestoneRow of this.querySelectorAll('.credit-milestone-row'))
+        const milestoneList = this.querySelector('[data-role="milestone-list"]');
+        if (milestoneList)
         {
-            milestones.push({
-                spendThreshold: CreditConfigEditor.#parseNumber(milestoneRow.querySelector('[data-milestone-field="spendThreshold"]').value, 0),
-                rewardCredits: CreditConfigEditor.#parseNumber(milestoneRow.querySelector('[data-milestone-field="rewardCredits"]').value, 0),
-            });
+            const milestones = [];
+            for (const milestoneRow of milestoneList.querySelectorAll('.credit-milestone-row'))
+            {
+                milestones.push({
+                    spendThreshold: CreditConfigEditor.#parseNumber(milestoneRow.querySelector('[data-milestone-field="spendThreshold"]').value, 0),
+                    rewardCredits: CreditConfigEditor.#parseNumber(milestoneRow.querySelector('[data-milestone-field="rewardCredits"]').value, 0),
+                });
+            }
+            this.#config.rewardMilestones = milestones;
         }
-        this.#config.rewardMilestones = milestones;
+
+        const pricingList = this.querySelector('[data-role="pricing-list"]');
+        if (pricingList)
+        {
+            const pricingEntries = [];
+            const seenCurrencies = new Set();
+            for (const pricingRow of pricingList.querySelectorAll('[data-pricing-index]'))
+            {
+                const currency = pricingRow.querySelector('[data-pricing-field="currency"]').value.trim().toUpperCase();
+                const pricePerCredit = CreditConfigEditor.#parseNumber(pricingRow.querySelector('[data-pricing-field="pricePerCredit"]').value, 0);
+                if (currency.length === 0 || seenCurrencies.has(currency))
+                {
+                    continue;
+                }
+                seenCurrencies.add(currency);
+                pricingEntries.push({ currency: currency, pricePerCredit: pricePerCredit < 0 ? 0 : pricePerCredit });
+            }
+            this.#config.creditPricing = pricingEntries;
+        }
+
+        const packList = this.querySelector('[data-role="pack-list"]');
+        if (packList)
+        {
+            const packs = [];
+            for (const packRow of packList.querySelectorAll('[data-pack-index]'))
+            {
+                const credits = Math.trunc(CreditConfigEditor.#parseNumber(packRow.querySelector('[data-pack-field="credits"]').value, 0));
+                let discountPercent = CreditConfigEditor.#parseNumber(packRow.querySelector('[data-pack-field="discountPercent"]').value, 0);
+                discountPercent = Math.min(100, Math.max(0, discountPercent));
+                packs.push({ credits: credits < 0 ? 0 : credits, discountPercent: discountPercent });
+            }
+            this.#config.creditPacks = packs;
+        }
     }
 
     async #save()
@@ -715,6 +1155,15 @@ class CreditConfigEditor extends HTMLElement
 
             const responseJson = await response.json();
             this.#config = this.#normalizeConfig(responseJson.config || this.#config);
+            if (Array.isArray(responseJson.supportedCurrencies))
+            {
+                this.#supportedCurrencies = responseJson.supportedCurrencies;
+            }
+            if (responseJson.effectivePricing)
+            {
+                this.#effectivePricing = responseJson.effectivePricing;
+            }
+            this.#ensureAllRules();
             this.#render();
             const refreshedStatus = this.querySelector('[data-role="status"]');
             if (refreshedStatus)

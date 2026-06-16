@@ -66,6 +66,10 @@ class PaidDeckLibraryPage extends HTMLElement
                         spellcheck="false">
                     <button class="paid-deck-library-search-clear" type="button" hidden>Clear</button>
                 </div>
+                <button class="paid-deck-library-filters-toggle" type="button" data-role="filters-toggle" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M3 5h18v2l-7 7v5l-4 2v-7L3 7z"></path></svg>
+                    <span>Filters</span>
+                </button>
                 <div class="paid-deck-library-region-bar">
                     <label>Region</label>
                     <select class="paid-deck-library-region-select">
@@ -89,9 +93,16 @@ class PaidDeckLibraryPage extends HTMLElement
                 </div>
             </div>
             <div class="paid-deck-library-body">
-                <aside class="paid-deck-library-filter-panel" data-role="filter-panel">
-                    <div class="paid-deck-filter-panel-loading">Loading filters…</div>
-                </aside>
+                <div class="paid-deck-library-filter-backdrop" data-role="filter-backdrop" hidden></div>
+                <div class="paid-deck-library-filter-drawer" data-role="filter-drawer">
+                    <div class="paid-deck-library-filter-drawer-header">
+                        <span>Filters</span>
+                        <button class="paid-deck-library-filter-drawer-close" type="button" data-role="filter-drawer-close" aria-label="Close filters">✕</button>
+                    </div>
+                    <aside class="paid-deck-library-filter-panel" data-role="filter-panel">
+                        <div class="paid-deck-filter-panel-loading">Loading filters…</div>
+                    </aside>
+                </div>
                 <main class="paid-deck-library-results">
                     <div class="paid-deck-library-result-count" data-role="result-count"></div>
                     <div class="paid-deck-library-grid" data-role="grid">
@@ -103,6 +114,7 @@ class PaidDeckLibraryPage extends HTMLElement
         `;
 
         this.#wireSearchBar();
+        this.#wireFilterDrawer();
 
         this.querySelector(".paid-deck-library-sort-field").addEventListener("change", (changeEvent) =>
         {
@@ -206,6 +218,40 @@ class PaidDeckLibraryPage extends HTMLElement
 
             this.#applyQueryFilter("");
             searchInputElement.focus();
+        });
+    }
+
+    // The filter sidebar is a permanent column on desktop, but an off-canvas
+    // drawer on narrow (mobile/portrait) screens so the deck grid keeps the
+    // full width. The drawer's open state is driven purely by a class toggle;
+    // the @media query decides whether that class has any visual effect.
+    #wireFilterDrawer()
+    {
+        const toggleButton = this.querySelector('[data-role="filters-toggle"]');
+        const backdrop = this.querySelector('[data-role="filter-backdrop"]');
+        const closeButton = this.querySelector('[data-role="filter-drawer-close"]');
+
+        const setDrawerOpen = (isOpen) =>
+        {
+            this.classList.toggle("filter-drawer-open", isOpen);
+            backdrop.hidden = !isOpen;
+            toggleButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
+        };
+
+        toggleButton.addEventListener("click", () =>
+        {
+            setDrawerOpen(!this.classList.contains("filter-drawer-open"));
+        });
+        backdrop.addEventListener("click", () => setDrawerOpen(false));
+        closeButton.addEventListener("click", () => setDrawerOpen(false));
+
+        // Dismiss with Escape while the drawer is open.
+        this.addEventListener("keydown", (keyDownEvent) =>
+        {
+            if (keyDownEvent.key === "Escape" && this.classList.contains("filter-drawer-open"))
+            {
+                setDrawerOpen(false);
+            }
         });
     }
 

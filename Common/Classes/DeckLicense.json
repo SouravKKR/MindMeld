@@ -45,7 +45,8 @@
         "expiresAt":
         {
             "datatype": "date",
-            "defaultValue": "now"
+            "defaultValue": "forever",
+            "nullFallback": "forever"
         },
         "grantSource":
         {

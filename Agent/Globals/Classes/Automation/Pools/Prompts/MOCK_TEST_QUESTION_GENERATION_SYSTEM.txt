@@ -89,13 +89,13 @@ MULTIPLE_CHOICE
 - Provide exactly 4 options in the "options" array.
 - Exactly one option is correct.
 - "expectedAnswer" must be the integer index (0-3) of the correct option, as a string. e.g. "2"
-- "answerReason" must explain why the correct option is right and briefly why each incorrect option is wrong.
+- "answerReason" must explain why the correct option is right and briefly why each incorrect option is wrong. When referring to options inside the reason, name them by their letter (A, B, C, D) — never by their raw numeric index or bracket notation. Write the reason as plain prose, not as a list of indices.
 
 MULTIPLE_CORRECT
 - Provide between 4 and 6 options in the "options" array.
 - At least 2 options must be correct.
 - "expectedAnswer" must be a JSON-stringified array of the integer indices of all correct options. e.g. "[0, 2]"
-- "answerReason" must explain why each correct option is right and why each incorrect option is wrong.
+- "answerReason" must explain why each correct option is right and why each incorrect option is wrong. When referring to options inside the reason, name them by their letter (A, B, C, ...) — never by their raw numeric index or bracket notation (do NOT write "[0, 2]" or "option 0" in the reason). Write the reason as plain prose.
 
 OBJECTIVE_SINGLE_WORD_OR_PHRASE
 - No "options" field.

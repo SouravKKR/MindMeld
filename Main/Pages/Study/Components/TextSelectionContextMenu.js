@@ -1,6 +1,7 @@
 import ContextMenu from "../../../CommonComponents/ContextMenu.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import LlmTierSelect from "../../../CommonComponents/LlmTierSelect.js";
+import LanguageSelect from "../../../CommonComponents/LanguageSelect.js";
 import { modelTiers } from "../../../Globals/Enumerations/ModelTiers.js";
 import { askAiPromptModes } from "../../../Globals/Enumerations/AskAiPromptModes.js";
 import ModelTierMetadata from "../../../Globals/Constants/ModelTierMetadata.js";
@@ -107,6 +108,7 @@ class TextSelectionContextMenu extends ContextMenu
     #studyDeck = null;
     #boundTierSelectedHandler = null;
     #boundSourcesChangedHandler = null;
+    #boundLanguageSelectedHandler = null;
     #imageAttachmentManager = null;
 
     static create(selectionRect, selectedText = "")
@@ -176,6 +178,9 @@ class TextSelectionContextMenu extends ContextMenu
             <div class="text-selection-tier-row context-menu-item">
                 <llm-tier-select></llm-tier-select>
             </div>
+            <div class="text-selection-language-row context-menu-item">
+                <language-select></language-select>
+            </div>
             <div class="text-selection-grounding-controls context-menu-item" data-role="grounding-controls" hidden>
                 <label class="text-selection-grounding-checkbox-row">
                     <input type="checkbox" data-role="document-grounded-checkbox">
@@ -210,6 +215,8 @@ class TextSelectionContextMenu extends ContextMenu
         this.#bindLocalEvents();
         this.#bindGroundingEvents();
         this.#hydrateGroundingFromDeck();
+        this.#bindLanguageEvents();
+        this.#hydrateLanguageFromDeck();
         this.#mountImageAttachmentManager();
         this.#applyTierAwareVisibility();
         this.#bindOutsideDismissHandlers();
@@ -256,6 +263,12 @@ class TextSelectionContextMenu extends ContextMenu
             const sourceSelectorElement = this.querySelector("information-source-selector");
             sourceSelectorElement?.removeEventListener(AutomaticGenerationEvents.ON_SOURCES_CHANGED, this.#boundSourcesChangedHandler);
             this.#boundSourcesChangedHandler = null;
+        }
+        if (this.#boundLanguageSelectedHandler)
+        {
+            const languageSelect = this.querySelector("language-select");
+            languageSelect?.removeEventListener("language-selected", this.#boundLanguageSelectedHandler);
+            this.#boundLanguageSelectedHandler = null;
         }
         if (this.#imageAttachmentManager)
         {
@@ -656,6 +669,47 @@ class TextSelectionContextMenu extends ContextMenu
     }
 
     /**
+     * Wire the language-select so a change to the language or the
+     * "Combine with English" checkbox persists onto the deck under the
+     * same ask-AI prefs record the grounding controls use — keeping the
+     * choice per-deck and in sync with the bottom panel.
+     */
+    #bindLanguageEvents()
+    {
+        const languageSelect = this.querySelector("language-select");
+        if (!languageSelect)
+        {
+            return;
+        }
+        this.#boundLanguageSelectedHandler = async (event) =>
+        {
+            await this.#persistPartialPreferences(
+            {
+                selectedLanguage:   event.detail?.selectedLanguage   ?? "ENGLISH",
+                combineWithEnglish: event.detail?.combineWithEnglish ?? false,
+            });
+        };
+        languageSelect.addEventListener("language-selected", this.#boundLanguageSelectedHandler);
+    }
+
+    /**
+     * Hydrate the language-select from the deck's persisted ask-AI prefs
+     * so the menu reopens on the language the user last picked for this
+     * deck (English by default).
+     */
+    #hydrateLanguageFromDeck()
+    {
+        const languageSelect = this.querySelector("language-select");
+        if (!languageSelect)
+        {
+            return;
+        }
+        const preferences = this.#readAskAiPreferences();
+        languageSelect.setSelectedLanguageKey(preferences.selectedLanguage);
+        languageSelect.setCombineWithEnglish(preferences.combineWithEnglish);
+    }
+
+    /**
      * Hydrate the grounding UI from the deck's persisted preferences.
      * Called once on mount; subsequent toggles update both the live
      * UI and the persisted record via #persistPartialPreferences.
@@ -751,6 +805,13 @@ class TextSelectionContextMenu extends ContextMenu
             informationSources:       Array.isArray(persisted.informationSources)
                 ? persisted.informationSources
                 : [],
+            selectedLanguage:         typeof persisted.selectedLanguage === "string"
+                ? persisted.selectedLanguage
+                : "ENGLISH",
+            // Default true so a non-English language is combined with
+            // English by default — only an explicit user untick (stored
+            // as false) turns it off.
+            combineWithEnglish:       persisted.combineWithEnglish !== false,
         };
     }
 
@@ -773,6 +834,8 @@ class TextSelectionContextMenu extends ContextMenu
             documentGroundingEnabled: current.documentGroundingEnabled,
             includeImagesEnabled: current.includeImagesEnabled,
             informationSources: current.informationSources,
+            selectedLanguage: current.selectedLanguage,
+            combineWithEnglish: current.combineWithEnglish,
             ...partialUpdate,
         };
         this.#studyDeck.setAdditionalDataField(TextSelectionContextMenu.#ADDITIONAL_DATA_KEY, merged);
@@ -853,6 +916,7 @@ class TextSelectionContextMenu extends ContextMenu
         const preferences = this.#readAskAiPreferences();
         const sourceSelectorElement = this.querySelector("information-source-selector");
         const liveSources = sourceSelectorElement?.getSources?.() ?? [];
+        const languageSelect = this.querySelector("language-select");
 
         const askAiSession = new AskAiSession
         ({
@@ -864,6 +928,8 @@ class TextSelectionContextMenu extends ContextMenu
             attachedImages:         this.#imageAttachmentManager?.getAttachedImages() ?? [],
             informationSources:     liveSources,
             useInformationSources:  preferences.documentGroundingEnabled,
+            selectedLanguage:       languageSelect?.getSelectedLanguageKey() ?? "ENGLISH",
+            combineWithEnglish:     languageSelect?.getCombineWithEnglish() ?? false,
         });
 
         await askAiSession.run();

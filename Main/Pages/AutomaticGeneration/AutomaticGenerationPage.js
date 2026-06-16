@@ -11,6 +11,7 @@ import PageNavigator from "../../Globals/Classes/PageNavigator.js";
 import GenerationTemplate from "../../Globals/Classes/GenerationTemplate.js";
 import AiFeatureGate from "../../Globals/Classes/AiFeatureGate.js";
 import CreditNotice from "../../Globals/Classes/Credits/CreditNotice.js";
+import MaintenanceNotice from "../../Globals/Classes/MaintenanceNotice.js";
 
 class AutomaticGenerationPage extends HTMLElement
 {
@@ -345,33 +346,7 @@ class AutomaticGenerationPage extends HTMLElement
 
             console.log("Settings are valid.");
 
-            const generationSettingsMap = {};
-
-            // Always include general generation settings
-            const generalFields = this.querySelector("general-generation-fields");
-            generationSettingsMap[generalFields.constructor.settingsKey] = generalFields.getSettings().toJson();
-
-            // For each secondary generation type, only include if its checkbox is checked
-            const secondaryContainerSelectors = [
-                { containerClass: ".flashcard-generation-container",       fieldTag: "flashcard-generation-fields" },
-                { containerClass: ".study-material-generation-container",  fieldTag: "study-material-generation-fields" },
-                { containerClass: ".mock-test-generation-container",       fieldTag: "mock-test-generation-fields" }
-            ];
-
-            for (const { containerClass, fieldTag } of secondaryContainerSelectors)
-            {
-                const container = this.querySelector(containerClass);
-                const checkbox  = container.querySelector(".generation-enabled-checkbox");
-                const field     = container.querySelector(fieldTag);
-
-                if (checkbox?.checked && field)
-                {
-                    generationSettingsMap[field.constructor.settingsKey] = field.getSettings().toJson();
-                }
-                // If unchecked, the key is simply absent — the server treats missing keys as null
-            }
-
-            generationSettingsMap["parentDeckId"] = this.#parentDeck?.getId() ?? "0";
+            const generationSettingsMap = this.#buildGenerationSettingsMap();
 
             generateButton.disabled = true;
             generateButton.textContent = "Starting...";
@@ -384,6 +359,13 @@ class AutomaticGenerationPage extends HTMLElement
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(generationSettingsMap)
                 });
+
+                if (await MaintenanceNotice.handleIfMaintenance(response))
+                {
+                    generateButton.disabled = false;
+                    generateButton.textContent = "Start Generation";
+                    return;
+                }
 
                 if (response.status === 402)
                 {
@@ -414,6 +396,109 @@ class AutomaticGenerationPage extends HTMLElement
                 generateButton.textContent = "Start Generation";
             }
         });
+
+        const computeCostButton = this.querySelector(".automatic-generation-compute-cost-button");
+
+        computeCostButton?.addEventListener("click", async () =>
+        {
+            if (!this.#validate())
+            {
+                await DialogBox.alert("Error", "Please fill out all the fields and make sure the values are valid.");
+                return;
+            }
+
+            const originalLabel = computeCostButton.textContent;
+            computeCostButton.disabled = true;
+            computeCostButton.textContent = "Estimating…";
+
+            try
+            {
+                const response = await fetch("/Generate/EstimateCost",
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(this.#buildGenerationSettingsMap())
+                });
+
+                if (!response.ok)
+                {
+                    await DialogBox.alert("Couldn't estimate", "We couldn't compute an estimate right now. Please try again.");
+                    return;
+                }
+
+                const estimate = await response.json();
+                await DialogBox.alert("Estimated cost", AutomaticGenerationPage.#buildEstimateMessage(estimate));
+            }
+            catch (estimateError)
+            {
+                console.error("[AutomaticGenerationPage] Cost estimate failed:", estimateError);
+                await DialogBox.alert("Couldn't estimate", "We couldn't reach the server. Please check your connection.");
+            }
+            finally
+            {
+                computeCostButton.disabled = false;
+                computeCostButton.textContent = originalLabel;
+            }
+        });
+    }
+
+    /**
+     * Collects the same generation-settings body the Start button posts to
+     * /Generate, so the Compute Cost button can estimate against an identical
+     * payload. Only the enabled secondary generation types are included.
+     */
+    #buildGenerationSettingsMap()
+    {
+        const generationSettingsMap = {};
+
+        const generalFields = this.querySelector("general-generation-fields");
+        generationSettingsMap[generalFields.constructor.settingsKey] = generalFields.getSettings().toJson();
+
+        const secondaryContainerSelectors = [
+            { containerClass: ".flashcard-generation-container", fieldTag: "flashcard-generation-fields" },
+            { containerClass: ".study-material-generation-container", fieldTag: "study-material-generation-fields" },
+            { containerClass: ".mock-test-generation-container", fieldTag: "mock-test-generation-fields" }
+        ];
+
+        for (const { containerClass, fieldTag } of secondaryContainerSelectors)
+        {
+            const container = this.querySelector(containerClass);
+            const checkbox = container.querySelector(".generation-enabled-checkbox");
+            const field = container.querySelector(fieldTag);
+
+            if (checkbox?.checked && field)
+            {
+                generationSettingsMap[field.constructor.settingsKey] = field.getSettings().toJson();
+            }
+            // If unchecked, the key is simply absent — the server treats missing keys as null
+        }
+
+        generationSettingsMap["parentDeckId"] = this.#parentDeck?.getId() ?? "0";
+        return generationSettingsMap;
+    }
+
+    static #buildEstimateMessage(estimate)
+    {
+        if (!estimate || estimate.estimatedCredits === null || estimate.estimatedCredits === undefined)
+        {
+            return "Credit pricing isn't configured yet, so we can't estimate the cost.";
+        }
+
+        const credits = estimate.estimatedCredits;
+        const moneySuffix = (typeof estimate.pricePerCredit === "number" && estimate.currency)
+            ? ` (≈ ${estimate.currency} ${(credits * estimate.pricePerCredit).toFixed(2)})`
+            : "";
+
+        const breakdownHtml = (Array.isArray(estimate.breakdown) ? estimate.breakdown : [])
+            .map(item => `<div style="display:flex;justify-content:space-between;gap:16px;"><span>${item.label}</span><span>${item.credits} cr</span></div>`)
+            .join("");
+
+        return `
+            <div style="font-size:16px;font-weight:700;margin-bottom:6px;">≈ ${credits} credits${moneySuffix}</div>
+            <div style="font-size:13px;opacity:0.8;margin-bottom:12px;">Estimated range: ${estimate.low}–${estimate.high} credits</div>
+            ${breakdownHtml ? `<div style="font-size:13px;display:flex;flex-direction:column;gap:4px;margin-bottom:12px;">${breakdownHtml}</div>` : ""}
+            <div style="font-size:12px;opacity:0.7;">This is an estimate (±10%). Your actual credits are charged from real usage during generation.</div>
+        `;
     }
 
     #handleGenerationContainerCheckboxEvents()

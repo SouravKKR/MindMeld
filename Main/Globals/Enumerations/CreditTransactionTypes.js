@@ -7,4 +7,5 @@ export const creditTransactionTypes =
   ADMIN_ADJUSTMENT: 4,
   SIGNUP_GRANT: 5,
   REFUND: 6,
+  PURCHASE_GRANT: 7,
 }

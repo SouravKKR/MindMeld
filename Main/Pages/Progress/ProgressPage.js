@@ -3,6 +3,8 @@ import GenerationProgressComponent from "./Components/GenerationProgressComponen
 import { taskStatus } from "../../Globals/Enumerations/TaskStatus.js";
 import { taskTypes } from "../../Globals/Enumerations/TaskTypes.js";
 import { enumerationToTitleCase } from "../../Globals/UtilityFunctions/EnumerationToTitleCase.js";
+import OutOfCreditsResumeFlow from "../../Globals/Classes/Credits/OutOfCreditsResumeFlow.js";
+import { formatCredits } from "../../Globals/UtilityFunctions/FormatCredits.js";
 
 const POLL_INTERVAL_MILLIS = 2000;
 const DEFAULT_PROGRESS_ENDPOINT = "/Generate/Progress";
@@ -90,10 +92,13 @@ class ProgressPage extends HTMLElement
 
             this.#getProgressComponent().update(payload);
 
-            if (this.#getProgressComponent().isTerminal())
+            // The !bTerminated guard prevents a second, overlapping poll from
+            // re-firing onTerminated (and a duplicate out-of-credits popup) in
+            // the window before the interval is cleared.
+            if (!this.#bTerminated && this.#getProgressComponent().isTerminal())
             {
                 this.#stopPolling();
-                this.#onTerminated(payload.status);
+                this.#onTerminated(payload);
             }
         }
         catch (error)
@@ -117,13 +122,33 @@ class ProgressPage extends HTMLElement
         }
     }
 
-    #onTerminated(status)
+    #onTerminated(payload)
     {
         this.#bTerminated = true;
 
-        const bSuccess = status === taskStatus.COMPLETED;
+        // For an AI generation, append the per-task credit-spend breakdown so
+        // the user can see where their credits went (regardless of outcome).
+        if (payload && payload.type === taskTypes.PREPARE_FOR_GENERATION)
+        {
+            this.#renderCreditSummary(this.#taskId).catch(summaryError => console.error("[ProgressPage] credit summary error:", summaryError));
+        }
 
         const statusBanner = this.querySelector(".progress-page-status-banner");
+
+        // Out-of-credits stop is checked first via the server-computed flag,
+        // not payload.status — the root task can read COMPLETED even when a
+        // deep child failed on credits. It's recoverable: show the top-up /
+        // resume flow instead of a dead-end "failed" message.
+        if (payload && payload.outOfCredits === true)
+        {
+            statusBanner.textContent = "Generation paused — you ran out of credits. Top up to continue.";
+            statusBanner.classList.add("progress-page-status-banner--error");
+            statusBanner.style.display = "block";
+            OutOfCreditsResumeFlow.present().catch(presentError => console.error("[ProgressPage] out-of-credits flow error:", presentError));
+            return;
+        }
+
+        const bSuccess = payload && payload.status === taskStatus.COMPLETED;
 
         if (bSuccess)
         {
@@ -179,6 +204,122 @@ class ProgressPage extends HTMLElement
         {
             continueButton.textContent = "Back to Activity →";
         }
+
+        // For an AI generation, append the per-task credit-spend breakdown
+        // alongside the historical summary.
+        if (payload && payload.type === taskTypes.PREPARE_FOR_GENERATION)
+        {
+            this.#renderCreditSummary(this.#taskId).catch(summaryError => console.error("[ProgressPage] credit summary error:", summaryError));
+        }
+    }
+
+    /**
+     * Fetches the per-task credit-spend breakdown for this generation and
+     * appends it as a table. No-op when nothing was charged (older runs,
+     * free config) or when the table is already present.
+     * @param {string} mainTaskId
+     */
+    async #renderCreditSummary(mainTaskId)
+    {
+        if (!mainTaskId)
+        {
+            return;
+        }
+
+        const leftColumn = this.querySelector(".progress-page-left");
+        if (!leftColumn || leftColumn.querySelector(".progress-page-credit-summary"))
+        {
+            return;
+        }
+
+        let summary;
+        try
+        {
+            const response = await fetch(`/Activity/Tasks/CreditSummary?taskid=${encodeURIComponent(mainTaskId)}`);
+            if (!response.ok)
+            {
+                return;
+            }
+            summary = await response.json();
+        }
+        catch (fetchError)
+        {
+            return;
+        }
+
+        if (!summary || !Array.isArray(summary.entries) || summary.entries.length === 0)
+        {
+            return;
+        }
+
+        // Guard against a late second call racing in after the await.
+        if (leftColumn.querySelector(".progress-page-credit-summary"))
+        {
+            return;
+        }
+
+        leftColumn.insertAdjacentHTML("beforeend", ProgressPage.#buildCreditSummaryHtml(summary));
+    }
+
+    static #buildCreditSummaryHtml(summary)
+    {
+        const formatTokens = (value) => (typeof value === "number" && value > 0) ? value.toLocaleString() : "—";
+        const formatDuration = (value) => (typeof value === "number" && value > 0) ? `${value}s` : "—";
+
+        const rowsHtml = summary.entries.map((entry) =>
+        {
+            const taskTypeName = Object.keys(taskTypes).find(name => taskTypes[name] === entry.taskType);
+            const label = taskTypeName ? enumerationToTitleCase(taskTypeName) : "Unknown task";
+            return `
+                <tr>
+                    <td>${ProgressPage.#escape(label)}</td>
+                    <td>${ProgressPage.#escape(entry.method || "—")}</td>
+                    <td>${ProgressPage.#escape(formatCredits(entry.credits))}</td>
+                    <td>${formatTokens(entry.inputTokens)}</td>
+                    <td>${formatTokens(entry.outputTokens)}</td>
+                    <td>${formatDuration(entry.durationSeconds)}</td>
+                </tr>
+            `;
+        }).join("");
+
+        return `
+            <style>
+                .progress-page-credit-summary { margin-top: 22px; }
+                .progress-page-credit-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+                .progress-page-credit-table th,
+                .progress-page-credit-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--outline-color-subtle); }
+                .progress-page-credit-table th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--secondary-text-color); font-weight: 600; }
+                .progress-page-credit-table td:nth-child(n+3),
+                .progress-page-credit-table th:nth-child(n+3) { text-align: right; }
+                .progress-page-credit-table .progress-page-credit-total td { font-weight: 700; color: var(--primary-text-color); border-bottom: none; border-top: 2px solid var(--outline-color); }
+            </style>
+            <div class="progress-page-credit-summary">
+                <div class="progress-page-section-title">Credit usage</div>
+                <table class="progress-page-credit-table">
+                    <thead>
+                        <tr>
+                            <th>Task</th>
+                            <th>Billed by</th>
+                            <th>Credits</th>
+                            <th>Input tokens</th>
+                            <th>Output tokens</th>
+                            <th>Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rowsHtml}
+                        <tr class="progress-page-credit-total">
+                            <td>Total</td>
+                            <td>—</td>
+                            <td>${ProgressPage.#escape(formatCredits(summary.totalCredits))}</td>
+                            <td>—</td>
+                            <td>—</td>
+                            <td>—</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        `;
     }
 
     #renderUnavailable(statusCode)

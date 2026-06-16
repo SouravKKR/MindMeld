@@ -410,8 +410,15 @@ class BatchSubmitter:
 
             # Record any per-response token usage the batch surfaced so
             # per-token spend rules apply to batch-served tasks too. Many
-            # batch backends omit it; record_from_response returns None then.
-            usage_metadata = CreditMeter.record_from_response(response)
+            # batch backends omit usage_metadata; in that case the meter falls
+            # back to a chars/4 estimate of this entry's prompt + output text,
+            # so the work is still billed rather than counted as free.
+            usage_metadata = CreditMeter.record_from_response(
+                response,
+                model = self.__model_string,
+                fallback_input_text = entry["request"].get_text_content(),
+                fallback_output_text = text_data,
+            )
 
             outputs = [AutomationContent(AutomationContentTypes.TEXT, text_data)]
             results[key] = AutomationResponse(outputs, usage_metadata)

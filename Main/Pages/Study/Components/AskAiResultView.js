@@ -143,8 +143,61 @@ class AskAiResultView extends HTMLElement
     {
         this.#bDoneReceived = true;
         this.#bodyElement?.classList.remove("ask-ai-pending");
+        // The body is re-rendered on every streamed chunk (innerHTML
+        // replace), which would wipe any KaTeX output mid-stream — so we
+        // render math and wire image error-handling exactly once, now that
+        // the markup has settled.
+        this.#renderLatex();
+        this.#wireImageErrorHandlers();
         // Future hook: this is where AskAiSession will call
         // populateActions(...) once the actions-bar feature ships.
+    }
+
+    /**
+     * Render KaTeX into the streamed body. Mirrors StudyPage.renderLatex —
+     * same delimiters (\( \) inline, \[ \] block) and throwOnError:false so
+     * a malformed expression degrades to its raw text rather than aborting
+     * the whole render. The auto-render plugin exposes renderMathInElement
+     * as a global; guard against it being absent (e.g. unit-test surface).
+     */
+    #renderLatex()
+    {
+        if (!this.#bodyElement || typeof renderMathInElement === "undefined")
+        {
+            return;
+        }
+        renderMathInElement(this.#bodyElement,
+        {
+            delimiters:
+            [
+                { left: "\\(", right: "\\)", display: false },
+                { left: "\\[", right: "\\]", display: true  }
+            ],
+            throwOnError: false
+        });
+    }
+
+    /**
+     * Web images come from model-supplied URLs (Pro / Pro Plus grounding),
+     * so some may 404 or be hotlink-blocked. Drop any image that fails to
+     * load so the learner never sees a broken-image icon. Re-runnable: each
+     * call re-binds against the current set of <img>s in the body (the body
+     * is re-rendered on stream completion and again on block selection).
+     */
+    #wireImageErrorHandlers()
+    {
+        if (!this.#bodyElement)
+        {
+            return;
+        }
+        const imageElements = this.#bodyElement.querySelectorAll("img");
+        for (const imageElement of imageElements)
+        {
+            imageElement.addEventListener("error", () =>
+            {
+                imageElement.remove();
+            });
+        }
     }
 
     /**
@@ -166,7 +219,13 @@ class AskAiResultView extends HTMLElement
      */
     getRenderedBodyHtml()
     {
-        return this.#bodyElement?.innerHTML || "";
+        // Re-sanitise from the raw accumulated markup rather than reading
+        // the live DOM: #renderLatex() mutates the body into KaTeX spans,
+        // and persisting THAT would double-render when the card / material
+        // re-runs renderLatex at view time. Sourcing from the accumulator
+        // keeps the raw \(...\) delimiters and <img> tags intact, matching
+        // how cards and study materials store math.
+        return AskAiStreamRenderer.sanitiseToStructuralHtml(this.#accumulatedMarkup);
     }
 
     /**
@@ -248,6 +307,11 @@ class AskAiResultView extends HTMLElement
                 blockElement.classList.toggle("selected");
             });
         }
+
+        // The body was just re-rendered from raw markup, so re-apply the
+        // math render and image error-handling the completion path set up.
+        this.#renderLatex();
+        this.#wireImageErrorHandlers();
     }
 
     /**

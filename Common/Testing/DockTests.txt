@@ -1,0 +1,141 @@
+Dock Test Catalog (Node)
+========================
+
+Scripts: Common/Testing/Dock/
+Two suites run here:
+
+-----------------------------------------------------------------------------
+SUITE 1 - Utility functions (no server needed)
+-----------------------------------------------------------------------------
+Runner:  Common/Testing/Dock/run_dock_unit_tests.js
+Coverage metric: structural -- catalogued security/model functions with a
+passing test, over the total catalogued below.
+
+Catalogued deterministic functions (coverage denominator):
+   1) Globals/Classes/Security/KeyManagementService.js :: derivePaidDeckPasswordKek
+   2) Globals/Classes/Security/KeyManagementService.js :: computePaidDeckPasswordHash
+   3) Globals/Classes/Security/KeyManagementService.js :: safeEqualPaidDeckPasswordHash
+   4) Globals/Classes/Security/KeyManagementService.js :: generatePaidDeckPasswordSaltBase64
+   5) Globals/Classes/Security/KeyManagementService.js :: isLicenseActive
+   6) Globals/Classes/Security/PaidDeckSyncCrypto.js    :: isEncryptedField
+   7) Globals/Classes/Security/PaidDeckSyncCrypto.js    :: encryptEntityContent
+   8) Globals/Classes/Security/PaidDeckSyncCrypto.js    :: restorePlaintextContent
+   9) Globals/Classes/Security/LicenseClientView.js     :: sanitize
+  10) Globals/Classes/Security/LicenseClientView.js     :: sanitizeMany
+  11) Globals/Classes/Security/PaidDeckEntityTooLargeError.js :: (constructor)
+  12) Globals/Classes/Security/RateLimiter.js           :: consume
+  13) Globals/Model/MaintenanceWindow.js                :: isActiveAt
+  14) Globals/Model/MaintenanceWindow.js                :: isUpcomingWithin
+  15) Globals/Model/MaintenanceWindow.js                :: toJson
+  16) Globals/Model/MaintenanceWindow.js                :: fromJson
+
+Test cases:
+  - PBKDF2 password KEK derivation is deterministic (same password+salt ->
+    identical 32-byte key) and salt-sensitive (different salt -> different key).
+  - password verification hash is deterministic and verifies with
+    safeEqualPaidDeckPasswordHash; a wrong password fails the compare.
+  - safeEqualPaidDeckPasswordHash returns false (never throws) on malformed input.
+  - generatePaidDeckPasswordSaltBase64 returns a fresh 16-byte base64 salt.
+  - isLicenseActive: ACTIVE + no expiry (epoch-zero FOREVER) -> true;
+    ACTIVE + future expiry -> true; ACTIVE + past expiry -> false;
+    non-ACTIVE status -> false.
+  - isEncryptedField recognizes the {__enc:1, ivBase64, ciphertextBase64}
+    envelope and rejects plain strings / nulls / partial objects.
+  - encryptEntityContent encrypts a card's question/answer (each becomes an
+    encrypted envelope) and leaves ids/tags/progress untouched; the source
+    object is not mutated.
+  - restorePlaintextContent overlays the server's authoritative plaintext over
+    an incoming (ciphertext / tampered) entity on push.
+  - LicenseClientView.sanitize strips _id and every SECRET_FIELDS entry
+    (wrapped/server keys, password hash/salt) while keeping public fields, and
+    does not mutate the source; null / non-object passes through.
+  - LicenseClientView.sanitizeMany maps sanitize over an array and returns []
+    for a non-array.
+  - PaidDeckEntityTooLargeError is an Error carrying name / entityId / sizeBytes
+    and a message that names the entity and byte count.
+  - RateLimiter.consume allows up to the configured limit within a window then
+    rejects (allowed=false, remaining clamped at 0, retryAfterSeconds >= 1), and
+    throttles distinct keys independently.
+  - MaintenanceWindow.isActiveAt is inclusive of start, exclusive of end, and
+    false outside or when dates are missing/invalid.
+  - MaintenanceWindow.isUpcomingWithin is true only when start is in the future
+    and within the lead window; false once already started.
+  - MaintenanceWindow.toJson / fromJson round-trip preserves the fields (dates
+    as ISO strings); fromJson(null) -> null.
+
+Notes:
+  - Pure Security classes and the hand-written MaintenanceWindow model are
+    catalogued here. Other Dock model classes (User, Device, PaidDeck, ...)
+    generate a random UUID in their constructor, so their toJson/fromJson are not
+    bit-for-bit deterministic; their field coercion is validated indirectly by
+    the endpoint suite rather than duplicated here.
+
+-----------------------------------------------------------------------------
+SUITE 2 - Endpoints + Auth isolation (server required)
+-----------------------------------------------------------------------------
+Runner:     Common/Testing/Dock/run_newman.js
+Collection: Common/Testing/Dock/MindMeld.postman_collection.json
+Environment: Common/Testing/Dock/MindMeld.postman_environment.json
+Coverage metric: endpoint -- distinct routes exercised over total catalogued.
+
+Folder "Public (must be reachable unauthenticated -- assert no 5xx)":
+  - GET  /                       -> 200 and serves HTML (static SPA shell)
+  - GET  /index.html             -> 200 (static SPA shell)
+  - GET  /LegalDocuments         -> 200 (public legal docs)
+  - GET  /PaidDecks/Library      -> 200 (public library browse)
+  - GET  /PaidDecks/Filters      -> 200
+  - POST /PaidDecks/Search       -> 2xx (public search)
+  - GET  /GetUser (anonymous)    -> 200 with no/empty user OR 401 (must not 5xx)
+  - POST /Auth/RequestOtp        -> reachable pre-auth (400 on empty body)
+  - POST /Auth/VerifyOtp         -> reachable pre-auth (400 on empty body)
+
+Folder "Protected (must reject anonymous = 401/403, never 200/5xx)":
+  EVERY authenticated route is probed WITHOUT a session cookie and must return
+  401 or 403. The full catalogued set lives in run_newman.js PROTECTED_ROUTES
+  (~100 routes) and is kept in lock-step with the server; the groups are:
+  - Account / auth: /UpdateUserAdditionalData, /Auth/Devices(+SignOut/Register),
+    /Auth/Heartbeat, /Legal/Accept
+  - Sync: /Sync, /Sync/Lock, /Sync/Unlock, /Sync/ForceUnlock,
+    GET /Sync/BulkSnapshot, /Sync/Licenses
+  - Generation: /Generate, /Generate/EstimateCost, GET /Generate/Progress,
+    /InformationSource/*, /Templates/*
+  - Paid decks (buyer): /PaidDecks/Purchase/*, /PaidDecks/MyPurchases,
+    /PaidDecks/Purchases/Invoice, /PaidDecks/SetPassword, /UnlockSession,
+    /ChangePassword, /Manifest, /Entities/*, /Copies/*, /ScreenshotAttempt
+  - Activity / analysis / profile: /Activity/Search, /Activity/Tasks/*,
+    /Analysis/QueueDeckAnalysis, /Profile/ClearUserData
+  - AI / mock test / task state: /AskAi/Query/{Basic,Pro,ProPlus},
+    /BrowserLlm/Manifest, /MockTest/EvaluateAttempt, GET /TaskState,
+    /TaskState/Discard
+  - Credits / maintenance / release notes: /Credits/Purchase/*,
+    GET /Maintenance/Status, GET /ReleaseNotes/List
+  - Organization (org admin): /Organization/Mine/List, /Get, /Members/{List,Add,
+    Remove,BulkAdd,BulkRemove}
+  - Admin (ensureAdmin): /Admin/ShadowStats, /Admin/PaidDecks/{List,Upload,Update,
+    Pricing,Bundle,RotateKey,RotateContentKey,BulkUpdate}, /Admin/Stats/Revenue,
+    /Admin/Users/SetRole, /Admin/Decks/BeautifyShortNames, /Admin/AdminEmails(+Add/
+    Remove), /Admin/ReleaseNotes/*, /Admin/Maintenance/*, /Admin/Organizations/*,
+    /Admin/RateLimits/List, /Admin/Audit/List, /Admin/Alerts/*,
+    /Admin/Credits/{Config,Config/Save,Grant/Preview,Grant/Apply}
+
+Folder "Static-only isolation guarantee":
+  - A request to a protected API path with an INVALID sessionId cookie is still
+    rejected (401/403), proving the cookie is validated against the store.
+
+Intentional public exception NOT exercised by the suite:
+  - POST /Webhooks/Razorpay is session-less but HMAC-signed (validates a payment
+    signature, not a cookie) and side-effecting, so the automated suite does not
+    POST to it. It is the one non-static unauthenticated route, documented here.
+
+Notes:
+  - The collection asserts on STATUS CODES and the public/protected boundary,
+    not on business payloads (which need seeded data + credits). This keeps the
+    suite deterministic and side-effect free against a running server.
+  - DB-DEPENDENT 5xx: the public data routes (/LegalDocuments, /PaidDecks/Library,
+    /PaidDecks/Filters, /PaidDecks/Search) and the invalid-cookie session lookups
+    hit MongoDB; without a reachable database they return 500 and those few cases
+    fail. Against a DB-backed server they return 200 / 401 and pass. This is an
+    environment limitation, not an auth-boundary regression -- the anonymous
+    401/403 rejection of every protected route is asserted independently of the DB.
+  - BASE_URL defaults to http://127.0.0.1:3000; override via the environment file
+    or the BASE_URL env var.

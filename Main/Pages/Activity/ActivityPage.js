@@ -1,4 +1,5 @@
 import HeaderComponent from "../../CommonComponents/HeaderComponent.js";
+import PausedTaskBanner from "../../CommonComponents/PausedTaskBanner.js";
 import ActivityEntryComponent from "./Components/ActivityEntryComponent.js";
 import LocalDownloadActivitySource from "./Sources/LocalDownloadActivitySource.js";
 import PaidDeckUploadActivitySource from "./Sources/PaidDeckUploadActivitySource.js";
@@ -52,6 +53,7 @@ class ActivityPage extends HTMLElement
 
         this.innerHTML = `
             <header-component title="Activity"></header-component>
+            <paused-task-banner></paused-task-banner>
             <div class="activity-page-controls">
                 <div class="activity-page-search">
                     <input

@@ -1,0 +1,12 @@
+{
+  "name": "mindmeld-main-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MindMeld browser UI tests (Puppeteer) against the built app at Dock/Static. Isolated here so the repo root stays clean.",
+  "scripts": {
+    "test:ui": "node run_ui_tests.js"
+  },
+  "dependencies": {
+    "puppeteer": "^23.0.0"
+  }
+}

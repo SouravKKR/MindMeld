@@ -1,6 +1,7 @@
 import TaskStateClient from "../Globals/Classes/TaskStateClient.js";
 import CreditNotice from "../Globals/Classes/Credits/CreditNotice.js";
 import DialogBox from "./DialogBox.js";
+import PageNavigator from "../Globals/Classes/PageNavigator.js";
 import { taskTypes } from "../Globals/Enumerations/TaskTypes.js";
 import { enumerationToTitleCase } from "../Globals/UtilityFunctions/EnumerationToTitleCase.js";
 
@@ -146,8 +147,23 @@ class PausedTaskBanner extends HTMLElement
         // Success — the resumed task is now running. Discard the saved state
         // (only an explicit resume/discard clears it, so an unrelated success
         // elsewhere never wipes a still-pending paused task).
+        const responseBody = await response.json().catch(() => ({}));
+        const newTaskId = responseBody && typeof responseBody.taskId === "string" ? responseBody.taskId : null;
+        const resumedTaskType = this.#taskState.taskType;
+
         await TaskStateClient.discard();
         this.remove();
+
+        // A resumed generation returns a fresh task id — open its progress page
+        // so the user lands back on the same live view. Other resumable task
+        // types (deck analysis, mock-test grading) have no progress page, so
+        // they keep the simple confirmation.
+        if (resumedTaskType === taskTypes.PREPARE_FOR_GENERATION && newTaskId)
+        {
+            PageNavigator.open("progress-page", newTaskId);
+            return;
+        }
+
         await DialogBox.alert("Task resumed", "Your task has been resumed and is now running. You can track its progress in Activity.");
     }
 

@@ -76,7 +76,7 @@ class CreateOrganizationDialog
                             <input type="text" class="organization-currency" value="INR" maxlength="8">
                         </label>
                         <label class="admin-panel-add-field">
-                            <span>Creation fee (minor units, 0 = no payment)</span>
+                            <span>Creation fee (minor units — e.g. 100 = 1.00; 0 = no payment)</span>
                             <input type="number" class="organization-amount-minor" value="0" min="0">
                         </label>
                         <label class="admin-panel-add-field">
@@ -140,7 +140,7 @@ class CreateOrganizationDialog
                 }
                 perksTable.innerHTML = `
                     <table class="admin-panel-table">
-                        <thead><tr><th>Deck</th><th>Perk type</th><th>Value</th><th>Duration (days, 0 = forever)</th><th></th></tr></thead>
+                        <thead><tr><th>Deck</th><th>Perk type</th><th>Value (price in minor units, or % for discount)</th><th>Duration (days, 0 = forever)</th><th></th></tr></thead>
                         <tbody>
                             ${perkRows.map((row, rowIndex) => `
                                 <tr data-perk-index="${rowIndex}">

@@ -59,6 +59,44 @@ study-session-bottom-panel .bottom-panel-tier-row
     margin-bottom: 2px;
 }
 
+/* ── Output-language picker row ───────────────────────────────────
+   Sits just under the tier row. The "Combine with English" checkbox
+   is hidden entirely while English is selected so it never clutters
+   the panel. */
+
+study-session-bottom-panel .bottom-panel-language-row
+{
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    margin-bottom: 2px;
+}
+
+study-session-bottom-panel .bottom-panel-language-row language-select
+{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+study-session-bottom-panel .bottom-panel-language-row .language-select-combine-row
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    line-height: 1.3;
+    cursor: pointer;
+    user-select: none;
+    color: var(--primary-text-color);
+    font-weight: 500;
+}
+
+study-session-bottom-panel .bottom-panel-language-row .language-select-combine-row[hidden]
+{
+    display: none;
+}
+
 /* ── Grounding controls ───────────────────────────────────────────
    Mirrors the TextSelectionContextMenu's grounding block — same
    persistence key per deck, same UX, just styled to sit in the

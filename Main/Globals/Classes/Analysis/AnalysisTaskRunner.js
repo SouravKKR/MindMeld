@@ -72,6 +72,30 @@ class AnalysisTaskRunner
             await AnalysisTaskRunner.clearPreviousAnalysis(deck);
         }
 
+        // Push local mutations UP before queuing the task. Study
+        // progress (Card.attempt → ENTITY_CHANGED) only schedules a
+        // 3-second debounced sync, so a user who studies and then
+        // immediately runs analysis would otherwise queue a task that
+        // reads stale, progress-less cards from Mongo — the server-side
+        // scorer then finds zero eligible cards and writes no topics
+        // ("Analysis finished, but found no topics" despite studying).
+        // Mirrors the mock-test re-evaluation flow, which force-syncs
+        // before its POST for the same reason. Gated on bTriggerSync so
+        // the on-login dispatcher (which batches its own sync per cycle)
+        // is unaffected. Best-effort: a failed push falls through to the
+        // queue request rather than blocking analysis entirely.
+        if (bTriggerSync)
+        {
+            try
+            {
+                await TaskProgressTracker.triggerSync();
+            }
+            catch (preQueueSyncError)
+            {
+                console.warn("[AnalysisTaskRunner] Pre-queue sync push failed; queuing analysis against possibly-stale server state:", preQueueSyncError);
+            }
+        }
+
         const queueResult = await AnalysisTaskRunner.#postQueueRequest(deck, { force, skipAnalysis, regenerateTopics, autoGenerateCuratedStudyOverride });
         const taskId             = queueResult.taskId;
         const bAlreadyRunning    = queueResult.bAlreadyRunning === true;

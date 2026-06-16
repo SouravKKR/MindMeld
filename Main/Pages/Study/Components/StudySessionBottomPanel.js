@@ -1,6 +1,7 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import StudySessionEvents from "../Events/StudySessionEvents.js";
 import LlmTierSelect from "../../../CommonComponents/LlmTierSelect.js";
+import LanguageSelect from "../../../CommonComponents/LanguageSelect.js";
 import { modelTiers } from "../../../Globals/Enumerations/ModelTiers.js";
 import { askAiPromptModes } from "../../../Globals/Enumerations/AskAiPromptModes.js";
 import ModelTierMetadata from "../../../Globals/Constants/ModelTierMetadata.js";
@@ -78,6 +79,7 @@ class StudySessionBottomPanel extends HTMLElement
     #studyMaterialChangedHandler = null;
     #boundTierSelectedHandler    = null;
     #boundSourcesChangedHandler  = null;
+    #boundLanguageSelectedHandler = null;
     #imageAttachmentManager      = null;
 
     static create(mode, initialEntity = null)
@@ -113,6 +115,9 @@ class StudySessionBottomPanel extends HTMLElement
             <div class="bottom-panel-body">
                 <div class="bottom-panel-tier-row">
                     <llm-tier-select></llm-tier-select>
+                </div>
+                <div class="bottom-panel-language-row">
+                    <language-select></language-select>
                 </div>
                 <div class="bottom-panel-grounding-controls" data-role="grounding-controls" hidden>
                     <label class="bottom-panel-grounding-checkbox-row">
@@ -151,6 +156,8 @@ class StudySessionBottomPanel extends HTMLElement
         this.#bindSessionEventListeners();
         this.#bindGroundingEvents();
         this.#hydrateGroundingFromDeck();
+        this.#bindLanguageEvents();
+        this.#hydrateLanguageFromDeck();
         this.#mountImageAttachmentManager();
         this.#applyTierAwareVisibility();
         this.#refreshMarkReviewToggleLabel();
@@ -179,6 +186,12 @@ class StudySessionBottomPanel extends HTMLElement
             const sourceSelectorElement = this.querySelector("information-source-selector");
             sourceSelectorElement?.removeEventListener(AutomaticGenerationEvents.ON_SOURCES_CHANGED, this.#boundSourcesChangedHandler);
             this.#boundSourcesChangedHandler = null;
+        }
+        if (this.#boundLanguageSelectedHandler)
+        {
+            const languageSelect = this.querySelector("language-select");
+            languageSelect?.removeEventListener("language-selected", this.#boundLanguageSelectedHandler);
+            this.#boundLanguageSelectedHandler = null;
         }
         if (this.#imageAttachmentManager)
         {
@@ -294,6 +307,46 @@ class StudySessionBottomPanel extends HTMLElement
             await this.#persistPartialPreferences({ informationSources: serialisedList });
         };
         sourceSelectorElement.addEventListener(AutomaticGenerationEvents.ON_SOURCES_CHANGED, this.#boundSourcesChangedHandler);
+    }
+
+    /**
+     * Persist the chosen output language + "Combine with English" flag
+     * onto the deck's ask-AI prefs (same record + key as the grounding
+     * controls) so the choice is per-deck and stays in sync with the
+     * text-selection menu.
+     */
+    #bindLanguageEvents()
+    {
+        const languageSelect = this.querySelector("language-select");
+        if (!languageSelect)
+        {
+            return;
+        }
+        this.#boundLanguageSelectedHandler = async (event) =>
+        {
+            await this.#persistPartialPreferences(
+            {
+                selectedLanguage:   event.detail?.selectedLanguage   ?? "ENGLISH",
+                combineWithEnglish: event.detail?.combineWithEnglish ?? false,
+            });
+        };
+        languageSelect.addEventListener("language-selected", this.#boundLanguageSelectedHandler);
+    }
+
+    /**
+     * Hydrate the language-select from the deck's persisted ask-AI prefs
+     * (English by default).
+     */
+    #hydrateLanguageFromDeck()
+    {
+        const languageSelect = this.querySelector("language-select");
+        if (!languageSelect)
+        {
+            return;
+        }
+        const preferences = this.#readAskAiPreferences();
+        languageSelect.setSelectedLanguageKey(preferences.selectedLanguage);
+        languageSelect.setCombineWithEnglish(preferences.combineWithEnglish);
     }
 
     /**
@@ -445,6 +498,7 @@ class StudySessionBottomPanel extends HTMLElement
         const preferences             = this.#readAskAiPreferences();
         const sourceSelectorElement   = this.querySelector("information-source-selector");
         const liveSources             = sourceSelectorElement?.getSources?.() ?? [];
+        const languageSelect          = this.querySelector("language-select");
 
         const askAiSession = new AskAiSession
         ({
@@ -456,6 +510,8 @@ class StudySessionBottomPanel extends HTMLElement
             attachedImages:        this.#imageAttachmentManager?.getAttachedImages() ?? [],
             informationSources:    liveSources,
             useInformationSources: preferences.documentGroundingEnabled,
+            selectedLanguage:      languageSelect?.getSelectedLanguageKey() ?? "ENGLISH",
+            combineWithEnglish:    languageSelect?.getCombineWithEnglish() ?? false,
         });
 
         await askAiSession.run();
@@ -501,6 +557,12 @@ class StudySessionBottomPanel extends HTMLElement
             informationSources:       Array.isArray(persisted.informationSources)
                 ? persisted.informationSources
                 : [],
+            selectedLanguage:         typeof persisted.selectedLanguage === "string"
+                ? persisted.selectedLanguage
+                : "ENGLISH",
+            // Default true so a non-English language is combined with
+            // English unless the user explicitly unticks (stored false).
+            combineWithEnglish:       persisted.combineWithEnglish !== false,
         };
     }
 
@@ -516,6 +578,8 @@ class StudySessionBottomPanel extends HTMLElement
             documentGroundingEnabled: current.documentGroundingEnabled,
             includeImagesEnabled:     current.includeImagesEnabled,
             informationSources:       current.informationSources,
+            selectedLanguage:         current.selectedLanguage,
+            combineWithEnglish:       current.combineWithEnglish,
             ...partialUpdate,
         };
         this.#studyDeck.setAdditionalDataField(StudySessionBottomPanel.#ADDITIONAL_DATA_KEY, merged);

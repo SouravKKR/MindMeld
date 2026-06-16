@@ -163,7 +163,7 @@ class BulkApplyDialog
 
                     <label class="bulk-apply-field">
                         <input type="checkbox" class="bulk-apply-field-toggle" data-field="basePriceMinor">
-                        <span class="bulk-apply-field-label">Base price (minor)</span>
+                        <span class="bulk-apply-field-label">Base price (minor units — e.g. 100 = 1.00)</span>
                         <input type="number" class="bulk-apply-field-input" data-field="basePriceMinor" min="0">
                     </label>
 

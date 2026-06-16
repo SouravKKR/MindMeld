@@ -8,6 +8,7 @@
 #   DURATION_SECONDS              ← wall-clock since the task started
 
 import asyncio
+import os
 import time
 
 from Globals.Enumerations.CreditDeductionTimings import CreditDeductionTimings
@@ -38,7 +39,26 @@ class TaskCreditCharger:
         }
 
     def __base_metadata(self) -> dict:
-        return {"taskId": self.__task_id, "taskType": self.__task_type}
+        # mainTaskId ties this child charge back to the generation it belongs
+        # to, so the Activity page can show a per-task credit-spend breakdown
+        # for the whole run. Absent for top-level / standalone tasks.
+        metadata = {"taskId": self.__task_id, "taskType": self.__task_type}
+        main_task_id = os.getenv("MAIN_TASK_ID")
+        if main_task_id:
+            metadata["mainTaskId"] = main_task_id
+        return metadata
+
+    def __usage_metadata(self, metrics: dict) -> dict:
+        # The raw (un-normalized) usage that drove this charge, recorded on the
+        # transaction so the user can see where their credits went: actual
+        # tokens consumed and wall-clock seconds. Normalized billing tokens are
+        # an internal detail and are intentionally not surfaced here.
+        raw_tokens = CreditMeter.raw_snapshot()
+        return {
+            "inputTokens": int(raw_tokens.get("INPUT_TOKENS", 0)),
+            "outputTokens": int(raw_tokens.get("OUTPUT_TOKENS", 0)),
+            "durationSeconds": round(float(metrics.get("DURATION_SECONDS", 0.0)), 2),
+        }
 
     async def charge_on_start(self) -> bool:
         """
@@ -99,13 +119,15 @@ class TaskCreditCharger:
         amount already charged this run. Used by the interval loop and by the
         final settle of an AT_INTERVALS rule.
         """
-        cumulative_cost = self.__rule.evaluate(self.__build_metrics())
+        metrics = self.__build_metrics()
+        cumulative_cost = self.__rule.evaluate(metrics)
         delta = cumulative_cost - self.__charged_amount
         if delta <= 0:
             return
 
         metadata = self.__base_metadata()
         metadata["phase"] = reference_suffix
+        metadata["usage"] = self.__usage_metadata(metrics)
         result = await CreditLedger.charge(
             self.__user_id,
             delta,
@@ -119,9 +141,11 @@ class TaskCreditCharger:
             self.__charged_amount += result.get("amount", 0)
 
     async def __charge_full(self, reference_suffix: str) -> None:
-        amount = self.__rule.evaluate(self.__build_metrics())
+        metrics = self.__build_metrics()
+        amount = self.__rule.evaluate(metrics)
         metadata = self.__base_metadata()
         metadata["phase"] = reference_suffix
+        metadata["usage"] = self.__usage_metadata(metrics)
         result = await CreditLedger.charge(
             self.__user_id,
             amount,
@@ -139,6 +163,23 @@ class TaskCreditCharger:
         gracefully (so no in-flight charge is interrupted), then applies the
         completion charge appropriate to the rule's timing.
         """
+        # ── TEMP DEBUG: surface exactly what the meter captured for this task.
+        # Remove once batch token usage is confirmed to be landing in the meter.
+        debug_metrics = self.__build_metrics()
+        raw_tokens = CreditMeter.raw_snapshot()
+        try:
+            debug_cost = self.__rule.evaluate(debug_metrics)
+        except Exception as evaluate_error:
+            debug_cost = f"<evaluate failed: {evaluate_error}>"
+        print(
+            f"[Credits][DEBUG] settle task={self.__task_id} type={self.__task_type} "
+            f"failed={b_failed} timing={self.__rule.get_deduction_timing()} "
+            f"raw_in={raw_tokens['INPUT_TOKENS']} raw_out={raw_tokens['OUTPUT_TOKENS']} "
+            f"norm_in={debug_metrics['INPUT_TOKENS']:.0f} norm_out={debug_metrics['OUTPUT_TOKENS']:.0f} "
+            f"duration={debug_metrics['DURATION_SECONDS']:.1f}s "
+            f"=> evaluated cost={debug_cost} credit(s)"
+        )
+
         if self.__interval_task is not None:
             if self.__stop_event is not None:
                 self.__stop_event.set()

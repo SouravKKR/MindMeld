@@ -1,13 +1,16 @@
 import PageNavigator from '../../Globals/Classes/PageNavigator.js';
+import AuthenticationEvents from '../../Globals/Events/AuthenticationEvents.js';
 import { settingsMenus } from '../../Globals/Enumerations/SettingsMenus.js';
 import { profileSettingKeys } from '../../Globals/Enumerations/ProfileSettingKeys.js';
 import { enumerationToTitleCase } from '../../Globals/UtilityFunctions/EnumerationToTitleCase.js';
+import { formatCredits } from '../../Globals/UtilityFunctions/FormatCredits.js';
 import AllSettings from '../../Globals/Classes/Settings/AllSettings.js';
 import SettingFlags from '../../Globals/Constants/SettingFlags.js';
 import DialogBox from '../../CommonComponents/DialogBox.js';
 import SyncManager from '../../Globals/Classes/SyncManager.js';
 import LlmTierSelect from '../../CommonComponents/LlmTierSelect.js';
 import AppearanceSettingsPanel from './Components/AppearanceSettingsPanel.js';
+import CreditPurchaseFlow from '../../Globals/Classes/Credits/CreditPurchaseFlow.js';
 
 class SettingsPage extends HTMLElement
 {
@@ -26,12 +29,31 @@ class SettingsPage extends HTMLElement
 
     async #loadAndRender()
     {
-        const user = window["user"];
-        if (user)
+        // Paint immediately from the cached user, then pull a fresh copy
+        // from the server. Server-owned values (the credit balance above
+        // all) change outside this client — generation, AskAI and grading
+        // charges land directly in Mongo — so the boot-time snapshot in
+        // window["user"] goes stale as soon as anything is charged.
+        const cachedUser = window["user"];
+        if (cachedUser)
         {
-            this.#allSettings.loadFromUser(user);
+            this.#allSettings.loadFromUser(cachedUser);
         }
         this.#renderContent();
+
+        const freshUser = await AuthenticationEvents.refreshUserFromServer();
+        if (freshUser)
+        {
+            this.#allSettings.loadFromUser(freshUser);
+
+            // Only row-based tabs display user-derived values. The Model
+            // and Appearance tabs own live controls (tier select, color
+            // pickers) that a late re-render would tear down mid-use.
+            if (this.#activeTab !== settingsMenus.MODEL && this.#activeTab !== settingsMenus.APPEARANCE)
+            {
+                this.#renderContent();
+            }
+        }
     }
 
     #settingLabel(key)
@@ -88,17 +110,24 @@ class SettingsPage extends HTMLElement
             const rawValue = setting.getValue() ?? setting.getDefaultValue();
             const displayValue = rawValue instanceof Date
                 ? rawValue.toLocaleDateString()
-                : (rawValue ?? '—');
+                : isCredits
+                    ? formatCredits(rawValue)
+                    : (rawValue ?? '—');
 
             const ctaLabel = setting.getAdditionalData()?.callToActionLabel ?? 'Action';
             const ctaHtml = hasCallToAction
                 ? `<button class="settings-cta-button" data-setting-key="${setting.getKey()}">${ctaLabel}</button>`
                 : '';
 
+            const refreshHtml = isCredits
+                ? `<button class="settings-refresh-button" type="button" title="Fetch the latest values from the server">&#x21bb; Refresh</button>`
+                : '';
+
             return `
                 <div class="settings-row ${isCredits ? 'credits-row' : ''}">
                     <span class="settings-row-label">${label}</span>
                     <span class="settings-row-value">${displayValue}</span>
+                    ${refreshHtml}
                     ${ctaHtml}
                 </div>
             `;
@@ -126,6 +155,50 @@ class SettingsPage extends HTMLElement
         {
             clearServerDataButton.addEventListener('click', () => this.#handleClearServerDataClick());
         }
+
+        const refreshButton = this.querySelector('.settings-refresh-button');
+        if(refreshButton)
+        {
+            refreshButton.addEventListener('click', () => this.#handleRefreshClick(refreshButton));
+        }
+
+        for (const callToActionButton of this.querySelectorAll('.settings-cta-button'))
+        {
+            if (parseInt(callToActionButton.dataset.settingKey, 10) === profileSettingKeys.CREDITS)
+            {
+                callToActionButton.addEventListener('click', () => this.#handleBuyCreditsClick());
+            }
+        }
+    }
+
+    async #handleBuyCreditsClick()
+    {
+        const purchased = await CreditPurchaseFlow.run();
+        if (purchased)
+        {
+            // The flow already refreshed window["user"]; repaint the rows so
+            // the credits row shows the new balance immediately.
+            await this.#loadAndRender();
+        }
+    }
+
+    async #handleRefreshClick(refreshButton)
+    {
+        refreshButton.disabled = true;
+        refreshButton.textContent = "Refreshing…";
+
+        const freshUser = await AuthenticationEvents.refreshUserFromServer();
+
+        if (!freshUser)
+        {
+            refreshButton.disabled = false;
+            refreshButton.innerHTML = "&#x21bb; Refresh";
+            await DialogBox.alert("Refresh Failed", "Could not reach the server. The values shown may be out of date.");
+            return;
+        }
+
+        this.#allSettings.loadFromUser(freshUser);
+        this.#renderContent();
     }
 
     #renderAppearanceTabContent()

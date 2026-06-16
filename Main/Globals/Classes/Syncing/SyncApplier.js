@@ -1094,13 +1094,22 @@ class SyncApplier
                 return;
             }
 
-            existing.setContent(studyMaterialData.content);
+            // Replace the material wholesale rather than patching #content
+            // in place. The old setContent() path updated ONLY the content
+            // field and left additionalData (the curated lifecycle fields —
+            // batchReviewState / sessionOutcome / generatedForAnalysisAt),
+            // detailLevel and syllabusPosition stale, so server-driven batch
+            // transitions (LIVE → SUPERSEDED / ARCHIVED from an auto-replace
+            // or a regen on another device) never landed on the client. Worse,
+            // setContent() calls lifecycle.touch(), bumping local lastModified
+            // PAST the server's — so the stale LIVE state could be pushed back
+            // up on the next sync and resurrect a batch the server had retired.
+            // Mirrors #applyCardChange / #applyMockTestChange.
+            targetDeck.removeStudyMaterial(existing);
         }
-        else
-        {
-            const material = StudyMaterial.fromJson(studyMaterialData);
-            targetDeck.addStudyMaterial(material);
-        }
+
+        const material = StudyMaterial.fromJson(studyMaterialData);
+        targetDeck.addStudyMaterial(material);
 
         dirtyDeckIds.add(targetDeck.getId());
     }

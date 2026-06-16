@@ -4,6 +4,7 @@ class DatabaseConstants
     static USERS_COLLECTION = 'users';
     static PURCHASES_COLLECTION = 'purchases';
     static PENDING_ORDERS_COLLECTION = 'pendingOrders';
+    static PENDING_CREDIT_ORDERS_COLLECTION = 'pendingCreditOrders';
     static INFORMATION_SOURCES_COLLECTION = 'informationSources';
     static TEXT_EMBEDDINGS_COLLECTION = 'textEmbeddings';
     static DECKS_COLLECTION = 'decks';
@@ -47,6 +48,7 @@ class DatabaseConstants
     static CREDIT_TRANSACTIONS_COLLECTION = 'creditTransactions';
     static TASK_STATES_COLLECTION = 'taskStates';
     static TASK_STATES_TTL_DAYS = 7;
+    static MAINTENANCE_WINDOWS_COLLECTION = 'maintenanceWindows';
 }
 
 export default DatabaseConstants;

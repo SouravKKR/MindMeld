@@ -18,10 +18,25 @@ class DatabaseConnector
 
     static async #connect()
     {
-        DatabaseConnector.#mongoClient = new MongoClient(App.getDatabaseUrl());
-
         try
         {
+            const databaseUrl = App.getDatabaseUrl();
+
+            // Validate before constructing. `new MongoClient(undefined)` throws
+            // synchronously ("Cannot read properties of undefined (reading
+            // 'startsWith')") — keeping it inside the try means a missing or
+            // blank MONGODB_URL degrades to a handled "not connected" (callers
+            // get null) instead of an uncaught throw that 500s every request.
+            if (typeof databaseUrl !== "string" || databaseUrl.trim() === "")
+            {
+                console.log("MONGODB_URL is not configured; cannot connect to MongoDB");
+                DatabaseConnector.#bConnected = false;
+                DatabaseConnector.#database = null;
+                return false;
+            }
+
+            DatabaseConnector.#mongoClient = new MongoClient(databaseUrl);
+
             await DatabaseConnector.#mongoClient.connect();
 
             DatabaseConnector.#database = await DatabaseConnector.#mongoClient.db(App.getDatabaseName());

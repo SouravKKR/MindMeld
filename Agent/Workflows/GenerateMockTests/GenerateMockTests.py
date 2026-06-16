@@ -101,6 +101,44 @@ class GenerateMockTests(Workflow):
 
         return floors
 
+    def __allocate_types_globally(self, type_values, type_keys, topic_paths, topic_counts):
+        # Build a per-topic per-type question breakdown that honours the
+        # question-type weightage ACROSS THE WHOLE POOL. The type split is
+        # computed once against the grand total (so every weighted type earns
+        # its proportional share), then each type's quota is spread across the
+        # topics in proportion to each topic's own question count.
+        #
+        # Doing this globally — rather than letting each worker split types for
+        # its own topics in isolation — is what prevents the later question
+        # types from being starved: when individual topics (or a single
+        # worker's slice) are smaller than the number of types, a local split
+        # can only ever cover the first few types, and the same bias repeats
+        # everywhere, leaving the pool dominated by the first types.
+        #
+        # Column sums (per type) match the weighted global allocation; row sums
+        # (per topic) stay close to each topic's intended share; the grand
+        # total is preserved exactly.
+        result = {path: {} for path in topic_paths}
+
+        total = sum(topic_counts)
+        if total == 0:
+            return result
+
+        global_type_counts = self.__largest_remainder_allocate(type_values, total)
+        topic_weights      = [float(count) for count in topic_counts]
+
+        for type_index, type_key in enumerate(type_keys):
+            type_total = global_type_counts[type_index]
+            if type_total == 0:
+                continue
+
+            per_topic_counts = self.__largest_remainder_allocate(topic_weights, type_total)
+            for topic_index, topic_type_count in enumerate(per_topic_counts):
+                if topic_type_count > 0:
+                    result[topic_paths[topic_index]][type_key] = topic_type_count
+
+        return result
+
     def __blueprint_validator(self, response: AutomationResponse) -> bool:
         try:
             text   = response.get_output().get_data()
@@ -769,6 +807,21 @@ class GenerateMockTests(Workflow):
 
         topic_question_count_by_path = dict(zip(topic_paths_in_order, topic_question_counts))
 
+        # Pre-compute a GLOBAL per-topic per-type question breakdown from the
+        # blueprint's type weightage so the per-type distribution is honoured
+        # across the entire pool. Workers consume their slice of this map
+        # instead of splitting types locally (which starves later types when a
+        # worker's topics are small). See __allocate_types_globally.
+        blueprint_format        = blueprint.get("format", {}) or {}
+        type_keys_in_order      = list(blueprint_format.keys())
+        type_values_in_order    = [float(blueprint_format[type_key]) for type_key in type_keys_in_order]
+        topic_type_count_by_path = self.__allocate_types_globally(
+            type_values_in_order,
+            type_keys_in_order,
+            topic_paths_in_order,
+            topic_question_counts,
+        )
+
         # ── 5b. Persist Blueprint.json with the FINAL totals + recursive flags ─
         # MoveToDatabase reads this to know how many tests to assemble per deck
         # and whether to bucket questions across the deck subtree.
@@ -808,11 +861,14 @@ class GenerateMockTests(Workflow):
             if group_num_questions == 0:
                 continue
 
+            group_topic_type_counts = {path: topic_type_count_by_path.get(path, {}) for path in group_topic_paths}
+
             worker_payload = {
                 "paths": group_topic_paths,
                 "totalWeight": sum(e["weight"] for e in group),
                 "numQuestions": group_num_questions,
                 "topicQuestionCounts": group_topic_counts,
+                "topicTypeCounts": group_topic_type_counts,
                 "examName": self.__exam_name,
                 "subjectName": self.__subject_name,
                 "mockTestGenerationSettings": self.__payload,

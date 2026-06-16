@@ -1,6 +1,7 @@
 import ContextMenu from "../../../CommonComponents/ContextMenu.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
+import MockTestStartDialog from "../../Study/Components/MockTestStartDialog.js";
 
 class MockTestOptionsContextMenu extends ContextMenu
 {
@@ -19,12 +20,21 @@ class MockTestOptionsContextMenu extends ContextMenu
     #handleEvents()
     {
         const editButton           = this.querySelector(".edit-button");
+        const previewButton        = this.querySelector(".preview-button");
         const clearAttemptsButton  = this.querySelector(".clear-attempts-button");
         const deleteButton         = this.querySelector(".delete-button");
 
         editButton.addEventListener("click", () =>
         {
             PageNavigator.open("mock-test-editor-page", this.#mockTest, this.#mockTest.getDeck());
+        });
+
+        previewButton.addEventListener("click", () =>
+        {
+            // Reuses the editor's preview flow: the start dialog opens in
+            // preview mode, so finishing the run exits without persisting an
+            // attempt. Question-to-question navigation comes from the runner.
+            MockTestStartDialog.show(this.#mockTest, null, true);
         });
 
         clearAttemptsButton.addEventListener("click", async () =>
@@ -76,6 +86,7 @@ class MockTestOptionsContextMenu extends ContextMenu
         this.innerHTML =
         `
             <button class="edit-button">Edit</button>
+            <button class="preview-button">Preview</button>
             <button class="clear-attempts-button">Clear Attempts</button>
             <button class="delete-button">Delete</button>
         `;

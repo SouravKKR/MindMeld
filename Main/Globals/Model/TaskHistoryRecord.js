@@ -110,7 +110,7 @@ class TaskHistoryRecord
 
     setStartDate(value)
     {
-        if (value !== null)
+        if (value !== null && value !== undefined)
         {
             value = value instanceof Date ? value : new Date(value);
             if (isNaN(value.getTime()))
@@ -132,7 +132,7 @@ class TaskHistoryRecord
 
     setCompletedAt(value)
     {
-        if (value !== null)
+        if (value !== null && value !== undefined)
         {
             value = value instanceof Date ? value : new Date(value);
             if (isNaN(value.getTime()))

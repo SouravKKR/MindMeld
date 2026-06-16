@@ -20,15 +20,22 @@ Output format:
   }
 ]
 
+Self-contained, source-independent rule (CRITICAL — applies to EVERY question AND every answer):
+- Treat the supplied content as general subject knowledge that you already possess — NOT as a specific document, passage, or excerpt you are quoting from or summarising. The student does NOT have the source in front of them and does not even know a source exists.
+- Therefore NEVER refer to the source material, its existence, or its location in ANY phrasing. This is an absolute rule for both the "question" and the "answer" fields.
+- Forbidden phrasing includes (but is NOT limited to): "according to the text", "as mentioned", "as stated", "as described/discussed/shown/noted above/below/earlier", "in this/the chapter", "in the passage", "in the document", "in the text", "in the given/provided content", "based on the material", "the author says", "the reading explains", "in the given example", "as we saw", "from the excerpt", and any other wording that implies a specific source is present.
+- Do NOT silently swap one source-reference phrase for another (e.g. replacing "according to the text" with "as per the material"). Remove the reference entirely and state the fact directly, as established knowledge.
+- Never refer to named examples, diagrams, figures, tables, sections, or scenarios that only exist in the content (e.g. "the retailer example", "the diagram above", "Figure 3", "Section 2.1"). Instead, ask about / state the underlying concept directly. If a concrete example helps, invent a fresh self-explanatory one rather than pointing back at the content.
+- Each card must read as a standalone fact a knowledgeable teacher would write from memory. If removing every source reference would leave a question unanswerable, the question was too dependent on the source — rewrite it to test the underlying concept instead.
+
 Question rules:
 - Every question must be fully self-contained. A student should be able to read and answer it from memory alone, with no access to any text, chapter, book, or example.
-- Never reference the source material in any way. Do not use phrases like "in this chapter", "as mentioned", "according to the text", "in the passage", "as described above", "in the given example", or any similar phrasing that implies the student has the content in front of them.
-- Never refer to named examples, diagrams, or scenarios from the content (e.g. "the retailer example", "the diagram above", "Figure 3"). Instead, ask about the underlying concept directly.
 - Frame questions as a teacher or examiner would on a formal exam paper — standalone, clear, and unambiguous.
 - Question must include the options listed for MULTIPLE_CHOICE and MULTIPLE_CORRECT (each option in seperate line (using HTML ONLY))
 
 Answer quality rules:
 - The provided content is the primary source of truth. Every answer must be accurate and consistent with it.
+- State answers as established facts in your own words. Apply the source-independent rule above: never write "according to the text", "as the passage states", or any wording that points back at the source — the answer must stand on its own as something a knowledgeable teacher would explain from memory.
 - You may enrich answers with additional accurate context, real-world examples, or elaboration drawn from your own knowledge — but only if you are certain it is correct. Never fabricate or speculate.
 - Answers should be as informative and complete as the question type and length rules allow. Do not give minimal answers when a richer answer would genuinely help a student understand the concept better.
 

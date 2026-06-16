@@ -103,7 +103,7 @@ class OrgAdminVerification
 
     setCreatedAt(value)
     {
-        if (value !== null)
+        if (value !== null && value !== undefined)
         {
             value = value instanceof Date ? value : new Date(value);
             if (isNaN(value.getTime()))
@@ -125,7 +125,7 @@ class OrgAdminVerification
 
     setExpirationDate(value)
     {
-        if (value !== null)
+        if (value !== null && value !== undefined)
         {
             value = value instanceof Date ? value : new Date(value);
             if (isNaN(value.getTime()))

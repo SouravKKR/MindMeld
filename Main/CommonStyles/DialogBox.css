@@ -63,7 +63,11 @@ dialog-box .button-section
     padding: 10px;
 }
 
-dialog-box .message-section input
+/* Scoped to text-entry inputs only. Checkboxes / radios inside a
+   message section (e.g. the tutorial cleanup dialog) must keep their
+   native box sizing — the block + 80% width below would otherwise blow
+   a 16x16 checkbox up into a full-width bar and break its flex row. */
+dialog-box .message-section input:not([type="checkbox"]):not([type="radio"])
 {
     display: block;
     width: 80%;

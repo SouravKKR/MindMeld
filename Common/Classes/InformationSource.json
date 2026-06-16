@@ -47,6 +47,17 @@
         {
             "datatype": "enum:OcrModes",
             "defaultValue": 1
+        },
+        "fileSizeBytes":
+        {
+            "datatype": "int",
+            "min": 0,
+            "defaultValue": 0
+        },
+        "retentionMode":
+        {
+            "datatype": "enum:ContentRetentionModes",
+            "defaultValue": 1
         }
     }
 }

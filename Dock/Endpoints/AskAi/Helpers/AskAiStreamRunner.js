@@ -6,6 +6,7 @@ const Logger = require("../../../Globals/Classes/Logger");
 const { getPythonExecutablePathFromVenv } = require("../../../Globals/UtilityFunctions.js/GetPythonExecutablePathFromVenv");
 const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
 const { creditTransactionTypes } = require("../../../Globals/Enumerations/CreditTransactionTypes");
+const { askAiLanguages } = require("../../../Globals/Enumerations/AskAiLanguages");
 const CreditPreflight = require("../../../Globals/Classes/Credits/CreditPreflight");
 const CreditLedger = require("../../../Globals/Classes/Credits/CreditLedger");
 const CreditConfigurationStore = require("../../../Globals/Classes/Credits/CreditConfigurationStore");
@@ -94,11 +95,16 @@ class AskAiStreamRunner
         const pythonInterpreterPath = getPythonExecutablePathFromVenv(path.join(agentServicePath, ".venv"));
         const workerScriptPath = path.join(agentServicePath, "Workflows", "AskAi", "StreamAskAiResponse.py");
 
+        // Forward our own run mode so the worker loads the matching environment
+        // file (EnvironmentLoader picks .env on --debug, .production.env without
+        // it). Without this the subprocess would always look like production.
+        const runModeArguments = process.argv.includes("--debug") ? ["--debug"] : [];
+
         // The worker reads PYTHONPATH-relative imports (Globals.*, Workflows.*) — it MUST
         // be spawned with cwd at the Agent root so its sys.path picks them up.
         const childProcess = spawn(
             pythonInterpreterPath,
-            [workerScriptPath],
+            [workerScriptPath, ...runModeArguments],
             {
                 cwd: agentServicePath,
                 stdio: ["pipe", "pipe", "pipe"],
@@ -335,6 +341,25 @@ class AskAiStreamRunner
         if (informationSources.length > AskAiStreamRunner.#MAX_INFORMATION_SOURCES)
         {
             return `Too many information sources (max ${AskAiStreamRunner.#MAX_INFORMATION_SOURCES}).`;
+        }
+
+        // Output language is optional — absent means English (the no-op
+        // default). When present it must be a known enum key so an
+        // arbitrary string can't be threaded into the worker's prompt.
+        if (requestBody.selectedLanguage !== undefined && requestBody.selectedLanguage !== null)
+        {
+            if (typeof requestBody.selectedLanguage !== "string"
+                || !Object.prototype.hasOwnProperty.call(askAiLanguages, requestBody.selectedLanguage))
+            {
+                return "selectedLanguage must be one of the supported language keys.";
+            }
+        }
+
+        // combineWithEnglish is optional and only meaningful for a
+        // non-English language; when present it must be a boolean.
+        if (requestBody.combineWithEnglish !== undefined && typeof requestBody.combineWithEnglish !== "boolean")
+        {
+            return "combineWithEnglish must be a boolean.";
         }
 
         return null;

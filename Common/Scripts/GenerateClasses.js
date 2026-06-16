@@ -14,6 +14,16 @@ const BASE_MEMBER_KEYS = new Set(['defaultValue', 'datatype', 'access', 'constan
 const NUMERIC_CONSTRAINT_KEYS = new Set(['min', 'max']);
 const STRING_CONSTRAINT_KEYS = new Set(['minLength', 'maxLength', 'pattern', 'allowedValues', 'trim']);
 const ARRAY_CONSTRAINT_KEYS = new Set(['minItems', 'maxItems']);
+const DATE_CONSTRAINT_KEYS = new Set(['nullFallback']);
+
+// `nullFallback` decides what a date member coerces to when set to null /
+// undefined / an unparseable value. "now" is the historical default;
+// "forever" coerces to the epoch-zero FOREVER sentinel (generated as a
+// static class member), which expiry checks treat as "never expires" —
+// without it a missing expiry would silently become an already-expired
+// timestamp.
+const DATE_NULL_FALLBACK_VALUES = new Set(['now', 'forever']);
+const FOREVER_SENTINEL_NAME = 'FOREVER';
 
 const PYTHON_BASIC_TYPE_MAP =
 {
@@ -124,8 +134,26 @@ function getAllowedKeysForParsedDatatype(parsedDatatype)
     {
         for (const key of ARRAY_CONSTRAINT_KEYS) allowedKeys.add(key);
     }
+    else if (kind === 'date')
+    {
+        for (const key of DATE_CONSTRAINT_KEYS) allowedKeys.add(key);
+    }
 
     return allowedKeys;
+}
+
+function getDateNullFallback(memberDef)
+{
+    return memberDef.nullFallback === 'forever' ? 'forever' : 'now';
+}
+
+function classNeedsForeverSentinel(memberEntriesList)
+{
+    return memberEntriesList.some(([, memberDef]) =>
+    {
+        const parsedDatatype = memberDef.datatype ? parseDatatypeString(memberDef.datatype) : null;
+        return parsedDatatype !== null && parsedDatatype.kind === 'date' && getDateNullFallback(memberDef) === 'forever';
+    });
 }
 
 function validateMember(memberName, memberDef, className)
@@ -229,6 +257,18 @@ function validateMember(memberName, memberDef, className)
         if (memberDef.pattern !== undefined && typeof memberDef.pattern !== 'string')
         {
             errors.push(`${context}: "pattern" must be a regex string`);
+        }
+    }
+
+    if (parsedDatatype && parsedDatatype.kind === 'date')
+    {
+        if (memberDef.nullFallback !== undefined && !DATE_NULL_FALLBACK_VALUES.has(memberDef.nullFallback))
+        {
+            errors.push(`${context}: "nullFallback" must be one of: ${[...DATE_NULL_FALLBACK_VALUES].join(', ')}`);
+        }
+        if (memberDef.defaultValue === 'forever' && getDateNullFallback(memberDef) !== 'forever')
+        {
+            errors.push(`${context}: defaultValue "forever" requires "nullFallback": "forever" so the sentinel survives explicit null / invalid assignments`);
         }
     }
 
@@ -471,6 +511,7 @@ function getJsLiteralForDefault(memberDef)
     if (parsed && parsed.kind === 'date')
     {
         if (value === undefined || value === null || value === 'now') return 'new Date()';
+        if (value === 'forever') return 'new Date(0)';
         return `new Date('${value}')`;
     }
 
@@ -500,6 +541,10 @@ function getPythonLiteralForDefault(memberDef)
         if (memberDef.defaultValue === undefined || memberDef.defaultValue === null || memberDef.defaultValue === 'now')
         {
             return 'datetime.now()';
+        }
+        if (memberDef.defaultValue === 'forever')
+        {
+            return 'datetime.fromtimestamp(0)';
         }
         return `datetime.fromisoformat('${memberDef.defaultValue}')`;
     }
@@ -857,7 +902,7 @@ function computeJsEnumImportPath(enumName, classRelativePath)
 
 // ─── JavaScript Setter Body ───────────────────────────────────────────────────
 
-function buildJsSetterLines(memberDef, parsedDatatype, indentLevel)
+function buildJsSetterLines(memberDef, parsedDatatype, indentLevel, className)
 {
     const lines = [];
     const pad = (extra) => indentation(indentLevel + extra);
@@ -991,17 +1036,20 @@ function buildJsSetterLines(memberDef, parsedDatatype, indentLevel)
     }
     else if (kind === 'date')
     {
-        lines.push(`${pad(0)}if (value !== null)`);
+        const fallbackExpression = getDateNullFallback(memberDef) === 'forever'
+            ? `${className}.${FOREVER_SENTINEL_NAME}`
+            : 'new Date()';
+        lines.push(`${pad(0)}if (value !== null && value !== undefined)`);
         lines.push(`${pad(0)}{`);
         lines.push(`${pad(1)}value = value instanceof Date ? value : new Date(value);`);
         lines.push(`${pad(1)}if (isNaN(value.getTime()))`);
         lines.push(`${pad(1)}{`);
-        lines.push(`${pad(2)}value = new Date();`);
+        lines.push(`${pad(2)}value = ${fallbackExpression};`);
         lines.push(`${pad(1)}}`);
         lines.push(`${pad(0)}}`);
         lines.push(`${pad(0)}else`);
         lines.push(`${pad(0)}{`);
-        lines.push(`${pad(1)}value = new Date();`);
+        lines.push(`${pad(1)}value = ${fallbackExpression};`);
         lines.push(`${pad(0)}}`);
     }
     else if (kind === 'bytes')
@@ -1249,6 +1297,15 @@ function generateJsClass(classDef, mode, inheritedMemberEntries)
 
     output += `${classDeclaration}\n{\n`;
 
+    if (classNeedsForeverSentinel([...inheritedMemberEntries, ...memberEntries]))
+    {
+        output += `${indentation(1)}// Epoch-zero sentinel meaning "never expires". Date members declared\n`;
+        output += `${indentation(1)}// with nullFallback "forever" coerce null / undefined / invalid values\n`;
+        output += `${indentation(1)}// to this instead of "now", so a missing expiry can never silently\n`;
+        output += `${indentation(1)}// become an already-expired timestamp.\n`;
+        output += `${indentation(1)}static ${FOREVER_SENTINEL_NAME} = new Date(0);\n\n`;
+    }
+
     // Private/protected backing field declarations
     for (const [memberName, memberDef] of controlledMembers)
     {
@@ -1346,7 +1403,7 @@ function generateJsClass(classDef, mode, inheritedMemberEntries)
             output += '\n';
             output += `${indentation(1)}${setterMethodName}(value)\n${indentation(1)}{\n`;
 
-            const setterBodyLines = buildJsSetterLines(memberDef, parsedDatatype, 2);
+            const setterBodyLines = buildJsSetterLines(memberDef, parsedDatatype, 2, name);
 
             if (setterBodyLines.length > 0)
             {
@@ -1518,7 +1575,7 @@ function generateJsClass(classDef, mode, inheritedMemberEntries)
 
 // ─── Python Setter Body ───────────────────────────────────────────────────────
 
-function buildPythonSetterLines(memberDef, parsedDatatype, indentLevel)
+function buildPythonSetterLines(memberDef, parsedDatatype, indentLevel, className)
 {
     const lines = [];
     const pad = (extra) => indentation(indentLevel + extra);
@@ -1614,16 +1671,19 @@ function buildPythonSetterLines(memberDef, parsedDatatype, indentLevel)
     }
     else if (kind === 'date')
     {
+        const fallbackExpression = getDateNullFallback(memberDef) === 'forever'
+            ? `${className}.${FOREVER_SENTINEL_NAME}`
+            : 'datetime.now()';
         lines.push(`${pad(0)}if value is not None:`);
         lines.push(`${pad(1)}if isinstance(value, str):`);
         lines.push(`${pad(2)}try:`);
         lines.push(`${pad(3)}value = datetime.fromisoformat(value)`);
         lines.push(`${pad(2)}except ValueError:`);
-        lines.push(`${pad(3)}value = datetime.now()`);
+        lines.push(`${pad(3)}value = ${fallbackExpression}`);
         lines.push(`${pad(1)}elif not isinstance(value, datetime):`);
-        lines.push(`${pad(2)}value = datetime.now()`);
+        lines.push(`${pad(2)}value = ${fallbackExpression}`);
         lines.push(`${pad(0)}else:`);
-        lines.push(`${pad(1)}value = datetime.now()`);
+        lines.push(`${pad(1)}value = ${fallbackExpression}`);
     }
     else if (kind === 'bytes')
     {
@@ -1760,6 +1820,15 @@ function generatePythonClass(classDef, inheritedMemberEntries)
 
     output += `${classDeclaration}\n`;
 
+    if (classNeedsForeverSentinel([...inheritedMemberEntries, ...memberEntries]))
+    {
+        output += `${indentation(1)}# Epoch-zero sentinel meaning "never expires". Date members declared\n`;
+        output += `${indentation(1)}# with nullFallback "forever" coerce None / invalid values to this\n`;
+        output += `${indentation(1)}# instead of "now", so a missing expiry can never silently become an\n`;
+        output += `${indentation(1)}# already-expired timestamp.\n`;
+        output += `${indentation(1)}${FOREVER_SENTINEL_NAME} = datetime.fromtimestamp(0)\n\n`;
+    }
+
     // Constructor — inherited non-id params come first, then own non-id params.
     // super().__init__() receives inherited params as keyword arguments.
     const inheritedNonIdEntries = inheritedMemberEntries.filter(([, memberDef]) => memberDef.id !== true);
@@ -1854,7 +1923,7 @@ function generatePythonClass(classDef, inheritedMemberEntries)
             output += '\n';
             output += `${indentation(1)}def set_${snakeName}(self, value: ${typeHint}) -> None:\n`;
 
-            const setterBodyLines = buildPythonSetterLines(memberDef, parsedDatatype, 2);
+            const setterBodyLines = buildPythonSetterLines(memberDef, parsedDatatype, 2, name);
 
             if (setterBodyLines.length > 0)
             {

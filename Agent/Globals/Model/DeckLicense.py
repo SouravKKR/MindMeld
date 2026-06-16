@@ -4,7 +4,13 @@ from Globals.Enumerations.DeckLicenseStatuses import DeckLicenseStatuses
 
 
 class DeckLicense:
-    def __init__(self, user_id: str = None, deck_id: str = None, status: DeckLicenseStatuses = DeckLicenseStatuses(1), key_version: int = 1, wrapped_key_blob: str = '', issued_at: datetime = datetime.now(), rotated_at: datetime = datetime.now(), expires_at: datetime = datetime.now(), grant_source: str = 'PURCHASE', downloaded_content_version: int = 0, password_hash: str = '', password_salt: str = '', password_wrapped_content_key_base64: str = '', password_wrapped_iv_base64: str = '', server_wrapped_content_key_base64: str = '', server_wrapped_iv_base64: str = '', content_key_version: int = 0, additional_data: dict = {}) -> None:
+    # Epoch-zero sentinel meaning "never expires". Date members declared
+    # with nullFallback "forever" coerce None / invalid values to this
+    # instead of "now", so a missing expiry can never silently become an
+    # already-expired timestamp.
+    FOREVER = datetime.fromtimestamp(0)
+
+    def __init__(self, user_id: str = None, deck_id: str = None, status: DeckLicenseStatuses = DeckLicenseStatuses(1), key_version: int = 1, wrapped_key_blob: str = '', issued_at: datetime = datetime.now(), rotated_at: datetime = datetime.now(), expires_at: datetime = datetime.fromtimestamp(0), grant_source: str = 'PURCHASE', downloaded_content_version: int = 0, password_hash: str = '', password_salt: str = '', password_wrapped_content_key_base64: str = '', password_wrapped_iv_base64: str = '', server_wrapped_content_key_base64: str = '', server_wrapped_iv_base64: str = '', content_key_version: int = 0, additional_data: dict = {}) -> None:
         self.__id = str(uuid.uuid4())
         self.set_user_id(user_id)
         self.set_deck_id(deck_id)
@@ -115,11 +121,11 @@ class DeckLicense:
                 try:
                     value = datetime.fromisoformat(value)
                 except ValueError:
-                    value = datetime.now()
+                    value = DeckLicense.FOREVER
             elif not isinstance(value, datetime):
-                value = datetime.now()
+                value = DeckLicense.FOREVER
         else:
-            value = datetime.now()
+            value = DeckLicense.FOREVER
         self.__expires_at = value
 
     def get_grant_source(self) -> str:

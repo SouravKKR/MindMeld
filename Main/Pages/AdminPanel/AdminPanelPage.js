@@ -7,7 +7,7 @@ import CreateOrganizationDialog from "./Components/CreateOrganizationDialog.js";
 import OrganizationDetailsDialog from "./Components/OrganizationDetailsDialog.js";
 import AddMembersDialog from "./Components/AddMembersDialog.js";
 import AlertNotifier from "./Components/AlertNotifier.js";
-import CreditConfigEditor from "./Components/CreditConfigEditor.js";
+import AdminCreditsTabs from "./Components/AdminCreditsTabs.js";
 import { userRoles } from "../../Globals/Enumerations/UserRoles.js";
 import { alertSeverity } from "../../Globals/Enumerations/AlertSeverity.js";
 import { adminPanelTabs } from "../../Globals/Enumerations/AdminPanelTabs.js";
@@ -66,7 +66,8 @@ class AdminPanelPage extends HTMLElement
             { tab: adminPanelTabs.ALERTS, label: "Alerts" },
             { tab: adminPanelTabs.RATE_LIMITS, label: "Rate Limits" },
             { tab: adminPanelTabs.AUDIT_LOG, label: "Audit Log" },
-            { tab: adminPanelTabs.CREDITS, label: "Credits" }
+            { tab: adminPanelTabs.CREDITS, label: "Credits" },
+            { tab: adminPanelTabs.MAINTENANCE, label: "Maintenance" }
         ];
         const organizationAdminTabs =
         [
@@ -106,7 +107,7 @@ class AdminPanelPage extends HTMLElement
         const currentUser = window["user"];
         const isSuperAdmin = currentUser && currentUser.getRole() === userRoles.ADMIN;
         const allowedTabs = isSuperAdmin
-            ? new Set([adminPanelTabs.DECKS, adminPanelTabs.STATS, adminPanelTabs.ADMINS, adminPanelTabs.RELEASE_NOTES, adminPanelTabs.ORGANIZATIONS, adminPanelTabs.ALERTS, adminPanelTabs.RATE_LIMITS, adminPanelTabs.AUDIT_LOG, adminPanelTabs.CREDITS])
+            ? new Set([adminPanelTabs.DECKS, adminPanelTabs.STATS, adminPanelTabs.ADMINS, adminPanelTabs.RELEASE_NOTES, adminPanelTabs.ORGANIZATIONS, adminPanelTabs.ALERTS, adminPanelTabs.RATE_LIMITS, adminPanelTabs.AUDIT_LOG, adminPanelTabs.CREDITS, adminPanelTabs.MAINTENANCE])
             : new Set([adminPanelTabs.ORGANIZATION_MEMBERS]);
 
         if (!allowedTabs.has(this.#activeTab))
@@ -152,6 +153,9 @@ class AdminPanelPage extends HTMLElement
             case adminPanelTabs.CREDITS:
                 this.#renderCreditsTab(content);
                 break;
+            case adminPanelTabs.MAINTENANCE:
+                await this.#renderMaintenanceTab(content);
+                break;
             case adminPanelTabs.ORGANIZATION_MEMBERS:
                 await this.#renderOrganizationMembersTab(content);
                 break;
@@ -160,11 +164,326 @@ class AdminPanelPage extends HTMLElement
 
     #renderCreditsTab(content)
     {
-        // The credits editor is a self-contained Web Component — it loads
-        // /Admin/Credits/Config, renders the per-task / storage / reward
-        // editors, and saves back via /Admin/Credits/Config/Save.
+        // One sub-tabbed surface hosting the grant panel and the sectioned
+        // credit-config editor (pricing & packs, task rules, storage rules,
+        // milestones & global). AdminCreditsTabs keeps both panels mounted
+        // across sub-tab switches so unsaved edits survive.
         content.innerHTML = "";
-        content.appendChild(document.createElement("credit-config-editor"));
+        content.appendChild(document.createElement("admin-credits-tabs"));
+    }
+
+    // ── Scheduled maintenance windows ──────────────────────────────────────
+
+    static #toDatetimeLocalValue(isoString)
+    {
+        if (!isoString)
+        {
+            return "";
+        }
+        const date = new Date(isoString);
+        if (Number.isNaN(date.getTime()))
+        {
+            return "";
+        }
+        // Build a local "YYYY-MM-DDTHH:mm" string for the datetime-local input.
+        const pad = (value) => String(value).padStart(2, "0");
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
+    static #describeWindowStatus(window)
+    {
+        const now = Date.now();
+        const start = window.startDate ? new Date(window.startDate).getTime() : null;
+        const end = window.endDate ? new Date(window.endDate).getTime() : null;
+        if (start === null || end === null)
+        {
+            return "Invalid";
+        }
+        if (now >= start && now < end)
+        {
+            return "Active";
+        }
+        if (now < start)
+        {
+            return "Upcoming";
+        }
+        return "Past";
+    }
+
+    async #renderMaintenanceTab(content)
+    {
+        content.innerHTML = `<div class="admin-panel-loading">Loading maintenance windows…</div>`;
+
+        let windows;
+        try
+        {
+            const response = await fetch("/Admin/Maintenance/List", { credentials: "same-origin" });
+            if (!response.ok)
+            {
+                content.innerHTML = `<div class="admin-panel-error">HTTP ${response.status}</div>`;
+                return;
+            }
+            const responseJson = await response.json();
+            windows = Array.isArray(responseJson.windows) ? responseJson.windows : [];
+        }
+        catch (loadError)
+        {
+            content.innerHTML = `<div class="admin-panel-error">${AdminPanelPage.#escape(loadError.message)}</div>`;
+            return;
+        }
+
+        content.innerHTML = `
+            <div class="admin-panel-toolbar">
+                <button class="admin-panel-upload" data-role="add-maintenance-window">Add maintenance window</button>
+            </div>
+            <table class="admin-panel-table">
+                <thead>
+                    <tr>
+                        <th>Title</th>
+                        <th>Start</th>
+                        <th>End</th>
+                        <th>Status</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody data-role="maintenance-window-rows"></tbody>
+            </table>
+        `;
+
+        this.querySelector('[data-role="add-maintenance-window"]').addEventListener("click", async () =>
+        {
+            const created = await this.#openCreateMaintenanceWindowDialog();
+            if (created)
+            {
+                await this.#renderTab();
+            }
+        });
+
+        this.#renderMaintenanceWindowRows(windows);
+    }
+
+    #renderMaintenanceWindowRows(windows)
+    {
+        const tableBody = this.querySelector('[data-role="maintenance-window-rows"]');
+        if (!tableBody)
+        {
+            return;
+        }
+
+        if (windows.length === 0)
+        {
+            tableBody.innerHTML = `<tr><td colspan="5" class="admin-panel-empty">No maintenance windows scheduled.</td></tr>`;
+            return;
+        }
+
+        tableBody.innerHTML = windows.map(window =>
+        {
+            const startText = window.startDate ? new Date(window.startDate).toLocaleString() : "—";
+            const endText = window.endDate ? new Date(window.endDate).toLocaleString() : "—";
+            const statusText = AdminPanelPage.#describeWindowStatus(window);
+            return `
+                <tr>
+                    <td>${AdminPanelPage.#escape(window.title || "")}</td>
+                    <td>${AdminPanelPage.#escape(startText)}</td>
+                    <td>${AdminPanelPage.#escape(endText)}</td>
+                    <td>${AdminPanelPage.#escape(statusText)}</td>
+                    <td>
+                        <button class="admin-panel-row-action" data-role="edit-maintenance-window" data-id="${AdminPanelPage.#escape(window.id)}">Edit</button>
+                        <button class="admin-panel-row-action" data-role="delete-maintenance-window" data-id="${AdminPanelPage.#escape(window.id)}">Delete</button>
+                    </td>
+                </tr>
+            `;
+        }).join("");
+
+        for (const editButton of tableBody.querySelectorAll('[data-role="edit-maintenance-window"]'))
+        {
+            editButton.addEventListener("click", async () =>
+            {
+                const window = windows.find(candidate => candidate.id === editButton.dataset.id);
+                if (window)
+                {
+                    const updated = await this.#openEditMaintenanceWindowDialog(window);
+                    if (updated)
+                    {
+                        await this.#renderTab();
+                    }
+                }
+            });
+        }
+
+        for (const deleteButton of tableBody.querySelectorAll('[data-role="delete-maintenance-window"]'))
+        {
+            deleteButton.addEventListener("click", async () =>
+            {
+                const window = windows.find(candidate => candidate.id === deleteButton.dataset.id);
+                if (window)
+                {
+                    await this.#handleDeleteMaintenanceWindow(window);
+                }
+            });
+        }
+    }
+
+    async #openCreateMaintenanceWindowDialog()
+    {
+        return this.#openMaintenanceWindowDialog(null);
+    }
+
+    async #openEditMaintenanceWindowDialog(window)
+    {
+        return this.#openMaintenanceWindowDialog(window);
+    }
+
+    async #openMaintenanceWindowDialog(existingWindow)
+    {
+        const isEdit = existingWindow !== null;
+        return new Promise((resolve) =>
+        {
+            const dialog = DialogBox.modal(`
+                <div class="admin-panel-add-dialog">
+                    <h2 class="admin-panel-add-title">${isEdit ? "Edit" : "Add"} maintenance window</h2>
+                    <label class="admin-panel-add-field">
+                        <span>Title</span>
+                        <input type="text" class="maintenance-window-title" maxlength="256">
+                    </label>
+                    <label class="admin-panel-add-field">
+                        <span>Start</span>
+                        <input type="datetime-local" class="maintenance-window-start">
+                    </label>
+                    <label class="admin-panel-add-field">
+                        <span>End</span>
+                        <input type="datetime-local" class="maintenance-window-end">
+                    </label>
+                    <label class="admin-panel-add-field">
+                        <span>Message to users (optional)</span>
+                        <textarea class="maintenance-window-message" rows="3" maxlength="2000"></textarea>
+                    </label>
+                    <div class="admin-panel-add-error" data-role="error" hidden></div>
+                    <div class="admin-panel-add-actions">
+                        <button type="button" class="admin-panel-add-cancel">Cancel</button>
+                        <button type="button" class="admin-panel-add-submit">${isEdit ? "Save changes" : "Schedule"}</button>
+                    </div>
+                </div>
+            `);
+
+            const titleInput = dialog.querySelector(".maintenance-window-title");
+            const startInput = dialog.querySelector(".maintenance-window-start");
+            const endInput = dialog.querySelector(".maintenance-window-end");
+            const messageInput = dialog.querySelector(".maintenance-window-message");
+            const errorElement = dialog.querySelector('[data-role="error"]');
+
+            if (isEdit)
+            {
+                titleInput.value = existingWindow.title || "";
+                startInput.value = AdminPanelPage.#toDatetimeLocalValue(existingWindow.startDate);
+                endInput.value = AdminPanelPage.#toDatetimeLocalValue(existingWindow.endDate);
+                messageInput.value = existingWindow.message || "";
+            }
+
+            dialog.querySelector(".admin-panel-add-cancel").addEventListener("click", () =>
+            {
+                dialog.close();
+                resolve(false);
+            });
+
+            dialog.querySelector(".admin-panel-add-submit").addEventListener("click", async () =>
+            {
+                if (!startInput.value || !endInput.value)
+                {
+                    errorElement.textContent = "Start and end are both required.";
+                    errorElement.hidden = false;
+                    return;
+                }
+
+                const startDate = new Date(startInput.value);
+                const endDate = new Date(endInput.value);
+                if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate.getTime() <= startDate.getTime())
+                {
+                    errorElement.textContent = "End must be after start.";
+                    errorElement.hidden = false;
+                    return;
+                }
+
+                errorElement.hidden = true;
+
+                let response;
+                if (isEdit)
+                {
+                    response = await fetch("/Admin/Maintenance/Update",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "same-origin",
+                        body: JSON.stringify({
+                            id: existingWindow.id,
+                            updates: {
+                                title: titleInput.value.trim() || "Scheduled maintenance",
+                                startDate: startDate.toISOString(),
+                                endDate: endDate.toISOString(),
+                                message: messageInput.value
+                            }
+                        })
+                    });
+                }
+                else
+                {
+                    response = await fetch("/Admin/Maintenance/Add",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "same-origin",
+                        body: JSON.stringify({
+                            title: titleInput.value.trim() || "Scheduled maintenance",
+                            startDate: startDate.toISOString(),
+                            endDate: endDate.toISOString(),
+                            message: messageInput.value
+                        })
+                    });
+                }
+
+                if (!response.ok)
+                {
+                    const responseJson = await response.json().catch(() => ({}));
+                    errorElement.textContent = responseJson.error || `HTTP ${response.status}`;
+                    errorElement.hidden = false;
+                    return;
+                }
+
+                dialog.close();
+                resolve(true);
+            });
+
+            titleInput.focus();
+        });
+    }
+
+    async #handleDeleteMaintenanceWindow(window)
+    {
+        const confirmed = await DialogBox.confirm(
+            "Delete maintenance window",
+            `Delete the maintenance window "${window.title}"? This cannot be undone.`
+        );
+        if (!confirmed)
+        {
+            return;
+        }
+
+        const response = await fetch("/Admin/Maintenance/Remove",
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({ id: window.id })
+        });
+
+        if (!response.ok)
+        {
+            const responseJson = await response.json().catch(() => ({}));
+            await DialogBox.alert("Could not delete", responseJson.error || `HTTP ${response.status}`);
+            return;
+        }
+
+        await this.#renderTab();
     }
 
     async #fetchPaidDecks()
@@ -741,7 +1060,7 @@ class AdminPanelPage extends HTMLElement
             content.innerHTML = `
                 <p>Revenue by deck (${responseJson.from} → ${responseJson.to})</p>
                 <table class="admin-panel-table">
-                    <thead><tr><th>Deck ID</th><th>Purchases</th><th>Total (minor)</th></tr></thead>
+                    <thead><tr><th>Deck ID</th><th>Purchases</th><th>Total (minor units — e.g. 100 = 1.00)</th></tr></thead>
                     <tbody>
                         ${rows.map(row => `<tr><td>${AdminPanelPage.#escape(row._id)}</td><td>${row.purchaseCount}</td><td>${row.totalMinor}</td></tr>`).join("")}
                     </tbody>

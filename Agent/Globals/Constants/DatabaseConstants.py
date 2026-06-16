@@ -3,6 +3,7 @@ class DatabaseConstants:
     USERS_COLLECTION = 'users'
     PURCHASES_COLLECTION = 'purchases'
     PENDING_ORDERS_COLLECTION = 'pendingOrders'
+    PENDING_CREDIT_ORDERS_COLLECTION = 'pendingCreditOrders'
     INFORMATION_SOURCES_COLLECTION = 'informationSources'
     TEXT_EMBEDDINGS_COLLECTION = 'textEmbeddings'
     DECKS_COLLECTION = 'decks'
@@ -46,3 +47,4 @@ class DatabaseConstants:
     CREDIT_TRANSACTIONS_COLLECTION = 'creditTransactions'
     TASK_STATES_COLLECTION = 'taskStates'
     TASK_STATES_TTL_DAYS = 7
+    MAINTENANCE_WINDOWS_COLLECTION = 'maintenanceWindows'

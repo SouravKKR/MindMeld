@@ -1,6 +1,7 @@
 import ContextMenu from "../../../CommonComponents/ContextMenu.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
+import ContentStudySession from "../../Study/Classes/ContentStudySession.js";
 
 class StudyMaterialOptionsContextMenu extends ContextMenu
 {
@@ -18,12 +19,18 @@ class StudyMaterialOptionsContextMenu extends ContextMenu
 
     #handleEvents()
     {
-        const editButton   = this.querySelector(".edit-button");
-        const deleteButton = this.querySelector(".delete-button");
+        const editButton    = this.querySelector(".edit-button");
+        const previewButton = this.querySelector(".preview-button");
+        const deleteButton  = this.querySelector(".delete-button");
 
         editButton.addEventListener("click", () =>
         {
             PageNavigator.open("study-material-editor-page", this.#material, this.#material.getDeck());
+        });
+
+        previewButton.addEventListener("click", () =>
+        {
+            PageNavigator.open("study-page", ContentStudySession, this.#browserPage.getDeck(), null, { bPreview: true, startMaterial: this.#material });
         });
 
         deleteButton.addEventListener("click", async () =>
@@ -45,6 +52,7 @@ class StudyMaterialOptionsContextMenu extends ContextMenu
         this.innerHTML =
         `
             <button class="edit-button">Edit</button>
+            <button class="preview-button">Preview</button>
             <button class="delete-button">Delete</button>
         `;
 

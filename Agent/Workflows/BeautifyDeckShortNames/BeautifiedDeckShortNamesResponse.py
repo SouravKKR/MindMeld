@@ -14,9 +14,9 @@ class BeautifiedDeckShortNameItem(BaseModel):
 
     short_name: str = Field(
         description = (
-            "A concise, human-readable short name for the deck. At most 16 characters. "
-            "Title Case. Plain text only — no markdown, no quotes, no surrounding "
-            "punctuation."
+            "A concise, human-readable short name for the deck, around 24 characters or "
+            "fewer. Use complete words only — never cut a word off mid-way. Title Case. "
+            "Plain text only — no markdown, no quotes, no surrounding punctuation."
         )
     )
 

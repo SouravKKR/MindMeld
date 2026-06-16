@@ -79,6 +79,11 @@ class MockTestGenerationWorker(Workflow):
         # GenerateMockTests for even-per-topic distribution. When absent
         # (legacy payload), falls back to the content+random heuristic.
         self.__topic_question_counts = payload.get("topicQuestionCounts", {}) or {}
+        # Orchestrator-computed GLOBAL per-topic per-type breakdown (keyed by
+        # topic path). Honours the question-type weightage across the whole
+        # pool; absent on legacy payloads, in which case the worker falls back
+        # to its own worker-global type allocation.
+        self.__topic_type_counts = payload.get("topicTypeCounts", {}) or {}
         self.__pyq_pool = payload.get("pyqPool", []) or []
         self.__settings = MockTestGenerationSettings.from_json(payload.get("mockTestGenerationSettings", payload))
 
@@ -103,6 +108,46 @@ class MockTestGenerationWorker(Workflow):
             floors[remainders[remainder_index][1]] += 1
 
         return floors
+
+    def __allocate_types_across_topics(self, type_values: list[float], type_keys: list[str], topic_question_counts: list[int]) -> list[dict]:
+        # Distribute this worker's WHOLE question budget across the question
+        # types first (so the per-type weightage is honoured globally), then
+        # spread each type's quota across the worker's topics in proportion to
+        # each topic's own question count.
+        #
+        # This replaces a per-topic type allocation, which starved the later
+        # types: when an individual topic only earns a handful of questions
+        # (fewer than the number of types), the largest-remainder pass can only
+        # cover the first few types — and because that same bias repeats for
+        # every topic, the whole pool ends up dominated by the first types.
+        # That is the reported "the test only contains the first few question
+        # types" bug. Allocating globally lets every weighted type earn its
+        # proportional share even when each individual topic is small.
+        #
+        # Column sums (per type) therefore match the weighted global
+        # allocation; row sums (per topic) stay close to each topic's intended
+        # share. The grand total is preserved exactly (largest-remainder always
+        # allocates the full amount).
+        topic_type_counts = [dict() for _ in topic_question_counts]
+
+        worker_total = sum(topic_question_counts)
+        if worker_total == 0:
+            return topic_type_counts
+
+        global_type_counts = self.__largest_remainder_allocate(type_values, worker_total)
+        topic_weights      = [float(count) for count in topic_question_counts]
+
+        for type_index, type_key in enumerate(type_keys):
+            type_total = global_type_counts[type_index]
+            if type_total == 0:
+                continue
+
+            per_topic_counts = self.__largest_remainder_allocate(topic_weights, type_total)
+            for topic_index, topic_type_count in enumerate(per_topic_counts):
+                if topic_type_count > 0:
+                    topic_type_counts[topic_index][type_key] = topic_type_count
+
+        return topic_type_counts
 
     def __allocate_questions_to_topics(self, topics: list[dict]) -> list[int]:
         # Preferred path: orchestrator pre-allocated counts evenly per topic.
@@ -462,19 +507,28 @@ class MockTestGenerationWorker(Workflow):
         await flush_wlog()
 
         # ── 3. Build per-cell requests across all topics ───────────────────────
+        # Prefer the orchestrator's GLOBAL per-topic per-type breakdown (keyed
+        # by topic path) so the per-type weightage is honoured across the whole
+        # pool. Fall back to a worker-global allocation for legacy payloads that
+        # don't carry it. Either way, types are NOT split per topic in
+        # isolation — that starves the later types when topics are small. See
+        # __allocate_types_across_topics for the rationale.
+        if self.__topic_type_counts:
+            topic_type_allocations = [
+                dict(self.__topic_type_counts.get(topic["path"], {}) or {})
+                for topic in topics
+            ]
+        else:
+            topic_type_allocations = self.__allocate_types_across_topics(type_values, type_keys, topic_question_counts)
+
         topic_cells = []
 
         for topic_index, (topic, topic_questions) in enumerate(zip(topics, topic_question_counts)):
-            if topic_questions == 0:
+            type_allocation = topic_type_allocations[topic_index]
+            if not type_allocation:
                 topic_cells.append({"topic_index": topic_index, "topic": topic, "cells": []})
                 continue
 
-            type_counts     = self.__largest_remainder_allocate(type_values, topic_questions)
-            type_allocation = {
-                type_keys[type_index]: type_counts[type_index]
-                for type_index in range(len(type_keys))
-                if type_counts[type_index] > 0
-            }
             wlog(f"[MockTestGenerationWorker] Topic {topic_index} type allocation: {type_allocation}")
 
             cells = []

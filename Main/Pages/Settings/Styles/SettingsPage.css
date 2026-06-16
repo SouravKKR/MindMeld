@@ -113,6 +113,32 @@ settings-page
     -webkit-text-fill-color: var(--primary-text-color);
 }
 
+.settings-refresh-button
+{
+    flex-shrink: 0;
+    padding: 6px 14px;
+    border-radius: 6px;
+    background-color: transparent;
+    border: 1px solid var(--primary-text-color);
+    color: var(--primary-text-color);
+    cursor: pointer;
+    font-size: 13px;
+    opacity: 0.75;
+    transition: opacity 0.15s ease;
+    -webkit-text-fill-color: var(--primary-text-color);
+}
+
+.settings-refresh-button:hover
+{
+    opacity: 1;
+}
+
+.settings-refresh-button:disabled
+{
+    opacity: 0.45;
+    cursor: default;
+}
+
 /* ── Model tab — tier select ───────────────────────────────────────────── */
 
 .settings-model-row .settings-row-value llm-tier-select
@@ -243,7 +269,8 @@ settings-page
         width: 100%;
     }
 
-    .settings-cta-button
+    .settings-cta-button,
+    .settings-refresh-button
     {
         align-self: flex-end;
         margin-top: 4px;

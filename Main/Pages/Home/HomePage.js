@@ -7,6 +7,7 @@ import NewDeckTile from "./Components/NewDeckTile.js";
 import HomePageContextMenu from "./Components/HomePageContextMenu.js";
 import HeaderComponent from "../../CommonComponents/HeaderComponent.js";
 import PausedTaskBanner from "../../CommonComponents/PausedTaskBanner.js";
+import MaintenanceBanner from "../../CommonComponents/MaintenanceBanner.js";
 import ProfileComponent from "./Components/ProfileComponent.js";
 import SyncManager from "../../Globals/Classes/SyncManager.js";
 import SyncStatusComponent from "./Components/SyncStatusComponent.js";
@@ -305,6 +306,7 @@ class HomePage extends HTMLElement
         this.innerHTML =
         `
             <header-component title="MindMeld Home"></header-component>
+            <maintenance-banner></maintenance-banner>
             <paused-task-banner></paused-task-banner>
             <button class="back-to-parent-button">Navigate to ${Deck.getCurrentDeck()?.getParent()?.getName() || ""}</button>
             <div class="decks-container"></div>

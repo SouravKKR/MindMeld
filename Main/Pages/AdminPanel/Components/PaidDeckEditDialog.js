@@ -444,7 +444,7 @@ class PaidDeckEditDialog
                     </div>
 
                     <label class="paid-deck-upload-field">
-                        <span>Base price (minor units)</span>
+                        <span>Base price (minor units — e.g. 100 = 1.00)</span>
                         <input type="number" name="basePriceMinor" min="0" value="${Number(deck.basePriceMinor) || 0}">
                     </label>
 

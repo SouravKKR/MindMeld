@@ -1068,8 +1068,11 @@ class Deck
         // direct programmatic call that bypasses export()'s user-facing gate.
         // Every paid node carries the paidDeckId tag, so this self-check —
         // propagated through the recursion below — aborts the whole export if any
-        // node in the subtree is paid.
-        if (this.#additionalData && this.#additionalData.paidDeckId)
+        // node in the subtree is paid. The one legitimate exception is the
+        // paid-deck upload-to-sell path (PaidDeckUploadDialog.serialiseDeckForUpload),
+        // where the author owns the content and is publishing it: it opts in via
+        // options.bAllowPaidContent to serialise the owned subtree for upload.
+        if (!options.bAllowPaidContent && this.#additionalData && this.#additionalData.paidDeckId)
         {
             throw new Error("Paid-deck content cannot be exported.");
         }
@@ -1107,12 +1110,11 @@ class Deck
             {
                 cards[cardIndex].progress = new Progress().toJson();
 
-                // Drop the per-user "marked for review" study flag so a
-                // published / shared copy carries no personal study state.
-                if (cards[cardIndex].additionalData && typeof cards[cardIndex].additionalData === "object")
-                {
-                    delete cards[cardIndex].additionalData.review;
-                }
+                // NOTE: the "marked for review" flag (additionalData.review)
+                // is intentionally preserved here. It is a curation signal —
+                // which cards the author wants revisited — not transient FSRS
+                // progress, so it must survive export/import (and the
+                // retain-progress toggle) and propagate to other devices.
             }
 
             // Mock-test attempt history is "progress" for tests — the same

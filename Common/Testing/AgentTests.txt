@@ -1,0 +1,72 @@
+Agent Test Catalog (Python utility functions)
+=============================================
+
+Scripts: Common/Testing/Agent/
+Runner:  Common/Testing/Agent/run_agent_tests.py  (uses Agent/.venv)
+Coverage metric: structural -- catalogued utility functions that have at least
+one passing test, divided by the total catalogued deterministic functions below.
+
+Deterministic utility functions catalogued (the coverage denominator):
+   1) Globals/Utility/CosineSimilarity.py        :: cosine_similarity
+   2) Globals/Utility/ExpandPageRanges.py        :: expand_page_ranges
+   3) Globals/Utility/ExpandPageRanges.py        :: is_full_document
+   4) Globals/Utility/ExpandPageRanges.py        :: is_full_document_range
+   5) Globals/Utility/StripJsonMarkdown.py       :: strip_json_markdown
+   6) Globals/Utility/SanitizeHtmlResponse.py    :: sanitize_html_response
+   7) Globals/Utility/SanitizeFilename.py        :: sanitize_filename
+   8) Globals/Utility/JoinPath.py                :: join_path
+   9) Globals/Utility/ArgumentParser.py          :: argument_parser
+  10) Globals/Model/DeckLicense.py               :: from_json / to_json round-trip
+
+Test cases:
+  cosine_similarity
+    - identical vectors return 1.0
+    - opposite vectors return -1.0
+    - orthogonal vectors return 0.0
+    - None / empty / mismatched-length / zero-norm inputs return 0.0 (no throw)
+  expand_page_ranges
+    - empty range list expands to every page 1..total
+    - a {0,0} sentinel range expands to the full document
+    - overlapping ranges are unioned and sorted
+    - out-of-bounds start/end are clamped to [1, total]
+    - reversed (start > end) ranges are normalized
+    - total_pages <= 0 returns []
+  is_full_document / is_full_document_range
+    - {0,0} and empty list are recognized as "whole document"
+    - a real range is not
+  strip_json_markdown
+    - a ```json fenced block is unwrapped and parsed to a dict
+    - a bare JSON object parses
+    - empty input returns "{}"
+    - invalid JSON returns None
+  sanitize_html_response
+    - {"html": "..."} wrapper is unwrapped to the inner HTML
+    - ```html fenced content is unwrapped
+    - plain HTML passes through unchanged
+    - empty input returns ""
+  sanitize_filename
+    - reserved characters < > : " / \ | ? * are replaced with _
+    - surrounding whitespace is trimmed
+  join_path
+    - parts are joined with the given separator, redundant separators collapsed
+    - empty / falsy parts are dropped
+    - backslashes are normalized to the separator
+  argument_parser
+    - bare flags become True; key=value pairs are captured as strings
+    - empty input -> empty dict
+    - only the first '=' splits the key (split has no maxsplit, so the value is
+      the token after the first '=', e.g. "key=val=ue" -> {"key": "val"})
+  DeckLicense (from_json / to_json round-trip)
+    - from_json(to_json(x)) preserves id / userId / deckId / status / keyVersion
+    - a null expiry maps to the FOREVER sentinel (DeckLicense.FOREVER) and
+      survives the round-trip (asserted against the sentinel, not a literal
+      string, so it is timezone-independent)
+
+Notes:
+  - Only pure, deterministic functions are catalogued here. The remaining Utility
+    modules are intentionally excluded: AgentLogger (logging side-effects),
+    LaunchPythonScript (subprocess), SetupEnvironment (env/IO). DB/LLM/async
+    functions (workflows, providers, task manager) are out of scope for unit
+    tests and are exercised indirectly by the Dock endpoint suite. DeckLicense is
+    the representative model (clear FOREVER-sentinel domain logic); other models
+    are plain field coercion validated indirectly by the endpoint suite.

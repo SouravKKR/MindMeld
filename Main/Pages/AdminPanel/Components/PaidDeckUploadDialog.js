@@ -491,7 +491,7 @@ class PaidDeckUploadDialog
             rowElement.className = "paid-deck-regional-price-row";
             rowElement.innerHTML = `
                 <select data-role="regional-region" class="paid-deck-regional-region">${regionOptionsHtml}</select>
-                <input type="number" data-role="regional-price" class="paid-deck-regional-price" min="0" value="0" placeholder="Price (minor units)">
+                <input type="number" data-role="regional-price" class="paid-deck-regional-price" min="0" value="0" placeholder="Price (minor units, e.g. 100 = 1.00)">
                 <select data-role="regional-currency" class="paid-deck-regional-currency">${currencyOptionsHtml}</select>
                 <button type="button" data-role="regional-remove" class="paid-deck-regional-remove" aria-label="Remove region">×</button>
             `;
@@ -621,7 +621,7 @@ class PaidDeckUploadDialog
                     <input type="text" data-role="row-title" maxlength="256">
                 </label>
                 <label class="paid-deck-upload-field">
-                    <span>Price * (minor units)</span>
+                    <span>Price * (minor units — e.g. 100 = 1.00)</span>
                     <input type="number" data-role="row-price" min="0" value="0">
                 </label>
                 <label class="paid-deck-upload-field paid-deck-upload-field-full">
@@ -813,7 +813,7 @@ class PaidDeckUploadDialog
                         </label>
 
                         <label class="paid-deck-upload-field paid-deck-upload-field-full">
-                            <span>Bundle price * (minor units — e.g. paise / cents)</span>
+                            <span>Bundle price * (minor units — e.g. 100 = 1.00)</span>
                             <input type="number" name="basePriceMinor" min="0" value="0">
                         </label>
 
@@ -1102,7 +1102,7 @@ class PaidDeckUploadDialog
         }
         const exportData = deckInstance.getExportData
         (
-            { bRecursive: true, bRetainProgress: false, bRetainAutoAnalysisSettings: false },
+            { bRecursive: true, bRetainProgress: false, bRetainAutoAnalysisSettings: false, bAllowPaidContent: true },
             []
         );
         if (!Array.isArray(exportData) || exportData.length === 0)

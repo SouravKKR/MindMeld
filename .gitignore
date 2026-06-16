@@ -396,3 +396,9 @@ test.pdf
 CLAUDE.md
 .vscode
 .vs
+# MindMeld automated test suite scratch (run-tests skill)
+Common/Reports/.results/
+Common/Testing/Dock/node_modules/
+Common/Testing/Main/node_modules/
+Common/Testing/**/package-lock.json
+.production.env

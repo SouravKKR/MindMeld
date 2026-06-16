@@ -197,8 +197,15 @@ class GeminiProvider(AutomationProvider):
         )
 
         # Capture token usage into the process-global meter so the credit
-        # system can apply per-token spend rules for this task.
-        usage_metadata = GeminiProvider.__record_token_usage(response)
+        # system can apply per-token spend rules for this task. The prompt and
+        # response text are passed as a chars/4 fallback for the rare case the
+        # response carries no usage_metadata.
+        usage_metadata = GeminiProvider.__record_token_usage(
+            response,
+            request.get_model(),
+            request.get_text_content(),
+            GeminiProvider.__safe_response_text(response),
+        )
 
         outputs = []
         if response.text:
@@ -218,10 +225,26 @@ class GeminiProvider(AutomationProvider):
         return AutomationResponse(outputs, usage_metadata)
 
     @staticmethod
-    def __record_token_usage(response) -> dict:
+    def __safe_response_text(response) -> str | None:
+        # response.text is a property that can raise (not just return None) when
+        # the response carries no usable parts — and it is only needed as a
+        # token-estimate fallback — so any failure collapses to None.
+        try:
+            return response.text
+        except Exception:
+            return None
+
+    @staticmethod
+    def __record_token_usage(response, model, fallback_input_text, fallback_output_text) -> dict:
         # Delegates to the shared meter so the live, batch and image paths
-        # all extract usage identically.
-        return CreditMeter.record_from_response(response)
+        # all extract usage identically. The model drives cost-normalization;
+        # the fallback texts cover responses that omit usage_metadata.
+        return CreditMeter.record_from_response(
+            response,
+            model = model,
+            fallback_input_text = fallback_input_text,
+            fallback_output_text = fallback_output_text,
+        )
 
     async def stream_text(
         self,
@@ -584,7 +607,7 @@ class GeminiProvider(AutomationProvider):
                     # The final stream chunk carries the usage_metadata for the
                     # whole image generation; record it for per-token billing.
                     if last_chunk is not None:
-                        CreditMeter.record_from_response(last_chunk)
+                        CreditMeter.record_from_response(last_chunk, model = model)
 
                 try:
                     await asyncio.to_thread(stream_sync)

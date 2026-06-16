@@ -1,6 +1,7 @@
 import ContextMenu from "../../../CommonComponents/ContextMenu.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
+import CardPreviewSession from "../../Study/Classes/CardPreviewSession.js";
 
 class CardOptionsContextMenu extends ContextMenu
 {
@@ -21,12 +22,18 @@ class CardOptionsContextMenu extends ContextMenu
     #handleEvents()
     {
         const editButton = this.querySelector(".edit-button");
+        const previewButton = this.querySelector(".preview-button");
         const resetButton = this.querySelector(".reset-button");
         const deleteButton = this.querySelector(".delete-button");
 
-        editButton.addEventListener("click", (event) => 
+        editButton.addEventListener("click", (event) =>
         {
             PageNavigator.open("card-editor-page", this.#card, this.#card.getDeck());
+        });
+
+        previewButton.addEventListener("click", () =>
+        {
+            PageNavigator.open("study-page", CardPreviewSession, this.#browserPage.getDeck(), this.#card);
         });
 
         resetButton.addEventListener("click", async () => 
@@ -56,6 +63,7 @@ class CardOptionsContextMenu extends ContextMenu
         this.innerHTML = 
         `
             <button class="edit-button">Edit</button>
+            <button class="preview-button">Preview</button>
             <button class="reset-button">Reset</button>
             <button class="delete-button">Delete</button>
         `;

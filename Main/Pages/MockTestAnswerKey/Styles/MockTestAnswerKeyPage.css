@@ -365,6 +365,22 @@ mock-test-answer-key-page .mock-test-answer-key-page-wait-button:hover
     background-color: rgba(37, 99, 235, 0.22);
 }
 
+mock-test-answer-key-page .mock-test-answer-key-page-home-button
+{
+    font: inherit;
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background-color: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+mock-test-answer-key-page .mock-test-answer-key-page-home-button:hover
+{
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
 mock-test-answer-key-page .mock-test-answer-key-page-toolbar-actions
 {
     flex-wrap: wrap;

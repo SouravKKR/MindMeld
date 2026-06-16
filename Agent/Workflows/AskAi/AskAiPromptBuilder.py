@@ -2,6 +2,7 @@ import re
 import html
 from Globals.Enumerations.AskAiPromptModes import AskAiPromptModes
 from Globals.Enumerations.AskAiContextKinds import AskAiContextKinds
+from Globals.Enumerations.AskAiLanguages import AskAiLanguages
 from Globals.Classes.Automation.Pools.PromptPool import PromptPool
 
 
@@ -42,6 +43,63 @@ class AskAiPromptBuilder:
     QUESTION_CHAR_LIMIT         = 4000
     ANSWER_CHAR_LIMIT           = 4000
 
+    # Generic LaTeX steer — appended to BOTH style blocks so every mode and
+    # context inherits it. Mirrors the wording in
+    # STUDY_MATERIAL_GENERATION_SYSTEM.txt / FLASHCARD_GENERATION_SYSTEM.txt
+    # (KaTeX renders these on the client). Kept deliberately generic ("a
+    # suitable candidate") rather than naming categories like equations or
+    # reactions — the model decides what warrants notation.
+    LATEX_GUIDANCE = (
+        " Where any content is a suitable candidate for mathematical or "
+        "scientific notation, write it as LaTeX — \\( \\) for inline and "
+        "\\[ \\] for block (KaTeX renders this on the client). Place the "
+        "LaTeX directly inside the delimiters; never wrap it in <pre> or "
+        "<code>."
+    )
+
+    # Web-image steer — appended to the user prompt ONLY when google-search
+    # grounding is on (Pro / Pro Plus). Basic has no web search, so it could
+    # only ever invent dead URLs; gating here keeps it from trying. The
+    # frontend renderer whitelists <img> and drops any image whose URL is
+    # malformed or fails to load, so a hallucinated link degrades to "no
+    # image" rather than a broken icon.
+    WEB_IMAGE_GUIDANCE = (
+        "Web search is available to you. When a relevant image from the web "
+        "would aid understanding — and always when the learner explicitly "
+        "asks for one — embed it inline using "
+        "<img src=\"DIRECT_IMAGE_URL\" alt=\"short description\">. Use only "
+        "direct links to actual image files (.jpg / .png / .webp / .svg) from "
+        "reputable sources you actually found via search; never invent, guess, "
+        "or approximate a URL. If no clearly relevant real image exists, omit "
+        "images entirely. The <img> tag is permitted in addition to the "
+        "structural tags listed above."
+    )
+
+    # Output-language steer — appended to the user prompt LAST (strongest
+    # position) only when the learner picked a non-English language. When
+    # the language is English this is never used, so the prompt is
+    # byte-identical to the pre-language behaviour. Two variants: the pure
+    # one keeps the whole answer in the target language; the bilingual one
+    # ("Combine with English") asks for a natural code-mixed style. Both
+    # leave the HTML / LaTeX / code constraints from the style block
+    # intact — only the human-readable prose changes language.
+    LANGUAGE_GUIDANCE = (
+        "Write your entire response in {language_name}. Translate every piece "
+        "of natural-language content — headings, sentences, list items, labels "
+        "— into {language_name}. Keep all HTML tags, attributes, LaTeX "
+        "delimiters, and code / identifiers exactly as instructed above; only "
+        "the human-readable text changes language."
+    )
+    LANGUAGE_GUIDANCE_BILINGUAL = (
+        "Write your response primarily in {language_name}, but mix in English "
+        "naturally for technical terms, proper nouns, standard keywords, and "
+        "any concept that is clearer or more conventional in English — a "
+        "natural bilingual, code-mixed style (for example, a {language_name} "
+        "explanation that keeps the English term it is defining). Keep all HTML "
+        "tags, attributes, LaTeX delimiters, and code / identifiers exactly as "
+        "instructed above; only the human-readable text changes language."
+    )
+
     # The "OUTPUT IS HTML, NOT MARKDOWN" clause is load-bearing — the
     # model otherwise mixes markdown syntax (**bold**, `code`, leading
     # # / - / *) into its HTML wrapper, which the sanitiser passes
@@ -65,6 +123,7 @@ class AskAiPromptBuilder:
         "fill, or stroke). Do not emit class or id attributes. Keep "
         "paragraphs short and well-structured. Begin output with the first "
         "content tag — no preamble."
+        + LATEX_GUIDANCE
     )
 
     # Richer allow-list used by FORMAT mode, which is explicitly about
@@ -88,10 +147,11 @@ class AskAiPromptBuilder:
         "are \"ask-ai-grid\" on an outer <div> and \"ask-ai-grid-item\" on "
         "each child <div> for a card-grid layout — no other classes, no "
         "ids. Begin output with the first content tag — no preamble."
+        + LATEX_GUIDANCE
     )
 
     @staticmethod
-    def build(prompt_mode: int, context_kind: int, context_payload: dict, selected_text: str, user_query: str, retrieved_chunks: list[dict]) -> tuple[str, str]:
+    def build(prompt_mode: int, context_kind: int, context_payload: dict, selected_text: str, user_query: str, retrieved_chunks: list[dict], b_enable_google_search: bool = False, selected_language: str = "ENGLISH", b_combine_with_english: bool = False) -> tuple[str, str]:
         information_source_block = AskAiPromptBuilder.__build_information_source_block(retrieved_chunks)
         safe_selected_text       = AskAiPromptBuilder.__sanitise_for_prompt(selected_text)
         # SUMMARIZE and FORMAT genuinely need the whole entity in view
@@ -138,6 +198,26 @@ class AskAiPromptBuilder:
                 user_query               = user_query,
                 information_source_block = information_source_block,
             )
+
+        # Web images are only viable when google-search grounding is on
+        # (Pro / Pro Plus). Append the steer last so it overrides the
+        # style block's structural-tags-only enumeration with the <img>
+        # exception.
+        if b_enable_google_search:
+            user_prompt = user_prompt + "\n\n" + AskAiPromptBuilder.WEB_IMAGE_GUIDANCE
+
+        # Output-language steer goes LAST so it is the final, strongest
+        # instruction. English (the default) is a deliberate no-op — the
+        # prompt is left untouched, identical to the pre-language call.
+        # The enum membership guard means an unexpected / tampered string
+        # can never be substituted into the prompt.
+        normalized_language = (selected_language or "ENGLISH").upper()
+        if normalized_language != "ENGLISH" and normalized_language in AskAiLanguages.__members__:
+            language_name     = normalized_language.capitalize()
+            guidance_template = (AskAiPromptBuilder.LANGUAGE_GUIDANCE_BILINGUAL
+                                 if b_combine_with_english
+                                 else AskAiPromptBuilder.LANGUAGE_GUIDANCE)
+            user_prompt = user_prompt + "\n\n" + guidance_template.replace("{language_name}", language_name)
 
         return system_prompt, user_prompt
 

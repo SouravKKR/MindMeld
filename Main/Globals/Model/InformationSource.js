@@ -1,5 +1,6 @@
 import { informationSourceTypes } from '../Enumerations/InformationSourceTypes.js';
 import { ocrModes } from '../Enumerations/OcrModes.js';
+import { contentRetentionModes } from '../Enumerations/ContentRetentionModes.js';
 
 class InformationSource
 {
@@ -12,8 +13,10 @@ class InformationSource
     #mimeType;
     #hash;
     #ocrMode;
+    #fileSizeBytes;
+    #retentionMode;
 
-    constructor({name = null, userId = null, sourceType = null, directoryPath = null, tags = [], mimeType = '', hash = '', ocrMode = 1} = {})
+    constructor({name = null, userId = null, sourceType = null, directoryPath = null, tags = [], mimeType = '', hash = '', ocrMode = 1, fileSizeBytes = 0, retentionMode = 1} = {})
     {
         this.#id = crypto.randomUUID();
         this.setName(name);
@@ -24,6 +27,8 @@ class InformationSource
         this.setMimeType(mimeType);
         this.setHash(hash);
         this.setOcrMode(ocrMode);
+        this.setFileSizeBytes(fileSizeBytes);
+        this.setRetentionMode(retentionMode);
     }
 
     getId()
@@ -170,6 +175,46 @@ class InformationSource
         this.#ocrMode = value;
     }
 
+    getFileSizeBytes()
+    {
+        return this.#fileSizeBytes;
+    }
+
+    setFileSizeBytes(value)
+    {
+        if (value !== null)
+        {
+            value = parseInt(value, 10);
+            if (isNaN(value))
+            {
+                value = 0;
+            }
+            else
+            {
+                value = Math.max(value, 0);
+            }
+        }
+        this.#fileSizeBytes = value;
+    }
+
+    getRetentionMode()
+    {
+        return this.#retentionMode;
+    }
+
+    setRetentionMode(value)
+    {
+        if (value !== null)
+        {
+            const enumValues = Object.values(contentRetentionModes);
+            if (!enumValues.includes(value))
+            {
+                value = enumValues[0] ?? null;
+            }
+        }
+        this.#retentionMode = value;
+    }
+
     toJson()
     {
         return {
@@ -182,6 +227,8 @@ class InformationSource
             mimeType: this.getMimeType(),
             hash: this.getHash(),
             ocrMode: this.getOcrMode() !== null ? Number(this.getOcrMode()) : null,
+            fileSizeBytes: this.getFileSizeBytes(),
+            retentionMode: this.getRetentionMode() !== null ? Number(this.getRetentionMode()) : null,
         };
     }
 
@@ -195,7 +242,9 @@ class InformationSource
             tags: json.tags ?? null,
             mimeType: json.mimeType ?? null,
             hash: json.hash ?? null,
-            ocrMode: json.ocrMode ?? null
+            ocrMode: json.ocrMode ?? null,
+            fileSizeBytes: json.fileSizeBytes ?? null,
+            retentionMode: json.retentionMode ?? null
         });
         instance._restoreId_id(json.id);
         return instance;

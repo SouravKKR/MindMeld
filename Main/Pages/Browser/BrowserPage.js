@@ -30,6 +30,11 @@ class BrowserPage extends HTMLElement
         return this.#selection;
     }
 
+    getDeck()
+    {
+        return this.#deck;
+    }
+
     #getEntities()
     {
         switch(this.#entityType)

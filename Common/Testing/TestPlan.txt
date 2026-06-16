@@ -1,0 +1,56 @@
+MindMeld Test Plan (master)
+===========================
+
+This is the source of truth for the automated pre-production test suite, the
+test equivalent of Common/Audits/Audit.txt. The run-tests skill reads this file
+fresh every run, so changed suites, paths, or instructions are picked up
+automatically.
+
+Report: Common/Reports/TestReport.pdf
+Machine-readable results: Common/Reports/TestResults.json
+
+Test catalogs (one text file per service, listing every case):
+  1) Common/Testing/AgentTests.txt   -> scripts in Common/Testing/Agent/
+  2) Common/Testing/DockTests.txt    -> scripts in Common/Testing/Dock/
+  3) Common/Testing/MainTests.txt    -> scripts in Common/Testing/Main/
+
+Objectives under test:
+  A) All utility functions work as expected (deterministic unit tests, every service).
+  B) Postman/Newman test cases for all endpoints (Dock).
+  C) Only static files are accessible unauthenticated; every protected endpoint
+     rejects an anonymous request (Dock auth-isolation).
+  D) UI navigation: from any page to any page, driven by a real browser
+     (Puppeteer) against the BUILT app at Dock/Static.
+  E) UI is responsive in portrait and landscape (no horizontal overflow, no
+     clipped content).
+  F) All popups/dialogs have correct alignment and overflow handling, appear one
+     after another (queued, never stacked on top of each other), and dismiss
+     cleanly.
+  G) No UI route or interaction produces a blank screen or client-side
+     (uncaught / console) error.
+
+Instructions (govern every run):
+  - Everything runs against the FINAL BUILT version. Run `setup.bat --aggressive`
+    first so Dock/Static mirrors Main/, then start the Dock server, then run the
+    suites. UI and API suites target http://127.0.0.1:3000 (override with BASE_URL).
+  - Tests must be INCREMENTAL. Never delete an existing, still-valid test. When a
+    source file changes, ADD or UPDATE the affected test(s) and keep the rest.
+  - Use git + the last-run manifest to save tokens: if no tracked source files
+    changed since the last run, do NOT regenerate tests -- just re-run the
+    existing deterministic suites via run_tests.py.
+  - When source DID change, inspect the diff and look for NEW testable surface
+    (new utility function, new endpoint, new page or dialog) and incorporate a
+    test for it before running.
+  - A suite whose prerequisites are unavailable (server down, deps not installed)
+    is reported SKIPPED, not FAILED -- the report must stay honest about what ran.
+  - The final report carries: an overall score out of 10, a coverage matrix
+    table (one row per suite), an executive summary, per-suite detail with any
+    failing cases, and actionable insights.
+  - Scratch artifacts (node_modules, per-suite JSON under Common/Reports/.results,
+    the staging manifest) are gitignored. Do not pollute the repo root: all test
+    files live under Common/Testing and all reports under Common/Reports.
+
+Scoring:
+  overallScore = (0.6 x pass-rate + 0.4 x mean per-suite coverage) x 10,
+  reduced by a skip factor for suites that could not run. Computed by
+  .claude/skills/run-tests/run_tests.py.

@@ -1110,6 +1110,43 @@ class SyncOrchestrator
                 return;
             }
 
+            // Empty-snapshot data-loss safeguard. The apply phase below
+            // calls Deck.clearAllInMemory(). If the server returned an
+            // effectively-empty snapshot (no real entities) while the
+            // local library DOES hold real data, replacing local with the
+            // empty snapshot would silently destroy the user's decks. This
+            // is the reported "deck imported on another device briefly
+            // appears on a fresh/slow login, then vanishes" failure: the
+            // local tree was populated (from disk or a partial pull) but
+            // the server's view hadn't caught up yet. Preserve local and
+            // route to a normal sync cycle that pushes it up first; the
+            // next pull reconciles against whatever the server then has.
+            //
+            // Deliberate wipes (Clear All Server Data) pass
+            // bDiscardPendingChanges and are exempt. The fresh-client,
+            // auto-retry, and "Force Pull" button paths only run with an
+            // empty local library, so this guard is inert for them.
+            const incomingDeckCount          = Array.isArray(snapshot.decks)          ? snapshot.decks.length          : 0;
+            const incomingCardCount          = Array.isArray(snapshot.cards)          ? snapshot.cards.length          : 0;
+            const incomingStudyMaterialCount = Array.isArray(snapshot.studyMaterials) ? snapshot.studyMaterials.length : 0;
+            const incomingMockTestCount      = Array.isArray(snapshot.mockTests)      ? snapshot.mockTests.length      : 0;
+            const bSnapshotEffectivelyEmpty  = incomingDeckCount <= 1
+                && incomingCardCount === 0
+                && incomingStudyMaterialCount === 0
+                && incomingMockTestCount === 0;
+
+            if (!bDiscardPendingChanges
+                && bSnapshotEffectivelyEmpty
+                && !SyncOrchestrator.#isLocalLibraryEffectivelyEmpty())
+            {
+                console.warn("[SyncOrchestrator] forcePullFromServer aborting bulk replace — the server snapshot is empty but the local library holds real data. Preserving local and routing to a normal sync cycle to push it up first.");
+                SyncOrchestrator.#setState(syncStates.IDLE);
+                window.dispatchEvent(new CustomEvent(SyncEvents.COMPLETED));
+                releaseMutex();
+                await SyncOrchestrator.sync({ bForce: true });
+                return;
+            }
+
             SyncProgressReporter.setFraction(0.55);
 
             // 2. Replace in-memory tree + commit to IDB in one bulk

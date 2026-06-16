@@ -602,6 +602,22 @@ class CuratedStudyController
 
         const additionalData = deck.getAdditionalData() || {};
         const canonicalBatchTag = additionalData[AutoAnalysisDeckFields.LAST_CURATED_BATCH_TAG] || null;
+
+        // When the deck carries NO canonical batch tag, there is no
+        // reference batch to repair against — every LIVE material would
+        // look "orphaned" and get archived. That is exactly the wrong
+        // move when the tag was transiently lost (e.g. a sync race
+        // clobbered the deck's additionalData while the materials
+        // themselves survived): archiving here would make the loss
+        // permanent. Leaving the LIVE materials untouched is harmless —
+        // the next deck pull restores the tag and getLiveBatchInfo finds
+        // them again. Only repair when we actually have a canonical tag
+        // to compare each material's own tag against.
+        if (typeof canonicalBatchTag !== "string" || canonicalBatchTag.length === 0)
+        {
+            return;
+        }
+
         const liveStateName = CuratedStudyController.#stateName(curatedBatchReviewStates.LIVE);
         const archivedStateName = CuratedStudyController.#stateName(curatedBatchReviewStates.ARCHIVED);
         const autoReplacedName = CuratedStudyController.#outcomeName(curatedSessionOutcomes.AUTO_REPLACED);

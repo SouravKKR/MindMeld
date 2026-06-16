@@ -1,0 +1,127 @@
+Main Test Catalog (browser UI, built app at Dock/Static)
+========================================================
+
+Scripts: Common/Testing/Main/
+Two suites run here:
+
+-----------------------------------------------------------------------------
+SUITE 1 - Utility functions (no server / no browser needed)
+-----------------------------------------------------------------------------
+Runner:  Common/Testing/Main/run_main_unit_tests.js  (pure Node, dynamic import)
+Coverage metric: structural -- catalogued pure Main utility functions with a
+passing test, over the total catalogued below.
+
+Catalogued deterministic functions (coverage denominator):
+  1) Globals/UtilityFunctions/FormatCredits.js          :: formatCredits
+  2) Globals/UtilityFunctions/EnumerationToTitleCase.js :: enumerationToTitleCase
+  3) Globals/UtilityFunctions/EnumerationToTitleCase.js :: titleCaseToEnumeration
+  4) Globals/UtilityFunctions/PascalCaseToTitleCase.js  :: pascalCaseToTitleCase
+  5) Globals/UtilityFunctions/RgbToHex.js               :: rgbToHex
+  6) Globals/UtilityFunctions/SanitizeForJsPdf.js       :: sanitizeForJsPdf
+  7) Globals/UtilityFunctions/Sha256.js                 :: sha256
+  8) Globals/UtilityFunctions/SmoothCurve.js            :: smoothCurve
+  9) Globals/UtilityFunctions/CreatePromiseMutex.js     :: createPromiseMutex
+
+Test cases:
+  formatCredits
+    - float-drifted balance (98.28949999999999) rounds to "98.29"
+    - half-credit (0.5), whole numbers (100, 5.0), trailing zeros, numeric
+      strings ("50.5") and negatives (-3.14159 -> "-3.14")
+    - non-numeric / non-finite input (NaN, Infinity, null, undefined, "abc")
+      formats as "0" and never throws
+  enumerationToTitleCase
+    - UPPER_SNAKE_CASE -> Title Case ("ON_SUCCESS" -> "On Success",
+      "GLICKO_RD" -> "Glicko Rd", single letter and "" pass through)
+  titleCaseToEnumeration
+    - Title Case -> UPPER_SNAKE_CASE, collapsing runs of whitespace
+    - round-trips enumerationToTitleCase
+  pascalCaseToTitleCase
+    - splits on case boundaries ("MyCardProgress" -> "My Card Progress"),
+      preserves all-caps acronyms ("URL" -> "URL"), "" -> ""
+  rgbToHex
+    - rgb(r,g,b) -> lowercase #rrggbb (incl. zero-padding 0a141e)
+    - unparseable input falls back to "#ffff00"
+  sanitizeForJsPdf
+    - maps non-WinAnsi glyphs to ASCII (α->alpha, π->pi), leaves ASCII intact
+    - null / empty input returns ""
+  sha256
+    - matches the known NIST vectors for "abc", "" and "test"
+    - deterministic across repeated calls
+  smoothCurve
+    - [] and a single point pass through unchanged
+    - preserves x-coordinates, holds a symmetric middle point, pulls the
+      endpoints inward toward their neighbours
+  createPromiseMutex
+    - exposes an acquire() function
+    - a second acquire() only resolves after the first holder releases (FIFO
+      mutual exclusion), asserted from a captured acquire/release ordering
+
+Notes:
+  - Only pure, deterministic helpers under Main/Globals/UtilityFunctions are
+    catalogued here. DOM / framework / browser-bound helpers (download,
+    fetch*WithTimeout, scaleDownImage, getRandomUuid, htmlToSearchableText, the
+    convertElementTo* / applyImageResizeDecorator decorators, pollTaskCompletion)
+    are NOT unit-testable without a DOM/network and are exercised by the
+    Puppeteer UI suite below.
+
+-----------------------------------------------------------------------------
+SUITE 2 - UI Navigation / Responsive / Popups (server + browser required)
+-----------------------------------------------------------------------------
+Runner:  Common/Testing/Main/run_ui_tests.js  (Puppeteer, real Chromium)
+Coverage metric: navigation -- (page pairs successfully reached) over
+(page pairs attempted), reported alongside pages-visited / pages-discovered.
+
+The runner drives a real browser against the BUILT app served by Dock at
+http://127.0.0.1:3000. Authentication is satisfied via TEST_SESSION_COOKIE (a
+valid sessionId for a seeded test account) when provided; otherwise the suite
+exercises the login-page and any page reachable without a session and records
+the rest as SKIPPED (not FAIL).
+
+Page inventory under test (PageNavigator tag names):
+  home-page, login-page, admin-panel-page, settings-page, mindmeld-about-page,
+  tutorials-page, progress-page, study-page, card-editor-page,
+  study-material-editor-page, deck-editor-page, mock-test-editor-page,
+  mock-test-answer-key-page, browser-page, deck-insights-page,
+  automatic-generation-page, activity-page, paid-deck-library-page,
+  paid-deck-details-page, paid-deck-browse-page
+
+Test cases:
+  Navigation matrix (objective D)
+    - From each reachable page, navigate to every other page via
+      PageNavigator.open(targetTag) and assert: the target becomes the current
+      page, the page element renders non-empty content, and PageNavigator.back()
+      returns to the prior page. Pages requiring constructor args are opened with
+      best-effort safe stubs; any that legitimately cannot mount standalone are
+      recorded with their reason.
+    - Assert the page stack depth never exceeds the 100-entry cap and back from
+      the root fires HARDWARE_BACK_AT_ROOT rather than leaving a blank screen.
+
+  Responsiveness (objective E)
+    - For each reachable page, render at portrait (390x844) and landscape
+      (844x390) and assert: no horizontal scroll (scrollWidth <= clientWidth + 1)
+      and the document body is not empty / not blank.
+    - Repeat at a desktop viewport (1280x800) as a control.
+
+  Popups / dialogs (objective F)
+    - DialogBox.alert and DialogBox.confirm render centered within the viewport
+      (bounding box inside the viewport on both axes), do not overflow, and
+      scroll internally when content is tall.
+    - When two dialogs are requested back-to-back they appear ONE AFTER ANOTHER
+      (the second only after the first resolves) -- never two visible backdrops
+      at once (BlockingOverlayCoordinator queueing).
+    - Each dialog dismisses cleanly, restoring scroll and leaving no orphan
+      backdrop in the DOM.
+
+  Client-side health (objective G)
+    - A page-level listener captures console.error, pageerror (uncaught
+      exceptions) and unhandledrejection during the whole run; ANY captured
+      error fails the owning case with the message + stack.
+    - After each navigation, assert the rendered page is not a blank screen
+      (visible text length > 0 and body has child elements).
+
+Notes:
+  - The runner DISCOVERS the page tag list at runtime from the served bundles
+    (window.customElements registrations and PageNavigator usage) and falls back
+    to the inventory above, so newly added pages are picked up automatically.
+  - All findings are written to the per-suite JSON; failing cases carry the
+    page, viewport, and captured error text.

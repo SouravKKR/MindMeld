@@ -92,7 +92,7 @@ class OrganizationDetailsDialog
                     <h3>Expand capacity</h3>
                     <div class="organization-expansion-row">
                         <label>Additional members <input type="number" class="organization-expansion-count" min="1" value="10"></label>
-                        <label>Amount (minor units, 0 = free) <input type="number" class="organization-expansion-amount" min="0" value="0"></label>
+                        <label>Amount (minor units — e.g. 100 = 1.00; 0 = free) <input type="number" class="organization-expansion-amount" min="0" value="0"></label>
                         <button type="button" class="organization-expand">Expand</button>
                     </div>
 
@@ -144,7 +144,7 @@ class OrganizationDetailsDialog
                 }
                 perksTable.innerHTML = `
                     <table class="admin-panel-table">
-                        <thead><tr><th>Deck</th><th>Perk type</th><th>Value</th><th>Duration (days, 0=forever)</th><th></th></tr></thead>
+                        <thead><tr><th>Deck</th><th>Perk type</th><th>Value (price in minor units, or % for discount)</th><th>Duration (days, 0=forever)</th><th></th></tr></thead>
                         <tbody>
                             ${perkRows.map((row, rowIndex) => `
                                 <tr data-perk-index="${rowIndex}">

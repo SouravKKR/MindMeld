@@ -12,10 +12,23 @@ class ContentStudySession extends StudySession
     #materials = [];
     #index = -1;
     #startTime = null;
+    #startIndex = 0;
+    #bPreview = false;
 
-    constructor(studyPage, deck = null, selectedDetailLevels = null)
+    /**
+     * @param {StudyPage} studyPage
+     * @param {Deck} deck
+     * @param {number[] | null} selectedDetailLevels - Optional detail-level filter.
+     * @param {{ bPreview?: boolean, startMaterial?: StudyMaterial } | null} previewOptions -
+     *     When `bPreview` is true the session is a read-only walk-through opened from the
+     *     Browser's "Preview" action: it never records a view into the lifecycle counters,
+     *     and (when provided) starts at `startMaterial` rather than the first material.
+     */
+    constructor(studyPage, deck = null, selectedDetailLevels = null, previewOptions = null)
     {
         super(studyPage, deck);
+
+        this.#bPreview = previewOptions?.bPreview === true;
 
         const allMaterials = deck.getStudyMaterials(true);
 
@@ -35,7 +48,13 @@ class ContentStudySession extends StudySession
             this.#materials = allMaterials;
         }
 
-        this.#index = -1;
+        const startMaterialId = previewOptions?.startMaterial?.getId?.() ?? null;
+        const foundIndex = startMaterialId !== null ? this.#materials.findIndex((material) => material.getId() === startMaterialId) : -1;
+        this.#startIndex = foundIndex >= 0 ? foundIndex : 0;
+
+        // next() advances before showing, so seed the cursor one before the
+        // intended start so the first next() lands on #startIndex.
+        this.#index = this.#startIndex - 1;
         this._current = null;
         this.#startTime = new Date();
 
@@ -52,11 +71,14 @@ class ContentStudySession extends StudySession
         const previousButton = this._studyPage.querySelector(".previous-card-button");
         const progressionContainer = this._studyPage.querySelector(".card-progression-container");
 
-        progressionContainer.innerHTML = `1/${this.#materials.length}`;
+        progressionContainer.innerHTML = `${this.#startIndex + 1}/${this.#materials.length}`;
 
-        nextButton.addEventListener("click", () =>
+        nextButton.addEventListener("click", async () =>
         {
-            this.next();
+            // next() can await an "end reached" dialog before it wraps, so
+            // the progress count must be refreshed AFTER it resolves —
+            // otherwise it would read the pre-navigation index.
+            await this.next();
             progressionContainer.innerHTML = `${this.#index + 1}/${this.#materials.length}`;
         });
 
@@ -110,8 +132,17 @@ class ContentStudySession extends StudySession
         this.next();
     }
 
-    next()
+    async next()
     {
+        // When the learner is on the last material and presses Next, tell
+        // them they've reached the end before looping back to the first —
+        // rather than silently wrapping as if nothing happened. Guarded on
+        // length > 1 so a single-material deck doesn't nag on every press.
+        if(this.#materials.length > 1 && this.#index === this.#materials.length - 1)
+        {
+            await DialogBox.alert("End reached", "You've reached the last study material — starting again from the beginning.");
+        }
+
         this.#index = (this.#index + 1) % this.#materials.length;
 
         this._current = this.#materials[this.#index];
@@ -160,7 +191,12 @@ class ContentStudySession extends StudySession
         // visible study material just changed.
         window.dispatchEvent(new CustomEvent(StudySessionEvents.STUDY_MATERIAL_CHANGED, {detail: {studyMaterial: material}}));
 
-        await material.view(this.getTimeSpent(), true);
+        // Preview is a read-only walk-through — never bump the view / time
+        // counters or persist anything for the material being previewed.
+        if(!this.#bPreview)
+        {
+            await material.view(this.getTimeSpent(), true);
+        }
     }
 
     onResumed()

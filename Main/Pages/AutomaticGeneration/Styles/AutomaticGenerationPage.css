@@ -70,7 +70,7 @@ automatic-generation-page[page]
     letter-spacing: 0.08em;
 }
 
-.generation-fields input,
+.generation-fields input:not([type="checkbox"]):not([type="radio"]),
 .generation-fields select,
 .generation-fields div[contenteditable]
 {
@@ -78,7 +78,7 @@ automatic-generation-page[page]
     border-radius: 10px;
 }
 
-.generation-fields input:hover,
+.generation-fields input:not([type="checkbox"]):not([type="radio"]):hover,
 .generation-fields select:hover,
 .generation-fields div[contenteditable]:hover
 {

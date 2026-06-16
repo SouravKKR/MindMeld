@@ -123,12 +123,81 @@ paid-deck-library-page
     color: var(--primary-text-color);
 }
 
+/* Opens the off-canvas filter drawer on mobile. Hidden on desktop where the
+   filter panel is a permanent sidebar column. */
+.paid-deck-library-filters-toggle
+{
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 14px;
+    border-radius: 8px;
+    border: none;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.paid-deck-library-filters-toggle:hover
+{
+    background-color: var(--secondary-background-color);
+}
+
 .paid-deck-library-body
 {
     flex: 1 1 auto;
     display: grid;
     grid-template-columns: 280px 1fr;
     overflow: hidden;
+    position: relative;
+}
+
+/* On desktop the drawer wrapper is transparent to the grid (its <aside> child
+   becomes the 280px sidebar column directly). On mobile it becomes a fixed
+   off-canvas panel — see the media query below. */
+.paid-deck-library-filter-drawer
+{
+    display: contents;
+}
+
+.paid-deck-library-filter-drawer-header
+{
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--primary-text-color);
+    border-bottom: 1px solid var(--tertiary-background-color);
+    flex-shrink: 0;
+}
+
+.paid-deck-library-filter-drawer-close
+{
+    border: none;
+    background: transparent;
+    color: var(--secondary-text-color);
+    font-size: 18px;
+    line-height: 1;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 6px;
+}
+
+.paid-deck-library-filter-drawer-close:hover
+{
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+}
+
+.paid-deck-library-filter-backdrop
+{
+    display: none;
 }
 
 .paid-deck-library-filter-panel
@@ -296,6 +365,14 @@ paid-deck-library-page
 {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    /* Size each implicit row to its cards' full content. Cards use
+       `overflow: hidden` (for the rounded thumbnail), which drops their
+       grid-item automatic minimum size to 0 — so with the default
+       `grid-auto-rows: auto` the row can be squeezed below the card's
+       content inside this constrained scroll container, clipping the card
+       body (title / price / button). `max-content` keeps every row tall
+       enough for the thumbnail plus the body. */
+    grid-auto-rows: max-content;
     align-content: flex-start;
     gap: 18px;
     padding: 4px 20px 20px 20px;
@@ -325,7 +402,11 @@ paid-deck-library-page
     outline-offset: -1px;
     box-shadow: 0 1px 4px var(--shadow-color);
     cursor: pointer;
-    overflow: hidden;
+    /* Deliberately NOT `overflow: hidden`. As a grid item, `overflow: hidden`
+       drops the card's automatic minimum size to 0, which lets the row
+       collapse and clip the body. The thumbnail's top corners are rounded on
+       the thumb-wrap itself (below) instead, so we keep rounded corners
+       without the clipping side-effect. */
     transition: outline-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
@@ -342,12 +423,23 @@ paid-deck-library-page
 .paid-deck-card-thumb-wrap
 {
     width: 100%;
-    aspect-ratio: 16 / 10;
+    /* Fixed (not width-derived) height: an `aspect-ratio` here makes the
+       thumbnail grow with the card's width, and on constrained screens the
+       grid hands out fewer/wider columns. The grid then sizes the row from
+       the minimum column width while the `1fr` columns expand wider, so the
+       taller thumbnail overruns the row and the card's `overflow: hidden`
+       clips the body (title / price / button). A fixed height keeps the
+       thumbnail's size independent of the card width, so the body is always
+       laid out and visible. */
+    height: 170px;
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     justify-content: center;
     background: linear-gradient(135deg, #fdfdff, #e9edf5);
     border-bottom: 1px solid var(--outline-color-subtle);
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
 }
 
 .paid-deck-card-thumb
@@ -507,17 +599,107 @@ paid-deck-library-page
 
 @media (max-width: 800px)
 {
+    .paid-deck-library-controls
+    {
+        padding: 10px 12px;
+        gap: 8px;
+        justify-content: flex-start;
+    }
+
+    /* Search owns the first row; the toggle + region + sort flow below it
+       and share the remaining width. */
+    .paid-deck-library-search
+    {
+        flex-basis: 100%;
+        order: -1;
+    }
+
+    .paid-deck-library-filters-toggle
+    {
+        display: inline-flex;
+        flex: 0 0 auto;
+    }
+
+    .paid-deck-library-region-bar,
+    .paid-deck-library-sort
+    {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .paid-deck-library-region-bar > label,
+    .paid-deck-library-sort > label
+    {
+        flex-shrink: 0;
+    }
+
+    .paid-deck-library-region-select,
+    .paid-deck-library-sort select
+    {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+
+    /* The region-resolved hint wraps to its own full-width line so it never
+       squeezes the region <select>. */
+    .paid-deck-library-region-resolved
+    {
+        flex-basis: 100%;
+    }
+
+    /* Deck grid takes the whole body — the filter sidebar is now an
+       off-canvas drawer rather than a stacked column. */
     .paid-deck-library-body
     {
         grid-template-columns: 1fr;
-        overflow-y: auto;
+    }
+
+    /* Off-canvas filter drawer: slides in from the left over the grid. */
+    .paid-deck-library-filter-drawer
+    {
+        display: flex;
+        flex-direction: column;
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: 86%;
+        max-width: 340px;
+        z-index: 1001;
+        background-color: var(--secondary-background-color);
+        box-shadow: 2px 0 22px var(--shadow-color-strong);
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+    }
+
+    paid-deck-library-page.filter-drawer-open .paid-deck-library-filter-drawer
+    {
+        transform: translateX(0);
+    }
+
+    .paid-deck-library-filter-drawer-header
+    {
+        display: flex;
     }
 
     .paid-deck-library-filter-panel
     {
         border-right: none;
-        border-bottom: 1px solid var(--tertiary-background-color);
-        max-height: 360px;
+        flex: 1 1 auto;
+        max-height: none;
+    }
+
+    .paid-deck-library-filter-backdrop
+    {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        background-color: rgba(0, 0, 0, 0.5);
+    }
+
+    paid-deck-library-page.filter-drawer-open .paid-deck-library-filter-backdrop
+    {
+        display: block;
     }
 
     .paid-deck-library-grid
@@ -527,12 +709,24 @@ paid-deck-library-page
         padding: 4px 12px 12px 12px;
     }
 
-    .paid-deck-library-controls
+    .paid-deck-card-thumb-wrap
     {
-        padding: 10px 12px;
+        height: 130px;
+    }
+}
+
+/* Very narrow portrait phones: two columns stay comfortable down here, and
+   the controls collapse so the search and each control gets a full row. */
+@media (max-width: 460px)
+{
+    .paid-deck-library-grid
+    {
+        grid-template-columns: repeat(auto-fill, minmax(135px, 1fr));
+        gap: 10px;
     }
 
-    .paid-deck-library-search
+    .paid-deck-library-region-bar,
+    .paid-deck-library-sort
     {
         flex-basis: 100%;
     }

@@ -40,7 +40,7 @@ _AGENT_ROOT = Path(__file__).resolve().parents[2]
 if str(_AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(_AGENT_ROOT))
 
-from dotenv import load_dotenv
+from Globals.Utility.EnvironmentLoader import EnvironmentLoader
 
 
 def _emit(event: dict) -> None:
@@ -140,7 +140,7 @@ async def _retrieve_grounding_chunks(selected_text: str, user_query: str | None,
 
 
 async def run() -> int:
-    load_dotenv()
+    EnvironmentLoader.load()
 
     try:
         request_body = _read_request_body()
@@ -157,8 +157,13 @@ async def run() -> int:
     attached_images     = request_body.get("attachedImages") or []
     information_sources = request_body.get("informationSources") or []
     b_use_information_sources = bool(request_body.get("useInformationSources"))
+    selected_language         = request_body.get("selectedLanguage") or "ENGLISH"
+    b_combine_with_english    = bool(request_body.get("combineWithEnglish"))
     model_id                  = request_body.get("modelId")
     b_enable_google_search    = bool(request_body.get("bEnableGoogleSearch"))
+    # Dock injects the resolved userId alongside modelId so every worker
+    # log line can be attributed to the user being charged for the call.
+    user_id = request_body.get("userId") or "unknown"
 
     if not model_id:
         _emit({ "type": "error", "message": "Missing modelId — Dock should inject this from ModelTierMetadata." })
@@ -190,6 +195,9 @@ async def run() -> int:
         selected_text    = selected_text,
         user_query       = user_query,
         retrieved_chunks = retrieved_chunks,
+        b_enable_google_search = b_enable_google_search,
+        selected_language      = selected_language,
+        b_combine_with_english = b_combine_with_english,
     )
 
     attached_image_parts = _build_attached_image_parts(attached_images)
@@ -197,7 +205,7 @@ async def run() -> int:
     from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
     gemini_provider = GeminiProvider()
 
-    _log(f"Streaming from {model_id} (grounding={b_enable_google_search}, images={len(attached_image_parts)}).")
+    _log(f"Streaming from {model_id} for user {user_id} (grounding={b_enable_google_search}, images={len(attached_image_parts)}).")
 
     try:
         async for event in gemini_provider.stream_text(

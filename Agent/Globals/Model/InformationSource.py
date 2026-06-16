@@ -2,10 +2,11 @@ import uuid
 from typing import List
 from Globals.Enumerations.InformationSourceTypes import InformationSourceTypes
 from Globals.Enumerations.OcrModes import OcrModes
+from Globals.Enumerations.ContentRetentionModes import ContentRetentionModes
 
 
 class InformationSource:
-    def __init__(self, name: str = None, user_id: str = None, source_type: InformationSourceTypes = None, directory_path: str = None, tags: List[str] = [], mime_type: str = '', hash: str = '', ocr_mode: OcrModes = OcrModes(1)) -> None:
+    def __init__(self, name: str = None, user_id: str = None, source_type: InformationSourceTypes = None, directory_path: str = None, tags: List[str] = [], mime_type: str = '', hash: str = '', ocr_mode: OcrModes = OcrModes(1), file_size_bytes: int = 0, retention_mode: ContentRetentionModes = ContentRetentionModes(1)) -> None:
         self.__id = str(uuid.uuid4())
         self.set_name(name)
         self.set_user_id(user_id)
@@ -15,6 +16,8 @@ class InformationSource:
         self.set_mime_type(mime_type)
         self.set_hash(hash)
         self.set_ocr_mode(ocr_mode)
+        self.set_file_size_bytes(file_size_bytes)
+        self.set_retention_mode(retention_mode)
 
     def get_id(self) -> str:
         return self.__id
@@ -96,6 +99,28 @@ class InformationSource:
                 value = valid_values[0] if valid_values else None
         self.__ocr_mode = value
 
+    def get_file_size_bytes(self) -> int:
+        return self.__file_size_bytes
+
+    def set_file_size_bytes(self, value: int) -> None:
+        if value is not None:
+            try:
+                value = int(value)
+                value = max(0, value)
+            except (ValueError, TypeError):
+                value = 0
+        self.__file_size_bytes = value
+
+    def get_retention_mode(self) -> ContentRetentionModes:
+        return self.__retention_mode
+
+    def set_retention_mode(self, value: ContentRetentionModes) -> None:
+        if value is not None:
+            valid_values = list(ContentRetentionModes)
+            if value not in valid_values:
+                value = valid_values[0] if valid_values else None
+        self.__retention_mode = value
+
     def _restore_id_id(self, stored_id):
         if stored_id is not None:
             self.__id = stored_id
@@ -111,6 +136,8 @@ class InformationSource:
             'mimeType': self.get_mime_type(),
             'hash': self.get_hash(),
             'ocrMode': int(self.get_ocr_mode().value) if self.get_ocr_mode() is not None else None,
+            'fileSizeBytes': self.get_file_size_bytes(),
+            'retentionMode': int(self.get_retention_mode().value) if self.get_retention_mode() is not None else None,
         }
 
     @classmethod
@@ -123,7 +150,9 @@ class InformationSource:
             tags=data.get('tags'),
             mime_type=data.get('mimeType'),
             hash=data.get('hash'),
-            ocr_mode=OcrModes(data.get('ocrMode')) if data.get('ocrMode') is not None else None
+            ocr_mode=OcrModes(data.get('ocrMode')) if data.get('ocrMode') is not None else None,
+            file_size_bytes=data.get('fileSizeBytes'),
+            retention_mode=ContentRetentionModes(data.get('retentionMode')) if data.get('retentionMode') is not None else None
         )
         if data.get('id') is not None:
             instance._restore_id_id(data.get('id'))

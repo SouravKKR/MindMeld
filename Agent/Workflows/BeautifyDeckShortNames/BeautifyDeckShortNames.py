@@ -19,18 +19,20 @@ class BeautifyDeckShortNames(Workflow):
 
     MODEL_NAME                   = "gemini-2.5-flash-lite"
     MAX_DECKS_PER_BATCH          = 50
-    MAX_SHORT_NAME_LENGTH        = 16
+    MAX_SHORT_NAME_LENGTH        = 24
     BEAUTIFIED_OUTPUT_FILE_NAME  = "BeautifiedShortNames.json"
     FLASHCARDS_DIRECTORY_NAME    = PersistenceConstants.FLASHCARDS_DIRECTORY
     STUDY_MATERIALS_DIRECTORY_NAME = PersistenceConstants.STUDY_MATERIALS_DIRECTORY
 
     SYSTEM_PROMPT = (
         "You are an expert at writing concise, readable short names for flashcard decks. "
-        "Each short name must be at most 16 characters long, in Title Case, and must be "
-        "instantly recognisable as a label for that deck. Prefer the full topic word when "
-        "it fits (e.g. 'Limits', 'Algebra'). For multi-word topics, drop filler words and "
-        "keep the most distinctive ones (e.g. 'The Nervous System' -> 'Nervous System'). "
-        "Never invent unrelated names. Never exceed 16 characters."
+        "Each short name must be a complete, meaningful label in Title Case that is shorter "
+        "than the full topic name but still instantly recognisable. Prefer the full topic "
+        "word when it fits (e.g. 'Limits', 'Algebra'). For multi-word topics, drop filler "
+        "words and keep the most distinctive whole words (e.g. 'The Nervous System' -> "
+        "'Nervous System'). Keep names to about 24 characters, but NEVER cut a word in half "
+        "or abbreviate to an unreadable fragment — always use complete words. A slightly "
+        "longer complete name is far better than a truncated one. Never invent unrelated names."
     )
 
     def __init__(self, payload = {}):
@@ -155,12 +157,13 @@ class BeautifyDeckShortNames(Workflow):
             prompt_lines.append(f"{index + 1}. {hierarchy_breadcrumb}")
 
         user_prompt = (
-            "For each numbered deck path below, produce a concise short name (max 16 characters) "
-            "for the LEAF segment (the last segment after the final '>'). Consult the parent "
-            "segments for context (so 'Math > Algebra > Limits' should shorten to 'Limits' rather "
-            "than 'Math Limits'). Return the result as JSON matching the requested schema — one "
-            "item per input, with `index` matching the input number and `short_name` containing "
-            "the beautified name.\n\n"
+            "For each numbered deck path below, produce a concise short name (aim for about 24 "
+            "characters, using complete words only — never cut a word off mid-way) for the LEAF "
+            "segment (the last segment after the final '>'). Consult the parent segments for "
+            "context (so 'Math > Algebra > Limits' should shorten to 'Limits' rather than 'Math "
+            "Limits'). Return the result as JSON matching the requested schema — one item per "
+            "input, with `index` matching the input number and `short_name` containing the "
+            "beautified name.\n\n"
             + "\n".join(prompt_lines)
         )
 
@@ -209,9 +212,30 @@ class BeautifyDeckShortNames(Workflow):
             candidate = (item.short_name or "").strip()
             if not candidate:
                 continue
-            results[entry_index] = candidate[: BeautifyDeckShortNames.MAX_SHORT_NAME_LENGTH]
+            results[entry_index] = BeautifyDeckShortNames.__fit_short_name(candidate)
 
         return results
+
+    @staticmethod
+    def __fit_short_name(candidate: str) -> str:
+        # Enforce the length budget WITHOUT slicing through the middle of a
+        # word. A blunt candidate[:24] produced stripped names like
+        # "Communication S"; instead we trim back to the last whole-word
+        # boundary that fits, and only when a single token is itself longer
+        # than the budget do we keep that whole word (a slightly long but
+        # complete word reads far better than a truncated fragment).
+        trimmed = candidate.strip()
+        max_length = BeautifyDeckShortNames.MAX_SHORT_NAME_LENGTH
+
+        if len(trimmed) <= max_length:
+            return trimmed
+
+        window = trimmed[:max_length]
+        last_space_index = window.rfind(" ")
+        if last_space_index > 0:
+            return window[:last_space_index].rstrip()
+
+        return trimmed.split(" ", 1)[0]
 
     async def __write_output(self, main_task_id: str, beautified_map: dict) -> None:
         output_path = join_path(
