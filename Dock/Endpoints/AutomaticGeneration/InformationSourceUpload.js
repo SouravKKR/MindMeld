@@ -5,15 +5,162 @@ const { computeFileSha512Hash } = require("../../Globals/UtilityFunctions.js/Com
 const Persistence = require("../../Globals/Classes/Persistence");
 const { storageTargets } = require("../../Globals/Enumerations/StorageTargets");
 const { contentRetentionModes } = require("../../Globals/Enumerations/ContentRetentionModes");
+const { ocrModes } = require("../../Globals/Enumerations/OcrModes");
 const InformationSourceQueryEngine = require("../../Globals/Classes/Database/InformationSourceQueryEngine");
 const PersistenceConstants = require("../../Globals/Constants/PersistenceConstants");
 const { joinPath } = require("../../Globals/UtilityFunctions.js/JoinPath");
-const OcrLocalFile = require("./Helpers/OcrLocalFile");
 const UploadQuotaManager = require("../../Globals/Classes/Quotas/UploadQuotaManager");
+const TaskManager = require("../../Globals/Classes/Task/TaskManager");
+const TaskDescriptor = require("../../Globals/Classes/Task/TaskDescriptor");
+const { taskTypes } = require("../../Globals/Enumerations/TaskTypes");
+const { taskStatus } = require("../../Globals/Enumerations/TaskStatus");
+const { taskExecutionTargets } = require("../../Globals/Enumerations/TaskExecutionTargets");
 const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const crypto = require("crypto");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 const uploadQuotaManager = new UploadQuotaManager();
+
+
+/**
+ * Marks a tracking task terminal (COMPLETED/FAILED) and persists it so the
+ * client's /Generate/Progress poll resolves. On failure the reason is stamped
+ * onto payload.error, which GetProgress surfaces to the client.
+ *
+ * @param {TaskDescriptor} task
+ * @param {number} status - taskStatus.COMPLETED or taskStatus.FAILED
+ * @param {string|null} errorMessage
+ */
+async function markTrackingTaskTerminal(task, status, errorMessage)
+{
+    task.setStatus(status);
+    task.setCompletion(status === taskStatus.COMPLETED ? 1 : task.getCompletion());
+
+    if (errorMessage)
+    {
+        task.setPayload({ ...(task.getPayload() || {}), error: errorMessage });
+    }
+
+    try
+    {
+        await TaskManager.updateTask(task);
+    }
+    catch (updateError)
+    {
+        console.error(`[InformationSourceUpload] Failed to mark tracking task ${task.getId()} terminal: ${updateError.message}`);
+    }
+}
+
+/**
+ * Background finalizer for a first-time upload. It runs entirely AFTER the HTTP
+ * response has returned (so the request never blocks past Cloudflare's ~100s
+ * edge timeout) and OFF the Dock process — the actual OCR is handed to the
+ * worker pool (a local worker, or a burst VM under load) so concurrent uploads
+ * don't peg the base node:
+ *
+ *   1. Upload the original to a per-task STAGING key in GCS (NOT the content
+ *      path). Keeping it off the content-addressed key is what preserves the CAS
+ *      invariant — the content path only ever holds the OCRed PDF, so a
+ *      concurrent reuse can never grab a not-yet-OCRed object.
+ *   2. Enqueue an OcrPdf task ({ ...source, ocrInputPath: <staging> }). The worker
+ *      reads the staging key, OCRs, and writes the OCRed PDF to the content path.
+ *   3. On success, save the InformationSource + record quota, THEN mark the
+ *      tracking task COMPLETED — so the client (which polls the TRACKING task,
+ *      not the OcrPdf task) only sees success once the source is fully usable.
+ *
+ * Rollback discipline:
+ *   - OCR failure: OcrPdf writes the content path only on success, so a failure
+ *     leaves nothing there — nothing to undo.
+ *   - DB save failure (non-duplicate): the content object is content-addressed
+ *     and may be shared with another user's row — it is NOT deleted.
+ *   - DB save duplicate-key (E11000): a concurrent same-user request already
+ *     inserted the canonical row; the content is valid, so the task is COMPLETED.
+ *   - The staging object + local copy are always cleaned up.
+ */
+async function finalizeOcrUploadInBackground({ trackingTask, localStagingFilePath, gcsStagingPath, informationSourcePath, informationSource, userId, fileSizeBytes })
+{
+    let bStagedToGcs = false;
+
+    try
+    {
+        // Move the original up to the per-task staging key (removes the local copy).
+        await Persistence.move(
+            localStagingFilePath,
+            storageTargets.LOCAL_FILE_SYSTEM,
+            gcsStagingPath,
+            storageTargets.GOOGLE_CLOUD_STORAGE,
+        );
+        bStagedToGcs = true;
+
+        // Hand OCR to the worker pool. OcrPdf reads ocrInputPath (staging) and
+        // writes the OCRed PDF to the content-addressed path it derives from the
+        // source's hash + directory. With the queue enabled this runs on a local
+        // or burst worker; in --debug it runs as a local Python subprocess.
+        const ocrTask = new TaskDescriptor({
+            userId: userId,
+            type: taskTypes.OCR_PDF,
+            executionTarget: taskExecutionTargets.LOCAL,
+            payload: {
+                ...informationSource.toJson(),
+                ocrMode: ocrModes.ENABLED,
+                ocrInputPath: gcsStagingPath
+            },
+            nextTaskIds: []
+        });
+        await TaskManager.setTask(ocrTask);
+
+        const bOcrSucceeded = await TaskManager.execute(ocrTask, 0, ocrTask, ocrTask.getId());
+        if (bOcrSucceeded === false)
+        {
+            const ocrTaskAfterRun = await TaskManager.getTask(ocrTask.getId());
+            const reason = ocrTaskAfterRun?.getPayload()?.error || "OCR task did not complete.";
+            throw new Error(reason);
+        }
+
+        // Defensive: OcrPdf writes the content object only when it actually OCRs
+        // (ENABLED + an OCRable source type). Don't trust execute()===true alone as
+        // proof — verify the OCRed object exists before persisting the row, so a
+        // future caller change (e.g. a DISABLED upload) can't strand a "saved"
+        // source pointing at a missing GCS object.
+        const bContentObjectWritten = await Persistence.exists(informationSourcePath, storageTargets.GOOGLE_CLOUD_STORAGE);
+        if (!bContentObjectWritten)
+        {
+            throw new Error("OCR task completed but produced no output object.");
+        }
+
+        // OCR done — the OCRed PDF now lives at the content path. Persist the row.
+        await InformationSourceQueryEngine.saveInformationSource(informationSource);
+        await uploadQuotaManager.record(userId, fileSizeBytes);
+
+        await markTrackingTaskTerminal(trackingTask, taskStatus.COMPLETED, null);
+    }
+    catch (error)
+    {
+        const bIsDuplicateKeyError = error?.code === 11000 || /E11000/.test(error?.message ?? "");
+
+        if (bIsDuplicateKeyError)
+        {
+            console.warn(`[InformationSourceUpload] Concurrent upload race resolved by unique index for ${userId} (task ${trackingTask.getId()}).`);
+            await markTrackingTaskTerminal(trackingTask, taskStatus.COMPLETED, null);
+        }
+        else
+        {
+            console.error(`[InformationSourceUpload] Async OCR finalize failed (task ${trackingTask.getId()}): ${error.message}`);
+            await markTrackingTaskTerminal(trackingTask, taskStatus.FAILED, error.message);
+        }
+    }
+    finally
+    {
+        if (bStagedToGcs)
+        {
+            try { await Persistence.delete(gcsStagingPath, storageTargets.GOOGLE_CLOUD_STORAGE); } catch (_) {}
+        }
+        try { fs.unlinkSync(localStagingFilePath); } catch (_) {}
+    }
+}
 
 
 /**
@@ -21,17 +168,23 @@ const uploadQuotaManager = new UploadQuotaManager();
  * JSON as a "metadata" query parameter and the file under multipart field
  * "file".
  *
+ * Response contract:
+ *   - Fast path (the OCRed PDF already exists in GCS, or a per-user duplicate):
+ *     returns the bare InformationSource JSON (or 409) exactly as before — the
+ *     source is immediately usable.
+ *   - First-time upload: returns `{ taskId, informationSource }` IMMEDIATELY and
+ *     finalizes asynchronously (see finalizeOcrUploadInBackground). The client
+ *     polls /Generate/Progress?taskid=... until the tracking task is COMPLETED,
+ *     then uses `informationSource`.
+ *
  * Storage contract (content-addressed):
  *   - The CAS key is sha512(originalFileBytes).
- *   - The GCS object at that key is ALWAYS the OCRed PDF — the original is
- *     never written to GCS. OCR runs synchronously on this host before the
- *     GCS upload, so the invariant "if it exists in GCS, it is OCRed" holds
- *     by construction. Crashes between OCR and DB save leave nothing in
- *     GCS, so a retry uploads cleanly.
- *   - If any user has already uploaded the same content the existing GCS
- *     object is reused — neither OCR nor upload repeats.
- *   - Per-user dedup uses the same CAS key, so a user can't see two
- *     entries for the same content.
+ *   - The GCS object at that key is ALWAYS the OCRed PDF — the original is staged
+ *     under a separate per-task key and removed after OCR, so the invariant "if
+ *     it exists in GCS, it is OCRed" holds by construction and a concurrent reuse
+ *     never sees a half-processed object.
+ *   - If any user has already uploaded the same content the existing GCS object
+ *     is reused — neither OCR nor upload repeats.
  *
  * @param {PacketronRequest} request
  * @param {PacketronResponse} response
@@ -67,7 +220,7 @@ async function handleInformationSourceUpload(request, response)
     {
         response.statusCode = httpStatus.TOO_MANY_REQUESTS;
         response.sendJson({
-            error: "UPLOAD_QUOTA_EXCEEDED",
+            error: ErrorCodes.UPLOAD_QUOTA_EXCEEDED,
             reason: quotaCheck.reason,
             remainingFiles: quotaCheck.remainingFiles,
             remainingBytes: quotaCheck.remainingBytes,
@@ -95,9 +248,7 @@ async function handleInformationSourceUpload(request, response)
     informationSource.setHash(contentAddressedKey);
 
     // Persist the measured upload size so the storage-credit assessor can
-    // bill the GCS-bucket footprint without re-reading the blob. retentionMode
-    // arrives in the metadata JSON (TEMPORARY sources are exempt from storage
-    // billing); fromJson defaults it to PERMANENT when the client omits it.
+    // bill the GCS-bucket footprint without re-reading the blob.
     informationSource.setFileSizeBytes(fileSizeBytes);
 
     const bIsDuplicate = await InformationSourceQueryEngine.doesUserAlreadyHaveInformationSourceWithSameContent(
@@ -118,8 +269,8 @@ async function handleInformationSourceUpload(request, response)
     informationSource.setDirectoryPath(informationSourceDirectory);
 
     // ── Global CAS check ──
-    // If the OCRed PDF for this content already exists in GCS (uploaded by
-    // any user), reuse it — skip OCR entirely.
+    // If the OCRed PDF for this content already exists in GCS (uploaded by any
+    // user), reuse it — skip OCR entirely and return the ready source directly.
     const bAlreadyInContentStore = await Persistence.exists(informationSourcePath, storageTargets.GOOGLE_CLOUD_STORAGE);
 
     if (bAlreadyInContentStore)
@@ -130,72 +281,57 @@ async function handleInformationSourceUpload(request, response)
         return;
     }
 
-    // ── First-time upload: OCR locally, then upload only the OCRed PDF ──
-    // The original is never written to GCS, so a crash here cannot leave a
-    // non-OCRed object masquerading as a CAS hit.
-    let ocrOutputPath = null;
+    // ── First-time upload: register a tracking task and finalize asynchronously ──
+    // The multipart temp file may be reaped once this handler returns, so copy it
+    // to a stable local path the background finalize can still read/upload.
+    const localStagingFilePath = path.join(os.tmpdir(), `mindmeld-upload-${Date.now()}-${crypto.randomBytes(8).toString("hex")}.bin`);
 
     try
     {
-        ocrOutputPath = await OcrLocalFile.run(uploadedFilePath);
+        await fs.promises.copyFile(uploadedFilePath, localStagingFilePath);
     }
-    catch (ocrError)
+    catch (stagingError)
     {
-        console.error(`[InformationSourceUpload] OCR failed: ${ocrError.message}`);
+        console.error(`[InformationSourceUpload] Failed to stage upload: ${stagingError.message}`);
         response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
-        response.sendJson({ error: "OCR_FAILED", reason: ocrError.message });
+        response.sendJson({ error: ErrorCodes.OCR_FAILED, reason: stagingError.message });
         return;
     }
 
-    try
-    {
-        await Persistence.move(
-            ocrOutputPath,
-            storageTargets.LOCAL_FILE_SYSTEM,
-            informationSourcePath,
-            storageTargets.GOOGLE_CLOUD_STORAGE,
-        );
-    }
-    catch (uploadError)
-    {
-        try { fs.unlinkSync(ocrOutputPath); } catch (_) {}
-        console.error(`[InformationSourceUpload] GCS upload failed: ${uploadError.message}`);
-        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
-        response.sendJson({ error: "GCS_UPLOAD_FAILED", reason: uploadError.message });
-        return;
-    }
+    // The tracking task is what the client polls. It is NOT the OcrPdf worker
+    // task (that's created inside the finalizer) — keeping them separate lets us
+    // flip the tracking task COMPLETED only AFTER the DB save, so a poll never
+    // reports "done" before the source is usable.
+    const trackingTask = new TaskDescriptor({
+        userId: user.getId(),
+        type: taskTypes.OCR_PDF,
+        status: taskStatus.IN_PROGRESS,
+        executionTarget: taskExecutionTargets.LOCAL,
+        completion: 0,
+        nextTaskIds: []
+    });
+    await TaskManager.setTask(trackingTask);
 
-    try
+    // Per-task staging key, well clear of the content-addressed store.
+    const gcsStagingPath = joinPath("/", PersistenceConstants.TASKS_DIRECTORY, trackingTask.getId(), "original");
+
+    response.statusCode = httpStatus.OK;
+    response.sendJson({ taskId: trackingTask.getId(), informationSource: informationSource.toJson() });
+
+    finalizeOcrUploadInBackground({
+        trackingTask,
+        localStagingFilePath,
+        gcsStagingPath,
+        informationSourcePath,
+        informationSource,
+        userId: user.getId(),
+        fileSizeBytes
+    }).catch(async (unexpectedError) =>
     {
-        await InformationSourceQueryEngine.saveInformationSource(informationSource);
-    }
-    catch (saveError)
-    {
-        // Do NOT delete the GCS object here. It is content-addressed and
-        // either (a) belongs to another user's earlier successful upload
-        // (CAS sharing), or (b) belongs to a concurrent same-user request
-        // (R1) that just inserted the canonical row — the row we're now
-        // colliding with on the userId_1_hash_1 unique index. Deleting it
-        // would leave R1's row pointing at a missing object and break
-        // downstream readers.
-        const bIsDuplicateKeyError = saveError?.code === 11000 || /E11000/.test(saveError?.message ?? "");
-
-        if (bIsDuplicateKeyError)
-        {
-            console.warn(`[InformationSourceUpload] Concurrent upload race resolved by unique index for ${user.getId()}/${contentAddressedKey}.`);
-            response.statusCode = httpStatus.CONFLICT;
-            response.end("You have already uploaded a source with the same content.");
-            return;
-        }
-
-        console.error(`[InformationSourceUpload] DB save failed after OCR + GCS upload: ${saveError.message}`);
-        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
-        response.sendJson({ error: "DB_SAVE_FAILED", reason: saveError.message });
-        return;
-    }
-
-    await uploadQuotaManager.record(user.getId(), fileSizeBytes);
-    response.sendJson(informationSource.toJson());
+        console.error(`[InformationSourceUpload] Unexpected finalize rejection (task ${trackingTask.getId()}): ${unexpectedError.message}`);
+        await markTrackingTaskTerminal(trackingTask, taskStatus.FAILED, unexpectedError.message);
+        try { fs.unlinkSync(localStagingFilePath); } catch (_) {}
+    });
 }
 
 module.exports = { handleInformationSourceUpload };

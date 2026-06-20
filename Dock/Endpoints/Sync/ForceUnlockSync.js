@@ -1,6 +1,7 @@
 const { PacketronRequest, PacketronResponse } = require("@gamiumgamers/packetron");
 const { getUser } = require("../Helpers/GetUser");
 const TaskManager = require("../../Globals/Classes/Task/TaskManager");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
  * Force-releases the sync lock for the authenticated user, regardless of
@@ -27,7 +28,7 @@ async function handleForceUnlockSync(request, response)
 
     if (!user)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 

@@ -2,6 +2,7 @@ const OrganizationQueryEngine = require("../../Globals/Classes/Organization/Orga
 const OrganizationPaymentQueryEngine = require("../../Globals/Classes/Organization/OrganizationPaymentQueryEngine");
 const PaymentProviderFactory = require("../../Globals/Classes/Payments/PaymentProviderFactory");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 
 async function verifyOrganizationExpansionPayment(request, response)
@@ -15,7 +16,7 @@ async function verifyOrganizationExpansionPayment(request, response)
     if (!organizationId || !providerOrderId || !providerPaymentId || !signature)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "MISSING_FIELDS" });
+        response.sendJson({ success: false, error: ErrorCodes.MISSING_FIELDS });
         return;
     }
 
@@ -23,7 +24,7 @@ async function verifyOrganizationExpansionPayment(request, response)
     if (!paymentRow || paymentRow.getOrganizationId() !== organizationId)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "PAYMENT_ROW_NOT_FOUND" });
+        response.sendJson({ success: false, error: ErrorCodes.PAYMENT_ROW_NOT_FOUND });
         return;
     }
 
@@ -33,7 +34,7 @@ async function verifyOrganizationExpansionPayment(request, response)
     {
         await OrganizationPaymentQueryEngine.markFailed(providerOrderId);
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "PAYMENT_NOT_VERIFIED", reason: verification.reason });
+        response.sendJson({ success: false, error: ErrorCodes.PAYMENT_NOT_VERIFIED, reason: verification.reason });
         return;
     }
 

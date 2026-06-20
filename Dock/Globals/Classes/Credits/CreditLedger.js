@@ -2,6 +2,7 @@ const DatabaseConstants = require('../../Constants/DatabaseConstants');
 const DatabaseConnector = require('../Database/DatabaseConnector');
 const { creditTransactionTypes } = require('../../Enumerations/CreditTransactionTypes');
 const CreditConfigurationStore = require('./CreditConfigurationStore');
+const ErrorCodes = require('../../Constants/ErrorCodes');
 
 // The atomic, idempotent charging engine. Every spend / grant is keyed by a
 // stable `referenceKey` whose uniqueness in the creditTransactions collection
@@ -16,6 +17,11 @@ class CreditLedger
     static #STATUS_APPLIED = "applied";
     static #STATUS_REJECTED = "rejected";
     static #DUPLICATE_KEY_ERROR_CODE = 11000;
+
+    // Public mirror of the applied-status string so other engines (e.g. the
+    // periodic-assignment report cross-check) can filter the ledger without
+    // duplicating the literal.
+    static TRANSACTION_STATUS_APPLIED = "applied";
 
     // additionalData keys owned exclusively by the credit subsystem. The
     // generic /UpdateUserAdditionalData merge MUST refuse these so a client
@@ -55,7 +61,7 @@ class CreditLedger
     {
         if (!userId || !referenceKey)
         {
-            return { applied: false, alreadyApplied: false, rejected: false, amount: 0, reason: "INVALID_REQUEST" };
+            return { applied: false, alreadyApplied: false, rejected: false, amount: 0, reason: ErrorCodes.INVALID_REQUEST };
         }
 
         const roundedAmount = CreditLedger.#round(amountCredits);
@@ -156,7 +162,7 @@ class CreditLedger
     {
         if (!userId || !referenceKey)
         {
-            return { applied: false, alreadyApplied: false, amount: 0, reason: "INVALID_REQUEST" };
+            return { applied: false, alreadyApplied: false, amount: 0, reason: ErrorCodes.INVALID_REQUEST };
         }
 
         const roundedAmount = CreditLedger.#round(amountCredits);

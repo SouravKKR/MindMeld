@@ -8,6 +8,7 @@ const creditTransactionTypes =
   SIGNUP_GRANT: 5,
   REFUND: 6,
   PURCHASE_GRANT: 7,
+  PROMO_GRANT: 8,
 }
 
 module.exports = { creditTransactionTypes };

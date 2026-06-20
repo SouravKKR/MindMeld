@@ -1,5 +1,6 @@
 const AlertQueryEngine = require("../../../Globals/Classes/Database/AlertQueryEngine");
 const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../../Globals/Constants/ErrorCodes");
 
 /**
  * POST /Admin/Alerts/Delete
@@ -32,7 +33,7 @@ async function deleteAlert(request, response)
         const result = await AlertQueryEngine.deleteById(alertId);
         if (!result.removed)
         {
-            response.statusCode = result.reason === "NOT_FOUND" ? 404 : 500;
+            response.statusCode = result.reason === ErrorCodes.NOT_FOUND ? httpStatus.NOT_FOUND : httpStatus.INTERNAL_SERVER_ERROR;
             response.sendJson({ error: result.reason });
             return;
         }

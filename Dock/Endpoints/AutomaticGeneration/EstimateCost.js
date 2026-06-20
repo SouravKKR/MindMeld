@@ -1,5 +1,6 @@
 const { getUser } = require("../Helpers/GetUser");
 const CreditEstimator = require("../../Globals/Classes/Credits/CreditEstimator");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -25,7 +26,7 @@ async function handleEstimateCost(request, response)
     const user = await getUser(request);
     if (!user)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 

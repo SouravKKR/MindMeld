@@ -99,6 +99,15 @@ docker build -t mindmeld-agent -f Dockerfile .
 - The image is **Debian/glibc, multi-stage** — deliberately not Alpine, because the
   worker pulls `torch`, `opencv`, `scipy`, `PyMuPDF`, etc., which ship prebuilt
   glibc wheels; musl (Alpine) would force slow, fragile source builds.
+- **Kept small for the 6 GB Image cap** (~2.5 GB): `requirements.txt` pins
+  **`torch`/`torchvision` to the `+cpu` build** from the PyTorch CPU index (burst VMs
+  have no GPU; the default Linux CUDA wheels drag in ~2.5 GB of `nvidia-*` libs), and
+  the Dockerfile **strips debug symbols** from the compiled `.so` files. Don't undo
+  either or the bake-box capture (step 1.10) will blow the cap.
+- **OCR stack baked in** — the runtime stage apt-installs `ocrmypdf` + `tesseract-ocr`
+  + `ghostscript` (the `OcrPdf` workflow shells out to `ocrmypdf`, a system binary).
+  Adds ~0.3–0.5 GB, so the image lands ~3 GB — still under the cap, but mind the margin
+  when capturing. **If you change this, re-bake the burst Image (§1.10).**
 - `Agent/requirements.txt` is an exact `pip freeze` of the Agent venv. If you changed
   Agent dependencies, refresh it first:
   ```bash
@@ -106,6 +115,8 @@ docker build -t mindmeld-agent -f Dockerfile .
   ```
   > The `asyncio` PyPI package is excluded on purpose — it shadows the Python 3.12
   > stdlib `asyncio` and breaks the container.
+  > After a re-freeze, **re-add** the `--extra-index-url https://download.pytorch.org/whl/cpu`
+  > line and the `+cpu` suffixes on `torch`/`torchvision` (freeze drops them).
 
 You'll move this image onto the bake box in step 1.8.
 
@@ -116,27 +127,84 @@ You'll move this image onto the bake box in step 1.8.
 2. Create the **base node** (a strong Linode) and attach it to the VPC.
 3. Install on the base node:
    - **Node.js** (to run Dock).
-   - **Python 3.12** + the ability to create a venv (to run the local workers).
+   - **Python 3.12** for the local workers — it must match the worker image's 3.12.
+     Debian's apt usually lacks 3.12 (bookworm ships 3.11, so `apt install python3.12`
+     fails with "Unable to locate package"); install a standalone build with `uv`
+     instead — see step 1.4 (no apt, no compiling).
    - **MongoDB** and **Redis**.
+   - **OCR stack** — `ocrmypdf`, `tesseract-ocr`, `ghostscript`. The `OcrPdf` workflow
+     shells out to the `ocrmypdf` CLI (a *system* binary, not a pip wheel); without it
+     the worker fails with `spawn ocrmypdf ENOENT`. Add `tesseract-ocr-<lang>` for
+     non-English documents.
    - Docker is **not** required on the base node (its workers run from the venv, not
      a container).
 4. **Bind Redis and MongoDB to the base node's private VPC IP** (not the public IP).
    Burst VMs will reach them over the VPC; nothing is exposed publicly. Note those
    URLs (e.g. `redis://10.0.0.2:6379`, `mongodb://10.0.0.2:27017`) — they become
-   `BURST_WORKER_REDIS_URL` / `BURST_WORKER_MONGODB_URL`.
+   `BURST_WORKER_REDIS_URL` / `BURST_WORKER_MONGODB_URL`. Redis/Mongo can live on the
+   base node or on separate Linodes in the same VPC; if separate, each gets its own VPC
+   IP (e.g. Mongo at `10.0.0.3`) and its own firewall (below).
+5. **Create Cloud Firewalls** — all with **inbound policy DROP, outbound ACCEPT**, and
+   sources for data ports set to the **VPC CIDR** (e.g. `10.0.0.0/24`), never public:
+
+   | Firewall | Inbound rules | Attach to |
+   |---|---|---|
+   | **Base/Dock** | SSH `22` ← *your admin IP* ; Redis `6379` ← VPC CIDR (if Redis is here) | base node |
+   | **Database** | SSH `22` ← *your admin IP* ; Mongo `27017` ← VPC CIDR | the Mongo node |
+   | **Burst** (`BURST_FIREWALL_ID`) | **none** — inbound DROP, no rules | every burst VM, set via `BURST_FIREWALL_ID` |
+
+   - **No public web port** anywhere — Dock is reached through the Cloudflare Tunnel
+     (step 1.8), so the base firewall needs no `80`/`443`/`3000`.
+   - **Burst VMs need zero inbound** — they only make outbound connections (Redis/Mongo
+     over the VPC, Gemini/OpenAI over the internet), and Cloud Firewalls are stateful so
+     replies are allowed automatically. Keep the burst firewall inbound-empty; **do not**
+     leave an SSH rule on it (every burst VM would get world-open SSH).
+   - **SSH** — restrict the `22` source to your admin IP `/32`, not `0.0.0.0/0`.
+6. **Default-route gotcha (dual-homed nodes).** If you create a node in the Cloud Manager
+   with **both** a VPC and a public interface using the newer **Linode Interfaces** model,
+   make sure the **public** interface holds the **IPv4 default route** — otherwise SSH and
+   all outbound internet break (reply packets route out the dead-end VPC interface and the
+   instance looks "up but unreachable"). Fix: power off → set the public interface as the
+   IPv4 default route (Network tab, or `PUT …/interfaces/settings`
+   `{"default_route":{"ipv4_interface_id":<publicInterfaceId>}}`) → boot. Burst VMs created
+   by the autoscaler use the legacy config-interface model with the public interface as
+   `eth0`, so they're unaffected — this only bites manually-created nodes.
 
 ## 1.4 Base node — deploy the code and Python venv
 
+> ⚡ **Automated path.** Once the repo is cloned and `Dock/.production.env` +
+> `Agent/.production.env` are in place, **[`Common/Scripts/setup-base-node.sh`](../Scripts/setup-base-node.sh)**
+> does all of §1.4–§1.7 in one shot: installs the OCR stack + Redis (bound to the VPC
+> IP) + Node, sets up Python 3.12 via `uv` and the Agent venv, runs `npm install`, and
+> registers + starts the Dock systemd service. Run it with
+> `sudo bash Common/Scripts/setup-base-node.sh`. The manual steps below document what
+> it does (and the Cloudflare Tunnel in §1.8 + the burst firewall stay manual).
+
 1. Clone/copy the repo, e.g. to `/opt/mindmeld/MindMeld`.
-2. Create the Agent venv and install dependencies:
+2. **Install Python 3.12** (no apt package on Debian — use a standalone build via `uv`,
+   which needs no compiling):
    ```bash
-   cd /opt/mindmeld/MindMeld/Agent
-   python3.12 -m venv .venv
-   ./.venv/bin/pip install --upgrade pip
-   ./.venv/bin/pip install -r requirements.txt
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   source $HOME/.local/bin/env
    ```
-   (`getPythonExecutablePathFromVenv` looks for `.venv/bin/python` on Linux, so the
-   venv must live at `Agent/.venv`.)
+3. **Create the Agent venv and install dependencies** (CPU torch + ML stack, ~10–15 min):
+   ```bash
+   cd /opt/mindmeld/MindMeld/Agent          # wherever you cloned the repo
+   uv venv --python 3.12 .venv
+   uv pip install --python .venv/bin/python --index-strategy unsafe-best-match -r requirements.txt
+   ```
+   (`--index-strategy unsafe-best-match` is required: `requirements.txt` adds the
+   PyTorch CPU index for `torch`, and uv otherwise resolves every package against the
+   first index that has it — finding e.g. `certifi` there at the wrong version and
+   failing. The flag makes uv consider all indexes, like pip does.)
+   The venv **must** live at exactly `Agent/.venv`. Dock's `LocalWorkerSupervisor`
+   (and the AskAi / paid-deck subprocess spawns) launch `Agent/.venv/bin/python3`
+   directly via `getPythonExecutablePathFromVenv`, so a global Python or a venv
+   elsewhere produces `spawn …/Agent/.venv/bin/python3 ENOENT` and the workers never
+   start (Dock still serves, but nothing drains the queue locally).
+   > If `pip`/`uv` is OOM-killed installing `torch`/`scipy` on a small base node, add
+   > temporary swap and re-run:
+   > `sudo fallocate -l 4G /swap && sudo mkswap /swap && sudo swapon /swap`
 
 ## 1.5 Base node — configure `Dock/.env`
 
@@ -145,8 +213,12 @@ Dock reads `Dock/.env` at boot (via dotenv, relative to its working directory). 
 
 **Required**
 
-- `MONGODB_URL` — MongoDB connection string (e.g. `mongodb://127.0.0.1:27017`, or the
-  private VPC IP).
+- `MONGODB_URL` — MongoDB connection string. If Mongo runs on a **separate** node whose
+  firewall only allows `27017` from the VPC (`10.0.0.0/24`), Dock must connect over the
+  **VPC private IP** (e.g. `mongodb://…@10.0.0.3:27017/…`), **not** the public IP — a
+  public-IP connection comes from Dock's public address and gets dropped by that
+  firewall. Also ensure Mongo's `bindIp` includes the VPC IP (or `0.0.0.0`), or it
+  won't accept the VPC connection at all.
 - `MONGODB_DATABASE_NAME` — the database name (e.g. `mindmeld`).
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — Google OAuth credentials for sign-in
   (from Google Cloud Console). The authorized redirect URI must be
@@ -171,8 +243,16 @@ Dock reads `Dock/.env` at boot (via dotenv, relative to its working directory). 
 
 **AI / Agent**
 
-- `GEMINI_API_KEY` — Gemini key for the generation pipeline. **Also forwarded to
-  burst workers**, so it must be set here.
+- **LLM keys are NOT set in `Dock/.env`.** Dock makes **no** LLM calls — every AI
+  request is delegated to the Agent (run locally as a spawned/queued worker, or on a
+  burst VM). `GEMINI_API_KEY` and `OPENAI_API_KEY` therefore live **only** in the
+  **Agent** env file (`Agent/.env` with `--debug`, else `Agent/.production.env`) and
+  are used only by the Agent. Dock reads that **sibling** file (same relative layout:
+  `Agent/` next to `Dock/`) for the **single** purpose of forwarding the keys to burst
+  workers via cloud-init — see `BurstFleetSettings.getWorkerRuntimeEnvironment` →
+  `#readAgentLlmKeys`. Dock never injects them into its own process. Consequence: the
+  Agent env file must exist next to `Dock/` on the base node, and you edit the LLM
+  keys in **one place** (the Agent env file), never in Dock's.
 - `AGENT_SERVICE_PATH` — absolute path to the Agent service so Dock can launch local
   workers reliably. Set it to `/opt/mindmeld/MindMeld/Agent`.
 
@@ -330,8 +410,28 @@ worker automatically.
 > autoscaler (recursive provisioning). Use a clean throwaway Linode.
 
 1. Create a **temporary** Debian Linode in the target region, attached to the VPC.
-2. Install Docker, then get the `mindmeld-agent` image onto it (push to a registry
-   and `docker pull`, or `docker save mindmeld-agent | ssh … docker load`).
+2. Install Docker, then get the `mindmeld-agent` image (built in step 1.2) onto it.
+   No registry needed — export it to a tar on your workstation, copy it over with
+   `scp`, and load it on the box.
+
+   **On your dev workstation** — make the tar and copy it (replace `<bake-box-ip>`):
+   ```bash
+   docker save -o mindmeld-agent.tar mindmeld-agent:latest
+   scp mindmeld-agent.tar root@<bake-box-ip>:/root/
+   ```
+
+   **On the bake box** — load it:
+   ```bash
+   docker load -i /root/mindmeld-agent.tar && rm /root/mindmeld-agent.tar
+   docker images               # confirm mindmeld-agent:latest is present
+   ```
+
+   > Registry alternative: push to a registry and `docker pull` on the box instead.
+   > The tar copy keeps everything private and offline, with no registry auth.
+   >
+   > ⚠️ Never run `docker image prune -a` here — with no container running the image,
+   > `-a` treats it as "unused" and **deletes the image you just loaded**. To drop a
+   > replaced/old image use `docker image prune -f` (dangling only) or `docker rmi <id>`.
 3. Install the worker systemd unit so the container auto-starts on boot and reads the
    env file that cloud-init writes at provision time:
 
@@ -356,13 +456,54 @@ worker automatically.
    sudo mkdir -p /etc/mindmeld
    sudo systemctl enable mindmeld-worker.service
    ```
-4. Power the Linode **off** and capture an **Image** (Linode dashboard → the Linode →
-   *Create Image*). Use the resulting id (e.g. `private/12345678`) as `BURST_IMAGE_ID`.
+4. **Get under Linode's Image cap, then capture.** A captured Image requires the disk
+   to be **≤ 6 GB** with **< 5.4 GB used** (ext3/ext4 only) — see
+   [Capture an Image](https://techdocs.akamai.com/cloud-computing/docs/capture-an-image).
+   A stock disk is 25 GB, so the capture **silently fails (image deletes itself
+   mid-creation)** until you both free space *and* shrink the disk. The image itself is
+   already kept small (~2.5 GB) by **CPU-only torch** and **symbol stripping** in
+   `Agent/Dockerfile` — burst VMs have no GPU. Do these in order:
+
+   **a. Clear the containerd image-store cache — the #1 gotcha.** Modern Docker stores
+   images via the **containerd snapshotter in `/var/lib/containerd`**, NOT
+   `/var/lib/docker` (which stays ~200 KB). Every `docker build`/`docker load` leaves
+   **orphaned snapshots** there, and `docker image prune` / `docker builder prune` do
+   **not** remove them — they pile up to many GB and quietly blow the cap. Confirm with
+   `du`, then save → wipe the store → reload the one image:
+   ```bash
+   sudo du -sh /var/lib/containerd            # often several GB of orphans for one image
+   docker save -o /root/mm.tar mindmeld-agent:latest
+   sudo systemctl stop docker docker.socket containerd
+   sudo rm -rf /var/lib/containerd/*
+   sudo systemctl start containerd docker
+   docker load -i /root/mm.tar && rm /root/mm.tar
+   ```
+
+   **b. Trim the OS** (safe — touches no images):
+   ```bash
+   sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/* /usr/share/locale/*
+   sudo journalctl --vacuum-size=10M 2>/dev/null; sudo rm -rf /var/log/*.gz /var/log/*.[0-9] /tmp/*
+   docker container prune -f
+   df -h /                                    # used must be < 5.4 GB before continuing
+   ```
+
+   **c. Power off, shrink the disk to 6 GB, then capture.**
+   ```bash
+   sudo poweroff
+   ```
+   Then (Linode is off): resize the ext4 disk down to **6144 MB** — dashboard → the
+   Linode → **Storage** → the disk → *Resize*, or API
+   `PUT /v4/linode/instances/{linodeId}/disks/{diskId}` body `{"size":6144}`. Finally
+   capture: dashboard → the Linode → **Create Image**, or API
+   `POST /v4/images` body `{"disk_id":<diskId>,"label":"mindmeld-burst-worker"}`. When
+   it reaches *available*, use its id (`private/NNNNNNNN`) as `BURST_IMAGE_ID`. (If the
+   image 404s / deletes itself mid-creation, it's still over the cap — go back to a/b.)
 5. **Delete the temporary Linode** — you only needed it to produce the Image.
 
 **How a burst VM then starts working:** when the autoscaler creates one,
-`LinodeComputeProvider.createInstance` boots it from `BURST_IMAGE_ID`, joins it to
-the VPC, tags it `BURST_MANAGEMENT_TAG`, and passes cloud-init user-data that writes
+`LinodeComputeProvider.createInstance` boots it from `BURST_IMAGE_ID`, attaches a
+public interface (egress) **and** the VPC interface (private Redis/Mongo), binds it
+to `BURST_FIREWALL_ID`, tags it `BURST_MANAGEMENT_TAG`, and passes cloud-init user-data that writes
 `/etc/mindmeld/worker.env` (private Redis/Mongo URLs + AI keys) and restarts
 `mindmeld-worker.service`. The container then drains the queue.
 
@@ -385,6 +526,13 @@ Add the task-queue / burst variables to `Dock/.env`. **Every term explained:**
 - `BURST_INSTANCE_TYPE` — burst VM type (smaller/cheaper, e.g. `g6-standard-2`).
 - `BASE_INSTANCE_TYPE` — documentation only; the base node is provisioned by hand.
 - `BURST_VPC_ID` / `BURST_SUBNET_ID` — the VPC/subnet from step 1.3.
+- `BURST_FIREWALL_ID` (**required**) — numeric id of the Cloud Firewall every burst VM
+  is bound to **at creation** (use a dedicated burst firewall: inbound **DROP**,
+  outbound **ACCEPT**). Burst VMs are **dual-homed** — a public interface for outbound
+  internet (Gemini/OpenAI) plus the VPC interface for private Redis/Mongo — so this
+  firewall's inbound-DROP is their network protection. **Fail-closed:** if unset, the
+  provider reports "not configured" and **no burst VM is ever created**. Find the id
+  in Linode Cloud Manager → Firewalls, or `GET /v4/networking/firewalls`.
 - `BURST_WORKER_REDIS_URL` / `BURST_WORKER_MONGODB_URL` — private-IP URLs burst VMs
   use (fall back to `REDIS_URL` / `MONGODB_URL` if unset).
 
@@ -441,6 +589,7 @@ BURST_IMAGE_ID=private/12345678
 BURST_INSTANCE_TYPE=g6-standard-2
 BURST_VPC_ID=12345
 BURST_SUBNET_ID=67890
+BURST_FIREWALL_ID=98765
 BURST_WORKER_REDIS_URL=redis://10.0.0.2:6379
 BURST_WORKER_MONGODB_URL=mongodb://10.0.0.2:27017
 BURST_WARM_POOL_SIZE=2
@@ -468,6 +617,95 @@ Healthy logs look like:
 [BurstAutoscaler] pending=0 processing=0 current=2 desired=2 (cap=6).
 ```
 
+### Quick test recipe — "does launching a task spawn agents / Linodes?"
+
+Everything is controlled by env constants in `Dock/.env`. The single flag to flip
+for a safe check is **`BURST_DRY_RUN=1`** — it runs the *entire* autoscaler (queue
+read, scaling math, hard cap) and logs every decision, but makes **no API calls and
+spends nothing**. Watch for `[BURST_DRY_RUN] Would create instance …`.
+
+**Gotcha first:** the autoscaler is **disabled whenever Dock runs with `--debug`**
+(`BurstAutoscaler.shouldRun()`). Test with the normal start (`./run.ps1 --web`, no
+`--debug`) and read `Logger.log` output. It also needs `DOCK_USE_TASK_QUEUE=1`, and —
+outside dry-run — the provider fully configured (token + region + image + type +
+**`BURST_FIREWALL_ID`**), or it stays disabled.
+
+| What you want to verify | Set in `Dock/.env` |
+|---|---|
+| The scaling path runs at all, zero spend | `DOCK_USE_TASK_QUEUE=1`, `BURST_DRY_RUN=1` |
+| A Linode is created immediately, no task needed | `BURST_WARM_POOL_SIZE=1` (the warm pool is built at startup) |
+| One launched task triggers a scale-up | `BURST_TASKS_PER_INSTANCE=1` **and** `AGENT_LOCAL_WORKER_COUNT=0` (so the base node doesn't drain the queue before burst reacts) |
+| It reacts within seconds | `BURST_RECONCILE_INTERVAL_SECONDS=10`, `BURST_SCALE_UP_COOLDOWN_SECONDS=0` |
+| Cap one real VM while smoke-testing | `BURST_DRY_RUN=0`, `BURST_MAX_INSTANCES=1` |
+
+Then launch a generation task and watch the reconcile line move, e.g.
+`[BurstAutoscaler] pending=1 processing=0 current=0 desired=1 (cap=1).` followed by
+`[BurstAutoscaler] Created burst instance … (mindmeld-burst-…).` In a live (non-dry)
+run, confirm in Linode Cloud Manager that the new instance is bound to the **same
+firewall as the Dock Linode** (`BURST_FIREWALL_ID`). Restore your normal values
+(`BURST_DRY_RUN`, `AGENT_LOCAL_WORKER_COUNT`, cooldowns, cap) when done.
+
+### Fake-load test — make burst VMs spawn without doing any real work
+
+You don't need real generations to test scaling. The autoscaler only counts how many
+items are waiting in one Redis list — **`TaskQueue/pending`**. Put fake items in that
+list and it reacts exactly as if real tasks arrived. Run all of this **on the base node**.
+
+**Watch the decisions** — open one terminal and leave it running:
+```bash
+journalctl -u mindmeld-dock -f | grep -E "BurstAutoscaler|BURST_DRY_RUN"
+```
+Every line reads `pending=<items waiting> … desired=<VMs it wants> (cap=<max>)`.
+
+**1. Make the test safe + quick.** In `Dock/.production.env` set these, then
+`sudo systemctl restart mindmeld-dock`:
+```ini
+BURST_DRY_RUN=1                     # pretend mode: no real VMs, no cost
+AGENT_LOCAL_WORKER_COUNT=0          # so the base node doesn't eat the fake items
+BURST_TASKS_PER_INSTANCE=1          # 1 waiting item = wants 1 VM (easy to read)
+BURST_RECONCILE_INTERVAL_SECONDS=10 # check every 10s instead of 30
+BURST_SCALE_UP_COOLDOWN_SECONDS=0   # no wait between scale-ups
+```
+
+**2. Add fake work:**
+```bash
+for i in $(seq 1 12); do redis-cli RPUSH TaskQueue/pending "test-$i" >/dev/null; done
+redis-cli LLEN TaskQueue/pending     # shows 12 items waiting
+```
+Within ~10s the log shows `pending=12 … desired=8 (cap=8)` and eight
+`[BURST_DRY_RUN] Would create instance …` lines (8 = `BURST_MAX_INSTANCES`). It works.
+
+**3. Remove the fake work and watch it shrink back:**
+```bash
+redis-cli DEL TaskQueue/pending TaskQueue/processing
+```
+The log returns to `pending=0 … desired=0`.
+
+**To see a REAL VM boot** (costs a few cents), change two settings and repeat step 2:
+```ini
+BURST_DRY_RUN=0                  # real this time
+BURST_MAX_INSTANCES=1            # only one VM, so spend is tiny
+BURST_IDLE_TIMEOUT_SECONDS=60    # it deletes itself ~1 min after the queue empties
+```
+Now `Would create instance` becomes `Created burst instance …`, and a `mindmeld-burst-*`
+Linode appears in the dashboard. Clear the queue (step 3) and it's deleted after the
+idle timeout, or `sudo systemctl restart mindmeld-dock` removes all burst VMs at once.
+
+**When done, put the normal values back** and clear leftovers:
+```ini
+BURST_DRY_RUN=0
+AGENT_LOCAL_WORKER_COUNT=2
+BURST_TASKS_PER_INSTANCE=2
+BURST_MAX_INSTANCES=8
+BURST_RECONCILE_INTERVAL_SECONDS=30
+BURST_SCALE_UP_COOLDOWN_SECONDS=60
+BURST_IDLE_TIMEOUT_SECONDS=600
+```
+```bash
+redis-cli DEL TaskQueue/pending TaskQueue/processing
+sudo systemctl restart mindmeld-dock
+```
+
 ---
 
 # Section 2 — Update deployment
@@ -478,7 +716,32 @@ all cases, restarting Dock cleanly cycles the fleet (teardown → rebuild).
 ## 2.1 Dock / frontend / backend code changed (base node only)
 
 Most changes (endpoints, frontend, Dock classes) only need a redeploy of the base
-node:
+node. The frontend has to be **bundled + obfuscated** into `Dock/Static/` first.
+
+> ⚡ **Recommended for a Windows-dev workflow — build on Windows, ship the artifacts.**
+> The base node only needs `Dock/`'s own deps (what `setup-base-node.sh` installs); it
+> does NOT have the frontend build/obfuscation toolchain. So build locally and copy the
+> result, rather than building on the base node:
+>
+> 1. On Windows, from the repo root: **`setup.bat --aggressive`** (does codegen — a
+>    no-op if you didn't touch `Common/` — then `CopyStaticFiles` + bundle + mangle +
+>    obfuscate, leaving a production-ready `Dock/Static/`).
+> 2. Ship `Dock/` (its changed backend files **and** the rebuilt `Dock/Static/`) to the
+>    base node, **excluding** `Dock/node_modules` and the live `Dock/.env` /
+>    `Dock/.production.env` so you don't clobber them:
+>    ```powershell
+>    tar --exclude=Dock/node_modules --exclude=Dock/.env --exclude=Dock/.production.env -czf dock-update.tar.gz Dock
+>    scp dock-update.tar.gz root@<base-node-ip>:<repo-dir>/
+>    ```
+>    ```bash
+>    cd <repo-dir> && tar -xzf dock-update.tar.gz && rm dock-update.tar.gz
+>    # tar extraction overwrites changed/added files but does NOT remove files you
+>    # deleted in the change — delete those by hand, then:
+>    sudo systemctl restart mindmeld-dock.service
+>    ```
+
+If the base node **does** have the build toolchain (you ran `npm install` for the build
+scripts there), you can instead build in place:
 
 ```bash
 cd /opt/mindmeld/MindMeld
@@ -494,6 +757,9 @@ node ./Common/Scripts/ManglePrivateMembersInBundle.js
 node ./Common/Scripts/MinifyAndObfuscateStaticFiles.js --aggressive
 sudo systemctl restart mindmeld-dock.service
 ```
+
+> For a **code-only** change (no `Common/` edits), the four `Generate*` codegen steps
+> are no-ops — only `CopyStaticFiles` + the bundle/obfuscate steps + restart matter.
 
 > The base node's local workers run from the venv, so an Agent code change also
 > takes effect here on restart — **but burst VMs run the baked image**, so if you
@@ -541,6 +807,23 @@ Agent, also re-bake (2.2).
 
 ## Troubleshooting
 
+- **`docker build` fails with `npipe:////./pipe/docker_engine ... cannot find the file`.**
+  The Docker daemon is not running — the CLI can't reach the engine. On Windows, start
+  **Docker Desktop** and wait until the engine is up (`docker version` shows a *Server*
+  block), then re-run the build. This is an environment issue, not a Dockerfile problem.
+- **`docker build` fails with `No matching distribution found for <package>==<version>`.**
+  A pinned version in `Agent/requirements.txt` was **yanked from PyPI** after it was
+  frozen (the error lists the still-available versions, with the pinned one missing).
+  The `ddgs` / `primp` pair is the usual culprit (they are released and yanked
+  together). Fix it at the source so the venv and the freeze stay in lock-step: install
+  the nearest available patch into the venv, then re-freeze. From `Agent/`:
+  ```bash
+  ./.venv/Scripts/python.exe -m pip install <package>==<nearest-available-patch>   # Windows
+  # ./.venv/bin/pip install <package>==<nearest-available-patch>                   # Linux base node
+  python -m pip freeze | grep -v -i '^asyncio==' > requirements.txt
+  ```
+  Then rebuild. Editing only `requirements.txt` unblocks the build but drifts it from
+  the venv — always sync both.
 - **Nothing distributes after enabling.** Confirm Dock runs **without** `--debug` and
   `DOCK_USE_TASK_QUEUE=1`; check `LLEN TaskQueue/pending` in Redis.
 - **Burst VMs boot but do no work.** On the burst VM, check
@@ -548,7 +831,9 @@ Agent, also re-bake (2.2).
   with reachable VPC-private Redis/Mongo URLs and the worker service is enabled.
 - **No burst VMs ever appear.** Check Admin Panel → Alerts for Linode API errors, and
   confirm `LINODE_API_TOKEN`, `BURST_IMAGE_ID`, `BURST_REGION`, `BURST_INSTANCE_TYPE`
-  are set (the autoscaler is disabled if the provider isn't configured).
+  and `BURST_FIREWALL_ID` are all set — the autoscaler is disabled (fail-closed) if
+  the provider isn't fully configured, and a **missing `BURST_FIREWALL_ID` alone** is
+  enough to keep it from ever creating a VM.
 - **OAuth fails / "redirect_uri_mismatch".** `DOMAIN_NAME` and the Google client's
   redirect URI must both be `https://<domain>/Login/Callback`.
 - **Cloudflare 502/1033 (tunnel error).** Check `systemctl status cloudflared` and

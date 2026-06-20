@@ -1,5 +1,6 @@
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -25,7 +26,7 @@ class GetPurchaseInvoiceEndpoint
         const session = request.session;
         if (!session)
         {
-            response.sendStatusCode(401);
+            response.sendStatusCode(httpStatus.UNAUTHORIZED);
             return;
         }
 
@@ -34,14 +35,14 @@ class GetPurchaseInvoiceEndpoint
 
         if (!purchaseId)
         {
-            response.sendStatusCode(400);
+            response.sendStatusCode(httpStatus.BAD_REQUEST);
             return;
         }
 
         const database = await DatabaseConnector.getDatabase();
         if (!database)
         {
-            response.sendStatusCode(503);
+            response.sendStatusCode(httpStatus.SERVICE_UNAVAILABLE);
             return;
         }
 
@@ -51,7 +52,7 @@ class GetPurchaseInvoiceEndpoint
 
         if (!purchase)
         {
-            response.sendStatusCode(404);
+            response.sendStatusCode(httpStatus.NOT_FOUND);
             return;
         }
 

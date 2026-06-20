@@ -7,6 +7,9 @@
 // The autoscaler reads scaling knobs from here and asks for a vendor-neutral
 // provisioning specification it can hand to ANY CloudComputeProvider.
 
+const path = require("path");
+const fs = require("fs");
+
 class BurstFleetSettings
 {
     static #resolvePositiveIntegerSetting(environmentVariableName, fallbackValue)
@@ -157,6 +160,14 @@ class BurstFleetSettings
         return BurstFleetSettings.#resolveStringSetting("BURST_SUBNET_ID", "");
     }
 
+    static getFirewallId()
+    {
+        // The Cloud Firewall every burst VM is bound to at creation — the same
+        // firewall that protects the Dock Linode. Required: the provider refuses
+        // to create unprotected instances when this is unset (fail-closed).
+        return BurstFleetSettings.#resolveStringSetting("BURST_FIREWALL_ID", "");
+    }
+
     static getWorkersPerInstance()
     {
         return BurstFleetSettings.#resolvePositiveIntegerSetting("AGENT_WORKERS_PER_VM", 1);
@@ -177,17 +188,46 @@ class BurstFleetSettings
             AGENT_WORKERS_PER_VM: String(BurstFleetSettings.getWorkersPerInstance())
         };
 
-        // Pass through the AI keys the workflows need, only when present.
-        const optionalPassthroughKeys = ["GEMINI_API_KEY", "OPENAI_API_KEY"];
-        for (const key of optionalPassthroughKeys)
-        {
-            if (process.env[key])
-            {
-                environment[key] = process.env[key];
-            }
-        }
+        // LLM keys (GEMINI/OPENAI) are NOT part of Dock's env and are never loaded
+        // into Dock's process — Dock makes no LLM calls. They live solely in the
+        // Agent env file and are used only by the Agent. We read them straight from
+        // that file here for the sole purpose of forwarding them to the burst
+        // worker, which runs the Agent but has no env file baked into its image.
+        Object.assign(environment, BurstFleetSettings.#readAgentLlmKeys());
 
         return environment;
+    }
+
+    /**
+     * Reads ONLY the LLM keys from the sibling Agent env file (same relative
+     * layout as the repo: Agent/ next to Dock/), without injecting anything into
+     * Dock's own process.env. Anchored to __dirname so the launch cwd is
+     * irrelevant. Returns {} (with a warning) if the file is absent/unreadable.
+     * @returns {Record<string, string>}
+     */
+    static #readAgentLlmKeys()
+    {
+        const environmentFileName = process.argv.includes("--debug") ? ".env" : ".production.env";
+        const agentEnvironmentPath = path.join(__dirname, "..", "..", "..", "..", "Agent", environmentFileName);
+
+        try
+        {
+            const parsedAgentEnvironment = require("dotenv").parse(fs.readFileSync(agentEnvironmentPath));
+            const llmKeys = {};
+            for (const key of ["GEMINI_API_KEY", "OPENAI_API_KEY"])
+            {
+                if (parsedAgentEnvironment[key])
+                {
+                    llmKeys[key] = parsedAgentEnvironment[key];
+                }
+            }
+            return llmKeys;
+        }
+        catch (readError)
+        {
+            console.warn(`[BurstFleetSettings] Could not read Agent LLM keys from ${agentEnvironmentPath}; burst workers may lack GEMINI_API_KEY/OPENAI_API_KEY: ${readError.message}`);
+            return {};
+        }
     }
 
     /**
@@ -207,6 +247,7 @@ class BurstFleetSettings
             instanceType: BurstFleetSettings.getInstanceType(),
             vpcId: BurstFleetSettings.getVpcId(),
             subnetId: BurstFleetSettings.getSubnetId(),
+            firewallId: BurstFleetSettings.getFirewallId(),
             workerEnvironment: BurstFleetSettings.getWorkerRuntimeEnvironment()
         };
     }

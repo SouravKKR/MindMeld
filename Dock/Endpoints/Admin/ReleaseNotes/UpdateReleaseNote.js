@@ -18,7 +18,7 @@ async function updateReleaseNote(request, response)
     const requester = request.user;
     if (!requester)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 

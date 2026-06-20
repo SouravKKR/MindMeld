@@ -1,6 +1,8 @@
-const { PacketronRequestMethod } = require("@gamiumgamers/packetron");
+const { PacketronRequestMethod, PacketronHandlerFlags } = require("@gamiumgamers/packetron");
 const { clearUserData } = require("./Profile/ClearUserData");
+const { redeemPromoCode } = require("./Profile/RedeemPromoCode");
 const { ensureLogin } = require("./Plugins/EnsureLogin");
+const {httpStatus} = require("../Globals/Enumerations/HttpStatus");
 
 function handleProfileEndpoints(server)
 {
@@ -16,7 +18,7 @@ function handleProfileEndpoints(server)
             {
                 console.error(`Error in route: ${request.url}`);
                 console.error(handlerError);
-                response.sendStatusCode(500);
+                response.sendStatusCode(httpStatus.INTERNAL_SERVER_ERROR);
             }
         };
     }
@@ -25,6 +27,15 @@ function handleProfileEndpoints(server)
     ({
         routePath: `/Profile/ClearUserData`,
         handler: wrapHandler(clearUserData),
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureLogin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Profile/RedeemPromoCode`,
+        handler: wrapHandler(redeemPromoCode),
+        flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureLogin]
     });

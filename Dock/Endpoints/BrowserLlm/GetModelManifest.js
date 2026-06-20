@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const BrowserLlmDownloadConstants = require("../../Globals/Constants/BrowserLlmDownloadConstants");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -41,7 +42,7 @@ class GetModelManifestEndpoint
 
         if (!fs.existsSync(modelDirectory))
         {
-            response.sendStatusCode(503);
+            response.sendStatusCode(httpStatus.SERVICE_UNAVAILABLE);
             response.sendJson({ reason: "model_not_provisioned", modelId });
             return;
         }
@@ -54,14 +55,14 @@ class GetModelManifestEndpoint
         catch (readError)
         {
             console.error(`[GetModelManifest] Could not read ${modelDirectory}: ${readError.message}`);
-            response.sendStatusCode(500);
+            response.sendStatusCode(httpStatus.INTERNAL_SERVER_ERROR);
             response.sendJson({ reason: "manifest_read_failed" });
             return;
         }
 
         if (directoryEntries.length === 0)
         {
-            response.sendStatusCode(503);
+            response.sendStatusCode(httpStatus.SERVICE_UNAVAILABLE);
             response.sendJson({ reason: "model_not_provisioned", modelId });
             return;
         }
@@ -99,7 +100,7 @@ class GetModelManifestEndpoint
 
         if (collectedFiles.length === 0 && wasmEntry === null)
         {
-            response.sendStatusCode(503);
+            response.sendStatusCode(httpStatus.SERVICE_UNAVAILABLE);
             response.sendJson({ reason: "model_not_provisioned", modelId });
             return;
         }

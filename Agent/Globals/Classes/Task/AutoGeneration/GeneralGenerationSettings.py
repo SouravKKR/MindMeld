@@ -6,7 +6,7 @@ from Globals.Classes.Decorators.ExtractableInformationSource import ExtractableI
 
 
 class GeneralGenerationSettings(AutoGenerationSettings):
-    def __init__(self, type: TaskTypes = None, additional_instructions: str = '', description: str = '', information_sources: List[ExtractableInformationSource] = [], enhance_images: bool = False, image_sources: List[ExtractableInformationSource] = [], subject_name: str = '', exam_name: str = '', generation_mode: AutomaticGenerationModes = AutomaticGenerationModes(0), inherit_image_curriculum_from_information_sources: bool = True, capture_images_enabled: bool = True, good_quality_deck_short_names: bool = False) -> None:
+    def __init__(self, type: TaskTypes = None, additional_instructions: str = '', description: str = '', information_sources: List[ExtractableInformationSource] = [], enhance_images: bool = False, image_sources: List[ExtractableInformationSource] = [], subject_name: str = '', exam_name: str = '', generation_mode: AutomaticGenerationModes = AutomaticGenerationModes(0), inherit_image_curriculum_from_information_sources: bool = True, capture_images_enabled: bool = False, good_quality_deck_short_names: bool = False) -> None:
         super().__init__(type=type, additional_instructions=additional_instructions, description=description, information_sources=information_sources, enhance_images=enhance_images, image_sources=image_sources, subject_name=subject_name, exam_name=exam_name)
         self.set_generation_mode(generation_mode)
         self.set_inherit_image_curriculum_from_information_sources(inherit_image_curriculum_from_information_sources)

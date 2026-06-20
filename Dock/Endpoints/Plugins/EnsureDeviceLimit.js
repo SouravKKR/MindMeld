@@ -2,6 +2,7 @@ const { PacketronPlugin } = require("@gamiumgamers/packetron");
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
 const LicenseConstants = require("../../Globals/Constants/LicenseConstants");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 const ensureDeviceLimit = new PacketronPlugin
 ({
@@ -34,7 +35,7 @@ const ensureDeviceLimit = new PacketronPlugin
             response.statusCode = httpStatus.CONFLICT;
             response.sendJson
             ({
-                error: "DEVICE_LIMIT_REACHED",
+                error: ErrorCodes.DEVICE_LIMIT_REACHED,
                 maxDevices: LicenseConstants.MAX_DEVICES_PER_USER,
                 devices: existingDevices.map(device => device.toJson())
             });

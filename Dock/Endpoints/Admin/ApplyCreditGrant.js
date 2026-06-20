@@ -1,6 +1,7 @@
 const CreditGrantTargetResolver = require("../../Globals/Classes/Credits/CreditGrantTargetResolver");
 const CreditGrantExecutor = require("../../Globals/Classes/Credits/CreditGrantExecutor");
 const { creditGrantAmountModes } = require("../../Globals/Enumerations/CreditGrantAmountModes");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
 
 /**
@@ -26,28 +27,28 @@ async function applyCreditGrant(request, response)
     if (!target || typeof target !== "object")
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_TARGET" });
+        response.sendJson({ error: ErrorCodes.MISSING_TARGET });
         return;
     }
 
     if (!isFinite(amount) || amount <= 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "INVALID_AMOUNT" });
+        response.sendJson({ error: ErrorCodes.INVALID_AMOUNT });
         return;
     }
 
     if (!Object.values(creditGrantAmountModes).includes(amountMode) || amountMode === creditGrantAmountModes.UNKNOWN)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "INVALID_AMOUNT_MODE" });
+        response.sendJson({ error: ErrorCodes.INVALID_AMOUNT_MODE });
         return;
     }
 
     if (typeof grantKey !== "string" || grantKey.trim().length < 8 || grantKey.length > 128)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "INVALID_GRANT_KEY" });
+        response.sendJson({ error: ErrorCodes.INVALID_GRANT_KEY });
         return;
     }
 
@@ -62,7 +63,7 @@ async function applyCreditGrant(request, response)
     if (resolution.recipients.length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "NO_MATCHING_USERS", unmatchedEmails: resolution.unmatchedEmails });
+        response.sendJson({ error: ErrorCodes.NO_MATCHING_USERS, unmatchedEmails: resolution.unmatchedEmails });
         return;
     }
 
@@ -70,7 +71,7 @@ async function applyCreditGrant(request, response)
     if (perUserAmount <= 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "AMOUNT_TOO_SMALL_TO_SPLIT" });
+        response.sendJson({ error: ErrorCodes.AMOUNT_TOO_SMALL_TO_SPLIT });
         return;
     }
 

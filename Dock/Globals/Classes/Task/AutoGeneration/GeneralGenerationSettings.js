@@ -9,7 +9,7 @@ class GeneralGenerationSettings extends AutoGenerationSettings
     #captureImagesEnabled;
     #goodQualityDeckShortNames;
 
-    constructor({type = null, additionalInstructions = '', description = '', informationSources = [], enhanceImages = false, imageSources = [], subjectName = '', examName = '', generationMode = 0, inheritImageCurriculumFromInformationSources = true, captureImagesEnabled = true, goodQualityDeckShortNames = false} = {})
+    constructor({type = null, additionalInstructions = '', description = '', informationSources = [], enhanceImages = false, imageSources = [], subjectName = '', examName = '', generationMode = 0, inheritImageCurriculumFromInformationSources = true, captureImagesEnabled = false, goodQualityDeckShortNames = false} = {})
     {
         super({type, additionalInstructions, description, informationSources, enhanceImages, imageSources, subjectName, examName});
         this.setGenerationMode(generationMode);

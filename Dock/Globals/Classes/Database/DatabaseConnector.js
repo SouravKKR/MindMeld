@@ -16,6 +16,14 @@ class DatabaseConnector
     static #bConnected = false;
     static #database = null;
 
+    // Atlas Vector Search index on the textEmbeddings collection. The name and
+    // dimensions are shared with the Agent's EmbeddingsQueryEngine (Python),
+    // which issues the $vectorSearch queries against this index — keep both in
+    // sync. 768 is the output dimensionality of nomic-ai/nomic-embed-text-v1,
+    // the model the Agent embeds chunks with.
+    static TEXT_EMBEDDINGS_VECTOR_INDEX_NAME = "textEmbeddingsVectorSearch";
+    static TEXT_EMBEDDINGS_VECTOR_DIMENSIONS = 768;
+
     static async #connect()
     {
         try
@@ -137,6 +145,10 @@ class DatabaseConnector
         // documents that explicitly have a role set.
         await usersCollection.createIndex({ role: 1 }, { sparse: true });
 
+        // World leaderboard ranks by counting users with a strictly higher
+        // composite-XP score; sparse so only users who have earned XP are indexed.
+        await usersCollection.createIndex({ "additionalData.metrics.leaderboardScore": 1 }, { sparse: true });
+
         // ── Purchases ──────────────────────────────────────────────────────────
         // Drop legacy indexes whose composite fields (purchaseEntityType,
         // entityId, expirationDate) no longer exist on the new Purchase
@@ -247,6 +259,68 @@ class DatabaseConnector
         await askAiPopupLinksCollection.createIndex({ userId: 1, "data.id": 1 }, { unique: true });
         await askAiPopupLinksCollection.createIndex({ userId: 1, serverUpdatedAt: 1 });
         await askAiPopupLinksCollection.createIndex({ userId: 1, "data.deckId": 1 });
+
+        // ── Text embeddings (RAG chunk store — written by the Agent) ────────────
+        // The AskAi grounding retrieval (EmbeddingsQueryEngine.vector_search), the
+        // embed-coverage check (get_pages_without_embeddings), and the chunk
+        // upsert all filter by informationSourceHash (+ pageNumber). Without this
+        // index every one of those reads was a FULL collection scan — O(all
+        // embeddings in the DB) on each AskAi call. The compound turns the
+        // candidate fetch into an index range scan scoped to the queried sources.
+        // (The cosine ranking that follows is still a brute-force pass over the
+        // matched chunks — that is inherent to not using an Atlas $vectorSearch
+        // index and is acceptable at this candidate-set size.)
+        const textEmbeddingsCollection = database.collection(DatabaseConstants.TEXT_EMBEDDINGS_COLLECTION);
+        await textEmbeddingsCollection.createIndex({ informationSourceHash: 1, pageNumber: 1 });
+
+        // Atlas Vector Search index for the semantic retrieval path. The Agent's
+        // EmbeddingsQueryEngine.vector_search (AskAi grounding) and the curated-
+        // study textbook search issue $vectorSearch aggregations against this
+        // instead of pulling every chunk and scoring cosine in Python. The
+        // informationSourceHash filter field lets AskAi scope the search to the
+        // active sources inside the index (a pre-filter, not a post-filter).
+        //
+        // Search-index management only exists on Atlas / the mongodb-atlas-local
+        // image (the bundled mongot). On a plain mongod this command throws — we
+        // swallow it (logging a warning) so the connection still succeeds; the
+        // Agent transparently falls back to brute-force cosine when the index is
+        // absent or still building. Creation is idempotent: skipped if present,
+        // and the build itself runs asynchronously server-side.
+        try
+        {
+            const existingSearchIndexes = await textEmbeddingsCollection.listSearchIndexes().toArray();
+            const bVectorIndexExists = existingSearchIndexes.some(searchIndex => searchIndex.name === DatabaseConnector.TEXT_EMBEDDINGS_VECTOR_INDEX_NAME);
+
+            if (!bVectorIndexExists)
+            {
+                await textEmbeddingsCollection.createSearchIndex
+                ({
+                    name: DatabaseConnector.TEXT_EMBEDDINGS_VECTOR_INDEX_NAME,
+                    type: "vectorSearch",
+                    definition:
+                    {
+                        fields:
+                        [
+                            { type: "vector", path: "embedding", numDimensions: DatabaseConnector.TEXT_EMBEDDINGS_VECTOR_DIMENSIONS, similarity: "cosine" },
+                            { type: "filter", path: "informationSourceHash" }
+                        ]
+                    }
+                });
+
+                console.log(`[DatabaseConnector] Creating vector search index '${DatabaseConnector.TEXT_EMBEDDINGS_VECTOR_INDEX_NAME}' on ${DatabaseConstants.TEXT_EMBEDDINGS_COLLECTION} (builds asynchronously)`);
+            }
+        }
+        catch (searchIndexError)
+        {
+            console.warn(`[DatabaseConnector] Could not ensure the text-embeddings vector search index (not an Atlas / atlas-local deployment?): ${searchIndexError?.message || searchIndexError}`);
+        }
+
+        // ── Figures (image-extraction cache — written by the Agent) ─────────────
+        // PrepareImages looks up previously-extracted figures by
+        // informationSourceHash to reuse cached perceptual hashes + embeddings
+        // instead of re-processing unchanged images on every run.
+        const figuresCollection = database.collection(DatabaseConstants.FIGURES_COLLECTION);
+        await figuresCollection.createIndex({ informationSourceHash: 1 });
 
         // ── Generation templates ───────────────────────────────────────────────
         // Curated exam-prep blueprints (JEE Mains, NEET UG, CBSE, etc.) the
@@ -548,6 +622,56 @@ class DatabaseConnector
         const taskStatesCollection = database.collection(DatabaseConstants.TASK_STATES_COLLECTION);
         await taskStatesCollection.createIndex({ userId: 1 }, { unique: true });
         await taskStatesCollection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+        // ── Periodic credit assignments ────────────────────────────────────────
+        // First-class recurring-grant definitions managed in the admin panel.
+        // The lazy reconciler (fired on GetUser / before an AI charge) queries
+        // active assignments two ways: by the member's current organizations
+        // (scopeType + organizationId) and by an explicit people-set that names
+        // the email (the multikey peopleEmails index). The (status, scopeType)
+        // index backs the admin listing.
+        const periodicCreditAssignmentsCollection = database.collection(DatabaseConstants.PERIODIC_CREDIT_ASSIGNMENTS_COLLECTION);
+        await periodicCreditAssignmentsCollection.createIndex({ id: 1 }, { unique: true });
+        await periodicCreditAssignmentsCollection.createIndex({ status: 1, scopeType: 1 });
+        await periodicCreditAssignmentsCollection.createIndex({ scopeType: 1, organizationId: 1 });
+        await periodicCreditAssignmentsCollection.createIndex({ peopleEmails: 1 });
+
+        // ── Periodic assignment recipients ─────────────────────────────────────
+        // Per-(assignment, email) cursor + denormalised report data. The row is
+        // the fast lookup for "has this email already been paid for this period
+        // / on-join?" — but the creditTransactions referenceKey remains the true
+        // idempotency guard; this collection is a rebuildable perf + report
+        // index. The unique (assignmentId, email) blocks duplicate rows; the
+        // by-email index lets the reconciler find every assignment a returning
+        // user has ever touched.
+        const periodicAssignmentRecipientsCollection = database.collection(DatabaseConstants.PERIODIC_ASSIGNMENT_RECIPIENTS_COLLECTION);
+        await periodicAssignmentRecipientsCollection.createIndex({ assignmentId: 1, email: 1 }, { unique: true });
+        await periodicAssignmentRecipientsCollection.createIndex({ assignmentId: 1 });
+        await periodicAssignmentRecipientsCollection.createIndex({ email: 1 });
+
+        // ── Credit deal payments ───────────────────────────────────────────────
+        // Standalone, non-gating money record attachable to a periodic
+        // assignment OR a one-time fixed grant (targetType + targetId). The
+        // sparse providerOrderId index makes the in-page Razorpay capture and
+        // the webhook safety-net lookup idempotent without indexing the many
+        // INDEPENDENT rows that carry no order id.
+        const creditDealPaymentsCollection = database.collection(DatabaseConstants.CREDIT_DEAL_PAYMENTS_COLLECTION);
+        await creditDealPaymentsCollection.createIndex({ id: 1 }, { unique: true });
+        await creditDealPaymentsCollection.createIndex({ targetType: 1, targetId: 1 });
+        await creditDealPaymentsCollection.createIndex({ providerOrderId: 1 }, { sparse: true });
+
+        // Promo codes. The unique codeString index forbids duplicate codes
+        // (codes are stored normalized uppercase); the unique (promoCodeId,
+        // userId) index forbids a second redemption by the same user.
+        const promoCodesCollection = database.collection(DatabaseConstants.PROMO_CODES_COLLECTION);
+        await promoCodesCollection.createIndex({ codeString: 1 }, { unique: true });
+        await promoCodesCollection.createIndex({ id: 1 }, { unique: true });
+        await promoCodesCollection.createIndex({ createdAt: -1 });
+
+        const promoCodeRedemptionsCollection = database.collection(DatabaseConstants.PROMO_CODE_REDEMPTIONS_COLLECTION);
+        await promoCodeRedemptionsCollection.createIndex({ promoCodeId: 1, userId: 1 }, { unique: true });
+        await promoCodeRedemptionsCollection.createIndex({ promoCodeId: 1, redeemedAt: -1 });
+        await promoCodeRedemptionsCollection.createIndex({ userId: 1, redeemedAt: -1 });
     }
 }
 

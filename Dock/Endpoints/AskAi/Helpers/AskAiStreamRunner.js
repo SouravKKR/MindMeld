@@ -11,6 +11,7 @@ const CreditPreflight = require("../../../Globals/Classes/Credits/CreditPrefligh
 const CreditLedger = require("../../../Globals/Classes/Credits/CreditLedger");
 const CreditConfigurationStore = require("../../../Globals/Classes/Credits/CreditConfigurationStore");
 const MaintenanceGate = require("../../../Globals/Classes/Maintenance/MaintenanceGate");
+const MetricBadgeManager = require("../../../Globals/Classes/Metrics/MetricBadgeManager");
 
 /**
  * AskAiStreamRunner
@@ -74,7 +75,7 @@ class AskAiStreamRunner
         const requestBody = await AskAiStreamRunner.#readRequestBody(request);
         if (requestBody === null)
         {
-            response.sendStatusCode(400);
+            response.sendStatusCode(httpStatus.BAD_REQUEST);
             return;
         }
 
@@ -128,7 +129,7 @@ class AskAiStreamRunner
         childProcess.stdin.write(JSON.stringify(stdinPayload));
         childProcess.stdin.end();
 
-        response.writeHead(200,
+        response.writeHead(httpStatus.OK,
         {
             "Content-Type":      "text/plain; charset=utf-8",
             "Transfer-Encoding": "chunked",
@@ -216,7 +217,7 @@ class AskAiStreamRunner
             }
         });
 
-        childProcess.on("close", (exitCode) =>
+        childProcess.on("close", async (exitCode) =>
         {
             stdoutLineReader.close();
             stderrLineReader.close();
@@ -230,6 +231,27 @@ class AskAiStreamRunner
             {
                 AskAiStreamRunner.#chargeForCompletedStream(userId, taskType, chargeReferenceKey)
                     .catch((chargeError) => Logger.log(`[AskAi] credit charge failed for ${chargeReferenceKey}: ${chargeError.message}`, "DOCK"));
+
+                // A completed stream IS a doubt asked. Count it authoritatively
+                // here — server-side, so a client can't inflate it (every doubt
+                // is a real, credit-metered call) — then stream the updated
+                // metrics back so the client's count refreshes and any milestone
+                // badge just crossed celebrates immediately. The client keeps
+                // reading until response.end(), so this trailing line is received
+                // even though the worker's "done" event already arrived.
+                try
+                {
+                    const doubtResult = await MetricBadgeManager.recordDoubtAsked(userId);
+                    Logger.log(`[AskAi] doubt counted for ${userId} (doubtsAsked=${doubtResult.metrics.doubtsAsked})`, "DOCK");
+                    if (!bResponseClosed)
+                    {
+                        response.write(JSON.stringify({ type: "metricsUpdate", metrics: doubtResult.metrics }) + "\n");
+                    }
+                }
+                catch (doubtError)
+                {
+                    Logger.log(`[AskAi] doubt count failed for ${userId}: ${doubtError.message || doubtError}`, "DOCK");
+                }
             }
 
             if (bResponseClosed) return;

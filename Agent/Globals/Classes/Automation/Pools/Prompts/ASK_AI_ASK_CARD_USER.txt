@@ -3,6 +3,6 @@ Flashcard answer: "{answer}"
 Highlighted fragment: "{selected_text}"
 User question: {user_query}
 
-Answer directly. Stay scoped to the fragment.
+Answer the question directly and correctly. Use the flashcard as context, but answer fully from your own knowledge — never say the answer "isn't on the card".
 
 {information_source_block}{html_style_block}

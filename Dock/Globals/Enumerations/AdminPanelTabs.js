@@ -10,6 +10,8 @@ const adminPanelTabs =
   RATE_LIMITS: 7,
   AUDIT_LOG: 8,
   CREDITS: 9,
+  MAINTENANCE: 10,
+  STREAKS: 11,
 }
 
 module.exports = { adminPanelTabs };

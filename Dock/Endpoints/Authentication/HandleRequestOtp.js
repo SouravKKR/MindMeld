@@ -1,4 +1,5 @@
 const OtpManager = require("../../Globals/Classes/Authentication/OtpManager");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -11,7 +12,7 @@ async function handleRequestOtp(request, response)
     if (!submittedEmail || !EMAIL_REGEX.test(submittedEmail))
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "INVALID_EMAIL" });
+        response.sendJson({ success: false, error: ErrorCodes.INVALID_EMAIL });
         return;
     }
 
@@ -24,16 +25,16 @@ async function handleRequestOtp(request, response)
     {
         console.error(`[HandleRequestOtp] OTP request failed for ${submittedEmail}: ${otpError.message}`);
         response.statusCode = httpStatus.BAD_GATEWAY;
-        response.sendJson({ success: false, error: "EMAIL_DELIVERY_FAILED" });
+        response.sendJson({ success: false, error: ErrorCodes.EMAIL_DELIVERY_FAILED });
         return;
     }
 
     if (!result.ok)
     {
-        if (result.reason === "RATE_LIMITED")
+        if (result.reason === ErrorCodes.RATE_LIMITED)
         {
             response.statusCode = httpStatus.TOO_MANY_REQUESTS;
-            response.sendJson({ success: false, error: "RATE_LIMITED", retryAfterSeconds: result.retryAfterSeconds });
+            response.sendJson({ success: false, error: ErrorCodes.RATE_LIMITED, retryAfterSeconds: result.retryAfterSeconds });
             return;
         }
         response.statusCode = httpStatus.BAD_REQUEST;

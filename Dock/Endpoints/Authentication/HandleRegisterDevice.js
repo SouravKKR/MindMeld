@@ -1,6 +1,7 @@
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
 const LicenseConstants = require("../../Globals/Constants/LicenseConstants");
 const DeviceLimitReachedError = require("../../Globals/Classes/Database/DeviceLimitReachedError");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
@@ -30,7 +31,7 @@ async function handleRegisterDevice(request, response)
     const session = request.session;
     if (!session)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -59,7 +60,7 @@ async function handleRegisterDevice(request, response)
             response.statusCode = httpStatus.CONFLICT;
             response.sendJson
             ({
-                error: "DEVICE_LIMIT_REACHED",
+                error: ErrorCodes.DEVICE_LIMIT_REACHED,
                 maxDevices: LicenseConstants.MAX_DEVICES_PER_USER,
                 devices: resolveError.getDevices()
             });

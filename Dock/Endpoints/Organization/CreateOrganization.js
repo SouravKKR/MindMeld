@@ -9,6 +9,7 @@ const { organizationStatus } = require("../../Globals/Enumerations/OrganizationS
 const { organizationPaymentKinds } = require("../../Globals/Enumerations/OrganizationPaymentKinds");
 const { organizationPaymentStatuses } = require("../../Globals/Enumerations/OrganizationPaymentStatuses");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 
 async function createOrganization(request, response)
@@ -25,25 +26,25 @@ async function createOrganization(request, response)
     if (name.length === 0 || name.length > 256)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "INVALID_NAME" });
+        response.sendJson({ success: false, error: ErrorCodes.INVALID_NAME });
         return;
     }
     if (!adminEmail || adminEmail.indexOf("@") < 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "INVALID_ADMIN_EMAIL" });
+        response.sendJson({ success: false, error: ErrorCodes.INVALID_ADMIN_EMAIL });
         return;
     }
     if (amountMinor < 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "INVALID_AMOUNT" });
+        response.sendJson({ success: false, error: ErrorCodes.INVALID_AMOUNT });
         return;
     }
     if (maxMembers <= 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "INVALID_MAX_MEMBERS" });
+        response.sendJson({ success: false, error: ErrorCodes.INVALID_MAX_MEMBERS });
         return;
     }
 
@@ -51,7 +52,7 @@ async function createOrganization(request, response)
     if (!tokenValid)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "INVALID_VERIFICATION_TOKEN" });
+        response.sendJson({ success: false, error: ErrorCodes.INVALID_VERIFICATION_TOKEN });
         return;
     }
 
@@ -63,7 +64,7 @@ async function createOrganization(request, response)
         if (!validation.valid)
         {
             response.statusCode = httpStatus.BAD_REQUEST;
-            response.sendJson({ success: false, error: "INVALID_PERK", reason: validation.reason, deckId: perkInput?.deckId });
+            response.sendJson({ success: false, error: ErrorCodes.INVALID_PERK, reason: validation.reason, deckId: perkInput?.deckId });
             return;
         }
     }
@@ -124,7 +125,7 @@ async function createOrganization(request, response)
         // PENDING row with no order behind it.
         await OrganizationQueryEngine.deleteOrganization(created.getId());
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
-        response.sendJson({ success: false, error: "PAYMENT_PROVIDER_NOT_CONFIGURED" });
+        response.sendJson({ success: false, error: ErrorCodes.PAYMENT_PROVIDER_NOT_CONFIGURED });
         return;
     }
 

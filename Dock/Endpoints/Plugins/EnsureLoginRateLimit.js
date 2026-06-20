@@ -1,6 +1,7 @@
 const { PacketronPlugin } = require("@gamiumgamers/packetron");
 const RateLimiter = require("../../Globals/Classes/Security/RateLimiter");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 /**
  * EnsureLoginRateLimit
@@ -62,7 +63,7 @@ const ensureLoginRateLimit = new PacketronPlugin
 
             response.statusCode = httpStatus.TOO_MANY_REQUESTS;
             response.setHeader("Retry-After", String(decision.retryAfterSeconds));
-            response.sendJson({ error: "RATE_LIMITED", scope: "LOGIN", retryAfterSeconds: decision.retryAfterSeconds });
+            response.sendJson({ error: ErrorCodes.RATE_LIMITED, scope: "LOGIN", retryAfterSeconds: decision.retryAfterSeconds });
             return true;
         }
 

@@ -27,7 +27,7 @@ async function handleTemplatesGet(request, response)
     const user = await getUser(request);
     if (!user)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 

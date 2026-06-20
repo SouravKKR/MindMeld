@@ -1,6 +1,7 @@
 const DatabaseConnector = require("../Database/DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
 const UploadQuotaLimits = require("../../Constants/UploadQuotaLimits");
+const ErrorCodes = require("../../Constants/ErrorCodes");
 
 class UploadQuotaManager
 {
@@ -53,7 +54,7 @@ class UploadQuotaManager
         {
             return {
                 allowed: false,
-                reason: "MISSING_USER_ID",
+                reason: ErrorCodes.MISSING_USER_ID,
                 remainingBytes: 0,
                 remainingFiles: 0,
                 resetAt: null

@@ -2,6 +2,7 @@ const OrganizationQueryEngine = require("../../Globals/Classes/Organization/Orga
 const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 
 async function bulkRemoveOrganizationMembers(request, response)
@@ -13,13 +14,13 @@ async function bulkRemoveOrganizationMembers(request, response)
     if (!organizationId)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "MISSING_ORGANIZATION_ID" });
+        response.sendJson({ success: false, error: ErrorCodes.MISSING_ORGANIZATION_ID });
         return;
     }
     if (memberIds.length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "MISSING_MEMBER_IDS" });
+        response.sendJson({ success: false, error: ErrorCodes.MISSING_MEMBER_IDS });
         return;
     }
 
@@ -27,7 +28,7 @@ async function bulkRemoveOrganizationMembers(request, response)
     if (!organization)
     {
         response.statusCode = httpStatus.NOT_FOUND;
-        response.sendJson({ success: false, error: "ORG_NOT_FOUND" });
+        response.sendJson({ success: false, error: ErrorCodes.ORG_NOT_FOUND });
         return;
     }
 
@@ -35,7 +36,7 @@ async function bulkRemoveOrganizationMembers(request, response)
     if (user.getRole() !== userRoles.ADMIN && organization.getAdminUserId() !== user.getId())
     {
         response.statusCode = httpStatus.FORBIDDEN;
-        response.sendJson({ success: false, error: "NOT_ORG_ADMIN" });
+        response.sendJson({ success: false, error: ErrorCodes.NOT_ORG_ADMIN });
         return;
     }
 

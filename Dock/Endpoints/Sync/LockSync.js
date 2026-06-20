@@ -1,6 +1,7 @@
 const { PacketronRequest, PacketronResponse } = require("@gamiumgamers/packetron");
 const { getUser } = require("../Helpers/GetUser");
 const TaskManager = require("../../Globals/Classes/Task/TaskManager");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
  * Acquires a sync lock for the authenticated user's device.
@@ -21,7 +22,7 @@ async function handleLockSync(request, response)
     
     if (!user)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -30,7 +31,7 @@ async function handleLockSync(request, response)
 
     if (!deviceId)
     {
-        response.sendStatusCode(400);
+        response.sendStatusCode(httpStatus.BAD_REQUEST);
         return;
     }
 

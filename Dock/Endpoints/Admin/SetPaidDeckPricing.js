@@ -1,6 +1,7 @@
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const PaidDeckPricing = require("../../Globals/Model/PaidDeckPricing");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function setPaidDeckPricing(request, response)
@@ -12,7 +13,7 @@ async function setPaidDeckPricing(request, response)
     if (!deckId || !pricingEntries)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_DECK_ID_OR_PRICINGS" });
+        response.sendJson({ error: ErrorCodes.MISSING_DECK_ID_OR_PRICINGS });
         return;
     }
 

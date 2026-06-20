@@ -2,6 +2,7 @@ const CreditConfigurationStore = require("../../Globals/Classes/Credits/CreditCo
 const CreditPurchasePricingEngine = require("../../Globals/Classes/Credits/CreditPurchasePricingEngine");
 const RegionResolver = require("../../Globals/Classes/Pricing/RegionResolver");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 /**
  * GET /Credits/Purchase/Options
@@ -38,7 +39,7 @@ async function getCreditPurchaseOptions(request, response)
     {
         console.error(`[GetCreditPurchaseOptions] ${optionsError.message}`);
         response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
-        response.sendJson({ error: "FAILED_TO_LOAD_PURCHASE_OPTIONS" });
+        response.sendJson({ error: ErrorCodes.FAILED_TO_LOAD_PURCHASE_OPTIONS });
     }
 }
 

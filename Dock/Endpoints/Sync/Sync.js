@@ -12,6 +12,7 @@ const CuratedStudyMaterialFields = require("../../Globals/Classes/Analysis/Curat
 const { entityTypes } = require("../../Globals/Enumerations/EntityTypes");
 const { deckLicenseStatuses } = require("../../Globals/Enumerations/DeckLicenseStatuses");
 const { curatedBatchReviewStates } = require("../../Globals/Enumerations/CuratedBatchReviewStates");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 // ── Pull-phase chunking ────────────────────────────────────────────────
 //
@@ -52,7 +53,7 @@ async function handleSync(request, response)
     if (!user)
     {
         console.warn("[Sync] Unauthorized — no user found in session.");
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -65,7 +66,7 @@ async function handleSync(request, response)
 
     if (!deviceId)
     {
-        response.sendStatusCode(400);
+        response.sendStatusCode(httpStatus.BAD_REQUEST);
         return;
     }
 
@@ -94,7 +95,7 @@ async function handleSync(request, response)
     if (!lockState.bIsLocked || lockState.holderDeviceId !== deviceId)
     {
         console.warn(`[Sync] Rejecting push from device ${deviceId} — lock is ${lockState.bIsLocked ? "held by " + lockState.holderDeviceId : "not held"}.`);
-        response.sendStatusCode(423);
+        response.sendStatusCode(httpStatus.LOCKED);
         return;
     }
 

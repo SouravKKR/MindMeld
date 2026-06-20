@@ -49,7 +49,9 @@ class LinodeComputeProvider extends CloudComputeProvider
             return true;
         }
 
-        return Boolean(this.#apiToken && BurstFleetSettings.getImageId() && BurstFleetSettings.getRegion() && BurstFleetSettings.getInstanceType());
+        // A firewall id is required (fail-closed): without it we would create a
+        // burst VM with no firewall, so report unconfigured and create nothing.
+        return Boolean(this.#apiToken && BurstFleetSettings.getImageId() && BurstFleetSettings.getRegion() && BurstFleetSettings.getInstanceType() && BurstFleetSettings.getFirewallId());
     }
 
     async #request(method, pathSuffix, bodyObject)
@@ -191,12 +193,20 @@ class LinodeComputeProvider extends CloudComputeProvider
                 private_ip: true,
                 booted: true,
                 root_pass: crypto.randomBytes(24).toString("base64") + "Aa1!",
+                firewall_id: Number(provisioningSpecification.firewallId),
                 metadata: { user_data: this.#buildCloudInitUserData(provisioningSpecification.workerEnvironment) }
             };
 
             if (provisioningSpecification.vpcId && provisioningSpecification.subnetId)
             {
+                // Dual-homed: eth0 is a public interface (the default route, so the
+                // worker has outbound internet to reach Gemini/OpenAI), eth1 is the
+                // VPC interface for private Redis/Mongo. The burst firewall drops ALL
+                // inbound, so the public interface is outbound-only in practice.
                 requestBody.interfaces = [
+                    {
+                        purpose: "public"
+                    },
                     {
                         purpose: "vpc",
                         vpc_id: Number(provisioningSpecification.vpcId),

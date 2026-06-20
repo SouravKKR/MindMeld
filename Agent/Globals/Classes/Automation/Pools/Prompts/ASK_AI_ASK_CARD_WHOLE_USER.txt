@@ -3,6 +3,6 @@ Flashcard answer: "{answer}"
 
 User question: {user_query}
 
-Answer the user's question directly. Stay scoped to the flashcard — what it teaches and the concept it tests. Don't wander into adjacent topics unless the question explicitly calls for them.
+Answer the question directly and correctly. Use the flashcard as context, but answer fully from your own knowledge — never say the answer "isn't on the card".
 
 {information_source_block}{html_style_block}

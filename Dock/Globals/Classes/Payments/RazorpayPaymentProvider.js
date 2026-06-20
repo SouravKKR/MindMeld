@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const PaymentProvider = require("./PaymentProvider");
 const { paymentProviders } = require("../../Enumerations/PaymentProviders");
+const ErrorCodes = require("../../Constants/ErrorCodes");
 
 class RazorpayPaymentProvider extends PaymentProvider
 {
@@ -86,7 +87,7 @@ class RazorpayPaymentProvider extends PaymentProvider
 
         if (!providerOrderId || !providerPaymentId || !signature)
         {
-            return { verified: false, reason: "MISSING_FIELDS" };
+            return { verified: false, reason: ErrorCodes.MISSING_FIELDS };
         }
 
         const expectedSignature = crypto
@@ -99,7 +100,7 @@ class RazorpayPaymentProvider extends PaymentProvider
 
         if (expectedBuffer.length !== signatureBuffer.length)
         {
-            return { verified: false, reason: "SIGNATURE_LENGTH_MISMATCH" };
+            return { verified: false, reason: ErrorCodes.SIGNATURE_LENGTH_MISMATCH };
         }
 
         const verified = crypto.timingSafeEqual(expectedBuffer, signatureBuffer);
@@ -117,12 +118,12 @@ class RazorpayPaymentProvider extends PaymentProvider
         const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || "";
         if (!webhookSecret)
         {
-            return { verified: false, reason: "WEBHOOK_SECRET_NOT_CONFIGURED" };
+            return { verified: false, reason: ErrorCodes.WEBHOOK_SECRET_NOT_CONFIGURED };
         }
 
         if (typeof rawBody !== "string" || typeof signature !== "string" || signature.length === 0)
         {
-            return { verified: false, reason: "MISSING_FIELDS" };
+            return { verified: false, reason: ErrorCodes.MISSING_FIELDS };
         }
 
         const expectedSignature = crypto
@@ -135,7 +136,7 @@ class RazorpayPaymentProvider extends PaymentProvider
 
         if (expectedBuffer.length !== signatureBuffer.length)
         {
-            return { verified: false, reason: "SIGNATURE_LENGTH_MISMATCH" };
+            return { verified: false, reason: ErrorCodes.SIGNATURE_LENGTH_MISMATCH };
         }
 
         const verified = crypto.timingSafeEqual(expectedBuffer, signatureBuffer);

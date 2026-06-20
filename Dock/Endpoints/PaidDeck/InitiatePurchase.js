@@ -12,6 +12,7 @@ const { grantAndSeedDeck, checkUserHasPaidDeckPassword } = require("./PaidDeckGr
 const LicenseClientView = require("../../Globals/Classes/Security/LicenseClientView");
 const GrantSources = require("../../Globals/Constants/GrantSources");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 const MILLISECONDS_PER_DAY = 86_400_000;
 
@@ -21,7 +22,7 @@ async function initiatePurchase(request, response)
 
     if (!session)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -38,7 +39,7 @@ async function initiatePurchase(request, response)
     if (deckIds.length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_DECK_IDS" });
+        response.sendJson({ error: ErrorCodes.MISSING_DECK_IDS });
         return;
     }
 
@@ -135,7 +136,7 @@ async function initiatePurchase(request, response)
     if (!provider.isConfigured())
     {
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
-        response.sendJson({ error: "PAYMENT_PROVIDER_NOT_CONFIGURED" });
+        response.sendJson({ error: ErrorCodes.PAYMENT_PROVIDER_NOT_CONFIGURED });
         return;
     }
 

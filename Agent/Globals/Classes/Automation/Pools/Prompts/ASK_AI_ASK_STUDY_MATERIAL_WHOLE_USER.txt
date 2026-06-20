@@ -1,8 +1,8 @@
-Study material lesson:
+Study material lesson (context):
 {material_excerpt}
 
 User question: {user_query}
 
-Answer the user's question directly, grounded in the lesson above. Quote or reference specific parts of the lesson where it helps; don't introduce unrelated material.
+Answer the question directly and correctly. Use the lesson as context, but answer fully from your own knowledge — never say the answer "isn't in the lesson".
 
 {information_source_block}{html_style_block}

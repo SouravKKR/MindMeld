@@ -1,0 +1,55 @@
+study-material-editor-page .study-material-editor
+{
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    padding: 20px;
+    flex: 1;
+    overflow-y: auto;
+}
+
+study-material-editor-page div[contenteditable],
+study-material-editor-page input,
+study-material-editor-page button,
+study-material-editor-page select
+{
+    padding: 10px;
+    border-radius: 5px;
+}
+
+.study-material-editor-button-container
+{
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+    margin: 10px;
+}
+
+.study-material-editor-button-container button
+{
+    width: 150px;
+}
+
+.delete-study-material-button
+{
+    background-color: red;
+}
+
+.save-button
+{
+    background-color: green;
+}
+
+button:hover
+{
+    cursor: pointer;
+}
+
+.study-material-wrapper
+{
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}

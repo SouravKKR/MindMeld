@@ -4,6 +4,7 @@ const OrgAdminVerificationManager = require("../../Globals/Classes/Authenticatio
 const PaymentProviderFactory = require("../../Globals/Classes/Payments/PaymentProviderFactory");
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 
 /**
@@ -25,7 +26,7 @@ async function verifyCreationPayment(request, response)
     if (!organizationId || !providerOrderId || !providerPaymentId || !signature)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "MISSING_FIELDS" });
+        response.sendJson({ success: false, error: ErrorCodes.MISSING_FIELDS });
         return;
     }
 
@@ -33,7 +34,7 @@ async function verifyCreationPayment(request, response)
     if (!organization)
     {
         response.statusCode = httpStatus.NOT_FOUND;
-        response.sendJson({ success: false, error: "ORG_NOT_FOUND" });
+        response.sendJson({ success: false, error: ErrorCodes.ORG_NOT_FOUND });
         return;
     }
     if (organization.getStatus() === organizationStatus.ACTIVE)
@@ -47,7 +48,7 @@ async function verifyCreationPayment(request, response)
     if (!paymentRow || paymentRow.getOrganizationId() !== organizationId)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "PAYMENT_ROW_NOT_FOUND" });
+        response.sendJson({ success: false, error: ErrorCodes.PAYMENT_ROW_NOT_FOUND });
         return;
     }
 
@@ -57,7 +58,7 @@ async function verifyCreationPayment(request, response)
     {
         await OrganizationPaymentQueryEngine.markFailed(providerOrderId);
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "PAYMENT_NOT_VERIFIED", reason: verification.reason });
+        response.sendJson({ success: false, error: ErrorCodes.PAYMENT_NOT_VERIFIED, reason: verification.reason });
         return;
     }
 

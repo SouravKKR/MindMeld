@@ -1,0 +1,56 @@
+deck-insights
+{
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    padding: 15px;
+    /*
+     * Cap content width on large monitors so paragraphs and tables
+     * stay at a comfortable reading width. `align-self: center` keeps
+     * the column horizontally centred inside the flex-column page
+     * shell. 1500px is generous — wide enough that the heatmap's
+     * 1-year view rarely needs horizontal scrolling, but narrow
+     * enough that body text never sprawls edge-to-edge on a 4K
+     * display.
+     *
+     * No overflow-y here on purpose: scrolling happens on the parent
+     * `deck-insights-page`, which IS full viewport width. Putting
+     * overflow on this centred column would pin the scrollbar to the
+     * column's right edge — which on a wide monitor sits mid-screen.
+     * The heatmap's own container handles its horizontal scroll
+     * locally.
+     */
+    width: 100%;
+    max-width: 1500px;
+    align-self: center;
+}
+
+deck-insights table
+{
+    border: 2px solid white;
+    border-collapse: collapse;
+    width: 100%;
+    
+}
+
+deck-insights th
+{
+    border: 1px solid white;
+    padding: 14px;
+    font-size: 1.15rem;
+    text-align: left;
+}
+
+deck-insights td
+{
+    border: 1px solid white;
+    padding: 10px;
+}
+
+deck-insights h2
+{
+    font-size: 28px;
+    margin: 25px;
+    text-align: center;
+    font-style: italic;
+}

@@ -4,10 +4,12 @@ const OrganizationPaymentQueryEngine = require("../../Globals/Classes/Organizati
 const OrgAdminVerificationManager = require("../../Globals/Classes/Authentication/OrgAdminVerificationManager");
 const PendingCreditOrderQueryEngine = require("../../Globals/Classes/Database/PendingCreditOrderQueryEngine");
 const CreditPurchaseCompletionService = require("../../Globals/Classes/Credits/CreditPurchaseCompletionService");
+const CreditDealPaymentQueryEngine = require("../../Globals/Classes/Credits/CreditDealPaymentQueryEngine");
 const { paymentProviders } = require("../../Globals/Enumerations/PaymentProviders");
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
 const { organizationPaymentKinds } = require("../../Globals/Enumerations/OrganizationPaymentKinds");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 
 /**
@@ -44,7 +46,7 @@ async function handleRazorpayWebhook(request, response)
     if (typeof rawBody !== "string" || rawBody.length === 0)
     {
         response.statusCode = httpStatus.OK;
-        response.sendJson({ acknowledged: true, reason: "EMPTY_BODY" });
+        response.sendJson({ acknowledged: true, reason: ErrorCodes.EMPTY_BODY });
         return;
     }
 
@@ -54,7 +56,7 @@ async function handleRazorpayWebhook(request, response)
     {
         console.warn(`[HandleRazorpayWebhook] Signature verification failed: ${verification.reason}`);
         response.statusCode = httpStatus.OK;
-        response.sendJson({ acknowledged: true, reason: "INVALID_SIGNATURE" });
+        response.sendJson({ acknowledged: true, reason: ErrorCodes.INVALID_SIGNATURE });
         return;
     }
 
@@ -67,7 +69,7 @@ async function handleRazorpayWebhook(request, response)
     {
         console.warn(`[HandleRazorpayWebhook] Failed to parse JSON body: ${parseError.message}`);
         response.statusCode = httpStatus.OK;
-        response.sendJson({ acknowledged: true, reason: "INVALID_BODY" });
+        response.sendJson({ acknowledged: true, reason: ErrorCodes.INVALID_BODY });
         return;
     }
 
@@ -91,7 +93,7 @@ async function handleRazorpayWebhook(request, response)
     if (!providerOrderId)
     {
         response.statusCode = httpStatus.OK;
-        response.sendJson({ acknowledged: true, reason: "MISSING_ORDER_ID" });
+        response.sendJson({ acknowledged: true, reason: ErrorCodes.MISSING_ORDER_ID });
         return;
     }
 
@@ -108,7 +110,7 @@ async function handleRazorpayWebhook(request, response)
             if (pendingCreditOrder.status === PendingCreditOrderQueryEngine.STATUS_CONSUMED)
             {
                 response.statusCode = httpStatus.OK;
-                response.sendJson({ acknowledged: true, reason: "CREDIT_ORDER_ALREADY_PROCESSED" });
+                response.sendJson({ acknowledged: true, reason: ErrorCodes.CREDIT_ORDER_ALREADY_PROCESSED });
                 return;
             }
 
@@ -128,10 +130,23 @@ async function handleRazorpayWebhook(request, response)
             return;
         }
 
+        // Not a credit purchase either — try an admin credit-deal payment
+        // (on-spot Razorpay for a periodic assignment / fixed grant). This is
+        // the safety net for an admin who closes the tab before the in-page
+        // verify runs. Idempotent on the atomic markCaptured CAS.
+        const dealPayment = await CreditDealPaymentQueryEngine.findByOrderId(providerOrderId);
+        if (dealPayment)
+        {
+            const dealCapture = await CreditDealPaymentQueryEngine.markCaptured(providerOrderId, providerPaymentId);
+            response.statusCode = httpStatus.OK;
+            response.sendJson({ acknowledged: true, dealCaptured: dealCapture.transitioned });
+            return;
+        }
+
         // The order belongs to a non-org payment flow (e.g. paid-deck
         // purchases) or to an org that was deleted before payment cleared.
         response.statusCode = httpStatus.OK;
-        response.sendJson({ acknowledged: true, reason: "PAYMENT_ROW_NOT_FOUND" });
+        response.sendJson({ acknowledged: true, reason: ErrorCodes.PAYMENT_ROW_NOT_FOUND });
         return;
     }
 

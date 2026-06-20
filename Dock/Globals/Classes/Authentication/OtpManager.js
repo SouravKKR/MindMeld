@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
+const ErrorCodes = require("../../Constants/ErrorCodes");
 const DatabaseConnector = require("../Database/DatabaseConnector");
 const AuthenticationQueryEngine = require("../Database/AuthenticationQueryEngine");
 const EmailSender = require("../Email/EmailSender");
@@ -43,7 +44,7 @@ class OtpManager
         const email = OtpManager.#normaliseEmail(rawEmail);
         if (!email)
         {
-            return { ok: false, reason: "INVALID_EMAIL" };
+            return { ok: false, reason: ErrorCodes.INVALID_EMAIL };
         }
 
         const collection = await OtpManager.#getOtpCollection();
@@ -56,7 +57,7 @@ class OtpManager
             if (secondsSinceLastIssue < OtpManager.RESEND_COOLDOWN_SECONDS)
             {
                 const retryAfterSeconds = Math.ceil(OtpManager.RESEND_COOLDOWN_SECONDS - secondsSinceLastIssue);
-                return { ok: false, reason: "RATE_LIMITED", retryAfterSeconds: retryAfterSeconds };
+                return { ok: false, reason: ErrorCodes.RATE_LIMITED, retryAfterSeconds: retryAfterSeconds };
             }
         }
 
@@ -96,12 +97,12 @@ class OtpManager
         const email = OtpManager.#normaliseEmail(rawEmail);
         if (!email)
         {
-            return { ok: false, reason: "INVALID_EMAIL" };
+            return { ok: false, reason: ErrorCodes.INVALID_EMAIL };
         }
 
         if (typeof submittedCode !== "string" || !/^\d{6}$/.test(submittedCode))
         {
-            return { ok: false, reason: "INVALID_CODE" };
+            return { ok: false, reason: ErrorCodes.INVALID_CODE };
         }
 
         const collection = await OtpManager.#getOtpCollection();
@@ -110,13 +111,13 @@ class OtpManager
         const otpDocument = await collection.findOne({ email: email });
         if (!otpDocument)
         {
-            return { ok: false, reason: "EXPIRED" };
+            return { ok: false, reason: ErrorCodes.EXPIRED };
         }
 
         if (new Date(otpDocument.expirationDate) <= now)
         {
             await collection.deleteOne({ email: email });
-            return { ok: false, reason: "EXPIRED" };
+            return { ok: false, reason: ErrorCodes.EXPIRED };
         }
 
         const incrementResult = await collection.findOneAndUpdate
@@ -131,7 +132,7 @@ class OtpManager
         if (currentAttempts > OtpManager.MAX_ATTEMPTS)
         {
             await collection.deleteOne({ email: email });
-            return { ok: false, reason: "TOO_MANY_ATTEMPTS" };
+            return { ok: false, reason: ErrorCodes.TOO_MANY_ATTEMPTS };
         }
 
         const submittedHash = OtpManager.#hashCode(submittedCode);
@@ -144,7 +145,7 @@ class OtpManager
 
         if (!hashesMatch)
         {
-            return { ok: false, reason: "INVALID_CODE", attemptsRemaining: Math.max(0, OtpManager.MAX_ATTEMPTS - currentAttempts) };
+            return { ok: false, reason: ErrorCodes.INVALID_CODE, attemptsRemaining: Math.max(0, OtpManager.MAX_ATTEMPTS - currentAttempts) };
         }
 
         let user = await AuthenticationQueryEngine.getUserByEmail(email);
@@ -154,7 +155,7 @@ class OtpManager
             const trimmedDisplayName = typeof rawDisplayName === "string" ? rawDisplayName.trim() : "";
             if (!trimmedDisplayName)
             {
-                return { ok: false, reason: "NAME_REQUIRED" };
+                return { ok: false, reason: ErrorCodes.NAME_REQUIRED };
             }
 
             user = new User

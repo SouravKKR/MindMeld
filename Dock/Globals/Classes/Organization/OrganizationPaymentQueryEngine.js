@@ -122,9 +122,13 @@ class OrganizationPaymentQueryEngine
         {
             return;
         }
+        // Only fail a still-pending row. Without the status guard a late
+        // client-verify that arrives AFTER the webhook already CAPTURED the
+        // payment (and activated the org) would overwrite CAPTURED -> FAILED,
+        // corrupting the audit row for a paid, active org.
         await collection.updateOne
         (
-            { providerOrderId: providerOrderId },
+            { providerOrderId: providerOrderId, status: { $nin: [organizationPaymentStatuses.CAPTURED, organizationPaymentStatuses.FAILED] } },
             { $set: { status: organizationPaymentStatuses.FAILED } }
         );
     }

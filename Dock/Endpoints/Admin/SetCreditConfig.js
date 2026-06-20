@@ -2,6 +2,7 @@ const CreditConfiguration = require("../../Globals/Classes/Credits/CreditConfigu
 const CreditConfigurationStore = require("../../Globals/Classes/Credits/CreditConfigurationStore");
 const CreditPurchasePricingEngine = require("../../Globals/Classes/Credits/CreditPurchasePricingEngine");
 const RegionMetadata = require("../../Globals/Classes/Pricing/RegionMetadata");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
@@ -23,7 +24,7 @@ async function setCreditConfig(request, response)
         if (!configJson || typeof configJson !== "object")
         {
             response.statusCode = httpStatus.BAD_REQUEST;
-            response.sendJson({ error: "MISSING_CONFIG" });
+            response.sendJson({ error: ErrorCodes.MISSING_CONFIG });
             return;
         }
 
@@ -47,7 +48,7 @@ async function setCreditConfig(request, response)
     {
         console.error(`[SetCreditConfig] ${saveError.message}`);
         response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
-        response.sendJson({ error: "FAILED_TO_SAVE_CREDIT_CONFIG" });
+        response.sendJson({ error: ErrorCodes.FAILED_TO_SAVE_CREDIT_CONFIG });
     }
 }
 

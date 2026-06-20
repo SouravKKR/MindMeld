@@ -5,6 +5,7 @@ const creditAdminSections =
   TASK_RULES: 2,
   STORAGE_RULES: 3,
   MILESTONES_AND_GLOBAL: 4,
+  PROMO_CODES: 5,
 }
 
 module.exports = { creditAdminSections };

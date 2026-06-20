@@ -1,3 +1,7 @@
+import io
+
+from PIL import Image
+
 from Globals.Classes.Automation.AutomationCaller import AutomationCaller
 from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Automation.AutomationRequest import AutomationRequest
@@ -5,6 +9,7 @@ from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
 from Globals.Classes.ImageProcessing.ImageRegionCropper import ImageRegionCropper
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
 
+from Workflows.EnhanceImages.DiagramSubjectRegion import DiagramSubjectRegion
 from Workflows.EnhanceImages.UnifiedAssetExtraction import UnifiedAssetExtraction
 
 
@@ -15,6 +20,34 @@ class AssetEnhancer:
 
     EXTRACTION_TEMPERATURE = 0.1
     EXTRACTION_MAX_OUTPUT_TOKENS = 16384
+
+    # Stage-1 occasionally under-frames the diagram_subject_region: diagrams
+    # whose nodes sit OUTSIDE an inner border (e.g. an 'acquisition' node to the
+    # left of a dashed frame box) get that border reported as the subject region,
+    # so the cropper slices the outlying nodes off and Stage 2 redraws a clipped
+    # diagram (cut-off shapes, half-rendered labels like "...on"). Guard against
+    # it by expanding the crop region to cover every node and group the extractor
+    # itself found, plus a safety margin, so the crop can never drop real content.
+    CROP_NODE_MARGIN_PERCENT = 5.0
+    CROP_SAFETY_MARGIN_PERCENT = 3.0
+
+    # Gemini image generation only accepts a fixed set of output aspect ratios.
+    # Without one it defaults toward 1:1, which letterbox-crops wide or tall
+    # source diagrams. We pick the nearest of these to the (cropped) reference so
+    # the regenerated diagram keeps the source's proportions instead of being
+    # squeezed into a square.
+    SUPPORTED_IMAGE_ASPECT_RATIOS = {
+        "1:1": 1.0,
+        "2:3": 2.0 / 3.0,
+        "3:2": 3.0 / 2.0,
+        "3:4": 3.0 / 4.0,
+        "4:3": 4.0 / 3.0,
+        "4:5": 4.0 / 5.0,
+        "5:4": 5.0 / 4.0,
+        "9:16": 9.0 / 16.0,
+        "16:9": 16.0 / 9.0,
+        "21:9": 21.0 / 9.0,
+    }
 
     BRAND_STYLE_TEMPLATE = (
         "\n"
@@ -50,11 +83,20 @@ class AssetEnhancer:
         "  shape or icon class for another.\n"
         "- If one visible border encloses several lines of stacked text, that is ONE node. "
         "  Put the lines into `label`, joined by '\\n'. Do not split it into multiple sibling nodes.\n"
+        "- A text label that reads as a single phrase is ONE node, even with no border and even "
+        "  when it wraps onto two lines (e.g. 'permission capture', 'friend to friend'). Never "
+        "  split one phrase into multiple nodes, and never emit the same label text as more than "
+        "  one node.\n"
         "- Capture every visible arrow or line. Record its direction (from_node -> to_node) and "
         "  describe its visible style in connection_style. If multiple arrows visually converge "
         "  to the same target (whether through a junction, a merge symbol, or any other shape), "
         "  record each one as its own connection entry from its source to the shared target -- "
         "  never collapse them into a single entry.\n"
+        "- Curved, looping, and concentric arcs ARE connections. Lifecycle / cycle / orbit "
+        "  layouts that fan many nested arcs between the same two hubs hide most of their "
+        "  structure in those arcs: trace each arc end to end and emit it as its own connection, "
+        "  set its label to the text riding that arc, and set from_node/to_node to the hubs it "
+        "  actually links. Never reduce a fan of arcs to just one or two connections.\n"
         "- Capture every visible container/grouping frame in groups[] with its label (if any), "
         "  border style, contained node IDs, and bounding box.\n"
         "- Capture the diagram's own on-figure title if present.\n\n"
@@ -260,7 +302,17 @@ class AssetEnhancer:
         # the rare case where the schema is respected at type level but a
         # required field is null / a list is empty when the prompt forbids
         # it.
-        return UnifiedAssetExtraction.model_validate_json(raw_extraction_text)
+        extraction = UnifiedAssetExtraction.model_validate_json(raw_extraction_text)
+
+        # Gemini routinely emits spatial coordinates on its native 0-1000 grid
+        # even though the schema asks for 0-100 percentages. Left unfixed, every
+        # downstream consumer that reads these as percentages (the blueprint's
+        # canvas-zone descriptions, the crop-region union) places nodes in the
+        # wrong third of the canvas, which is what corrupts the regenerated
+        # layout. Rescale defensively before anyone reads the coordinates.
+        AssetEnhancer.__normalize_extraction_coordinates(extraction)
+
+        return extraction
 
     async def __run_image_generation_stage(
         self,
@@ -275,9 +327,26 @@ class AssetEnhancer:
         # already located the subject region for us; fall back to the full
         # image if the region is absent or invalid (see ImageRegionCropper
         # for the fail-soft behaviour).
+        #
+        # The raw subject region is first widened to enclose every node /
+        # group the extractor found (plus a margin) so an under-framed region
+        # can never crop a real diagram element out of the reference.
+        safe_crop_region = AssetEnhancer.__compute_safe_crop_region(extraction)
         effective_source_image_bytes = ImageRegionCropper.crop_to_subject_region(
             source_image_bytes,
-            extraction.diagram_subject_region_percent,
+            safe_crop_region,
+        )
+
+        # Lock the generated image's aspect ratio to the ORIGINAL figure's
+        # proportions, so a wide or tall diagram isn't squeezed into Gemini's
+        # default ~1:1. We deliberately measure the original YOLO crop, not the
+        # subject-cropped reference: the YOLO crop's geometry is reliable,
+        # whereas the LLM subject region is occasionally near-square even for a
+        # wide diagram, which would otherwise force a 1:1 (and visibly cramped)
+        # regeneration. The blueprint carries every node, so the model still
+        # lays the full diagram out across whatever aspect we request.
+        reference_aspect_ratio = AssetEnhancer.__nearest_supported_aspect_ratio(
+            source_image_bytes
         )
 
         blueprint_prompt = AssetEnhancer.__build_blueprint_prompt(extraction)
@@ -293,13 +362,17 @@ class AssetEnhancer:
             f"{rendering_guardrail}"
         )
 
+        image_generation_metadata = {"generate_image": True}
+        if reference_aspect_ratio is not None:
+            image_generation_metadata["image_aspect_ratio"] = reference_aspect_ratio
+
         image_generation_request = AutomationRequest(
             AssetEnhancer.IMAGE_GENERATION_MODEL_NAME,
             [
                 AutomationContent(
                     AutomationContentTypes.TEXT,
                     final_generation_prompt,
-                    metadata = {"generate_image": True},
+                    metadata = image_generation_metadata,
                 ),
                 AutomationContent(AutomationContentTypes.IMAGE, effective_source_image_bytes),
             ],
@@ -324,6 +397,143 @@ class AssetEnhancer:
             "AssetEnhancer: Stage 2 produced no image data -- the model returned no "
             "inline IMAGE part."
         )
+
+    @staticmethod
+    def __normalize_extraction_coordinates(extraction: UnifiedAssetExtraction) -> None:
+        """
+        Rescales node / group / subject-region coordinates from Gemini's native
+        0-1000 normalized grid down to the 0-100 percentages the rest of the
+        pipeline assumes. The model is unreliable here -- it can even put one
+        axis on the 0-1000 grid and the other on 0-100 within the same
+        response -- so each axis is detected and rescaled INDEPENDENTLY: if any
+        value on that axis exceeds 100 the whole axis is on the 0-1000 grid and
+        is divided by 10. Mutates the extraction in place.
+        """
+        subject_region = extraction.diagram_subject_region_percent
+
+        horizontal_values: list[float] = []
+        vertical_values: list[float] = []
+
+        for node in extraction.nodes or []:
+            horizontal_values.append(node.x_percent)
+            vertical_values.append(node.y_percent)
+
+        for group in extraction.groups or []:
+            horizontal_values.append(group.x_percent + group.width_percent)
+            vertical_values.append(group.y_percent + group.height_percent)
+
+        if subject_region is not None:
+            horizontal_values.append(subject_region.right_percent)
+            vertical_values.append(subject_region.bottom_percent)
+
+        horizontal_divisor = 10.0 if horizontal_values and max(horizontal_values) > 100.0 else 1.0
+        vertical_divisor = 10.0 if vertical_values and max(vertical_values) > 100.0 else 1.0
+
+        if horizontal_divisor == 1.0 and vertical_divisor == 1.0:
+            return
+
+        for node in extraction.nodes or []:
+            node.x_percent /= horizontal_divisor
+            node.y_percent /= vertical_divisor
+
+        for group in extraction.groups or []:
+            group.x_percent /= horizontal_divisor
+            group.width_percent /= horizontal_divisor
+            group.y_percent /= vertical_divisor
+            group.height_percent /= vertical_divisor
+
+        if subject_region is not None:
+            subject_region.left_percent /= horizontal_divisor
+            subject_region.right_percent /= horizontal_divisor
+            subject_region.top_percent /= vertical_divisor
+            subject_region.bottom_percent /= vertical_divisor
+
+    @staticmethod
+    def __compute_safe_crop_region(extraction: UnifiedAssetExtraction) -> DiagramSubjectRegion | None:
+        """
+        Widens the Stage-1 diagram_subject_region so it provably encloses every
+        node and group the extractor reported, then pads it with a safety
+        margin. This stops an under-framed region from cropping real diagram
+        elements out of the reference image (the cause of cut-off shapes and
+        half-rendered labels in the regenerated diagram).
+
+        Returns None when the extractor supplied no region at all -- the
+        existing "use the full source image" behaviour is preserved.
+        """
+        subject_region = extraction.diagram_subject_region_percent
+        if subject_region is None:
+            return None
+
+        left_percent = subject_region.left_percent
+        top_percent = subject_region.top_percent
+        right_percent = subject_region.right_percent
+        bottom_percent = subject_region.bottom_percent
+
+        # Nodes carry centre points, so pad each one out to cover its shape /
+        # label rather than just the single centre pixel.
+        for node in extraction.nodes or []:
+            left_percent = min(left_percent, node.x_percent - AssetEnhancer.CROP_NODE_MARGIN_PERCENT)
+            right_percent = max(right_percent, node.x_percent + AssetEnhancer.CROP_NODE_MARGIN_PERCENT)
+            top_percent = min(top_percent, node.y_percent - AssetEnhancer.CROP_NODE_MARGIN_PERCENT)
+            bottom_percent = max(bottom_percent, node.y_percent + AssetEnhancer.CROP_NODE_MARGIN_PERCENT)
+
+        # Groups carry a top-left corner plus width / height.
+        for group in extraction.groups or []:
+            left_percent = min(left_percent, group.x_percent)
+            top_percent = min(top_percent, group.y_percent)
+            right_percent = max(right_percent, group.x_percent + group.width_percent)
+            bottom_percent = max(bottom_percent, group.y_percent + group.height_percent)
+
+        left_percent -= AssetEnhancer.CROP_SAFETY_MARGIN_PERCENT
+        top_percent -= AssetEnhancer.CROP_SAFETY_MARGIN_PERCENT
+        right_percent += AssetEnhancer.CROP_SAFETY_MARGIN_PERCENT
+        bottom_percent += AssetEnhancer.CROP_SAFETY_MARGIN_PERCENT
+
+        left_percent = max(0.0, min(100.0, left_percent))
+        top_percent = max(0.0, min(100.0, top_percent))
+        right_percent = max(0.0, min(100.0, right_percent))
+        bottom_percent = max(0.0, min(100.0, bottom_percent))
+
+        # If the union collapsed to something degenerate, hand back the original
+        # region and let the cropper's own fail-soft guards decide.
+        if left_percent >= right_percent or top_percent >= bottom_percent:
+            return subject_region
+
+        return DiagramSubjectRegion(
+            top_percent = top_percent,
+            left_percent = left_percent,
+            bottom_percent = bottom_percent,
+            right_percent = right_percent,
+        )
+
+    @staticmethod
+    def __nearest_supported_aspect_ratio(image_bytes: bytes) -> str | None:
+        """
+        Returns the label (e.g. "4:3") of the supported Gemini output aspect
+        ratio closest to the given image's own width:height. Returns None if the
+        image can't be measured, in which case Stage 2 falls back to the model's
+        default aspect.
+        """
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as reference_image:
+                reference_width, reference_height = reference_image.size
+        except Exception:
+            return None
+
+        if reference_height <= 0:
+            return None
+
+        actual_ratio = reference_width / reference_height
+
+        nearest_label = None
+        smallest_difference = None
+        for ratio_label, ratio_value in AssetEnhancer.SUPPORTED_IMAGE_ASPECT_RATIOS.items():
+            difference = abs(ratio_value - actual_ratio)
+            if smallest_difference is None or difference < smallest_difference:
+                smallest_difference = difference
+                nearest_label = ratio_label
+
+        return nearest_label
 
     @staticmethod
     def __humanize_component_type(raw_component_type: str) -> str:
@@ -471,6 +681,10 @@ class AssetEnhancer:
         # image.
         return (
             "\nSTRICT RENDERING RULES:\n"
+            "- Lay the ENTIRE diagram out within the full canvas with a small even margin on all "
+            "sides. Every element -- including the outermost nodes on the far left, right, top and "
+            "bottom -- must sit fully inside the frame. Do NOT crop, zoom into, or cut off any part "
+            "of the diagram, and do not push any node or label off the edge.\n"
             "- An ATTACHED REFERENCE IMAGE accompanies this prompt. Treat it as ground truth for "
             "the diagram's geometry: shapes, sizes, relative positions, arrow paths, arrow "
             "directions, line styles, container frames, nesting, and which elements connect to "

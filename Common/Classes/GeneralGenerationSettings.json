@@ -16,7 +16,7 @@
         "captureImagesEnabled":
         {
             "datatype": "boolean",
-            "defaultValue": true
+            "defaultValue": false
         },
         "goodQualityDeckShortNames":
         {

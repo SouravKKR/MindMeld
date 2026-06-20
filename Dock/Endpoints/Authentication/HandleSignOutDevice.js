@@ -1,4 +1,5 @@
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function handleSignOutDevice(request, response)
@@ -7,7 +8,7 @@ async function handleSignOutDevice(request, response)
 
     if (!session)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -17,7 +18,7 @@ async function handleSignOutDevice(request, response)
     if (!targetDeviceId)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_DEVICE_ID" });
+        response.sendJson({ error: ErrorCodes.MISSING_DEVICE_ID });
         return;
     }
 
@@ -30,7 +31,7 @@ async function handleSignOutDevice(request, response)
 
     if (!result.success)
     {
-        response.statusCode = result.reason === "DEVICE_STILL_ACTIVE" ? 409 : 400;
+        response.statusCode = result.reason === ErrorCodes.DEVICE_STILL_ACTIVE ? httpStatus.CONFLICT : httpStatus.BAD_REQUEST;
         response.sendJson({ error: result.reason });
         return;
     }

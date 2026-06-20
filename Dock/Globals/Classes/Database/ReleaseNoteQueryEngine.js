@@ -2,6 +2,7 @@ const DatabaseConnector = require("./DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
 const ReleaseNote = require("../../Model/ReleaseNote");
 const { semVerBumpTypes } = require("../../Enumerations/SemVerBumpTypes");
+const ErrorCodes = require("../../Constants/ErrorCodes");
 
 
 /**
@@ -355,19 +356,19 @@ class ReleaseNoteQueryEngine
     {
         if (typeof noteId !== "string" || noteId.length === 0)
         {
-            return { removed: false, reason: "INVALID_ID" };
+            return { removed: false, reason: ErrorCodes.INVALID_ID };
         }
 
         const collection = await ReleaseNoteQueryEngine.#getCollection();
         if (!collection)
         {
-            return { removed: false, reason: "DATABASE_UNAVAILABLE" };
+            return { removed: false, reason: ErrorCodes.DATABASE_UNAVAILABLE };
         }
 
         const result = await collection.deleteOne({ id: noteId });
         if (result.deletedCount === 0)
         {
-            return { removed: false, reason: "NOT_FOUND" };
+            return { removed: false, reason: ErrorCodes.NOT_FOUND };
         }
 
         return { removed: true, reason: "OK" };

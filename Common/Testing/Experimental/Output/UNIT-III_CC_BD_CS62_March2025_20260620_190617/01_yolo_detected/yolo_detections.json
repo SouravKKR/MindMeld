@@ -1,0 +1,100 @@
+[
+  {
+    "index": 0,
+    "savedFileName": "p025_fig00_ea65ade21230ecec.png",
+    "pageNumber": 25,
+    "boundingBoxCoordinates": [
+      0,
+      0,
+      2000,
+      1500
+    ],
+    "captionText": "",
+    "figureRef": null,
+    "perceptualImageHash": "ea65ade21230ecec"
+  },
+  {
+    "index": 1,
+    "savedFileName": "p032_fig01_ee828cf2ad4bd20d.png",
+    "pageNumber": 32,
+    "boundingBoxCoordinates": [
+      580,
+      607,
+      2000,
+      1500
+    ],
+    "captionText": "",
+    "figureRef": null,
+    "perceptualImageHash": "ee828cf2ad4bd20d"
+  },
+  {
+    "index": 2,
+    "savedFileName": "p037_fig02_ab3ef672d4c0c483.png",
+    "pageNumber": 37,
+    "boundingBoxCoordinates": [
+      36,
+      266,
+      1970,
+      1482
+    ],
+    "captionText": "",
+    "figureRef": null,
+    "perceptualImageHash": "ab3ef672d4c0c483"
+  },
+  {
+    "index": 3,
+    "savedFileName": "p047_fig03_eab39bcc9992a684.png",
+    "pageNumber": 47,
+    "boundingBoxCoordinates": [
+      1031,
+      161,
+      1973,
+      1388
+    ],
+    "captionText": "",
+    "figureRef": null,
+    "perceptualImageHash": "eab39bcc9992a684"
+  },
+  {
+    "index": 4,
+    "savedFileName": "p048_fig04_fa7a803b95959594.png",
+    "pageNumber": 48,
+    "boundingBoxCoordinates": [
+      926,
+      266,
+      1994,
+      1300
+    ],
+    "captionText": "",
+    "figureRef": null,
+    "perceptualImageHash": "fa7a803b95959594"
+  },
+  {
+    "index": 5,
+    "savedFileName": "p049_fig05_fa7a8d9ca49f8700.png",
+    "pageNumber": 49,
+    "boundingBoxCoordinates": [
+      1000,
+      136,
+      2000,
+      1480
+    ],
+    "captionText": "",
+    "figureRef": null,
+    "perceptualImageHash": "fa7a8d9ca49f8700"
+  },
+  {
+    "index": 6,
+    "savedFileName": "p050_fig06_eb9ad1d986698496.png",
+    "pageNumber": 50,
+    "boundingBoxCoordinates": [
+      847,
+      315,
+      2000,
+      1301
+    ],
+    "captionText": "",
+    "figureRef": null,
+    "perceptualImageHash": "eb9ad1d986698496"
+  }
+]

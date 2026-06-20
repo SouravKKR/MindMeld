@@ -7,6 +7,11 @@ from Globals.Constants.DatabaseConstants import DatabaseConstants
 
 class EmbeddingsQueryEngine:
 
+    # Name of the Atlas Vector Search index on the textEmbeddings collection.
+    # Created by Dock's DatabaseConnector (#setupCollections) — keep this literal
+    # in sync with DatabaseConnector.TEXT_EMBEDDINGS_VECTOR_INDEX_NAME.
+    VECTOR_INDEX_NAME = "textEmbeddingsVectorSearch"
+
     @staticmethod
     async def upsert_embeddings(extractable_information_source: ExtractableInformationSource, embedding_documents: list[dict[str, Any]], collection_name: str = None) -> None:
         """
@@ -98,16 +103,97 @@ class EmbeddingsQueryEngine:
         source hashes. Used by the AskAi streaming worker to inline grounded
         excerpts into the LLM prompt.
 
-        Returns a list of { sourceName, pageNumber, content } objects,
-        ordered by descending similarity. Empty list when no chunks are
+        Runs as an Atlas $vectorSearch against the VECTOR_INDEX_NAME index
+        (created by Dock's DatabaseConnector). If that index is missing or still
+        building — or the deployment is a plain mongod with no search node — it
+        transparently falls back to an in-memory brute-force cosine scan so
+        grounding never silently disappears.
+
+        Returns a list of { sourceName, pageNumber, content, similarity }
+        objects, ordered by descending similarity. Empty list when no chunks are
         indexed for any of the supplied hashes.
         """
         if not information_source_hashes or not query_embedding:
             return []
 
+        top_k = max(0, int(top_k))
+        if top_k == 0:
+            return []
+
         database = await DatabaseConnector.get_database()
         embeddings_collection = database[collection_name or DatabaseConstants.TEXT_EMBEDDINGS_COLLECTION]
 
+        try:
+            scored_chunks = EmbeddingsQueryEngine.__atlas_vector_search(embeddings_collection, query_embedding, information_source_hashes, top_k)
+        except Exception as vector_search_error:
+            print(f"[EmbeddingsQueryEngine] Atlas vector search unavailable, falling back to brute-force cosine: {vector_search_error}")
+            scored_chunks = EmbeddingsQueryEngine.__brute_force_vector_search(embeddings_collection, query_embedding, information_source_hashes, top_k)
+
+        if not scored_chunks:
+            return []
+
+        # Batched lookup of source names so we don't issue one query per
+        # chunk. The frontend has already de-duped the hash list.
+        information_sources_collection = database[DatabaseConstants.INFORMATION_SOURCES_COLLECTION]
+        source_documents = list(information_sources_collection.find(
+            { "hash": { "$in": information_source_hashes } },
+            { "_id": 0, "hash": 1, "name": 1 }
+        ))
+        hash_to_name = { source_document["hash"]: source_document.get("name", "Unnamed source") for source_document in source_documents }
+
+        retrieved_chunks = []
+        for scored_chunk in scored_chunks:
+            retrieved_chunks.append(
+            {
+                "sourceName": hash_to_name.get(scored_chunk["informationSourceHash"], "Unnamed source"),
+                "pageNumber": scored_chunk.get("pageNumber"),
+                "content":    scored_chunk.get("content", ""),
+                "similarity": scored_chunk.get("similarity"),
+            })
+
+        return retrieved_chunks
+
+    @staticmethod
+    def __atlas_vector_search(embeddings_collection, query_embedding: list[float], information_source_hashes: list[str], top_k: int) -> list[dict[str, Any]]:
+        """
+        Approximate-nearest-neighbour retrieval via the Atlas $vectorSearch
+        stage. numCandidates is over-fetched relative to top_k so the
+        approximate search has enough breadth to surface the true top-k.
+        Raises if the search index is not queryable (caller falls back).
+        """
+        pipeline = [
+            {
+                "$vectorSearch":
+                {
+                    "index": EmbeddingsQueryEngine.VECTOR_INDEX_NAME,
+                    "path": "embedding",
+                    "queryVector": [float(value) for value in query_embedding],
+                    "numCandidates": max(top_k * 20, 150),
+                    "limit": top_k,
+                    "filter": { "informationSourceHash": { "$in": information_source_hashes } },
+                }
+            },
+            {
+                "$project":
+                {
+                    "_id": 0,
+                    "informationSourceHash": 1,
+                    "pageNumber": 1,
+                    "content": 1,
+                    "similarity": { "$meta": "vectorSearchScore" },
+                }
+            },
+        ]
+
+        return list(embeddings_collection.aggregate(pipeline))
+
+    @staticmethod
+    def __brute_force_vector_search(embeddings_collection, query_embedding: list[float], information_source_hashes: list[str], top_k: int) -> list[dict[str, Any]]:
+        """
+        Fallback path: pull every embedded chunk for the supplied hashes and
+        score cosine similarity in-process. Linear in the number of candidate
+        chunks; used only when the $vectorSearch index is unavailable.
+        """
         candidate_documents = list(embeddings_collection.find(
             {
                 "informationSourceHash": { "$in": information_source_hashes },
@@ -131,28 +217,13 @@ class EmbeddingsQueryEngine:
             if candidate_norm == 0.0:
                 continue
             similarity = float(numpy.dot(query_vector, candidate_vector) / (query_norm * candidate_norm))
-            scored_chunks.append((similarity, candidate_document))
-
-        scored_chunks.sort(key=lambda entry: entry[0], reverse=True)
-        top_scored = scored_chunks[:max(0, int(top_k))]
-
-        # Batched lookup of source names so we don't issue one query per
-        # chunk. The frontend has already de-duped the hash list.
-        information_sources_collection = database[DatabaseConstants.INFORMATION_SOURCES_COLLECTION]
-        source_documents = list(information_sources_collection.find(
-            { "hash": { "$in": information_source_hashes } },
-            { "_id": 0, "hash": 1, "name": 1 }
-        ))
-        hash_to_name = { source_document["hash"]: source_document.get("name", "Unnamed source") for source_document in source_documents }
-
-        retrieved_chunks = []
-        for similarity_score, candidate_document in top_scored:
-            retrieved_chunks.append(
+            scored_chunks.append(
             {
-                "sourceName": hash_to_name.get(candidate_document["informationSourceHash"], "Unnamed source"),
+                "informationSourceHash": candidate_document["informationSourceHash"],
                 "pageNumber": candidate_document.get("pageNumber"),
-                "content":    candidate_document.get("content", ""),
-                "similarity": similarity_score,
+                "content": candidate_document.get("content", ""),
+                "similarity": similarity,
             })
 
-        return retrieved_chunks
+        scored_chunks.sort(key=lambda entry: entry["similarity"], reverse=True)
+        return scored_chunks[:top_k]

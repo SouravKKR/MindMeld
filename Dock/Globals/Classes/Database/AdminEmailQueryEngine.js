@@ -1,6 +1,7 @@
 const DatabaseConnector = require("./DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
 const AdminEmailRecord = require("../../Model/AdminEmailRecord");
+const ErrorCodes = require("../../Constants/ErrorCodes");
 
 
 /**
@@ -164,25 +165,25 @@ class AdminEmailQueryEngine
         const normalised = AdminEmailQueryEngine.#normaliseEmail(email);
         if (normalised.length === 0)
         {
-            return { removed: false, reason: "INVALID_EMAIL" };
+            return { removed: false, reason: ErrorCodes.INVALID_EMAIL };
         }
 
         const collection = await AdminEmailQueryEngine.#getCollection();
         if (!collection)
         {
-            return { removed: false, reason: "DATABASE_UNAVAILABLE" };
+            return { removed: false, reason: ErrorCodes.DATABASE_UNAVAILABLE };
         }
 
         const totalAdmins = await collection.countDocuments({});
         if (totalAdmins <= 1)
         {
-            return { removed: false, reason: "LAST_ADMIN_PROTECTED" };
+            return { removed: false, reason: ErrorCodes.LAST_ADMIN_PROTECTED };
         }
 
         const result = await collection.deleteOne({ email: normalised });
         if (result.deletedCount === 0)
         {
-            return { removed: false, reason: "NOT_FOUND" };
+            return { removed: false, reason: ErrorCodes.NOT_FOUND };
         }
 
         return { removed: true, reason: "OK" };

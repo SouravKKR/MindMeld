@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const DatabaseConnector = require("./DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
 const { alertSeverity } = require("../../Enumerations/AlertSeverity");
+const ErrorCodes = require("../../Constants/ErrorCodes");
 
 /**
  * AlertQueryEngine
@@ -140,12 +141,12 @@ class AlertQueryEngine
     {
         if (typeof alertId !== "string" || alertId.length === 0)
         {
-            return { ok: false, reason: "INVALID_ID" };
+            return { ok: false, reason: ErrorCodes.INVALID_ID };
         }
         const collection = await AlertQueryEngine.#getCollection();
         if (!collection)
         {
-            return { ok: false, reason: "DATABASE_UNAVAILABLE" };
+            return { ok: false, reason: ErrorCodes.DATABASE_UNAVAILABLE };
         }
 
         const result = await collection.updateOne
@@ -155,7 +156,7 @@ class AlertQueryEngine
         );
         if (result.matchedCount === 0)
         {
-            return { ok: false, reason: "NOT_FOUND" };
+            return { ok: false, reason: ErrorCodes.NOT_FOUND };
         }
         return { ok: true };
     }
@@ -164,18 +165,18 @@ class AlertQueryEngine
     {
         if (typeof alertId !== "string" || alertId.length === 0)
         {
-            return { removed: false, reason: "INVALID_ID" };
+            return { removed: false, reason: ErrorCodes.INVALID_ID };
         }
         const collection = await AlertQueryEngine.#getCollection();
         if (!collection)
         {
-            return { removed: false, reason: "DATABASE_UNAVAILABLE" };
+            return { removed: false, reason: ErrorCodes.DATABASE_UNAVAILABLE };
         }
 
         const result = await collection.deleteOne({ id: alertId });
         if (result.deletedCount === 0)
         {
-            return { removed: false, reason: "NOT_FOUND" };
+            return { removed: false, reason: ErrorCodes.NOT_FOUND };
         }
         return { removed: true };
     }

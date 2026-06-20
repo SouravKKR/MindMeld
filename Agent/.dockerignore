@@ -3,7 +3,13 @@ venv/
 __pycache__/
 **/__pycache__/
 *.pyc
+# Environment / secrets — never bake any env file into the image, at any depth.
 .env
+.env.*
+*.env
+**/.env
+**/.env.*
+**/*.env
 Tasks/
 .pytest_cache/
 .mypy_cache/

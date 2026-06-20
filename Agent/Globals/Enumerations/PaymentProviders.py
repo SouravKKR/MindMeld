@@ -5,3 +5,4 @@ class PaymentProviders(IntEnum):
     STRIPE = 1
     PAYPAL = 2
     ORG_AUTO_ASSIGN = 3
+    ZOHO = 4

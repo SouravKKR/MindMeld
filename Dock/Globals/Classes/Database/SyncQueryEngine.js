@@ -378,7 +378,25 @@ class SyncQueryEngine
                                 {
                                     $cond:
                                     {
-                                        if:   { $lte: [{ $toDate: { $ifNull: ["$data.lifecycle.lastModified", null] } }, incomingDate] },
+                                        // Bump serverUpdatedAt ONLY when this write both wins
+                                        // the lastModified gate AND actually changes the stored
+                                        // data. A byte-identical re-push (the client re-sending
+                                        // a record it already pushed) must NOT advance the
+                                        // cursor — otherwise the pull keeps re-finding it and a
+                                        // re-push loop never converges (the runaway "Syncing X /
+                                        // Y" climb). A genuine same-millisecond second-device
+                                        // change has different `data`, so the documented tie
+                                        // case still bumps. $literal protects user-content
+                                        // strings starting with `$` / ending with `.` from the
+                                        // 40353 field-path failure, same as the `data` block.
+                                        if:
+                                        {
+                                            $and:
+                                            [
+                                                { $lte: [{ $toDate: { $ifNull: ["$data.lifecycle.lastModified", null] } }, incomingDate] },
+                                                { $ne: [{ $literal: data }, "$data"] }
+                                            ]
+                                        },
                                         then: writeDate,
                                         else: "$serverUpdatedAt"
                                     }

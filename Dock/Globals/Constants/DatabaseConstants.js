@@ -49,6 +49,11 @@ class DatabaseConstants
     static TASK_STATES_COLLECTION = 'taskStates';
     static TASK_STATES_TTL_DAYS = 7;
     static MAINTENANCE_WINDOWS_COLLECTION = 'maintenanceWindows';
+    static PERIODIC_CREDIT_ASSIGNMENTS_COLLECTION = 'periodicCreditAssignments';
+    static PERIODIC_ASSIGNMENT_RECIPIENTS_COLLECTION = 'periodicAssignmentRecipients';
+    static CREDIT_DEAL_PAYMENTS_COLLECTION = 'creditDealPayments';
+    static PROMO_CODES_COLLECTION = 'promoCodes';
+    static PROMO_CODE_REDEMPTIONS_COLLECTION = 'promoCodeRedemptions';
 }
 
 module.exports = DatabaseConstants;

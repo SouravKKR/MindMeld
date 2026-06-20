@@ -1,0 +1,27 @@
+.date-range-container
+{
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    margin: 10px;
+    background-color: var(--tertiary-background-color);
+    padding: 10px;
+    border-radius: 10px;
+    align-items: center;
+    justify-content: center;
+}
+.date-range-container input
+{
+    padding: 5px;
+    border-radius: 5px;
+}
+
+.mastery-progression-chart-container
+{
+    padding: 20px;
+    margin: 10px;
+    background-color: var(--secondary-background-color);
+    border-radius: 10px;
+    position: relative;
+    height: 400px;
+}

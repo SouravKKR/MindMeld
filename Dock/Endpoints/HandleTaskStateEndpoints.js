@@ -2,6 +2,7 @@ const { PacketronRequestMethod } = require("@gamiumgamers/packetron");
 const { getTaskState } = require("./TaskState/GetTaskState");
 const { discardTaskState } = require("./TaskState/DiscardTaskState");
 const { ensureLogin } = require("./Plugins/EnsureLogin");
+const {httpStatus} = require("../Globals/Enumerations/HttpStatus");
 
 function handleTaskStateEndpoints(server)
 {
@@ -17,7 +18,7 @@ function handleTaskStateEndpoints(server)
             {
                 console.error(`Error in route: ${request.url}`);
                 console.error(handlerError);
-                response.sendStatusCode(500);
+                response.sendStatusCode(httpStatus.INTERNAL_SERVER_ERROR);
             }
         };
     }

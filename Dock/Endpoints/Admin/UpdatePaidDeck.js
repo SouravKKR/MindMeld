@@ -1,5 +1,6 @@
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 const ALLOWED_FIELDS = new Set
@@ -29,7 +30,7 @@ async function updatePaidDeck(request, response)
     if (!deckId || !updates)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_ID_OR_UPDATES" });
+        response.sendJson({ error: ErrorCodes.MISSING_ID_OR_UPDATES });
         return;
     }
 
@@ -46,7 +47,7 @@ async function updatePaidDeck(request, response)
     if (Object.keys(setOperations).length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "NO_VALID_FIELDS" });
+        response.sendJson({ error: ErrorCodes.NO_VALID_FIELDS });
         return;
     }
 

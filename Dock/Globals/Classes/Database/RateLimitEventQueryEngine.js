@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const DatabaseConnector = require("./DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
+const {httpStatus} = require("../../Enumerations/HttpStatus");
 
 /**
  * RateLimitEventQueryEngine
@@ -61,7 +62,7 @@ class RateLimitEventQueryEngine
                 limit: limit !== null && limit !== undefined ? Number(limit) : null,
                 windowMilliseconds: windowMilliseconds !== null && windowMilliseconds !== undefined ? Number(windowMilliseconds) : null,
                 retryAfterSeconds: retryAfterSeconds !== null && retryAfterSeconds !== undefined ? Number(retryAfterSeconds) : null,
-                statusCode: 429,
+                statusCode: httpStatus.TOO_MANY_REQUESTS,
                 occurredAt: new Date()
             };
 

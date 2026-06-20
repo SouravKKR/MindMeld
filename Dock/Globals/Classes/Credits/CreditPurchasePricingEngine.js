@@ -1,5 +1,6 @@
 const CurrencyConverter = require("../Pricing/CurrencyConverter");
 const RegionMetadata = require("../Pricing/RegionMetadata");
+const ErrorCodes = require("../../Constants/ErrorCodes");
 
 /**
  * CreditPurchasePricingEngine
@@ -187,7 +188,7 @@ class CreditPurchasePricingEngine
 
         if (!unitResolution.available)
         {
-            return { available: false, reason: "CREDIT_PRICING_NOT_CONFIGURED" };
+            return { available: false, reason: ErrorCodes.CREDIT_PRICING_NOT_CONFIGURED };
         }
 
         const minimumPurchaseCredits = configuration.getMinimumPurchaseCredits();

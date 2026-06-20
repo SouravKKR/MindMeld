@@ -43,6 +43,8 @@ const { handleOrganizationEndpoints } = require("./Endpoints/HandleOrganizationE
 const { handleWebhookEndpoints } = require("./Endpoints/HandleWebhookEndpoints");
 const { handleCreditEndpoints } = require("./Endpoints/HandleCreditEndpoints");
 const { handleMaintenanceEndpoints } = require("./Endpoints/HandleMaintenanceEndpoints");
+const { handleStreakEndpoints } = require("./Endpoints/HandleStreakEndpoints");
+const { handleMetricsEndpoints } = require("./Endpoints/HandleMetricsEndpoints");
 const Logger = require("./Globals/Classes/Logger");
 const KeyManagementService = require("./Globals/Classes/Security/KeyManagementService");
 const KeyRotationScheduler = require("./Globals/Classes/Security/KeyRotationScheduler");
@@ -220,3 +222,5 @@ handleOrganizationEndpoints(server);
 handleWebhookEndpoints(server);
 handleCreditEndpoints(server);
 handleMaintenanceEndpoints(server);
+handleStreakEndpoints(server);
+handleMetricsEndpoints(server);

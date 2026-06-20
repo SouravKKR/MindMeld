@@ -1,5 +1,6 @@
 const CreditTransactionQueryEngine = require("../../Globals/Classes/Database/CreditTransactionQueryEngine");
 const CreditConfigurationStore = require("../../Globals/Classes/Credits/CreditConfigurationStore");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -75,7 +76,7 @@ async function getGenerationCreditSummary(request, response)
     const session = request.session;
     if (!session)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -84,7 +85,7 @@ async function getGenerationCreditSummary(request, response)
 
     if (!taskId)
     {
-        response.sendStatusCode(400);
+        response.sendStatusCode(httpStatus.BAD_REQUEST);
         return;
     }
 

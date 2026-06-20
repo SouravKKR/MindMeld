@@ -3,6 +3,7 @@ const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const DeckLicense = require("../../Globals/Model/DeckLicense");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 /**
  * POST /PaidDecks/UnlockSession
@@ -29,14 +30,14 @@ async function unlockPaidDeckSession(request, response)
     if (!KeyManagementService.isReady())
     {
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
-        response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
+        response.sendJson({ error: ErrorCodes.KEY_MANAGEMENT_NOT_READY });
         return;
     }
 
     const session = request.session;
     if (!session)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -47,14 +48,14 @@ async function unlockPaidDeckSession(request, response)
     if (typeof deckId !== "string" || deckId.length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_DECK_ID" });
+        response.sendJson({ error: ErrorCodes.MISSING_DECK_ID });
         return;
     }
 
     if (typeof passwordString !== "string" || passwordString.length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_PASSWORD" });
+        response.sendJson({ error: ErrorCodes.MISSING_PASSWORD });
         return;
     }
 
@@ -64,7 +65,7 @@ async function unlockPaidDeckSession(request, response)
     if (!KeyManagementService.isLicenseActive(license))
     {
         response.statusCode = httpStatus.FORBIDDEN;
-        response.sendJson({ error: "NO_ACTIVE_LICENSE" });
+        response.sendJson({ error: ErrorCodes.NO_ACTIVE_LICENSE });
         return;
     }
 
@@ -74,7 +75,7 @@ async function unlockPaidDeckSession(request, response)
     if (typeof passwordSaltBase64 !== "string" || passwordSaltBase64.length === 0)
     {
         response.statusCode = httpStatus.CONFLICT;
-        response.sendJson({ error: "PASSWORD_NOT_SET" });
+        response.sendJson({ error: ErrorCodes.PASSWORD_NOT_SET });
         return;
     }
 
@@ -82,7 +83,7 @@ async function unlockPaidDeckSession(request, response)
     if (!KeyManagementService.safeEqualPaidDeckPasswordHash(submittedHashBase64, passwordHashBase64))
     {
         response.statusCode = httpStatus.UNAUTHORIZED;
-        response.sendJson({ error: "WRONG_PASSWORD" });
+        response.sendJson({ error: ErrorCodes.WRONG_PASSWORD });
         return;
     }
 
@@ -93,7 +94,7 @@ async function unlockPaidDeckSession(request, response)
     if (license.getServerWrappedContentKeyBase64().length === 0)
     {
         response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
-        response.sendJson({ error: "LICENSE_MISSING_SERVER_WRAP" });
+        response.sendJson({ error: ErrorCodes.LICENSE_MISSING_SERVER_WRAP });
         return;
     }
 

@@ -4,6 +4,7 @@ const KeyManagementService = require("../../Globals/Classes/Security/KeyManageme
 const DeckLicense = require("../../Globals/Model/DeckLicense");
 const { deckLicenseStatuses } = require("../../Globals/Enumerations/DeckLicenseStatuses");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 /**
  * POST /PaidDecks/SetPassword
@@ -23,14 +24,14 @@ async function setPaidDeckPassword(request, response)
     if (!KeyManagementService.isReady())
     {
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
-        response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
+        response.sendJson({ error: ErrorCodes.KEY_MANAGEMENT_NOT_READY });
         return;
     }
 
     const session = request.session;
     if (!session)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -40,7 +41,7 @@ async function setPaidDeckPassword(request, response)
     if (typeof newPasswordString !== "string" || newPasswordString.length < 6)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "PASSWORD_TOO_SHORT" });
+        response.sendJson({ error: ErrorCodes.PASSWORD_TOO_SHORT });
         return;
     }
 
@@ -60,7 +61,7 @@ async function setPaidDeckPassword(request, response)
     if (alreadyHasPassword)
     {
         response.statusCode = httpStatus.CONFLICT;
-        response.sendJson({ error: "PASSWORD_ALREADY_SET" });
+        response.sendJson({ error: ErrorCodes.PASSWORD_ALREADY_SET });
         return;
     }
 

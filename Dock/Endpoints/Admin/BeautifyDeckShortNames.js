@@ -1,12 +1,10 @@
 const TaskDescriptor = require("../../Globals/Classes/Task/TaskDescriptor");
 const TaskManager = require("../../Globals/Classes/Task/TaskManager");
-const Persistence = require("../../Globals/Classes/Persistence");
-const PersistenceConstants = require("../../Globals/Constants/PersistenceConstants");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const { taskTypes } = require("../../Globals/Enumerations/TaskTypes");
 const { taskExecutionTargets } = require("../../Globals/Enumerations/TaskExecutionTargets");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
-const BEAUTIFIED_OUTPUT_FILE_NAME = "BeautifiedShortNames.json";
 const MAX_DECK_CHAINS_PER_REQUEST = 500;
 
 
@@ -58,7 +56,7 @@ async function beautifyDeckShortNames(request, response)
     if (!requestedChains || requestedChains.length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_DECK_CHAINS" });
+        response.sendJson({ error: ErrorCodes.MISSING_DECK_CHAINS });
         return;
     }
 
@@ -75,14 +73,14 @@ async function beautifyDeckShortNames(request, response)
     if (sanitizedChains.length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "NO_VALID_DECK_CHAINS" });
+        response.sendJson({ error: ErrorCodes.NO_VALID_DECK_CHAINS });
         return;
     }
 
     if (sanitizedChains.length > MAX_DECK_CHAINS_PER_REQUEST)
     {
         response.statusCode = httpStatus.PAYLOAD_TOO_LARGE;
-        response.sendJson({ error: "TOO_MANY_DECK_CHAINS", limit: MAX_DECK_CHAINS_PER_REQUEST });
+        response.sendJson({ error: ErrorCodes.TOO_MANY_DECK_CHAINS, limit: MAX_DECK_CHAINS_PER_REQUEST });
         return;
     }
 
@@ -98,78 +96,26 @@ async function beautifyDeckShortNames(request, response)
     await TaskManager.setTask(beautifyTask);
 
     const mainTaskId = beautifyTask.getId();
-    const outputPath = `${PersistenceConstants.TASKS_DIRECTORY}/${mainTaskId}/${BEAUTIFIED_OUTPUT_FILE_NAME}`;
+    const requestingUserId = request.user.getId();
 
-    try
-    {
-        // execute(taskDescriptor, retries, mainTask, parentTaskId) — pass
-        // the beautify task as its own mainTask so MAIN_TASK_ID resolves
-        // to this task id. The workflow writes its output under
-        // Tasks/<mainTaskId>/, which we read back below.
-        const executed = await TaskManager.execute(beautifyTask, 0, beautifyTask, mainTaskId);
+    // Beautifying a large subtree is an LLM round-trip that can exceed
+    // Cloudflare's ~100s edge timeout (HTTP 524). So instead of blocking the
+    // request on TaskManager.execute, return the task id immediately and run the
+    // workflow in the background. The client polls /Generate/Progress?taskid=...
+    // until COMPLETED, then GETs /Admin/Decks/BeautifyShortNames/Result to read
+    // back the deck-key → short-name map the worker wrote under Tasks/<id>/.
+    response.statusCode = httpStatus.OK;
+    response.sendJson({ taskId: mainTaskId });
 
-        if (executed === false)
+    // execute(taskDescriptor, retries, mainTask, parentTaskId) — pass the beautify
+    // task as its own mainTask so MAIN_TASK_ID resolves to this task id and the
+    // worker writes Tasks/<mainTaskId>/<BEAUTIFIED_OUTPUT_FILE_NAME>. The worker
+    // also sets the task's terminal status in Redis, which the client's poll sees.
+    TaskManager.execute(beautifyTask, 0, beautifyTask, mainTaskId)
+        .catch((executionError) =>
         {
-            response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
-            response.sendJson({ error: "BEAUTIFY_TASK_FAILED" });
-            return;
-        }
-
-        let beautifiedMap = {};
-        let bFileMissing = false;
-        try
-        {
-            const outputBuffer = await Persistence.read(outputPath);
-            const parsedOutput = JSON.parse(outputBuffer.toString("utf-8"));
-            if (parsedOutput && typeof parsedOutput === "object")
-            {
-                for (const [deckKey, candidateShortName] of Object.entries(parsedOutput))
-                {
-                    if (typeof candidateShortName === "string" && candidateShortName.length > 0)
-                    {
-                        beautifiedMap[deckKey] = candidateShortName;
-                    }
-                }
-            }
-        }
-        catch (readError)
-        {
-            bFileMissing = true;
-            console.warn(`[BeautifyDeckShortNames] Output file missing or unreadable for task ${mainTaskId}: ${readError.message}`);
-        }
-
-        // The workflow tolerates LLM failures so the post-generation
-        // path can still publish a deck with deterministic short names.
-        // For the admin-triggered path we want the opposite: surface
-        // the failure so the user knows to retry. An empty file or 0
-        // beautified entries almost always means the model returned
-        // 503 / quota / blocked content — re-run usually works.
-        if (bFileMissing || Object.keys(beautifiedMap).length === 0)
-        {
-            response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
-            response.sendJson({
-                error: "BEAUTIFY_LLM_UNAVAILABLE",
-                message: "The AI service did not return any short names. The model may be temporarily overloaded — please try again in a minute."
-            });
-            return;
-        }
-
-        response.statusCode = httpStatus.OK;
-        response.sendJson({ shortNamesByKey: beautifiedMap });
-    }
-    finally
-    {
-        try
-        {
-            await Persistence.delete(outputPath);
-        }
-        catch (cleanupError)
-        {
-            // File may have never been written if the workflow failed
-            // before reaching its write step — best-effort cleanup, the
-            // GCS bucket has lifecycle rules to garbage-collect anyway.
-        }
-    }
+            console.error(`[BeautifyDeckShortNames] Background execution failed for task ${mainTaskId} (user ${requestingUserId}): ${executionError.message}`);
+        });
 }
 
 

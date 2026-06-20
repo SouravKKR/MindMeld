@@ -1,0 +1,733 @@
+paid-deck-library-page
+{
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.paid-deck-library-controls
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 18px;
+    background-color: var(--secondary-background-color);
+    border-bottom: 1px solid var(--tertiary-background-color);
+    flex-shrink: 0;
+}
+
+.paid-deck-library-search
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 320px;
+    min-width: 0;
+    order: -1;
+}
+
+/* Inputs and buttons inherit `border:none` on hover from Theme.css, so
+   we use an outline (with outline-offset:-1px) to keep the visual frame
+   stable through hover/focus without shifting layout. */
+.paid-deck-library-search-input
+{
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 9px 14px;
+    border-radius: 8px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-size: 14px;
+}
+
+.paid-deck-library-search-input:focus,
+.paid-deck-library-search-input:hover
+{
+    outline-color: var(--outline-color-strong);
+}
+
+.paid-deck-library-search-input::placeholder
+{
+    color: var(--secondary-text-color);
+}
+
+.paid-deck-library-search-clear
+{
+    padding: 7px 12px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background: transparent;
+    color: var(--secondary-text-color);
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.paid-deck-library-search-clear:hover
+{
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+}
+
+.paid-deck-library-region-bar
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--primary-text-color);
+}
+
+.paid-deck-library-region-select
+{
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+}
+
+.paid-deck-library-region-resolved
+{
+    font-size: 12px;
+    color: var(--secondary-text-color);
+}
+
+.paid-deck-library-sort
+{
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 13px;
+}
+
+.paid-deck-library-sort select
+{
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+}
+
+/* Opens the off-canvas filter drawer on mobile. Hidden on desktop where the
+   filter panel is a permanent sidebar column. */
+.paid-deck-library-filters-toggle
+{
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 14px;
+    border-radius: 8px;
+    border: none;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.paid-deck-library-filters-toggle:hover
+{
+    background-color: var(--secondary-background-color);
+}
+
+.paid-deck-library-body
+{
+    flex: 1 1 auto;
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    overflow: hidden;
+    position: relative;
+}
+
+/* On desktop the drawer wrapper is transparent to the grid (its <aside> child
+   becomes the 280px sidebar column directly). On mobile it becomes a fixed
+   off-canvas panel — see the media query below. */
+.paid-deck-library-filter-drawer
+{
+    display: contents;
+}
+
+.paid-deck-library-filter-drawer-header
+{
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--primary-text-color);
+    border-bottom: 1px solid var(--tertiary-background-color);
+    flex-shrink: 0;
+}
+
+.paid-deck-library-filter-drawer-close
+{
+    border: none;
+    background: transparent;
+    color: var(--secondary-text-color);
+    font-size: 18px;
+    line-height: 1;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 6px;
+}
+
+.paid-deck-library-filter-drawer-close:hover
+{
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+}
+
+.paid-deck-library-filter-backdrop
+{
+    display: none;
+}
+
+.paid-deck-library-filter-panel
+{
+    border-right: 1px solid var(--tertiary-background-color);
+    padding: 16px;
+    overflow-y: auto;
+    background-color: var(--secondary-background-color);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.paid-deck-filter-panel-header
+{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.paid-deck-filter-panel-clear
+{
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background: transparent;
+    color: var(--primary-text-color);
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.paid-deck-filter-panel-clear:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.paid-deck-filter-panel-field
+{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.paid-deck-filter-panel-empty,
+.paid-deck-filter-panel-loading
+{
+    color: var(--secondary-text-color);
+    font-size: 13px;
+}
+
+.paid-deck-filter-label
+{
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--secondary-text-color);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.paid-deck-filter-text-input,
+.paid-deck-filter-enum-select,
+.paid-deck-filter-boolean-select
+{
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.paid-deck-filter-text-input:focus,
+.paid-deck-filter-enum-select:focus,
+.paid-deck-filter-boolean-select:focus
+{
+    outline-color: var(--outline-color-strong);
+}
+
+.paid-deck-filter-number-range,
+.paid-deck-filter-date-range
+{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.paid-deck-filter-number-range input,
+.paid-deck-filter-date-range input
+{
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+}
+
+.paid-deck-filter-number-range input:focus,
+.paid-deck-filter-date-range input:focus
+{
+    outline-color: var(--outline-color-strong);
+}
+
+.paid-deck-filter-range-separator
+{
+    color: var(--secondary-text-color);
+}
+
+.paid-deck-filter-range-bounds
+{
+    font-size: 11px;
+    color: var(--secondary-text-color);
+}
+
+.paid-deck-filter-checkbox-list
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 240px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.paid-deck-filter-checkbox-row
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.paid-deck-filter-empty
+{
+    font-size: 12px;
+    color: var(--secondary-text-color);
+}
+
+.paid-deck-library-results
+{
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.paid-deck-library-result-count
+{
+    padding: 10px 20px;
+    font-size: 13px;
+    color: var(--secondary-text-color);
+}
+
+.paid-deck-library-grid
+{
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    /* Size each implicit row to its cards' full content. Cards use
+       `overflow: hidden` (for the rounded thumbnail), which drops their
+       grid-item automatic minimum size to 0 — so with the default
+       `grid-auto-rows: auto` the row can be squeezed below the card's
+       content inside this constrained scroll container, clipping the card
+       body (title / price / button). `max-content` keeps every row tall
+       enough for the thumbnail plus the body. */
+    grid-auto-rows: max-content;
+    align-content: flex-start;
+    gap: 18px;
+    padding: 4px 20px 20px 20px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    flex: 1 1 auto;
+}
+
+.paid-deck-library-loading,
+.paid-deck-library-error,
+.paid-deck-library-empty
+{
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 40px;
+    color: var(--secondary-text-color);
+}
+
+.paid-deck-card
+{
+    background: var(--secondary-background-color);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    border: none;
+    outline: 1px solid var(--outline-color-subtle);
+    outline-offset: -1px;
+    box-shadow: 0 1px 4px var(--shadow-color);
+    cursor: pointer;
+    /* Deliberately NOT `overflow: hidden`. As a grid item, `overflow: hidden`
+       drops the card's automatic minimum size to 0, which lets the row
+       collapse and clip the body. The thumbnail's top corners are rounded on
+       the thumb-wrap itself (below) instead, so we keep rounded corners
+       without the clipping side-effect. */
+    transition: outline-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.paid-deck-card:hover
+{
+    outline-color: var(--outline-color-strong);
+    box-shadow: 0 6px 18px var(--shadow-color-strong);
+    transform: translateY(-2px);
+}
+
+/* Light backdrop behind the thumbnail so the colourful built-in SVG icons
+   (and any uploaded artwork) stay clearly visible regardless of theme. The
+   image is contained (never cropped) and centred with breathing room. */
+.paid-deck-card-thumb-wrap
+{
+    width: 100%;
+    /* Fixed (not width-derived) height: an `aspect-ratio` here makes the
+       thumbnail grow with the card's width, and on constrained screens the
+       grid hands out fewer/wider columns. The grid then sizes the row from
+       the minimum column width while the `1fr` columns expand wider, so the
+       taller thumbnail overruns the row and the card's `overflow: hidden`
+       clips the body (title / price / button). A fixed height keeps the
+       thumbnail's size independent of the card width, so the body is always
+       laid out and visible. */
+    height: 170px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #fdfdff, #e9edf5);
+    border-bottom: 1px solid var(--outline-color-subtle);
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+}
+
+.paid-deck-card-thumb
+{
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    padding: 14px;
+    box-sizing: border-box;
+}
+
+.paid-deck-card-body
+{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    flex: 1 1 auto;
+}
+
+.paid-deck-card-title
+{
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--primary-text-color);
+}
+
+.paid-deck-card-description
+{
+    font-size: 13px;
+    color: var(--secondary-text-color);
+    flex: 1 1 auto;
+    line-height: 1.35;
+}
+
+.paid-deck-card-price
+{
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+}
+
+.paid-deck-card-strike
+{
+    text-decoration: line-through;
+    color: var(--secondary-text-color);
+    font-size: 13px;
+}
+
+.paid-deck-card-final
+{
+    font-weight: 700;
+    font-size: 15px;
+}
+
+.paid-deck-card-owned
+{
+    font-size: 14px;
+    color: var(--success-color);
+    font-weight: 700;
+}
+
+.paid-deck-card-expiry
+{
+    font-size: 12px;
+    color: var(--secondary-text-color);
+}
+
+.paid-deck-card-actions
+{
+    display: flex;
+    gap: 8px;
+}
+
+.paid-deck-card-actions .paid-deck-card-view
+{
+    flex: 1 1 0;
+}
+
+.paid-deck-card-extend
+{
+    flex: 0 0 auto;
+    padding: 10px 14px;
+    border: none;
+    border-radius: 8px;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background: transparent;
+    color: var(--primary-text-color);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.paid-deck-card-extend:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.paid-deck-card-extend:disabled
+{
+    opacity: 0.6;
+    cursor: default;
+}
+
+.paid-deck-card-view
+{
+    padding: 10px;
+    border: none;
+    border-radius: 8px;
+    background: var(--primary-background-gradient);
+    color: var(--primary-text-color);
+    font-weight: 600;
+    cursor: pointer;
+    transition: filter 0.15s ease-out;
+}
+
+.paid-deck-card-view:hover
+{
+    filter: brightness(1.08);
+}
+
+.paid-deck-library-pagination
+{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 12px 20px 20px 20px;
+    border-top: 1px solid var(--tertiary-background-color);
+    flex-shrink: 0;
+}
+
+.paid-deck-library-pagination button
+{
+    padding: 8px 14px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    cursor: pointer;
+}
+
+.paid-deck-library-pagination button:disabled
+{
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.paid-deck-library-page-counter
+{
+    font-size: 13px;
+    color: var(--secondary-text-color);
+}
+
+@media (max-width: 800px)
+{
+    .paid-deck-library-controls
+    {
+        padding: 10px 12px;
+        gap: 8px;
+        justify-content: flex-start;
+    }
+
+    /* Search owns the first row; the toggle + region + sort flow below it
+       and share the remaining width. */
+    .paid-deck-library-search
+    {
+        flex-basis: 100%;
+        order: -1;
+    }
+
+    .paid-deck-library-filters-toggle
+    {
+        display: inline-flex;
+        flex: 0 0 auto;
+    }
+
+    .paid-deck-library-region-bar,
+    .paid-deck-library-sort
+    {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .paid-deck-library-region-bar > label,
+    .paid-deck-library-sort > label
+    {
+        flex-shrink: 0;
+    }
+
+    .paid-deck-library-region-select,
+    .paid-deck-library-sort select
+    {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+
+    /* The region-resolved hint wraps to its own full-width line so it never
+       squeezes the region <select>. */
+    .paid-deck-library-region-resolved
+    {
+        flex-basis: 100%;
+    }
+
+    /* Deck grid takes the whole body — the filter sidebar is now an
+       off-canvas drawer rather than a stacked column. */
+    .paid-deck-library-body
+    {
+        grid-template-columns: 1fr;
+    }
+
+    /* Off-canvas filter drawer: slides in from the left over the grid. */
+    .paid-deck-library-filter-drawer
+    {
+        display: flex;
+        flex-direction: column;
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: 86%;
+        max-width: 340px;
+        z-index: 1001;
+        background-color: var(--secondary-background-color);
+        box-shadow: 2px 0 22px var(--shadow-color-strong);
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+    }
+
+    paid-deck-library-page.filter-drawer-open .paid-deck-library-filter-drawer
+    {
+        transform: translateX(0);
+    }
+
+    .paid-deck-library-filter-drawer-header
+    {
+        display: flex;
+    }
+
+    .paid-deck-library-filter-panel
+    {
+        border-right: none;
+        flex: 1 1 auto;
+        max-height: none;
+    }
+
+    .paid-deck-library-filter-backdrop
+    {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        background-color: rgba(0, 0, 0, 0.5);
+    }
+
+    paid-deck-library-page.filter-drawer-open .paid-deck-library-filter-backdrop
+    {
+        display: block;
+    }
+
+    .paid-deck-library-grid
+    {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 12px;
+        padding: 4px 12px 12px 12px;
+    }
+
+    .paid-deck-card-thumb-wrap
+    {
+        height: 130px;
+    }
+}
+
+/* Very narrow portrait phones: two columns stay comfortable down here, and
+   the controls collapse so the search and each control gets a full row. */
+@media (max-width: 460px)
+{
+    .paid-deck-library-grid
+    {
+        grid-template-columns: repeat(auto-fill, minmax(135px, 1fr));
+        gap: 10px;
+    }
+
+    .paid-deck-library-region-bar,
+    .paid-deck-library-sort
+    {
+        flex-basis: 100%;
+    }
+}

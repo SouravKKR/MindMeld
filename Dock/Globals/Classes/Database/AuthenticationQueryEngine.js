@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
 const LicenseConstants = require("../../Constants/LicenseConstants");
+const ErrorCodes = require("../../Constants/ErrorCodes");
 const User = require("../../Model/User");
 const UserSession = require("../../Model/UserSession");
 const Device = require("../../Model/Device");
@@ -422,14 +423,14 @@ class AuthenticationQueryEngine
     {
         if (!userId || !targetDeviceId)
         {
-            return { success: false, reason: "INVALID_REQUEST" };
+            return { success: false, reason: ErrorCodes.INVALID_REQUEST };
         }
 
         const device = await AuthenticationQueryEngine.getDeviceById(targetDeviceId);
 
         if (!device || device.getUserId() !== userId)
         {
-            return { success: false, reason: "NOT_FOUND" };
+            return { success: false, reason: ErrorCodes.NOT_FOUND };
         }
 
         const isSelf = targetDeviceId === requesterDeviceId;
@@ -438,7 +439,7 @@ class AuthenticationQueryEngine
 
         if (!isSelf && !isOfflineLongEnough)
         {
-            return { success: false, reason: "DEVICE_STILL_ACTIVE" };
+            return { success: false, reason: ErrorCodes.DEVICE_STILL_ACTIVE };
         }
 
         const database = await DatabaseConnector.getDatabase();

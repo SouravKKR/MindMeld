@@ -6,6 +6,7 @@ const RegionResolver = require("../../Globals/Classes/Pricing/RegionResolver");
 const RegionMetadata = require("../../Globals/Classes/Pricing/RegionMetadata");
 const { paymentProviders } = require("../../Globals/Enumerations/PaymentProviders");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 /**
  * POST /Credits/Purchase/Initiate
@@ -24,7 +25,7 @@ async function initiateCreditPurchase(request, response)
 
     if (!session)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -34,7 +35,7 @@ async function initiateCreditPurchase(request, response)
     if (!Number.isInteger(credits) || credits < 1)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "INVALID_CREDIT_QUANTITY" });
+        response.sendJson({ error: ErrorCodes.INVALID_CREDIT_QUANTITY });
         return;
     }
 
@@ -43,14 +44,14 @@ async function initiateCreditPurchase(request, response)
     if (!configuration.getBaseCreditPriceEntry())
     {
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
-        response.sendJson({ error: "CREDIT_PRICING_NOT_CONFIGURED" });
+        response.sendJson({ error: ErrorCodes.CREDIT_PRICING_NOT_CONFIGURED });
         return;
     }
 
     if (credits < configuration.getMinimumPurchaseCredits())
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "BELOW_MINIMUM_PURCHASE", minimumPurchaseCredits: configuration.getMinimumPurchaseCredits() });
+        response.sendJson({ error: ErrorCodes.BELOW_MINIMUM_PURCHASE, minimumPurchaseCredits: configuration.getMinimumPurchaseCredits() });
         return;
     }
 
@@ -70,7 +71,7 @@ async function initiateCreditPurchase(request, response)
     if (!charge.available)
     {
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
-        response.sendJson({ error: "CREDIT_PRICING_NOT_CONFIGURED" });
+        response.sendJson({ error: ErrorCodes.CREDIT_PRICING_NOT_CONFIGURED });
         return;
     }
 
@@ -80,7 +81,7 @@ async function initiateCreditPurchase(request, response)
         response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson
         ({
-            error: "AMOUNT_BELOW_PROVIDER_MINIMUM",
+            error: ErrorCodes.AMOUNT_BELOW_PROVIDER_MINIMUM,
             minimumCreditsForCharge: options.available ? options.minimumCreditsForCharge : configuration.getMinimumPurchaseCredits(),
         });
         return;
@@ -97,7 +98,7 @@ async function initiateCreditPurchase(request, response)
     if (!provider.isConfigured())
     {
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
-        response.sendJson({ error: "PAYMENT_PROVIDER_NOT_CONFIGURED" });
+        response.sendJson({ error: ErrorCodes.PAYMENT_PROVIDER_NOT_CONFIGURED });
         return;
     }
 

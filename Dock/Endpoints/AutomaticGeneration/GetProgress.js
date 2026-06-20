@@ -2,6 +2,7 @@ const { getUser } = require("../Helpers/GetUser");
 const TaskManager = require("../../Globals/Classes/Task/TaskManager");
 const { taskTypes } = require("../../Globals/Enumerations/TaskTypes");
 const { taskStatus } = require("../../Globals/Enumerations/TaskStatus");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
  * Recursively fetches a task and all its descendants from Redis,
@@ -69,7 +70,7 @@ async function handleGetProgress(request, response)
 
     if (!user)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -78,7 +79,7 @@ async function handleGetProgress(request, response)
 
     if (!taskId)
     {
-        response.sendStatusCode(400);
+        response.sendStatusCode(httpStatus.BAD_REQUEST);
         return;
     }
 
@@ -86,7 +87,7 @@ async function handleGetProgress(request, response)
 
     if (!tree)
     {
-        response.sendStatusCode(404);
+        response.sendStatusCode(httpStatus.NOT_FOUND);
         return;
     }
 

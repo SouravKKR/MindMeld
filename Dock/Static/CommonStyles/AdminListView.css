@@ -1,0 +1,241 @@
+.admin-list-view
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+}
+
+.admin-list-toolbar
+{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.admin-list-search
+{
+    flex: 1 1 240px;
+    min-width: 200px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+}
+
+.admin-list-search:focus
+{
+    outline-color: var(--outline-color-strong);
+}
+
+.admin-list-filters
+{
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.admin-list-filter
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.admin-list-limit
+{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--secondary-text-color);
+    font-size: 13px;
+    margin-left: auto;
+}
+
+.admin-list-limit select
+{
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+}
+
+.admin-list-bulk-bar
+{
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.admin-list-bulk-button
+{
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: none;
+    background: var(--primary-background-gradient);
+    color: var(--primary-text-color);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.admin-list-bulk-button:disabled
+{
+    opacity: 0.5;
+    cursor: default;
+}
+
+.admin-list-table-wrap
+{
+    overflow-x: auto;
+}
+
+.admin-list-table
+{
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.admin-list-table th,
+.admin-list-table td
+{
+    text-align: left;
+    padding: 10px;
+    border-bottom: 1px solid var(--tertiary-background-color);
+    vertical-align: top;
+}
+
+.admin-list-table th
+{
+    color: var(--secondary-text-color);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.admin-list-checkbox-cell
+{
+    width: 1%;
+    white-space: nowrap;
+}
+
+.admin-list-actions
+{
+    white-space: nowrap;
+}
+
+.admin-list-row-action
+{
+    margin-right: 6px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    cursor: pointer;
+}
+
+.admin-list-row-action:hover
+{
+    outline-color: var(--outline-color-strong);
+}
+
+.admin-list-badge
+{
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.admin-list-badge-info
+{
+    background-color: var(--tertiary-background-color);
+    color: var(--secondary-text-color);
+}
+
+.admin-list-badge-neutral
+{
+    background-color: var(--tertiary-background-color);
+    color: var(--secondary-text-color);
+}
+
+.admin-list-badge-warning
+{
+    background-color: rgba(212, 160, 23, 0.18);
+    color: #d4a017;
+}
+
+.admin-list-badge-danger
+{
+    background-color: var(--danger-background-color);
+    color: var(--danger-text-color);
+}
+
+.admin-list-badge-success
+{
+    background-color: var(--success-background-color);
+    color: var(--success-text-color);
+}
+
+.admin-list-footer
+{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.admin-list-count
+{
+    color: var(--secondary-text-color);
+    font-size: 13px;
+}
+
+.admin-list-pagination
+{
+    display: flex;
+    gap: 8px;
+}
+
+.admin-list-page-button
+{
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    cursor: pointer;
+}
+
+.admin-list-page-button:disabled
+{
+    opacity: 0.4;
+    cursor: default;
+}
+
+.admin-list-status,
+.admin-list-empty,
+.admin-list-error
+{
+    padding: 16px;
+    text-align: center;
+    color: var(--secondary-text-color);
+}
+
+.admin-list-error
+{
+    color: var(--danger-text-color);
+}

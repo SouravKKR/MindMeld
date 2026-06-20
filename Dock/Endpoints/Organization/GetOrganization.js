@@ -3,6 +3,7 @@ const OrganizationDeckPerkQueryEngine = require("../../Globals/Classes/Organizat
 const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
 const OrganizationPaymentQueryEngine = require("../../Globals/Classes/Organization/OrganizationPaymentQueryEngine");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 
 async function getOrganization(request, response)
@@ -13,7 +14,7 @@ async function getOrganization(request, response)
     if (!organizationId)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "MISSING_ORGANIZATION_ID" });
+        response.sendJson({ success: false, error: ErrorCodes.MISSING_ORGANIZATION_ID });
         return;
     }
 
@@ -21,7 +22,7 @@ async function getOrganization(request, response)
     if (!organization)
     {
         response.statusCode = httpStatus.NOT_FOUND;
-        response.sendJson({ success: false, error: "ORG_NOT_FOUND" });
+        response.sendJson({ success: false, error: ErrorCodes.ORG_NOT_FOUND });
         return;
     }
 

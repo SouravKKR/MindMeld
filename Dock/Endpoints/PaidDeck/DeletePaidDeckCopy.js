@@ -6,6 +6,7 @@ const LicenseClientView = require("../../Globals/Classes/Security/LicenseClientV
 const { removeInstanceFromLicense, buildPaidInstanceRowFilter } = require("./PaidDeckGrantHelpers");
 const { entityTypes } = require("../../Globals/Enumerations/EntityTypes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 /**
  * POST /PaidDecks/Copies/Delete
@@ -28,7 +29,7 @@ async function deletePaidDeckCopy(request, response)
     const session = request.session;
     if (!session)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -39,14 +40,14 @@ async function deletePaidDeckCopy(request, response)
     if (typeof deckId !== "string" || deckId.length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_DECK_ID" });
+        response.sendJson({ error: ErrorCodes.MISSING_DECK_ID });
         return;
     }
 
     if (typeof instanceId !== "string" || instanceId.length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_INSTANCE_ID" });
+        response.sendJson({ error: ErrorCodes.MISSING_INSTANCE_ID });
         return;
     }
 
@@ -56,7 +57,7 @@ async function deletePaidDeckCopy(request, response)
     if (!license)
     {
         response.statusCode = httpStatus.NOT_FOUND;
-        response.sendJson({ error: "LICENSE_NOT_FOUND" });
+        response.sendJson({ error: ErrorCodes.LICENSE_NOT_FOUND });
         return;
     }
 
@@ -75,7 +76,7 @@ async function deletePaidDeckCopy(request, response)
     {
         console.error(`[DeletePaidDeckCopy] Failed to persist license for user ${userId} deck ${deckId}:`, persistError);
         response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
-        response.sendJson({ error: "INSTANCE_UPDATE_FAILED" });
+        response.sendJson({ error: ErrorCodes.INSTANCE_UPDATE_FAILED });
         return;
     }
 

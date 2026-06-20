@@ -105,6 +105,7 @@ class GeminiProvider(AutomationProvider):
         links_to_fetch = []
         enable_search  = False
         generate_image = False
+        image_aspect_ratio = None
         thinking_level = None
         response_as_text = False
         response_schema_override = None
@@ -125,6 +126,8 @@ class GeminiProvider(AutomationProvider):
                 enable_search = True
             if metadata and metadata.get("generate_image", False):
                 generate_image = True
+            if metadata and metadata.get("image_aspect_ratio"):
+                image_aspect_ratio = metadata.get("image_aspect_ratio")
             if metadata and metadata.get("thinking_level"):
                 thinking_level = metadata.get("thinking_level")
             if metadata and metadata.get("response_as_text", False):
@@ -172,7 +175,7 @@ class GeminiProvider(AutomationProvider):
             config_args["system_instruction"] = "\n".join(system_prompts)
 
         if generate_image:
-            return await self.__fetch_image_generation(request, user_parts, config_args, thinking_level)
+            return await self.__fetch_image_generation(request, user_parts, config_args, thinking_level, image_aspect_ratio)
 
         config_args["response_mime_type"] = "text/plain" if response_as_text else "application/json"
 
@@ -638,16 +641,21 @@ class GeminiProvider(AutomationProvider):
 
     async def __fetch_image_generation(
         self,
-        request:        AutomationRequest,
-        user_parts:     list,
-        config_args:    dict,
-        thinking_level: str | None = None,
+        request:            AutomationRequest,
+        user_parts:         list,
+        config_args:        dict,
+        thinking_level:     str | None = None,
+        image_aspect_ratio: str | None = None,
     ) -> AutomationResponse:
         if "system_instruction" in config_args:
             config_args["system_instruction"] = [types.Part.from_text(text=config_args.pop("system_instruction"))]
 
+        image_config_arguments = {"image_size": "1K"}
+        if image_aspect_ratio is not None:
+            image_config_arguments["aspect_ratio"] = image_aspect_ratio
+
         config_args["thinking_config"]     = types.ThinkingConfig(thinking_level=thinking_level or "HIGH")
-        config_args["image_config"]        = types.ImageConfig(image_size="2K")
+        config_args["image_config"]        = types.ImageConfig(**image_config_arguments)
         config_args["response_modalities"] = ["IMAGE"]
 
         config   = types.GenerateContentConfig(**config_args)

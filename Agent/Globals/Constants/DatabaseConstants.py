@@ -48,3 +48,8 @@ class DatabaseConstants:
     TASK_STATES_COLLECTION = 'taskStates'
     TASK_STATES_TTL_DAYS = 7
     MAINTENANCE_WINDOWS_COLLECTION = 'maintenanceWindows'
+    PERIODIC_CREDIT_ASSIGNMENTS_COLLECTION = 'periodicCreditAssignments'
+    PERIODIC_ASSIGNMENT_RECIPIENTS_COLLECTION = 'periodicAssignmentRecipients'
+    CREDIT_DEAL_PAYMENTS_COLLECTION = 'creditDealPayments'
+    PROMO_CODES_COLLECTION = 'promoCodes'
+    PROMO_CODE_REDEMPTIONS_COLLECTION = 'promoCodeRedemptions'

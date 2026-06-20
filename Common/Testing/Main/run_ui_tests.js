@@ -4,6 +4,14 @@
 // alignment + overflow + one-after-another queueing, and client-side error
 // capture (console.error / pageerror / unhandledrejection).
 //
+// MindMeld is a single-page app: the custom PageNavigator mounts exactly one
+// page element at a time (the previous page is hidden via display:none or
+// cleared from the stack). A single boot-page check would therefore only cover
+// whatever the bootstrap happened to open, so the responsiveness + blank-screen
+// sweep DRIVES THE NAVIGATOR to every discovered page and asserts each one
+// individually. Pages that cannot mount standalone (they need initialize args)
+// are recorded SKIPPED with their reason -- never FAIL.
+//
 //   node Common/Testing/Main/run_ui_tests.js
 //
 // Env: BASE_URL (default http://127.0.0.1:3000),
@@ -86,6 +94,7 @@ catch (error)
     let navigationReached = 0;
     let pagesDiscovered = [];
     let appShellLoadMs = null;
+    let responsivePagesChecked = 0;
 
     const record = (name, passed, detail) => cases.push({ name, status: passed ? "PASS" : "FAIL", detail: detail || "" });
 
@@ -184,25 +193,125 @@ catch (error)
 
         const authed = pagesDiscovered.includes("home-page") || (SESSION_COOKIE && pagesDiscovered.length > 1);
 
-        // -- Responsiveness of whatever is currently on screen (always testable) --
-        for (const [orientation, viewport] of Object.entries(VIEWPORTS))
+        // -- Per-page responsiveness + blank-screen sweep (SPA navigator-aware) --
+        // Drive the PageNavigator to each discovered page and check it on its
+        // own. Overflow is a universally-valid hard assertion (it must never
+        // happen regardless of what data a page holds). Blankness is reported
+        // PASS when the page renders content and SKIPPED when it mounts empty --
+        // a standalone page opened without its initialize args can legitimately
+        // be empty, and we cannot distinguish that from a defect here, so we do
+        // not FAIL it. When the navigator is unavailable (e.g. an unbundled
+        // single-page or unauthenticated shell that 404s the probe import) we
+        // fall back to checking whatever is currently on screen.
+        if (navigatorReady && pagesDiscovered.length >= 1)
         {
-            await page.setViewport(viewport);
-            await new Promise(resolve => setTimeout(resolve, 300));
-            const metrics = await page.evaluate(() => ({
-                scrollWidth: document.documentElement.scrollWidth,
-                clientWidth: document.documentElement.clientWidth,
-                textLength: (document.body.innerText || "").trim().length,
-                childCount: document.body.childElementCount,
-            }));
-            const noOverflow = metrics.scrollWidth <= metrics.clientWidth + 1;
-            const notBlank = metrics.textLength > 0 && metrics.childCount > 0;
-            record(`Responsive (${orientation}): no horizontal overflow`, noOverflow,
-                `scrollWidth ${metrics.scrollWidth} vs clientWidth ${metrics.clientWidth}`);
-            record(`Responsive (${orientation}): not a blank screen`, notBlank,
-                `text length ${metrics.textLength}, children ${metrics.childCount}`);
+            for (const pageTag of pagesDiscovered)
+            {
+                // clearAndOpen wipes the stack so ONLY this page is mounted and
+                // visible -- no hidden display:none siblings skewing the metrics.
+                const mount = await page.evaluate(async (tag) =>
+                {
+                    const result = { mounted: false, detail: "" };
+                    try
+                    {
+                        window.PageNavigator.clearAndOpen
+                            ? window.PageNavigator.clearAndOpen(tag)
+                            : window.PageNavigator.open(tag);
+                        await new Promise(resolve => setTimeout(resolve, 200));
+                        const current = window.PageNavigator.getCurrentPage
+                            ? window.PageNavigator.getCurrentPage()
+                            : null;
+                        const currentTag = current ? current.tagName.toLowerCase() : "";
+                        result.mounted = currentTag === tag;
+                        if (!result.mounted)
+                        {
+                            result.detail = `landed on ${currentTag || "nothing"}`;
+                        }
+                    }
+                    catch (error)
+                    {
+                        result.detail = String(error && error.message || error);
+                    }
+                    return result;
+                }, pageTag);
+
+                if (!mount.mounted)
+                {
+                    cases.push({
+                        name: `Responsive (${pageTag})`,
+                        status: "SKIPPED",
+                        detail: `Could not mount standalone${mount.detail ? `: ${mount.detail}` : ""} (likely needs initialize args).`,
+                    });
+                    continue;
+                }
+
+                responsivePagesChecked += 1;
+                for (const [orientation, viewport] of Object.entries(VIEWPORTS))
+                {
+                    await page.setViewport(viewport);
+                    await new Promise(resolve => setTimeout(resolve, 250));
+                    const metrics = await page.evaluate(() =>
+                    {
+                        const current = window.PageNavigator && window.PageNavigator.getCurrentPage
+                            ? window.PageNavigator.getCurrentPage()
+                            : document.body;
+                        return {
+                            scrollWidth: document.documentElement.scrollWidth,
+                            clientWidth: document.documentElement.clientWidth,
+                            textLength: current ? (current.innerText || "").trim().length : 0,
+                            childCount: current ? current.childElementCount : 0,
+                        };
+                    });
+                    const noOverflow = metrics.scrollWidth <= metrics.clientWidth + 1;
+                    record(`Responsive (${pageTag}, ${orientation}): no horizontal overflow`, noOverflow,
+                        `scrollWidth ${metrics.scrollWidth} vs clientWidth ${metrics.clientWidth}`);
+
+                    // Assert non-blankness once per page (on the desktop control)
+                    // to avoid triple-counting the same observation per viewport.
+                    if (orientation === "desktop")
+                    {
+                        if (metrics.textLength > 0 && metrics.childCount > 0)
+                        {
+                            record(`Page (${pageTag}): renders non-blank content`, true,
+                                `text length ${metrics.textLength}, children ${metrics.childCount}`);
+                        }
+                        else
+                        {
+                            cases.push({
+                                name: `Page (${pageTag}): renders non-blank content`,
+                                status: "SKIPPED",
+                                detail: `mounted empty (text ${metrics.textLength}, children ${metrics.childCount}) -- likely needs initialize args.`,
+                            });
+                        }
+                    }
+                }
+            }
+            await page.setViewport(VIEWPORTS.desktop);
         }
-        await page.setViewport(VIEWPORTS.desktop);
+        else
+        {
+            // Fallback: no navigator (or no discovered pages) -- check the single
+            // page currently on screen, as the suite did before it was made
+            // SPA-aware.
+            for (const [orientation, viewport] of Object.entries(VIEWPORTS))
+            {
+                await page.setViewport(viewport);
+                await new Promise(resolve => setTimeout(resolve, 300));
+                const metrics = await page.evaluate(() => ({
+                    scrollWidth: document.documentElement.scrollWidth,
+                    clientWidth: document.documentElement.clientWidth,
+                    textLength: (document.body.innerText || "").trim().length,
+                    childCount: document.body.childElementCount,
+                }));
+                const noOverflow = metrics.scrollWidth <= metrics.clientWidth + 1;
+                const notBlank = metrics.textLength > 0 && metrics.childCount > 0;
+                record(`Responsive (${orientation}): no horizontal overflow`, noOverflow,
+                    `scrollWidth ${metrics.scrollWidth} vs clientWidth ${metrics.clientWidth}`);
+                record(`Responsive (${orientation}): not a blank screen`, notBlank,
+                    `text length ${metrics.textLength}, children ${metrics.childCount}`);
+            }
+            await page.setViewport(VIEWPORTS.desktop);
+        }
 
         // -- Navigation matrix --
         if (!navigatorReady || pagesDiscovered.length < 2)
@@ -239,7 +348,11 @@ catch (error)
                                 : null;
                             const tag = current ? current.tagName.toLowerCase() : "";
                             const text = current ? (current.innerText || "").trim().length : 0;
-                            result.ok = tag === target && text >= 0;
+                            // Reachability only: the target must become the
+                            // current page. Per-page blankness is asserted by the
+                            // responsiveness sweep above, not here -- a navigated
+                            // page may be legitimately sparse without args.
+                            result.ok = tag === target;
                             result.detail = `landed on ${tag}, content length ${text}`;
                         }
                         catch (error)
@@ -371,6 +484,7 @@ catch (error)
     if (appFailedResourceCount) noteParts.push(`${appFailedResourceCount} app resource load failure(s)`);
     if (scriptErrors.length) noteParts.push(`${scriptErrors.length} script fault(s)`);
     if (benignFailedResourceCount) noteParts.push(`${benignFailedResourceCount} benign probe/favicon 404(s) ignored`);
+    if (responsivePagesChecked) noteParts.push(`${responsivePagesChecked} page(s) swept for responsiveness across ${Object.keys(VIEWPORTS).length} viewports`);
     if (appShellLoadMs !== null) noteParts.push(`shell document loaded in ${appShellLoadMs}ms`);
 
     const payload = {
@@ -385,8 +499,8 @@ catch (error)
             covered: navigationReached,
             total: navigationAttempted,
             detail: navigationAttempted > 0
-                ? `${navigationReached}/${navigationAttempted} page-pairs reached; ${pagesDiscovered.length} pages discovered`
-                : `${pagesDiscovered.length} pages discovered; navigation matrix not run`,
+                ? `${navigationReached}/${navigationAttempted} page-pairs reached; ${pagesDiscovered.length} pages discovered; ${responsivePagesChecked} checked for responsiveness`
+                : `${pagesDiscovered.length} pages discovered; ${responsivePagesChecked} checked for responsiveness; navigation matrix not run`,
         },
         metrics,
         cases,

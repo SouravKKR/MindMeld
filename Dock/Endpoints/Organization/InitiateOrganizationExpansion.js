@@ -6,6 +6,7 @@ const { organizationStatus } = require("../../Globals/Enumerations/OrganizationS
 const { organizationPaymentKinds } = require("../../Globals/Enumerations/OrganizationPaymentKinds");
 const { organizationPaymentStatuses } = require("../../Globals/Enumerations/OrganizationPaymentStatuses");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 
 async function initiateOrganizationExpansion(request, response)
@@ -18,19 +19,19 @@ async function initiateOrganizationExpansion(request, response)
     if (!organizationId)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "MISSING_ORGANIZATION_ID" });
+        response.sendJson({ success: false, error: ErrorCodes.MISSING_ORGANIZATION_ID });
         return;
     }
     if (additionalMembers <= 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "INVALID_ADDITIONAL_MEMBERS" });
+        response.sendJson({ success: false, error: ErrorCodes.INVALID_ADDITIONAL_MEMBERS });
         return;
     }
     if (amountMinor < 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "INVALID_AMOUNT" });
+        response.sendJson({ success: false, error: ErrorCodes.INVALID_AMOUNT });
         return;
     }
 
@@ -38,13 +39,13 @@ async function initiateOrganizationExpansion(request, response)
     if (!organization)
     {
         response.statusCode = httpStatus.NOT_FOUND;
-        response.sendJson({ success: false, error: "ORG_NOT_FOUND" });
+        response.sendJson({ success: false, error: ErrorCodes.ORG_NOT_FOUND });
         return;
     }
     if (organization.getStatus() !== organizationStatus.ACTIVE)
     {
         response.statusCode = httpStatus.CONFLICT;
-        response.sendJson({ success: false, error: "ORG_NOT_ACTIVE" });
+        response.sendJson({ success: false, error: ErrorCodes.ORG_NOT_ACTIVE });
         return;
     }
 
@@ -67,7 +68,7 @@ async function initiateOrganizationExpansion(request, response)
     if (!provider.isConfigured())
     {
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
-        response.sendJson({ success: false, error: "PAYMENT_PROVIDER_NOT_CONFIGURED" });
+        response.sendJson({ success: false, error: ErrorCodes.PAYMENT_PROVIDER_NOT_CONFIGURED });
         return;
     }
 

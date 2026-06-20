@@ -40,8 +40,8 @@ class OcrPdf(Workflow):
     # mode rasterizes EVERY page at --oversample dpi and re-embeds it,
     # which inflated a 5 MB upload to 457 MB. Reverted to --redo-ocr +
     # higher dpi + PSM 11 to chase recall without paying the size cost.
-    # The mirror in Dock/Endpoints/AutomaticGeneration/Helpers/OcrLocalFile.js
-    # carries the same flag set -- keep them in sync.
+    # This is now the single source of the OCR flag set — the upload flow
+    # runs OCR through this workflow on the worker pool (no Dock-local mirror).
     _MODE_FLAG_MAP = {
         OcrModes.ENABLED: ["--redo-ocr"],
     }
@@ -54,7 +54,9 @@ class OcrPdf(Workflow):
     TESSERACT_PAGE_SEGMENTATION_MODE = "11"
 
     # 400dpi catches small or anti-aliased text in slide-deck PNGs without
-    # ballooning runtime. Default ocrmypdf oversample is 300dpi.
+    # ballooning runtime. Default ocrmypdf oversample is 300dpi. Kept at 400
+    # deliberately — slide/diagram uploads need the recall and we don't want to
+    # compromise OCR quality for speed.
     OVERSAMPLE_DPI = "400"
 
     def __init__(self, payload = {}):
@@ -63,6 +65,13 @@ class OcrPdf(Workflow):
         # ocrMode mixed in) — NOT an ExtractableInformationSource wrapper —
         # because OCR does not need page-range metadata.
         self.__information_source: InformationSource = InformationSource.from_json(payload)
+        # Optional staging input. When present, OCR reads the original from this
+        # GCS key and writes the OCRed result to the content-addressed path
+        # (below). The async upload flow uses this so the original never sits at
+        # the content key (which would let a concurrent CAS reuse grab a
+        # not-yet-OCRed object). When absent, OCR is in-place at the content path
+        # (the original generation-pipeline behaviour) — fully backward compatible.
+        self.__ocr_input_path = payload.get("ocrInputPath")
         # Mode is forwarded in the task payload as an integer (mirrors how
         # other enums travel between Dock and Agent). DISABLED is a valid
         # safety value — the orchestrator should not have scheduled us in
@@ -143,10 +152,14 @@ class OcrPdf(Workflow):
             await self.__update_progress(1.0)
             return
 
-        gcs_pdf_path = join_path("/", information_source.get_directory_path(), information_source.get_hash())
-        print(f"[OcrPdf] OCRing '{information_source.get_name()}' with mode={self.__ocr_mode.name}.")
+        # Output is always the content-addressed path (so every downstream
+        # workflow reads the OCRed copy). Input is the staging key when the
+        # caller supplied one, else the same content path (in-place OCR).
+        gcs_output_path = join_path("/", information_source.get_directory_path(), information_source.get_hash())
+        gcs_input_path  = self.__ocr_input_path or gcs_output_path
+        print(f"[OcrPdf] OCRing '{information_source.get_name()}' with mode={self.__ocr_mode.name} (input={gcs_input_path}).")
 
-        pdf_bytes = await Persistence.read(gcs_pdf_path)
+        pdf_bytes = await Persistence.read(gcs_input_path)
         await self.__update_progress(0.10)
 
         # ocrmypdf is a CLI tool — it needs real filesystem paths, not bytes.
@@ -171,15 +184,17 @@ class OcrPdf(Workflow):
             with open(output_path, "rb") as output_file:
                 ocred_pdf_bytes = output_file.read()
 
-            # Overwrite the original GCS object so every downstream
-            # workflow (chunking, image extraction, topic mapping) reads
-            # the OCRed version transparently.
-            await Persistence.write(gcs_pdf_path, ocred_pdf_bytes)
+            # Write to the content-addressed path so every downstream workflow
+            # (chunking, image extraction, topic mapping) reads the OCRed version
+            # transparently. With in-place input this overwrites the original;
+            # with a staging input this is the first object to land at the content
+            # key — which is exactly what preserves the CAS "GCS == OCRed" invariant.
+            await Persistence.write(gcs_output_path, ocred_pdf_bytes)
             await self.__update_progress(1.0)
 
             print(
                 f"[OcrPdf] Done. Original size={len(pdf_bytes)} bytes, "
-                f"OCRed size={len(ocred_pdf_bytes)} bytes — written to {gcs_pdf_path}."
+                f"OCRed size={len(ocred_pdf_bytes)} bytes — written to {gcs_output_path}."
             )
         finally:
             for path in (input_path, output_path):

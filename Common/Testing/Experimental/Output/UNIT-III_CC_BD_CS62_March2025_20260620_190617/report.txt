@@ -1,0 +1,30 @@
+MindMeld YOLO + Image-Enhance Lab -- run report
+============================================================
+PDF:               C:/Users/Sourav/Downloads/UNIT-III_CC&BD_CS62_March2025.pdf
+Pages:             [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50]
+YOLO confidence:   0.15
+Started:           2026-06-20T19:06:20
+Finished:          2026-06-20T19:12:48
+
+[1] YOLO detection: 7 figure(s) in 112.7s
+      page 25: 1
+      page 32: 1
+      page 37: 1
+      page 47: 1
+      page 48: 1
+      page 49: 1
+      page 50: 1
+
+[2] LLM gate: 7 kept, 0 dropped, in 11.8s
+      cost $0.0005  (1,975 in / 641 out tokens)
+
+[3] Enhancement: 7 image(s) in 263.1s, cost $2.0414
+      p025_fig00_ea65ade21230ecec.png: kind=DIAGRAM 41.7s $0.3580
+      p032_fig01_ee828cf2ad4bd20d.png: kind=DIAGRAM 66.8s $0.5171
+      p037_fig02_ab3ef672d4c0c483.png: kind=TEXT_DATA 2.8s $0.0008
+      p047_fig03_eab39bcc9992a684.png: kind=DIAGRAM 34.0s $0.2664
+      p048_fig04_fa7a803b95959594.png: kind=DIAGRAM 42.5s $0.2609
+      p049_fig05_fa7a8d9ca49f8700.png: kind=DIAGRAM 39.6s $0.3625
+      p050_fig06_eb9ad1d986698496.png: kind=DIAGRAM 35.7s $0.2757
+
+GRAND TOTAL: $2.0418

@@ -3,6 +3,7 @@ const OrganizationDeckPerkQueryEngine = require("../../Globals/Classes/Organizat
 const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/OrganizationAutoAssigner");
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 
 async function updateOrganizationPerks(request, response)
@@ -14,7 +15,7 @@ async function updateOrganizationPerks(request, response)
     if (!organizationId)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "MISSING_ORGANIZATION_ID" });
+        response.sendJson({ success: false, error: ErrorCodes.MISSING_ORGANIZATION_ID });
         return;
     }
 
@@ -22,13 +23,13 @@ async function updateOrganizationPerks(request, response)
     if (!organization)
     {
         response.statusCode = httpStatus.NOT_FOUND;
-        response.sendJson({ success: false, error: "ORG_NOT_FOUND" });
+        response.sendJson({ success: false, error: ErrorCodes.ORG_NOT_FOUND });
         return;
     }
     if (organization.getStatus() !== organizationStatus.ACTIVE)
     {
         response.statusCode = httpStatus.CONFLICT;
-        response.sendJson({ success: false, error: "ORG_NOT_ACTIVE" });
+        response.sendJson({ success: false, error: ErrorCodes.ORG_NOT_ACTIVE });
         return;
     }
 
@@ -38,7 +39,7 @@ async function updateOrganizationPerks(request, response)
         if (!validation.valid)
         {
             response.statusCode = httpStatus.BAD_REQUEST;
-            response.sendJson({ success: false, error: "INVALID_PERK", reason: validation.reason, deckId: perkInput?.deckId });
+            response.sendJson({ success: false, error: ErrorCodes.INVALID_PERK, reason: validation.reason, deckId: perkInput?.deckId });
             return;
         }
     }

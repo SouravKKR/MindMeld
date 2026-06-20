@@ -34,7 +34,7 @@ async function listReleaseNotes(request, response)
         const requester = await getUser(request);
         if (!requester)
         {
-            response.sendStatusCode(401);
+            response.sendStatusCode(httpStatus.UNAUTHORIZED);
             return;
         }
 

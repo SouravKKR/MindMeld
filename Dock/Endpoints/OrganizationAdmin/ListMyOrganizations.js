@@ -10,7 +10,7 @@ async function listMyOrganizations(request, response)
     {
         // The plugin should have rejected before reaching here, but
         // defend in depth.
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 

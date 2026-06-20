@@ -7,6 +7,7 @@ const PaidDeck = require("../../Globals/Model/PaidDeck");
 const PaidDeckPricing = require("../../Globals/Model/PaidDeckPricing");
 const PaidDeckContentSummarizer = require("../../Globals/Classes/PaidDeck/PaidDeckContentSummarizer");
 const RegionMetadata = require("../../Globals/Classes/Pricing/RegionMetadata");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
@@ -61,7 +62,7 @@ async function uploadPaidDeck(request, response)
     if (!KeyManagementService.isReady())
     {
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
-        response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
+        response.sendJson({ error: ErrorCodes.KEY_MANAGEMENT_NOT_READY });
         return;
     }
 
@@ -72,7 +73,7 @@ async function uploadPaidDeck(request, response)
     if (!metadata || !deckPayload)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_METADATA_OR_PAYLOAD" });
+        response.sendJson({ error: ErrorCodes.MISSING_METADATA_OR_PAYLOAD });
         return;
     }
 
@@ -101,7 +102,7 @@ async function uploadPaidDeck(request, response)
             response.sendJson
             ({
                 error: storeError.message,
-                code: "ENTITY_TOO_LARGE",
+                code: ErrorCodes.ENTITY_TOO_LARGE,
                 entityId: storeError.entityId
             });
             return;

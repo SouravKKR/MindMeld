@@ -1,5 +1,6 @@
 const LegalDocumentQueryEngine = require("../Database/LegalDocumentQueryEngine");
 const AuthenticationQueryEngine = require("../Database/AuthenticationQueryEngine");
+const ErrorCodes = require("../../Constants/ErrorCodes");
 
 /**
  * LegalAcceptanceService
@@ -105,7 +106,7 @@ class LegalAcceptanceService
     {
         if (!userId || typeof documentKey !== "string" || documentKey.length === 0)
         {
-            return { ok: false, reason: "INVALID_REQUEST" };
+            return { ok: false, reason: ErrorCodes.INVALID_REQUEST };
         }
 
         const legalDocuments = await LegalDocumentQueryEngine.getAll();
@@ -115,7 +116,7 @@ class LegalAcceptanceService
 
         if (!targetDocument)
         {
-            return { ok: false, reason: "UNKNOWN_DOCUMENT" };
+            return { ok: false, reason: ErrorCodes.UNKNOWN_DOCUMENT };
         }
 
         const currentVersion = Number(targetDocument.version);
@@ -125,7 +126,7 @@ class LegalAcceptanceService
         // version rather than silently recording stale consent.
         if (claimedVersion !== null && Number.isFinite(claimedVersion) && claimedVersion !== currentVersion)
         {
-            return { ok: false, reason: "VERSION_MISMATCH", documents: LegalAcceptanceService.#toPublicShape(legalDocuments) };
+            return { ok: false, reason: ErrorCodes.VERSION_MISMATCH, documents: LegalAcceptanceService.#toPublicShape(legalDocuments) };
         }
 
         const agreedVersionKey = LegalAcceptanceService.buildAgreedVersionKey(documentKey);
@@ -139,7 +140,7 @@ class LegalAcceptanceService
 
         if (!updatedAdditionalData)
         {
-            return { ok: false, reason: "PERSIST_FAILED" };
+            return { ok: false, reason: ErrorCodes.PERSIST_FAILED };
         }
 
         return { ok: true, additionalData: updatedAdditionalData };

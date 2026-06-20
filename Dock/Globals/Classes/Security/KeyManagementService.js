@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const BSON = require("bson");
 const DatabaseConnector = require("../Database/DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
+const ErrorCodes = require("../../Constants/ErrorCodes");
 const LicenseConstants = require("../../Constants/LicenseConstants");
 const GrantSources = require("../../Constants/GrantSources");
 const DeckLicense = require("../../Model/DeckLicense");
@@ -931,7 +932,7 @@ class KeyManagementService
             catch (rotationError)
             {
                 console.error(`[KeyManagementService] Failed to rotate content key for user ${license.getUserId()} on deck ${deckId}:`, rotationError);
-                rotationResults.push({ userId: license.getUserId(), success: false, reason: "EXCEPTION" });
+                rotationResults.push({ userId: license.getUserId(), success: false, reason: ErrorCodes.EXCEPTION });
             }
         }
         return rotationResults;

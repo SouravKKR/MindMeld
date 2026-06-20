@@ -3,11 +3,12 @@ const PendingCreditOrderQueryEngine = require("../../Globals/Classes/Database/Pe
 const CreditPurchaseCompletionService = require("../../Globals/Classes/Credits/CreditPurchaseCompletionService");
 const CreditLedger = require("../../Globals/Classes/Credits/CreditLedger");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 /**
  * POST /Credits/Purchase/Verify
  *
- * Completes a credit purchase after Razorpay checkout. Only the
+ * Completes a credit purchase after Zoho Payments checkout. Only the
  * payment-identifying fields are trusted from the client — the credit
  * quantity and amount come from the server-side pendingCreditOrders row
  * created at initiation. The grant itself is idempotent (referenceKey
@@ -22,17 +23,21 @@ async function verifyCreditPurchase(request, response)
 
     if (!session)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
     const body = await request.getBody();
-    const { providerOrderId, providerPaymentId, signature, paymentProvider } = body || {};
+    // paymentProvider is intentionally NOT read from the client — the verifier
+    // (and thus the signing key + signature scheme) is resolved from the trusted
+    // server-side order row below, so a client cannot pick which provider
+    // validates its payment.
+    const { providerOrderId, providerPaymentId, signature } = body || {};
 
     if (!providerOrderId || !providerPaymentId || !signature)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_FIELDS" });
+        response.sendJson({ error: ErrorCodes.MISSING_FIELDS });
         return;
     }
 
@@ -42,24 +47,30 @@ async function verifyCreditPurchase(request, response)
     if (!pendingCreditOrder)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "ORDER_NOT_FOUND" });
+        response.sendJson({ error: ErrorCodes.ORDER_NOT_FOUND });
         return;
     }
 
     if (pendingCreditOrder.userId !== session.getUserId())
     {
         response.statusCode = httpStatus.FORBIDDEN;
-        response.sendJson({ error: "ORDER_OWNER_MISMATCH" });
+        response.sendJson({ error: ErrorCodes.ORDER_OWNER_MISMATCH });
         return;
     }
 
-    const provider = PaymentProviderFactory.getProvider(paymentProvider);
+    // Resolve the provider that actually created this order from the trusted
+    // pending row (falls back to the configured default for legacy rows that
+    // predate the stored field).
+    const storedProvider = pendingCreditOrder.paymentProvider;
+    const provider = storedProvider !== null && storedProvider !== undefined
+        ? PaymentProviderFactory.getProvider(storedProvider)
+        : PaymentProviderFactory.getDefaultProvider();
     const verification = await provider.verifyPayment({ providerOrderId, providerPaymentId, signature });
 
     if (!verification.verified)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "PAYMENT_NOT_VERIFIED", reason: verification.reason });
+        response.sendJson({ error: ErrorCodes.PAYMENT_NOT_VERIFIED, reason: verification.reason });
         return;
     }
 

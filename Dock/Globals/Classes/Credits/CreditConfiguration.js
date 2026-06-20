@@ -22,11 +22,17 @@ class CreditConfiguration
     #minimumPurchaseCredits;
     #defaultEnforcementMode;
     #signupGrant;
+    #promoGrantAmount;
     #version;
     #updatedAt;
     #updatedBy;
 
-    static DEFAULT_SIGNUP_GRANT = 5;
+    // New accounts receive a small starter grant so a student can taste the AI
+    // features before hitting the paywall; larger welcome bonuses are still
+    // distributed through admin-issued promo codes. Kept intentionally small
+    // (2 credits) to limit farming via disposable email aliases.
+    static DEFAULT_SIGNUP_GRANT = 2;
+    static DEFAULT_PROMO_GRANT_AMOUNT = 5;
     static DEFAULT_MINIMUM_PURCHASE_CREDITS = 1;
 
     // Default flat per-request costs for the AskAi cloud tiers, keyed by
@@ -41,7 +47,7 @@ class CreditConfiguration
         ASK_AI_PRO_PLUS: 1,
     };
 
-    constructor({ taskRules = {}, storageRules = {}, rewardMilestones = [], creditPricing = [], creditPacks = [], minimumPurchaseCredits = CreditConfiguration.DEFAULT_MINIMUM_PURCHASE_CREDITS, defaultEnforcementMode = creditEnforcementModes.ALLOW_NEGATIVE, signupGrant = CreditConfiguration.DEFAULT_SIGNUP_GRANT, version = 1, updatedAt = null, updatedBy = '' } = {})
+    constructor({ taskRules = {}, storageRules = {}, rewardMilestones = [], creditPricing = [], creditPacks = [], minimumPurchaseCredits = CreditConfiguration.DEFAULT_MINIMUM_PURCHASE_CREDITS, defaultEnforcementMode = creditEnforcementModes.ALLOW_NEGATIVE, signupGrant = CreditConfiguration.DEFAULT_SIGNUP_GRANT, promoGrantAmount = CreditConfiguration.DEFAULT_PROMO_GRANT_AMOUNT, version = 1, updatedAt = null, updatedBy = '' } = {})
     {
         this.setTaskRules(taskRules);
         this.setStorageRules(storageRules);
@@ -51,6 +57,7 @@ class CreditConfiguration
         this.setMinimumPurchaseCredits(minimumPurchaseCredits);
         this.setDefaultEnforcementMode(defaultEnforcementMode);
         this.setSignupGrant(signupGrant);
+        this.setPromoGrantAmount(promoGrantAmount);
         this.setVersion(version);
         this.setUpdatedAt(updatedAt);
         this.setUpdatedBy(updatedBy);
@@ -233,6 +240,21 @@ class CreditConfiguration
         this.#signupGrant = value;
     }
 
+    getPromoGrantAmount()
+    {
+        return this.#promoGrantAmount;
+    }
+
+    setPromoGrantAmount(value)
+    {
+        value = parseFloat(value);
+        if (isNaN(value) || value < 0)
+        {
+            value = 0;
+        }
+        this.#promoGrantAmount = value;
+    }
+
     getVersion()
     {
         return this.#version;
@@ -371,6 +393,7 @@ class CreditConfiguration
             minimumPurchaseCredits: this.getMinimumPurchaseCredits(),
             defaultEnforcementMode: this.getDefaultEnforcementMode(),
             signupGrant: this.getSignupGrant(),
+            promoGrantAmount: this.getPromoGrantAmount(),
             version: this.getVersion(),
             updatedAt: this.getUpdatedAt() !== null ? this.getUpdatedAt().toISOString() : null,
             updatedBy: this.getUpdatedBy(),
@@ -388,6 +411,7 @@ class CreditConfiguration
             minimumPurchaseCredits: json?.minimumPurchaseCredits ?? CreditConfiguration.DEFAULT_MINIMUM_PURCHASE_CREDITS,
             defaultEnforcementMode: json?.defaultEnforcementMode ?? creditEnforcementModes.ALLOW_NEGATIVE,
             signupGrant: json?.signupGrant ?? CreditConfiguration.DEFAULT_SIGNUP_GRANT,
+            promoGrantAmount: json?.promoGrantAmount ?? CreditConfiguration.DEFAULT_PROMO_GRANT_AMOUNT,
             version: json?.version ?? 1,
             updatedAt: json?.updatedAt ?? null,
             updatedBy: json?.updatedBy ?? '',

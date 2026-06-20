@@ -11,3 +11,5 @@ class AdminPanelTabs(IntEnum):
     RATE_LIMITS = 7
     AUDIT_LOG = 8
     CREDITS = 9
+    MAINTENANCE = 10
+    STREAKS = 11

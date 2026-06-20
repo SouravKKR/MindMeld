@@ -1,13 +1,16 @@
 const CreditLedger = require("./CreditLedger");
 const PendingCreditOrderQueryEngine = require("../Database/PendingCreditOrderQueryEngine");
+const AuthenticationQueryEngine = require("../Database/AuthenticationQueryEngine");
+const ZohoInvoiceService = require("../Invoicing/ZohoInvoiceService");
 const { creditTransactionTypes } = require("../../Enumerations/CreditTransactionTypes");
 
 /**
  * CreditPurchaseCompletionService
  *
  * The ONE place a verified credit payment turns into credits. Called by both
- * VerifyCreditPurchase (buyer's browser) and the Razorpay webhook (server to
- * server), so the two paths cannot diverge — whichever arrives first grants;
+ * VerifyCreditPurchase (buyer's browser) and the payment-provider webhook (Zoho
+ * today; server to server), so the two paths cannot diverge — whichever arrives
+ * first grants;
  * the other becomes an idempotent no-op.
  *
  * Idempotency layers, in order:
@@ -71,6 +74,16 @@ class CreditPurchaseCompletionService
 
         await PendingCreditOrderQueryEngine.markConsumed(pendingCreditOrder.providerOrderId, pendingCreditOrder.userId);
 
+        // Invoice exactly once — only on the FIRST grant for this order (a
+        // replay from the other path lands as alreadyApplied and must not
+        // re-invoice). Best-effort: ZohoInvoiceService never throws, but the
+        // user lookup might, so the whole block is guarded — a failure here
+        // never affects the credits that were just granted.
+        if (grantResult.applied === true && grantResult.alreadyApplied !== true)
+        {
+            await CreditPurchaseCompletionService.#generateInvoice(pendingCreditOrder, providerPaymentId);
+        }
+
         const balanceAfter = grantResult.balanceAfter !== undefined && grantResult.balanceAfter !== null
             ? grantResult.balanceAfter
             : await CreditLedger.getBalance(pendingCreditOrder.userId);
@@ -81,6 +94,38 @@ class CreditPurchaseCompletionService
             creditsGranted: pendingCreditOrder.credits,
             balanceAfter: balanceAfter,
         };
+    }
+
+    static async #generateInvoice(pendingCreditOrder, providerPaymentId)
+    {
+        try
+        {
+            if (!ZohoInvoiceService.isEnabled())
+            {
+                return;
+            }
+
+            const user = await AuthenticationQueryEngine.getUserById(pendingCreditOrder.userId);
+            const email = user ? (user.getAdditionalData()?.email || "") : "";
+            if (!email)
+            {
+                return;
+            }
+
+            await ZohoInvoiceService.createPaidInvoice
+            ({
+                email: email,
+                name: user.getDisplayName ? user.getDisplayName() : "",
+                amountMinor: pendingCreditOrder.amountMinor,
+                currency: pendingCreditOrder.currency,
+                description: `${pendingCreditOrder.credits} MindMeld credits`,
+                referenceNumber: providerPaymentId || pendingCreditOrder.providerOrderId
+            });
+        }
+        catch (invoiceError)
+        {
+            console.warn(`[CreditPurchaseCompletionService] Invoice step failed for order ${pendingCreditOrder.providerOrderId} (non-fatal): ${invoiceError?.message || invoiceError}`);
+        }
     }
 }
 

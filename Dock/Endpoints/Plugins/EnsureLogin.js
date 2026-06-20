@@ -1,6 +1,7 @@
 const { PacketronPlugin, PacketronRequest, PacketronResponse } = require("@gamiumgamers/packetron");
 const { getSession } = require("../Helpers/GetSession");
 const { slideSessionExpiry } = require("../Helpers/SlideSessionExpiry");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 const ensureLogin = new PacketronPlugin
 ({
@@ -19,7 +20,7 @@ const ensureLogin = new PacketronPlugin
         
         if(!session)
         {
-            response.sendStatusCode(401);
+            response.sendStatusCode(httpStatus.UNAUTHORIZED);
             return true;
         }
         else

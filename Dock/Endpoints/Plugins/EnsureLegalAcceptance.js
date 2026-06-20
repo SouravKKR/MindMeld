@@ -3,6 +3,7 @@ const { getSession } = require("../Helpers/GetSession");
 const { getUser } = require("../Helpers/GetUser");
 const LegalAcceptanceService = require("../../Globals/Classes/Authentication/LegalAcceptanceService");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 /**
  * EnsureLegalAcceptance
@@ -136,7 +137,7 @@ const legalAcceptancePlugin = new PacketronPlugin
         }
 
         response.statusCode = httpStatus.FORBIDDEN;
-        response.sendJson({ error: "LEGAL_ACCEPTANCE_REQUIRED", documents: pendingDocuments });
+        response.sendJson({ error: ErrorCodes.LEGAL_ACCEPTANCE_REQUIRED, documents: pendingDocuments });
         return true;
     }
 });

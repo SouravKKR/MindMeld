@@ -1,0 +1,106 @@
+study-material-generation-fields
+{
+    display: flex;
+    flex-direction: column;
+}
+
+.detail-levels-container.field-container
+{
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+}
+
+.detail-levels-container.field-container > label:first-child
+{
+    flex: unset;
+    font-size: 0.875rem;
+    opacity: 0.8;
+}
+
+.detail-levels-list
+{
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 14px;
+    background-color: var(--secondary-background-color);
+    border-radius: 10px;
+    padding: 18px;
+    box-sizing: border-box;
+}
+
+.detail-level-card
+{
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 16px 18px;
+    background-color: var(--tertiary-background-color);
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+.detail-level-card label
+{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    cursor: pointer;
+    line-height: 1.4;
+    flex: 1;
+    min-width: 0;
+}
+
+.detail-level-card-title
+{
+    font-size: 0.95rem;
+    font-weight: 600;
+    opacity: 1;
+}
+
+.detail-level-card-description
+{
+    font-size: 0.8rem;
+    opacity: 0.65;
+    font-weight: 400;
+}
+
+.detail-level-card input[type="checkbox"]
+{
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    cursor: pointer;
+    accent-color: var(--gradient-start-color);
+    margin-top: 2px;
+}
+
+/* Mobile / narrow viewport: collapse the grid to a single column and
+   tighten outer padding so a long description doesn't crowd the card.
+   The label stays two-line (bold title + description) since that's the
+   readable layout — only the column count changes. */
+@media (max-width: 600px)
+{
+    .detail-levels-list
+    {
+        grid-template-columns: 1fr;
+        gap: 10px;
+        padding: 12px;
+    }
+
+    .detail-level-card
+    {
+        padding: 14px;
+        gap: 12px;
+    }
+
+    .detail-level-card-title
+    {
+        font-size: 0.9rem;
+    }
+
+    .detail-level-card-description
+    {
+        font-size: 0.78rem;
+    }
+}

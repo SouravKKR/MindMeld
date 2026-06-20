@@ -9,8 +9,11 @@ const { rotatePaidDeckContentKey } = require("./Admin/RotatePaidDeckContentKey")
 const { getRevenueStats } = require("./Admin/GetRevenueStats");
 const { listPaidDecks } = require("./Admin/ListPaidDecks");
 const { setUserRole } = require("./Admin/SetUserRole");
+const { setUserStreak } = require("./Admin/Streak/SetUserStreak");
 const { beautifyDeckShortNames } = require("./Admin/BeautifyDeckShortNames");
+const { getBeautifiedShortNames } = require("./Admin/GetBeautifiedShortNames");
 const { bulkUpdatePaidDecks } = require("./Admin/BulkUpdatePaidDecks");
+const { generatePaidDeckField } = require("./Admin/GeneratePaidDeckField");
 const { listAdminEmails } = require("./Admin/AdminEmails/ListAdminEmails");
 const { addAdminEmail } = require("./Admin/AdminEmails/AddAdminEmail");
 const { removeAdminEmail } = require("./Admin/AdminEmails/RemoveAdminEmail");
@@ -41,10 +44,36 @@ const { getCreditConfig } = require("./Admin/GetCreditConfig");
 const { setCreditConfig } = require("./Admin/SetCreditConfig");
 const { previewCreditGrant } = require("./Admin/PreviewCreditGrant");
 const { applyCreditGrant } = require("./Admin/ApplyCreditGrant");
+const { createPeriodicAssignment } = require("./Admin/Periodic/CreatePeriodicAssignment");
+const { listPeriodicAssignments } = require("./Admin/Periodic/ListPeriodicAssignments");
+const { terminatePeriodicAssignment } = require("./Admin/Periodic/TerminatePeriodicAssignment");
+const { getPeriodicAssignmentReport } = require("./Admin/Periodic/GetPeriodicAssignmentReport");
+const { createDealPayment } = require("./Admin/Deals/CreateDealPayment");
+const { verifyDealPayment } = require("./Admin/Deals/VerifyDealPayment");
+const { uploadDealInvoice } = require("./Admin/Deals/UploadDealInvoice");
+const { downloadDealInvoice } = require("./Admin/Deals/DownloadDealInvoice");
+const { listDealPayments } = require("./Admin/Deals/ListDealPayments");
+const { renameOrganization } = require("./Organization/RenameOrganization");
+const { setOrganizationMaxMembers } = require("./Organization/SetOrganizationMaxMembers");
+const { createPromoCode } = require("./Admin/PromoCodes/CreatePromoCode");
+const { createPromoCodesBulk } = require("./Admin/PromoCodes/CreatePromoCodesBulk");
+const { setPromoCodeEnabled } = require("./Admin/PromoCodes/SetPromoCodeEnabled");
+const { deletePromoCode } = require("./Admin/PromoCodes/DeletePromoCode");
+const { getAdminListMetadata } = require("./Admin/Lists/GetAdminListMetadata");
+const { queryAdminList } = require("./Admin/Lists/QueryAdminList");
 const { ensureAdmin } = require("./Plugins/EnsureAdmin");
 
 function handleAdminEndpoints(server)
 {
+    server.handle
+    ({
+        routePath: `/Admin/Streak/SetUserStreak`,
+        handler: setUserStreak,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
     server.handle
     ({
         routePath: `/Admin/ShadowStats`,
@@ -74,6 +103,15 @@ function handleAdminEndpoints(server)
     ({
         routePath: `/Admin/PaidDecks/Update`,
         handler: updatePaidDeck,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/GenerateField`,
+        handler: generatePaidDeckField,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureAdmin]
@@ -138,6 +176,14 @@ function handleAdminEndpoints(server)
         handler: beautifyDeckShortNames,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Decks/BeautifyShortNames/Result`,
+        handler: getBeautifiedShortNames,
+        method: PacketronRequestMethod.GET,
         plugins: [ensureAdmin]
     });
 
@@ -336,6 +382,24 @@ function handleAdminEndpoints(server)
         plugins: [ensureAdmin]
     });
 
+    server.handle
+    ({
+        routePath: `/Admin/Organizations/Rename`,
+        handler: renameOrganization,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Organizations/SetMaxMembers`,
+        handler: setOrganizationMaxMembers,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
     // ── Alerts (operational alert log) ─────────────────────────────────────
     server.handle
     ({
@@ -413,6 +477,140 @@ function handleAdminEndpoints(server)
     ({
         routePath: `/Admin/Credits/Grant/Apply`,
         handler: applyCreditGrant,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Credits (periodic / recurring assignments — lazily reconciled) ─────
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Periodic/Create`,
+        handler: createPeriodicAssignment,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Periodic/List`,
+        handler: listPeriodicAssignments,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Periodic/Terminate`,
+        handler: terminatePeriodicAssignment,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Periodic/Report`,
+        handler: getPeriodicAssignmentReport,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Credits (deal payments + invoices — bookkeeping, non-gating) ───────
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Deals/Create`,
+        handler: createDealPayment,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Deals/VerifyPayment`,
+        handler: verifyDealPayment,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Deals/UploadInvoice`,
+        handler: uploadDealInvoice,
+        flags: PacketronHandlerFlags.FILE_UPLOAD,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Deals/Invoice`,
+        handler: downloadDealInvoice,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Deals/List`,
+        handler: listDealPayments,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Credits (promo codes — bounded welcome-credit distribution) ────────
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Promo/Create`,
+        handler: createPromoCode,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Promo/CreateBulk`,
+        handler: createPromoCodesBulk,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Promo/SetEnabled`,
+        handler: setPromoCodeEnabled,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Promo/Delete`,
+        handler: deletePromoCode,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Generic admin list framework (paginated/filtered tables) ───────────
+    server.handle
+    ({
+        routePath: `/Admin/Lists/Metadata`,
+        handler: getAdminListMetadata,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Lists/Query`,
+        handler: queryAdminList,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureAdmin]

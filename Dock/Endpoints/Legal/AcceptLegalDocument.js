@@ -2,6 +2,7 @@ const { PacketronRequest, PacketronResponse } = require("@gamiumgamers/packetron
 const { getUser } = require("../Helpers/GetUser");
 const LegalAcceptanceService = require("../../Globals/Classes/Authentication/LegalAcceptanceService");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 /**
  * POST /Legal/Accept
@@ -27,7 +28,7 @@ async function handleAcceptLegalDocument(request, response)
 
     if (!user)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -38,7 +39,7 @@ async function handleAcceptLegalDocument(request, response)
     if (!documentKey)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_DOCUMENT_KEY" });
+        response.sendJson({ error: ErrorCodes.MISSING_DOCUMENT_KEY });
         return;
     }
 
@@ -46,28 +47,28 @@ async function handleAcceptLegalDocument(request, response)
 
     if (!result.ok)
     {
-        if (result.reason === "VERSION_MISMATCH")
+        if (result.reason === ErrorCodes.VERSION_MISMATCH)
         {
             response.statusCode = httpStatus.CONFLICT;
-            response.sendJson({ error: "VERSION_MISMATCH", documents: result.documents || [] });
+            response.sendJson({ error: ErrorCodes.VERSION_MISMATCH, documents: result.documents || [] });
             return;
         }
 
-        if (result.reason === "UNKNOWN_DOCUMENT")
+        if (result.reason === ErrorCodes.UNKNOWN_DOCUMENT)
         {
             response.statusCode = httpStatus.NOT_FOUND;
-            response.sendJson({ error: "UNKNOWN_DOCUMENT" });
+            response.sendJson({ error: ErrorCodes.UNKNOWN_DOCUMENT });
             return;
         }
 
-        if (result.reason === "INVALID_REQUEST")
+        if (result.reason === ErrorCodes.INVALID_REQUEST)
         {
             response.statusCode = httpStatus.BAD_REQUEST;
-            response.sendJson({ error: "INVALID_REQUEST" });
+            response.sendJson({ error: ErrorCodes.INVALID_REQUEST });
             return;
         }
 
-        response.sendStatusCode(500);
+        response.sendStatusCode(httpStatus.INTERNAL_SERVER_ERROR);
         return;
     }
 

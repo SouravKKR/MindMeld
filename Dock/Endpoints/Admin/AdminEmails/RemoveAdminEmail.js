@@ -1,4 +1,5 @@
 const AdminEmailQueryEngine = require("../../../Globals/Classes/Database/AdminEmailQueryEngine");
+const ErrorCodes = require("../../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
 
 
@@ -23,7 +24,7 @@ async function removeAdminEmail(request, response)
     const requester = request.user;
     if (!requester)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -51,7 +52,7 @@ async function removeAdminEmail(request, response)
     if (email === requesterEmail)
     {
         response.statusCode = httpStatus.CONFLICT;
-        response.sendJson({ error: "Cannot remove the currently logged-in admin.", reason: "SELF_REMOVAL" });
+        response.sendJson({ error: "Cannot remove the currently logged-in admin.", reason: ErrorCodes.SELF_REMOVAL });
         return;
     }
 
@@ -60,13 +61,13 @@ async function removeAdminEmail(request, response)
         const result = await AdminEmailQueryEngine.removeAdmin(email);
         if (!result.removed)
         {
-            if (result.reason === "LAST_ADMIN_PROTECTED")
+            if (result.reason === ErrorCodes.LAST_ADMIN_PROTECTED)
             {
                 response.statusCode = httpStatus.CONFLICT;
                 response.sendJson({ error: "Cannot remove the last admin.", reason: result.reason });
                 return;
             }
-            if (result.reason === "NOT_FOUND")
+            if (result.reason === ErrorCodes.NOT_FOUND)
             {
                 response.statusCode = httpStatus.NOT_FOUND;
                 response.sendJson({ error: "Admin email not found.", reason: result.reason });

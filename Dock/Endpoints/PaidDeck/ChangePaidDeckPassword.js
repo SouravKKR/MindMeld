@@ -4,6 +4,7 @@ const KeyManagementService = require("../../Globals/Classes/Security/KeyManageme
 const DeckLicense = require("../../Globals/Model/DeckLicense");
 const { deckLicenseStatuses } = require("../../Globals/Enumerations/DeckLicenseStatuses");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 /**
  * POST /PaidDecks/ChangePassword
@@ -22,14 +23,14 @@ async function changePaidDeckPassword(request, response)
     if (!KeyManagementService.isReady())
     {
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
-        response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
+        response.sendJson({ error: ErrorCodes.KEY_MANAGEMENT_NOT_READY });
         return;
     }
 
     const session = request.session;
     if (!session)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -40,14 +41,14 @@ async function changePaidDeckPassword(request, response)
     if (typeof oldPasswordString !== "string" || oldPasswordString.length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_OLD_PASSWORD" });
+        response.sendJson({ error: ErrorCodes.MISSING_OLD_PASSWORD });
         return;
     }
 
     if (typeof newPasswordString !== "string" || newPasswordString.length < 6)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "NEW_PASSWORD_TOO_SHORT" });
+        response.sendJson({ error: ErrorCodes.NEW_PASSWORD_TOO_SHORT });
         return;
     }
 
@@ -62,7 +63,7 @@ async function changePaidDeckPassword(request, response)
     if (licenseDocuments.length === 0)
     {
         response.statusCode = httpStatus.NOT_FOUND;
-        response.sendJson({ error: "NO_LICENSES" });
+        response.sendJson({ error: ErrorCodes.NO_LICENSES });
         return;
     }
 
@@ -74,7 +75,7 @@ async function changePaidDeckPassword(request, response)
     if (!referenceLicenseDocument)
     {
         response.statusCode = httpStatus.CONFLICT;
-        response.sendJson({ error: "PASSWORD_NOT_SET" });
+        response.sendJson({ error: ErrorCodes.PASSWORD_NOT_SET });
         return;
     }
 
@@ -85,7 +86,7 @@ async function changePaidDeckPassword(request, response)
     if (!KeyManagementService.safeEqualPaidDeckPasswordHash(submittedOldHashBase64, expectedOldHashBase64))
     {
         response.statusCode = httpStatus.UNAUTHORIZED;
-        response.sendJson({ error: "WRONG_OLD_PASSWORD" });
+        response.sendJson({ error: ErrorCodes.WRONG_OLD_PASSWORD });
         return;
     }
 

@@ -5,6 +5,7 @@ const OtpManager = require("../../Globals/Classes/Authentication/OtpManager");
 const UserRoleReconciliator = require("../../Globals/Classes/Authentication/UserRoleReconciliator");
 const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
 const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/OrganizationAutoAssigner");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -19,14 +20,14 @@ async function handleVerifyOtp(request, response)
     if (!submittedEmail || !EMAIL_REGEX.test(submittedEmail))
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "INVALID_EMAIL" });
+        response.sendJson({ success: false, error: ErrorCodes.INVALID_EMAIL });
         return;
     }
 
     if (!/^\d{6}$/.test(submittedCode))
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "INVALID_CODE" });
+        response.sendJson({ success: false, error: ErrorCodes.INVALID_CODE });
         return;
     }
 

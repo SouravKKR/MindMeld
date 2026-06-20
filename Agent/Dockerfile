@@ -36,6 +36,14 @@ COPY requirements.txt /tmp/requirements.txt
 RUN pip install --upgrade pip \
     && pip install -r /tmp/requirements.txt
 
+# Strip debug symbols from the compiled extensions (torch/scipy/numpy/opencv etc.
+# ship .so files fat with symbols) and drop bytecode caches. Saves a few hundred MB
+# — needed to stay under Linode's 6 GB Image cap when baking the burst Image.
+# `strip` comes from binutils (part of build-essential above) and stays in this
+# builder stage; only the slimmed /opt/venv is copied into the runtime image.
+RUN find /opt/venv \( -name '*.so' -o -name '*.so.*' \) -exec strip --strip-unneeded {} + 2>/dev/null || true \
+    && find /opt/venv -type d -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
+
 # ── Stage 2: runtime — slim image carrying only the venv + shared libs ───────
 FROM python:3.12-slim
 
@@ -43,11 +51,19 @@ FROM python:3.12-slim
 #   - libgomp1            : OpenMP, used by numpy / scipy / scikit-learn / torch
 #   - libgl1, libglib2.0-0: OpenCV (opencv-python) image ops
 # (PyMuPDF / Pillow bundle their own native bits in the wheel.)
+#
+# OCR stack — the OcrPdf workflow shells out to the `ocrmypdf` CLI, which wraps
+# tesseract + ghostscript. These are SYSTEM binaries (not pip wheels), so they must
+# be installed here or the worker fails with `spawn ocrmypdf ENOENT`. tesseract-ocr
+# bundles English; add tesseract-ocr-<lang> (e.g. -hin) for other languages.
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
         libgomp1 \
         libgl1 \
         libglib2.0-0 \
+        ocrmypdf \
+        tesseract-ocr \
+        ghostscript \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/opt/venv/bin:$PATH" \

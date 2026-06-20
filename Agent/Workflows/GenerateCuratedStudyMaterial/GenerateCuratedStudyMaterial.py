@@ -23,7 +23,7 @@ from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
 from Globals.Enumerations.CuratedBatchReviewStates import CuratedBatchReviewStates
 from Globals.Enumerations.CuratedFlashcardGrade import CuratedFlashcardGrade
 from Globals.Enumerations.TopicStrength import TopicStrength
-from Globals.Utility.CosineSimilarity import cosine_similarity
+from Globals.Classes.Database.EmbeddingsQueryEngine import EmbeddingsQueryEngine
 from Globals.Utility.StripJsonMarkdown import strip_json_markdown
 
 
@@ -306,30 +306,39 @@ class GenerateCuratedStudyMaterial(Workflow):
 
         query_vector = await asyncio.to_thread(encode_query)
 
-        candidate_documents = await asyncio.to_thread(
+        top_k = GenerateCuratedStudyMaterial.EMBEDDING_TOP_K
+
+        # Global (un-scoped) Atlas $vectorSearch over the textbook corpus — the
+        # index defines an informationSourceHash filter field, but curated study
+        # intentionally searches across all embedded sources, so no filter is
+        # supplied. If the index is missing or still building the aggregation
+        # raises and __collect_textbook_snippets swallows it (returns []).
+        pipeline = [
+            {
+                "$vectorSearch":
+                {
+                    "index": EmbeddingsQueryEngine.VECTOR_INDEX_NAME,
+                    "path": "embedding",
+                    "queryVector": [float(value) for value in query_vector],
+                    "numCandidates": max(top_k * 20, 150),
+                    "limit": top_k,
+                }
+            },
+            {
+                "$project": {"_id": 0, "content": 1},
+            },
+        ]
+
+        scored_documents = await asyncio.to_thread(
             list,
-            text_embeddings_collection.find(
-                {"embedding": {"$exists": True, "$ne": None}},
-                {"_id": 0, "content": 1, "embedding": 1},
-            ).limit(GenerateCuratedStudyMaterial.EMBEDDING_DOC_FETCH_LIMIT),
+            text_embeddings_collection.aggregate(pipeline),
         )
 
-        if not candidate_documents:
-            return []
-
-        scored: list[tuple[float, str]] = []
-        for candidate in candidate_documents:
-            embedding_vector = candidate.get("embedding")
-            content_text     = candidate.get("content")
-
-            if not isinstance(embedding_vector, list) or not isinstance(content_text, str) or not content_text:
-                continue
-
-            similarity = cosine_similarity(query_vector, embedding_vector)
-            scored.append((similarity, content_text))
-
-        scored.sort(key=lambda entry: entry[0], reverse=True)
-        return [content for _, content in scored[: GenerateCuratedStudyMaterial.EMBEDDING_TOP_K]]
+        return [
+            document["content"]
+            for document in scored_documents
+            if isinstance(document.get("content"), str) and document.get("content")
+        ]
 
     async def __collect_web_snippets(self) -> list[dict]:
         """

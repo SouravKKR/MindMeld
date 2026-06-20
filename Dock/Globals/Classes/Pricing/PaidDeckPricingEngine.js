@@ -5,6 +5,7 @@ const OrganizationPerkResolver = require("../Organization/OrganizationPerkResolv
 const RegionMetadata = require("./RegionMetadata");
 const CurrencyConverter = require("./CurrencyConverter");
 const { deckLicenseStatuses } = require("../../Enumerations/DeckLicenseStatuses");
+const ErrorCodes = require("../../Constants/ErrorCodes");
 
 class PaidDeckPricingEngine
 {
@@ -139,7 +140,7 @@ class PaidDeckPricingEngine
                     discountMinor: 0,
                     finalPriceMinor: 0,
                     currency: null,
-                    reason: "ALREADY_OWNED"
+                    reason: ErrorCodes.ALREADY_OWNED
                 });
                 continue;
             }
@@ -161,7 +162,7 @@ class PaidDeckPricingEngine
                         discountMinor: 0,
                         finalPriceMinor: 0,
                         currency: null,
-                        reason: "DECK_NOT_FOUND"
+                        reason: ErrorCodes.DECK_NOT_FOUND
                     });
                     continue;
                 }

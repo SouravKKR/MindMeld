@@ -1,0 +1,113 @@
+{
+    "name": "CreditDealPayment",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "targetType":
+        {
+            "datatype": "enum:CreditDealTargetTypes",
+            "defaultValue": 0
+        },
+        "targetId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "label":
+        {
+            "datatype": "string",
+            "defaultValue": "",
+            "maxLength": 256
+        },
+        "mode":
+        {
+            "datatype": "enum:CreditDealPaymentModes",
+            "defaultValue": 0
+        },
+        "status":
+        {
+            "datatype": "enum:CreditDealPaymentStatuses",
+            "defaultValue": 0
+        },
+        "amountMinor":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "currency":
+        {
+            "datatype": "string",
+            "defaultValue": "INR",
+            "maxLength": 8
+        },
+        "paymentProvider":
+        {
+            "datatype": "enum:PaymentProviders",
+            "defaultValue": 0
+        },
+        "providerOrderId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "providerPaymentId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "invoiceFileName":
+        {
+            "datatype": "string",
+            "defaultValue": "",
+            "maxLength": 512
+        },
+        "invoiceMimeType":
+        {
+            "datatype": "string",
+            "defaultValue": "",
+            "maxLength": 128
+        },
+        "invoiceBucketPath":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "invoiceSizeBytes":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "invoiceUploadedAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "hasInvoice":
+        {
+            "datatype": "boolean",
+            "defaultValue": false
+        },
+        "createdByUserId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "createdAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "additionalData":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        }
+    }
+}

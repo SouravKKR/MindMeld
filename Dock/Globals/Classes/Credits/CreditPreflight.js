@@ -1,6 +1,7 @@
 const { creditDeductionTimings } = require('../../Enumerations/CreditDeductionTimings');
 const CreditConfigurationStore = require('./CreditConfigurationStore');
 const CreditLedger = require('./CreditLedger');
+const ErrorCodes = require('../../Constants/ErrorCodes');
 
 // Best-effort, UX-level gate at the top-level queue endpoints. The Agent
 // remains the authoritative charger (it runs every task through the four
@@ -17,19 +18,35 @@ class CreditPreflight
      */
     static async check(userId, entryTaskType)
     {
+        // Lazy, pull-based enforcement of periodic credit assignments: using a
+        // metered AI feature is one of the two trigger points (the other is
+        // GetUser). Reconcile BEFORE reading the balance so any newly-due
+        // installments count toward affordability. Lazy-required to avoid a
+        // require cycle (both this and the reconciler reach CreditLedger), and
+        // fully guarded so a reconcile failure never blocks the request.
+        try
+        {
+            const PeriodicCreditReconciler = require("./PeriodicCreditReconciler");
+            await PeriodicCreditReconciler.reconcileForUserId(userId);
+        }
+        catch (reconcileError)
+        {
+            console.warn(`[CreditPreflight] Periodic credit reconcile failed for ${userId}: ${reconcileError?.message || reconcileError}`);
+        }
+
         const configuration = await CreditConfigurationStore.load();
         const rule = configuration.getRuleForTask(entryTaskType);
 
         // No rule configured at all → unmetered → allow (free).
         if (rule === null)
         {
-            return { allowed: true, reason: "UNCONFIGURED", balance: 0, required: 0, floor: null };
+            return { allowed: true, reason: ErrorCodes.UNCONFIGURED, balance: 0, required: 0, floor: null };
         }
 
         // Rule present but disabled → the service is denied, NOT free.
         if (!rule.getEnabled())
         {
-            return { allowed: false, reason: "SERVICE_DISABLED", balance: 0, required: 0, floor: null };
+            return { allowed: false, reason: ErrorCodes.SERVICE_DISABLED, balance: 0, required: 0, floor: null };
         }
 
         const balance = (await CreditLedger.getBalance(userId)) ?? 0;
@@ -38,7 +55,7 @@ class CreditPreflight
         const minimumToRun = rule.getMinimumBalanceToRun();
         if (minimumToRun > 0 && balance < minimumToRun)
         {
-            return { allowed: false, reason: "INSUFFICIENT_CREDITS", balance: balance, required: minimumToRun, floor: rule.getMinimumBalanceFloor() };
+            return { allowed: false, reason: ErrorCodes.INSUFFICIENT_CREDITS, balance: balance, required: minimumToRun, floor: rule.getMinimumBalanceFloor() };
         }
 
         // Affordability of the up-front (flat) portion against the floor.
@@ -50,7 +67,7 @@ class CreditPreflight
             const flatStartCost = rule.getDeductionTiming() === creditDeductionTimings.ON_START ? rule.evaluate({}) : 0;
             if ((balance - flatStartCost) < floor)
             {
-                return { allowed: false, reason: "INSUFFICIENT_CREDITS", balance: balance, required: Math.max(minimumToRun, flatStartCost), floor: floor };
+                return { allowed: false, reason: ErrorCodes.INSUFFICIENT_CREDITS, balance: balance, required: Math.max(minimumToRun, flatStartCost), floor: floor };
             }
         }
 

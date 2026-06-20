@@ -1,6 +1,7 @@
 const TaskManager = require("../../Globals/Classes/Task/TaskManager");
 const TaskHistoryQueryEngine = require("../../Globals/Classes/Database/TaskHistoryQueryEngine");
 const { taskStatus } = require("../../Globals/Enumerations/TaskStatus");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -33,7 +34,7 @@ class GetActiveTaskProgressEndpoint
         const session = request.session;
         if (!session)
         {
-            response.sendStatusCode(401);
+            response.sendStatusCode(httpStatus.UNAUTHORIZED);
             return;
         }
 
@@ -42,7 +43,7 @@ class GetActiveTaskProgressEndpoint
 
         if (!taskId)
         {
-            response.sendStatusCode(400);
+            response.sendStatusCode(httpStatus.BAD_REQUEST);
             return;
         }
 
@@ -54,7 +55,7 @@ class GetActiveTaskProgressEndpoint
             const ownerUserId = GetActiveTaskProgressEndpoint.#readUserId(rootTask);
             if (ownerUserId !== userId)
             {
-                response.sendStatusCode(403);
+                response.sendStatusCode(httpStatus.FORBIDDEN);
                 return;
             }
 
@@ -71,7 +72,7 @@ class GetActiveTaskProgressEndpoint
         const historyRow = await TaskHistoryQueryEngine.getByIdForUser(taskId, userId);
         if (!historyRow)
         {
-            response.sendStatusCode(404);
+            response.sendStatusCode(httpStatus.NOT_FOUND);
             return;
         }
 

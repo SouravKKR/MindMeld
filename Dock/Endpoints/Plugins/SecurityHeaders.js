@@ -19,7 +19,8 @@ const { PacketronPlugin, PacketronPluginPriority } = require("@gamiumgamers/pack
  *                                 so plain-http local development is unaffected).
  *
  * Compatibility-first CSP. MindMeld embeds third parties that are hostile to a
- * strict nonce/hash policy: Google AdSense, the Razorpay checkout, Google OAuth,
+ * strict nonce/hash policy: Google AdSense, the Zoho Payments checkout widget,
+ * Google OAuth,
  * and in-browser LLMs (WebLLM / Transformers.js) that compile WebAssembly, spawn
  * blob-URL workers and stream model shards from huggingface.co. The Web
  * Components also render inline styles throughout. The default policy therefore

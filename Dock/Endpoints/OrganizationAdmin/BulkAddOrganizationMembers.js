@@ -4,6 +4,7 @@ const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/Org
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -17,13 +18,13 @@ async function bulkAddOrganizationMembers(request, response)
     if (!organizationId)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "MISSING_ORGANIZATION_ID" });
+        response.sendJson({ success: false, error: ErrorCodes.MISSING_ORGANIZATION_ID });
         return;
     }
     if (submittedEmails.length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "MISSING_EMAILS" });
+        response.sendJson({ success: false, error: ErrorCodes.MISSING_EMAILS });
         return;
     }
 
@@ -31,7 +32,7 @@ async function bulkAddOrganizationMembers(request, response)
     if (!organization)
     {
         response.statusCode = httpStatus.NOT_FOUND;
-        response.sendJson({ success: false, error: "ORG_NOT_FOUND" });
+        response.sendJson({ success: false, error: ErrorCodes.ORG_NOT_FOUND });
         return;
     }
 
@@ -39,13 +40,13 @@ async function bulkAddOrganizationMembers(request, response)
     if (user.getRole() !== userRoles.ADMIN && organization.getAdminUserId() !== user.getId())
     {
         response.statusCode = httpStatus.FORBIDDEN;
-        response.sendJson({ success: false, error: "NOT_ORG_ADMIN" });
+        response.sendJson({ success: false, error: ErrorCodes.NOT_ORG_ADMIN });
         return;
     }
     if (organization.getStatus() !== organizationStatus.ACTIVE)
     {
         response.statusCode = httpStatus.CONFLICT;
-        response.sendJson({ success: false, error: "ORG_NOT_ACTIVE" });
+        response.sendJson({ success: false, error: ErrorCodes.ORG_NOT_ACTIVE });
         return;
     }
 
@@ -118,7 +119,7 @@ async function bulkAddOrganizationMembers(request, response)
     if (!capResult.ok)
     {
         response.statusCode = httpStatus.CONFLICT;
-        response.sendJson({ success: false, error: "CAP_REACHED" });
+        response.sendJson({ success: false, error: ErrorCodes.CAP_REACHED });
         return;
     }
 
@@ -136,7 +137,7 @@ async function bulkAddOrganizationMembers(request, response)
         await OrganizationQueryEngine.decrementMemberCountBy(organizationId, additionsList.length);
         console.error(`[BulkAddOrganizationMembers] bulkAddMembers threw for org=${organizationId}: ${bulkError.message}`);
         response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
-        response.sendJson({ success: false, error: "BULK_ADD_FAILED" });
+        response.sendJson({ success: false, error: ErrorCodes.BULK_ADD_FAILED });
         return;
     }
 

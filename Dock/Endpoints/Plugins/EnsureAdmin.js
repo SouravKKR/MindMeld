@@ -3,6 +3,7 @@ const { getUser } = require("../Helpers/GetUser");
 const { slideSessionExpiry } = require("../Helpers/SlideSessionExpiry");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
 const AdminActionAuditor = require("../../Globals/Classes/Security/AdminActionAuditor");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 const ensureAdmin = new PacketronPlugin
 ({
@@ -17,13 +18,13 @@ const ensureAdmin = new PacketronPlugin
 
         if (!user)
         {
-            response.sendStatusCode(401);
+            response.sendStatusCode(httpStatus.UNAUTHORIZED);
             return true;
         }
 
         if (user.getRole() !== userRoles.ADMIN)
         {
-            response.sendStatusCode(403);
+            response.sendStatusCode(httpStatus.FORBIDDEN);
             return true;
         }
 

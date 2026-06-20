@@ -5,6 +5,7 @@ const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const PaidDeckSyncCrypto = require("../../Globals/Classes/Security/PaidDeckSyncCrypto");
 const { entityTypes } = require("../../Globals/Enumerations/EntityTypes");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -40,7 +41,7 @@ class BulkSnapshotEndpoint
 
         if (!user)
         {
-            response.sendStatusCode(401);
+            response.sendStatusCode(httpStatus.UNAUTHORIZED);
             return;
         }
 

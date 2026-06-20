@@ -9,7 +9,7 @@ async function pullLicenses(request, response)
 
     if (!session)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 

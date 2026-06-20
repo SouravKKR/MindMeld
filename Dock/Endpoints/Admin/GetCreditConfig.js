@@ -1,6 +1,7 @@
 const CreditConfigurationStore = require("../../Globals/Classes/Credits/CreditConfigurationStore");
 const CreditPurchasePricingEngine = require("../../Globals/Classes/Credits/CreditPurchasePricingEngine");
 const RegionMetadata = require("../../Globals/Classes/Pricing/RegionMetadata");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
@@ -31,7 +32,7 @@ async function getCreditConfig(request, response)
     {
         console.error(`[GetCreditConfig] ${loadError.message}`);
         response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
-        response.sendJson({ error: "FAILED_TO_LOAD_CREDIT_CONFIG" });
+        response.sendJson({ error: ErrorCodes.FAILED_TO_LOAD_CREDIT_CONFIG });
     }
 }
 

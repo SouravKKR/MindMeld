@@ -1,6 +1,7 @@
 const { PacketronRequest, PacketronResponse } = require("@gamiumgamers/packetron");
 const GenerationTemplateQueryEngine = require("../../Globals/Classes/Database/GenerationTemplateQueryEngine");
 const { getUser } = require("../Helpers/GetUser");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -25,7 +26,7 @@ async function handleTemplatesSearch(request, response)
     const user = await getUser(request);
     if (!user)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 

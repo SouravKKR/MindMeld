@@ -2,6 +2,7 @@ const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnec
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 /**
  * GET /PaidDecks/Manifest?deckId=...
@@ -26,14 +27,14 @@ async function getPaidDeckManifest(request, response)
     if (!KeyManagementService.isReady())
     {
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
-        response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
+        response.sendJson({ error: ErrorCodes.KEY_MANAGEMENT_NOT_READY });
         return;
     }
 
     const session = request.session;
     if (!session)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -43,7 +44,7 @@ async function getPaidDeckManifest(request, response)
     if (typeof deckId !== "string" || deckId.length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_DECK_ID" });
+        response.sendJson({ error: ErrorCodes.MISSING_DECK_ID });
         return;
     }
 
@@ -53,7 +54,7 @@ async function getPaidDeckManifest(request, response)
     if (!KeyManagementService.isLicenseActive(license))
     {
         response.statusCode = httpStatus.FORBIDDEN;
-        response.sendJson({ error: "NO_ACTIVE_LICENSE" });
+        response.sendJson({ error: ErrorCodes.NO_ACTIVE_LICENSE });
         return;
     }
 
@@ -65,7 +66,7 @@ async function getPaidDeckManifest(request, response)
     if (!userContentDocument || !userContentDocument.manifest)
     {
         response.statusCode = httpStatus.NOT_FOUND;
-        response.sendJson({ error: "USER_CONTENT_NOT_SEEDED" });
+        response.sendJson({ error: ErrorCodes.USER_CONTENT_NOT_SEEDED });
         return;
     }
 

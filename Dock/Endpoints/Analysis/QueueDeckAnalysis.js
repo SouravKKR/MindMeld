@@ -10,6 +10,7 @@ const TaskStateManager = require("../../Globals/Classes/Task/TaskStateManager");
 const { getUser } = require("../Helpers/GetUser");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const MaintenanceGate = require("../../Globals/Classes/Maintenance/MaintenanceGate");
 
 
@@ -70,7 +71,7 @@ async function handleQueueDeckAnalysis(request, response)
         if (!KeyManagementService.isLicenseActive(license))
         {
             response.statusCode = httpStatus.FORBIDDEN;
-            response.sendJson({ error: "NO_ACTIVE_LICENSE" });
+            response.sendJson({ error: ErrorCodes.NO_ACTIVE_LICENSE });
             return;
         }
     }
@@ -116,7 +117,7 @@ async function handleQueueDeckAnalysis(request, response)
         // the existing run either way; `bAlreadyRunning` keeps the
         // legacy contract for the dispatcher's silent join path.
         const wasForcedAttempt = force;
-        response.statusCode = wasForcedAttempt ? 409 : 200;
+        response.statusCode = wasForcedAttempt ? httpStatus.CONFLICT : httpStatus.OK;
         response.sendJson({
             taskId: existingActiveTask.getId(),
             bAlreadyRunning: true,
@@ -142,7 +143,7 @@ async function handleQueueDeckAnalysis(request, response)
     const creditPreflight = await CreditPreflight.check(user.getId(), taskTypes.ANALYZE_DECK_PERFORMANCE);
     if (!creditPreflight.allowed)
     {
-        const bIsResumable = creditPreflight.reason === "INSUFFICIENT_CREDITS";
+        const bIsResumable = creditPreflight.reason === ErrorCodes.INSUFFICIENT_CREDITS;
         if (bIsResumable)
         {
             try { await TaskStateManager.save({ userId: user.getId(), taskType: taskTypes.ANALYZE_DECK_PERFORMANCE, route: "/Analysis/QueueDeckAnalysis", payload: body, pausedReason: creditPreflight.reason }); }

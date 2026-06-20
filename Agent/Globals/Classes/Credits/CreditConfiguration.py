@@ -13,14 +13,19 @@ from Globals.Classes.Credits.CreditRewardMilestone import CreditRewardMilestone
 
 class CreditConfiguration:
 
-    DEFAULT_SIGNUP_GRANT = 5
+    # New accounts receive a small starter grant so a student can taste the AI
+    # features before hitting the paywall; larger welcome bonuses are still
+    # distributed through admin-issued promo codes.
+    DEFAULT_SIGNUP_GRANT = 2
+    DEFAULT_PROMO_GRANT_AMOUNT = 5
 
-    def __init__(self, task_rules: dict = None, storage_rules: dict = None, reward_milestones: list = None, default_enforcement_mode: CreditEnforcementModes = CreditEnforcementModes.ALLOW_NEGATIVE, signup_grant: float = None, version: int = 1, updated_at=None, updated_by: str = "") -> None:
+    def __init__(self, task_rules: dict = None, storage_rules: dict = None, reward_milestones: list = None, default_enforcement_mode: CreditEnforcementModes = CreditEnforcementModes.ALLOW_NEGATIVE, signup_grant: float = None, promo_grant_amount: float = None, version: int = 1, updated_at=None, updated_by: str = "") -> None:
         self.set_task_rules(task_rules if task_rules is not None else {})
         self.set_storage_rules(storage_rules if storage_rules is not None else {})
         self.set_reward_milestones(reward_milestones if reward_milestones is not None else [])
         self.set_default_enforcement_mode(default_enforcement_mode)
         self.set_signup_grant(signup_grant if signup_grant is not None else CreditConfiguration.DEFAULT_SIGNUP_GRANT)
+        self.set_promo_grant_amount(promo_grant_amount if promo_grant_amount is not None else CreditConfiguration.DEFAULT_PROMO_GRANT_AMOUNT)
         self.set_version(version)
         self.set_updated_at(updated_at)
         self.set_updated_by(updated_by)
@@ -78,6 +83,18 @@ class CreditConfiguration:
 
     def get_signup_grant(self) -> float:
         return self.__signup_grant
+
+    def set_promo_grant_amount(self, value) -> None:
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            value = 0
+        if value < 0:
+            value = 0
+        self.__promo_grant_amount = value
+
+    def get_promo_grant_amount(self) -> float:
+        return self.__promo_grant_amount
 
     def set_version(self, value) -> None:
         try:
@@ -139,6 +156,7 @@ class CreditConfiguration:
             "rewardMilestones": [milestone.to_json() for milestone in self.__reward_milestones],
             "defaultEnforcementMode": int(self.get_default_enforcement_mode().value),
             "signupGrant": self.get_signup_grant(),
+            "promoGrantAmount": self.get_promo_grant_amount(),
             "version": self.get_version(),
             "updatedAt": self.get_updated_at().isoformat() if self.get_updated_at() is not None else None,
             "updatedBy": self.get_updated_by(),
@@ -153,6 +171,7 @@ class CreditConfiguration:
             reward_milestones=data.get("rewardMilestones", []),
             default_enforcement_mode=data.get("defaultEnforcementMode", CreditEnforcementModes.ALLOW_NEGATIVE),
             signup_grant=data.get("signupGrant", CreditConfiguration.DEFAULT_SIGNUP_GRANT),
+            promo_grant_amount=data.get("promoGrantAmount", CreditConfiguration.DEFAULT_PROMO_GRANT_AMOUNT),
             version=data.get("version", 1),
             updated_at=data.get("updatedAt"),
             updated_by=data.get("updatedBy", ""),

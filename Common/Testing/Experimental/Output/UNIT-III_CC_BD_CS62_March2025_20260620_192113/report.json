@@ -1,0 +1,120 @@
+{
+  "pdf": "C:/Users/Sourav/Downloads/UNIT-III_CC&BD_CS62_March2025.pdf",
+  "pageFilter": [
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32
+  ],
+  "yoloConfidenceThreshold": 0.15,
+  "enhanceEnabled": true,
+  "startedAt": "2026-06-20T19:21:15",
+  "yolo": {
+    "seconds": 95.6,
+    "detectedCount": 2,
+    "perPage": {
+      "25": 1,
+      "32": 1
+    }
+  },
+  "validation": {
+    "seconds": 3.9,
+    "confirmedCount": 2,
+    "rejectedCount": 0,
+    "cost": {
+      "inputTokens": 685,
+      "outputTokens": 199,
+      "inputUsd": 6.85e-05,
+      "outputUsd": 7.960000000000001e-05,
+      "totalUsd": 0.00014810000000000002,
+      "byModel": {
+        "gemini-2.5-flash-lite": {
+          "calls": 1,
+          "inputTokens": 685,
+          "outputTokens": 199,
+          "usd": 0.00014810000000000002
+        }
+      }
+    }
+  },
+  "enhancement": {
+    "enhancedCount": 2,
+    "seconds": 85.5,
+    "totalUsd": 0.6905345,
+    "perImage": [
+      {
+        "savedFileName": "p025_fig00_ea65ade21230ecec.png",
+        "kind": "DIAGRAM",
+        "outputFileName": "p025_fig00_ea65ade21230ecec__ENHANCED.png",
+        "error": null,
+        "seconds": 38.8,
+        "originalAspect": 1.333,
+        "enhancedAspect": 1.0,
+        "aspectDriftFraction": 0.25,
+        "framingFlag": "POSSIBLE CLIP",
+        "cost": {
+          "inputTokens": 3914,
+          "outputTokens": 6215,
+          "inputUsd": 0.0014667500000000002,
+          "outputUsd": 0.260814,
+          "totalUsd": 0.26228075,
+          "byModel": {
+            "gemini-3.1-flash-lite": {
+              "calls": 1,
+              "inputTokens": 1961,
+              "outputTokens": 1916,
+              "usd": 0.00336425
+            },
+            "gemini-3.1-flash-image-preview": {
+              "calls": 1,
+              "inputTokens": 1953,
+              "outputTokens": 4299,
+              "usd": 0.2589165
+            }
+          }
+        }
+      },
+      {
+        "savedFileName": "p032_fig01_ee828cf2ad4bd20d.png",
+        "kind": "DIAGRAM",
+        "outputFileName": "p032_fig01_ee828cf2ad4bd20d__ENHANCED.png",
+        "error": null,
+        "seconds": 46.7,
+        "originalAspect": 1.59,
+        "enhancedAspect": 1.491,
+        "aspectDriftFraction": 0.063,
+        "framingFlag": "framing OK",
+        "cost": {
+          "inputTokens": 3870,
+          "outputTokens": 8853,
+          "inputUsd": 0.00143775,
+          "outputUsd": 0.426816,
+          "totalUsd": 0.42825375,
+          "byModel": {
+            "gemini-3.1-flash-lite": {
+              "calls": 1,
+              "inputTokens": 1989,
+              "outputTokens": 1784,
+              "usd": 0.00317325
+            },
+            "gemini-3.1-flash-image-preview": {
+              "calls": 1,
+              "inputTokens": 1881,
+              "outputTokens": 7069,
+              "usd": 0.4250805
+            }
+          }
+        }
+      }
+    ]
+  },
+  "grandTotalUsd": 0.6906826,
+  "unknownModelsCostedAtFallback": [],
+  "finishedAt": "2026-06-20T19:24:21"
+}

@@ -1,0 +1,434 @@
+study-page
+{
+    display: flex;
+    flex-direction: column;
+    width: 100dvw;
+    height: 100dvh;
+}
+
+study-page .study-page-container
+{
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 8px;
+    box-sizing: border-box;
+    padding: 10px;
+    overflow-y: auto;
+}
+
+/* Mobile selection: -webkit-touch-callout:none suppresses the iOS
+   long-press callout that would otherwise cover our TextSelectionContextMenu.
+   Text selection itself stays enabled via user-select:text — only the
+   default link / image action sheet is suppressed. The Android action-
+   mode toolbar is OS-owned and can't be fully hidden from a web page,
+   but on Android our menu still appears alongside it; the
+   selectionchange-debounce in StudyPage ensures the JS path runs even
+   when the OS hijacks pointer events. */
+study-page .question-section,
+study-page .answer-section,
+study-page .study-material-content-section
+{
+    -webkit-touch-callout: none;
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+study-page .question-section
+{
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    box-sizing: border-box;
+    border-radius: 10px;
+    background-color: var(--tertiary-background-color);
+    padding: 15px;
+    font-size: calc(var(--study-card-zoom, 1) * 1em);
+    /* Constrain reading width on wide monitors; em-based so zooming
+       widens the card the same way it does a PDF reader. */
+    width: 100%;
+    max-width: 56em;
+    margin: 0 auto;
+}
+
+study-page .answer-section
+{
+    flex: 3;
+    min-height: 0;
+    box-sizing: border-box;
+    overflow-y: auto;
+    border-radius: 5px;
+    padding: 15px;
+    background-color: var(--tertiary-background-color);
+    font-size: calc(var(--study-card-zoom, 1) * 1em);
+    width: 100%;
+    max-width: 56em;
+    margin: 0 auto;
+}
+
+.show-answer-button
+{
+    /* No `margin: 0 auto` — in the action flex row, auto margins absorb
+       all leftover space and push every sibling (prev/next, zoom, edit,
+       assistant) to the opposite edge. The parent `.study-action-row`
+       already has justify-content: center, so the group centers as a
+       whole and the green button sits flush against its neighbors. */
+    padding: 8px 24px;
+    border-radius: 8px;
+    background-color: green;
+    font-weight: bold;
+    flex: 1 1 100%;
+    max-width: 320px;
+}
+
+.resize-handle
+{
+    touch-action: none;
+    height: 4px;
+    background-color: white;
+    cursor: ns-resize;
+    opacity: 0.5;
+}
+
+.user-score-section
+{
+    display: none;
+    flex-direction: row;
+    gap: 6px;
+    justify-content: center;
+    flex: 1 1 100%;
+}
+
+.user-score-section button
+{
+    /* min-width ensures all four grade buttons render at the same width
+       regardless of label length ("Very Hard" vs "Easy"). flex: 1 1 0
+       lets them grow past that minimum to fill the row in portrait. */
+    flex: 1 1 0;
+    min-width: 96px;
+    padding: 8px 6px;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 12px;
+}
+
+.previous-next-button-container
+{
+    display: none;
+    flex-direction: row;
+    gap: 6px;
+    justify-content: center;
+    align-items: center;
+    flex: 1 1 100%;
+}
+
+.previous-next-button-container button
+{
+    flex: 1 1 0;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-weight: bold;
+}
+
+
+.very-hard-button
+{
+    background-color: rgb(200, 0, 0);
+}
+
+.hard-button
+{
+    background-color: rgb(200, 100, 0);
+}
+
+.neutral-button
+{
+    background-color: rgb(200, 150, 0);
+}
+
+.easy-button
+{
+    background-color: rgb(0, 190, 0);
+}
+
+.card-progression-container
+{
+    display: flex;
+    text-align: center;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 16px;
+    padding: 0 4px;
+    min-width: 56px;
+}
+
+/* ── Study material wrapper (content + edit button) ──────────────────────── */
+
+.study-material-wrapper
+{
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    gap: 10px;
+}
+
+/* ── Edit buttons (study material and card) — sit inline in the action row ── */
+
+.edit-study-material-button,
+.edit-card-button
+{
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 8px;
+    flex-shrink: 0;
+}
+
+/* ── Study action row ────────────────────────────────────────────────────────
+   All bottom controls (show-answer, scores, prev/next, zoom, edit, assistant)
+   live in one wrapping flex row.
+
+   Portrait: prev-next, score and show-answer get `flex-basis: 100%` so they
+             force a wrap onto their own row; edit/zoom/assistant share the
+             remaining row. Result: at most 2 rows for content / pre-answer
+             card mode, 3 rows for post-answer card mode (which has both
+             score and prev-next visible).
+
+   Landscape: flex-basis on those wrapping items is reset to `auto` so
+             everything sizes to its content and fits on a single row when
+             the viewport is wide enough. ─────────────────────────────────── */
+
+study-page .study-action-row
+{
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    row-gap: 6px;
+}
+
+/* ── Assistant toggle + zoom controls (shared button family) ───────────────── */
+
+study-page .assistant-toggle-button
+{
+    padding: 7px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 8px;
+    flex-shrink: 0;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    border: none;
+    outline: 1px solid var(--outline-color-subtle);
+    outline-offset: -1px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+study-page .assistant-toggle-button:hover
+{
+    background-color: var(--quaternary-background-color);
+}
+
+study-page study-zoom-controls
+{
+    display: inline-flex;
+    align-items: stretch;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+study-page study-zoom-controls button
+{
+    min-width: 32px;
+    padding: 5px 8px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    border: none;
+    outline: 1px solid var(--outline-color-subtle);
+    outline-offset: -1px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+study-page study-zoom-controls button:hover
+{
+    background-color: var(--quaternary-background-color);
+}
+
+study-page study-zoom-controls .study-zoom-reset-button
+{
+    min-width: 48px;
+}
+
+/* ── Portrait + narrow: shrink the grade buttons so all four fit a single
+       row on common phone widths.
+
+   At the base rule each button enforces min-width: 96px so labels of
+   different lengths ("Very Hard" vs "Easy") render uniformly on wide
+   screens. On a 360-375 px phone four 96 px buttons plus their gaps add
+   up to ~402 px — the row overflows the viewport and the rightmost
+   button gets clipped. Dropping the floor to 0 lets `flex: 1 1 0`
+   distribute the available width equally; the labels stay readable
+   because the buttons remain the same width as each other and the
+   row no longer exceeds the screen.
+
+   A safety net below 340 px (vanishingly rare modern device) wraps the
+   row into a 2x2 grid so labels can't be clipped even there. ─────── */
+
+@media (orientation: portrait) and (max-width: 480px)
+{
+    .user-score-section
+    {
+        gap: 4px;
+    }
+
+    .user-score-section button
+    {
+        min-width: 0;
+        padding: 9px 4px;
+    }
+}
+
+@media (orientation: portrait) and (max-width: 340px)
+{
+    .user-score-section
+    {
+        flex-wrap: wrap;
+    }
+
+    .user-score-section button
+    {
+        flex: 1 1 calc(50% - 2px);
+    }
+}
+
+/* ── Landscape: drop the forced 100% basis so all controls share one row ───── */
+
+@media (orientation: landscape)
+{
+    study-page .study-action-row .show-answer-button
+    {
+        flex: 0 1 auto;
+        max-width: 220px;
+    }
+
+    study-page .study-action-row .user-score-section
+    {
+        flex: 0 1 auto;
+    }
+
+    study-page .study-action-row .user-score-section button
+    {
+        /* Keep flex: 1 1 0 so the four grade buttons stay the same width
+           even in landscape — the .user-score-section sizes to content,
+           and min-width (set on the base rule) pins each button at the
+           same minimum so labels of different lengths render uniformly. */
+        flex: 1 1 0;
+        padding: 6px 10px;
+    }
+
+    study-page .study-action-row .previous-next-button-container
+    {
+        flex: 0 1 auto;
+    }
+
+    study-page .study-action-row .previous-next-button-container button
+    {
+        flex: 0 0 auto;
+        padding: 6px 14px;
+    }
+}
+
+
+/* ── Mock Test Viewer ─────────────────────────────────────────────────────── */
+
+study-page .mock-test-page-wrapper
+{
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+}
+
+study-page .mock-test-container
+{
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+}
+
+study-page .mock-test-toolbar
+{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background-color: var(--tertiary-background-color);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+study-page .mock-test-toolbar-info
+{
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+study-page .mock-test-toolbar-title
+{
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--primary-text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+study-page .mock-test-toolbar-meta
+{
+    font-size: 12px;
+    color: var(--secondary-text-color, #888);
+}
+
+study-page .mock-test-download-button
+{
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 18px;
+    background-color: var(--accent-color, #1a73e8);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: opacity 0.15s ease;
+}
+
+study-page .mock-test-download-button:hover
+{
+    opacity: 0.85;
+}
+
+study-page .mock-test-pdf-frame
+{
+    flex: 1;
+    width: 100%;
+    border: none;
+    background: #f0f0f0;
+}

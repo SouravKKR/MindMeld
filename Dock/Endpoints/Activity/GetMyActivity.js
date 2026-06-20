@@ -5,6 +5,7 @@ const TaskManager = require("../../Globals/Classes/Task/TaskManager");
 const { activityEntryTypes } = require("../../Globals/Enumerations/ActivityEntryTypes");
 const { taskStatus } = require("../../Globals/Enumerations/TaskStatus");
 const { taskTypes } = require("../../Globals/Enumerations/TaskTypes");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 /**
@@ -45,7 +46,7 @@ class GetMyActivityEndpoint
         const session = request.session;
         if (!session)
         {
-            response.sendStatusCode(401);
+            response.sendStatusCode(httpStatus.UNAUTHORIZED);
             return;
         }
 

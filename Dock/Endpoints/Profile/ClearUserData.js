@@ -1,6 +1,7 @@
 const { getUser } = require("../Helpers/GetUser");
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
  * POST /Profile/ClearUserData
@@ -21,7 +22,7 @@ async function clearUserData(request, response)
 
     if(!user)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 

@@ -1,5 +1,6 @@
 const DatabaseConnector = require("../Database/DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
+const ErrorCodes = require("../../Constants/ErrorCodes");
 const Organization = require("../../Model/Organization");
 const { organizationStatus } = require("../../Enumerations/OrganizationStatus");
 
@@ -217,13 +218,13 @@ class OrganizationQueryEngine
     {
         if (!Number.isInteger(count) || count <= 0)
         {
-            return { ok: false, reason: "INVALID_COUNT" };
+            return { ok: false, reason: ErrorCodes.INVALID_COUNT };
         }
 
         const collection = await OrganizationQueryEngine.#getCollection();
         if (!collection)
         {
-            return { ok: false, reason: "DATABASE_UNAVAILABLE" };
+            return { ok: false, reason: ErrorCodes.DATABASE_UNAVAILABLE };
         }
 
         const result = await collection.updateOne
@@ -245,7 +246,7 @@ class OrganizationQueryEngine
         // or filling these slots would exceed maxMembers. The caller
         // doesn't need the distinction (the UI presents either "org
         // not active" or "cap reached"), so a single error suffices.
-        return { ok: false, reason: "CAP_OR_STATE_REJECTED" };
+        return { ok: false, reason: ErrorCodes.CAP_OR_STATE_REJECTED };
     }
 
     /**
@@ -295,6 +296,67 @@ class OrganizationQueryEngine
             { id: organizationId },
             { $inc: { maxMembers: additionalMembers } }
         );
+    }
+
+    /**
+     * Renames an organization. Returns true iff a row was updated. The name
+     * is length-guarded by the model setter at the endpoint; this is the
+     * raw persistence write.
+     * @param {string} organizationId
+     * @param {string} newName
+     * @returns {Promise<boolean>}
+     */
+    static async renameOrganization(organizationId, newName)
+    {
+        const collection = await OrganizationQueryEngine.#getCollection();
+        if (!collection || typeof newName !== "string" || newName.trim().length === 0)
+        {
+            return false;
+        }
+
+        const result = await collection.updateOne
+        (
+            { id: organizationId },
+            { $set: { name: newName.trim().slice(0, 256) } }
+        );
+        return result.matchedCount === 1;
+    }
+
+    /**
+     * Sets maxMembers directly (super-admin). Atomically guarded so the cap
+     * can never drop BELOW the current member count — the `$expr` filter
+     * rejects the update, and the caller surfaces MAX_MEMBERS_BELOW_CURRENT.
+     * @param {string} organizationId
+     * @param {number} newMax
+     * @returns {Promise<{ ok: boolean, reason: string }>}
+     */
+    static async setMaxMembers(organizationId, newMax)
+    {
+        if (!Number.isInteger(newMax) || newMax <= 0)
+        {
+            return { ok: false, reason: ErrorCodes.INVALID_MAX_MEMBERS };
+        }
+
+        const collection = await OrganizationQueryEngine.#getCollection();
+        if (!collection)
+        {
+            return { ok: false, reason: ErrorCodes.DATABASE_UNAVAILABLE };
+        }
+
+        const result = await collection.updateOne
+        (
+            { id: organizationId, $expr: { $gte: [newMax, "$currentMemberCount"] } },
+            { $set: { maxMembers: newMax } }
+        );
+
+        if (result.matchedCount === 1)
+        {
+            return { ok: true, reason: "OK" };
+        }
+
+        // matchedCount 0 — either the org is gone or newMax < currentMemberCount.
+        const existing = await collection.findOne({ id: organizationId }, { projection: { _id: 0, id: 1 } });
+        return { ok: false, reason: existing ? ErrorCodes.MAX_MEMBERS_BELOW_CURRENT : ErrorCodes.ORG_NOT_FOUND };
     }
 
     /**

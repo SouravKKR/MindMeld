@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const DatabaseConnector = require("../Database/DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
+const ErrorCodes = require("../../Constants/ErrorCodes");
 const EmailSender = require("../Email/EmailSender");
 
 
@@ -68,13 +69,13 @@ class OrgAdminVerificationManager
         const email = OrgAdminVerificationManager.#normaliseEmail(rawEmail);
         if (email.length === 0 || email.indexOf("@") < 0)
         {
-            return { ok: false, reason: "INVALID_EMAIL" };
+            return { ok: false, reason: ErrorCodes.INVALID_EMAIL };
         }
 
         const collection = await OrgAdminVerificationManager.#getCollection();
         if (!collection)
         {
-            return { ok: false, reason: "DATABASE_UNAVAILABLE" };
+            return { ok: false, reason: ErrorCodes.DATABASE_UNAVAILABLE };
         }
 
         const now = new Date();
@@ -86,7 +87,7 @@ class OrgAdminVerificationManager
             if (secondsSinceLastIssue < OrgAdminVerificationManager.RESEND_COOLDOWN_SECONDS)
             {
                 const retryAfterSeconds = Math.ceil(OrgAdminVerificationManager.RESEND_COOLDOWN_SECONDS - secondsSinceLastIssue);
-                return { ok: false, reason: "RATE_LIMITED", retryAfterSeconds: retryAfterSeconds };
+                return { ok: false, reason: ErrorCodes.RATE_LIMITED, retryAfterSeconds: retryAfterSeconds };
             }
         }
 
@@ -132,17 +133,17 @@ class OrgAdminVerificationManager
         const email = OrgAdminVerificationManager.#normaliseEmail(rawEmail);
         if (email.length === 0)
         {
-            return { ok: false, reason: "INVALID_EMAIL" };
+            return { ok: false, reason: ErrorCodes.INVALID_EMAIL };
         }
         if (typeof submittedCode !== "string" || !/^\d{6}$/.test(submittedCode))
         {
-            return { ok: false, reason: "INVALID_CODE" };
+            return { ok: false, reason: ErrorCodes.INVALID_CODE };
         }
 
         const collection = await OrgAdminVerificationManager.#getCollection();
         if (!collection)
         {
-            return { ok: false, reason: "DATABASE_UNAVAILABLE" };
+            return { ok: false, reason: ErrorCodes.DATABASE_UNAVAILABLE };
         }
 
         const now = new Date();
@@ -150,12 +151,12 @@ class OrgAdminVerificationManager
         const row = await collection.findOne({ email: email });
         if (!row || !row.codeHash || row.codeHash.length === 0)
         {
-            return { ok: false, reason: "EXPIRED" };
+            return { ok: false, reason: ErrorCodes.EXPIRED };
         }
         if (new Date(row.expirationDate) <= now)
         {
             await collection.deleteOne({ email: email });
-            return { ok: false, reason: "EXPIRED" };
+            return { ok: false, reason: ErrorCodes.EXPIRED };
         }
 
         const incrementResult = await collection.findOneAndUpdate
@@ -170,7 +171,7 @@ class OrgAdminVerificationManager
         if (currentAttempts > OrgAdminVerificationManager.MAX_ATTEMPTS)
         {
             await collection.deleteOne({ email: email });
-            return { ok: false, reason: "TOO_MANY_ATTEMPTS" };
+            return { ok: false, reason: ErrorCodes.TOO_MANY_ATTEMPTS };
         }
 
         const submittedHash = OrgAdminVerificationManager.#hashCode(submittedCode);
@@ -182,7 +183,7 @@ class OrgAdminVerificationManager
 
         if (!hashesMatch)
         {
-            return { ok: false, reason: "INVALID_CODE", attemptsRemaining: Math.max(0, OrgAdminVerificationManager.MAX_ATTEMPTS - currentAttempts) };
+            return { ok: false, reason: ErrorCodes.INVALID_CODE, attemptsRemaining: Math.max(0, OrgAdminVerificationManager.MAX_ATTEMPTS - currentAttempts) };
         }
 
         // Code phase passes. Issue a verification token, blank the code

@@ -1,4 +1,5 @@
 const RazorpayPaymentProvider = require("./RazorpayPaymentProvider");
+const ZohoPaymentProvider = require("./ZohoPaymentProvider");
 const StripePaymentProvider = require("./StripePaymentProvider");
 const PaypalPaymentProvider = require("./PaypalPaymentProvider");
 const { paymentProviders } = require("../../Enumerations/PaymentProviders");
@@ -18,6 +19,9 @@ class PaymentProviderFactory
 
         switch (providerEnumValue)
         {
+            case paymentProviders.ZOHO:
+                provider = new ZohoPaymentProvider();
+                break;
             case paymentProviders.RAZORPAY:
                 provider = new RazorpayPaymentProvider();
                 break;

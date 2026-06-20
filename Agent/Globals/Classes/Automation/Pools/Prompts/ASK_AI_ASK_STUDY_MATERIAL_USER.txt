@@ -1,9 +1,9 @@
-Study material lesson:
+Study material lesson (context):
 {material_excerpt}
 
 Highlighted fragment: "{selected_text}"
 User question: {user_query}
 
-Answer directly, grounded in the lesson above.
+Answer the question directly and correctly. Use the lesson as context, but answer fully from your own knowledge — never say the answer "isn't in the lesson".
 
 {information_source_block}{html_style_block}

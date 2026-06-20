@@ -11,8 +11,9 @@ const { paidDeckFilterTypes } = require("../../Enumerations/PaidDeckFilterTypes"
 class DateRangeFilter extends PaidDeckFilter
 {
     #field;
+    #compareAsIsoString;
 
-    constructor({ key, label, field })
+    constructor({ key, label, field, compareAsIsoString = false })
     {
         super({ key: key, label: label, type: paidDeckFilterTypes.DATE_RANGE });
 
@@ -22,6 +23,11 @@ class DateRangeFilter extends PaidDeckFilter
         }
 
         this.#field = field;
+        // Some collections persist their dates as ISO-8601 strings rather than
+        // BSON Date objects. Mongo never coerces across those two types in a
+        // range comparison, so for those fields the bounds must be emitted as
+        // ISO strings (string-to-string ordering matches chronological order).
+        this.#compareAsIsoString = compareAsIsoString === true;
     }
 
     async getMetadata(database)
@@ -65,12 +71,12 @@ class DateRangeFilter extends PaidDeckFilter
 
         if (fromDate !== null)
         {
-            rangeClause.$gte = fromDate;
+            rangeClause.$gte = this.#compareAsIsoString ? fromDate.toISOString() : fromDate;
         }
 
         if (toDate !== null)
         {
-            rangeClause.$lte = toDate;
+            rangeClause.$lte = this.#compareAsIsoString ? toDate.toISOString() : toDate;
         }
 
         const queryFragment = {};

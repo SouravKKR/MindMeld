@@ -6,6 +6,7 @@ const KeyManagementService = require("../../Globals/Classes/Security/KeyManageme
 const LicenseClientView = require("../../Globals/Classes/Security/LicenseClientView");
 const { seedProtectedContentForLicense, buildPaidInstanceRowFilter } = require("./PaidDeckGrantHelpers");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 /**
  * POST /PaidDecks/Copies/Add
@@ -46,14 +47,14 @@ async function addPaidDeckCopy(request, response)
     if (!KeyManagementService.isReady())
     {
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
-        response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
+        response.sendJson({ error: ErrorCodes.KEY_MANAGEMENT_NOT_READY });
         return;
     }
 
     const session = request.session;
     if (!session)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -63,7 +64,7 @@ async function addPaidDeckCopy(request, response)
     if (typeof deckId !== "string" || deckId.length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_DECK_ID" });
+        response.sendJson({ error: ErrorCodes.MISSING_DECK_ID });
         return;
     }
 
@@ -75,7 +76,7 @@ async function addPaidDeckCopy(request, response)
     if (!KeyManagementService.isLicenseActive(license))
     {
         response.statusCode = httpStatus.FORBIDDEN;
-        response.sendJson({ error: "NO_ACTIVE_LICENSE" });
+        response.sendJson({ error: ErrorCodes.NO_ACTIVE_LICENSE });
         return;
     }
 
@@ -90,7 +91,7 @@ async function addPaidDeckCopy(request, response)
     if (currentCopyCount >= LicenseConstants.MAX_PAID_DECK_COPIES_PER_USER)
     {
         response.statusCode = httpStatus.CONFLICT;
-        response.sendJson({ error: "COPY_LIMIT_REACHED", maxCopies: LicenseConstants.MAX_PAID_DECK_COPIES_PER_USER });
+        response.sendJson({ error: ErrorCodes.COPY_LIMIT_REACHED, maxCopies: LicenseConstants.MAX_PAID_DECK_COPIES_PER_USER });
         return;
     }
 
@@ -102,7 +103,7 @@ async function addPaidDeckCopy(request, response)
     if (existingPaidEntityCount >= LicenseConstants.MAX_PAID_DECK_ENTITIES_PER_USER)
     {
         response.statusCode = httpStatus.PAYLOAD_TOO_LARGE;
-        response.sendJson({ error: "DATA_CAP_EXCEEDED" });
+        response.sendJson({ error: ErrorCodes.DATA_CAP_EXCEEDED });
         return;
     }
 
@@ -127,7 +128,7 @@ async function addPaidDeckCopy(request, response)
         }
 
         response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
-        response.sendJson({ error: "COPY_SEED_FAILED", reason: seedResult.reason });
+        response.sendJson({ error: ErrorCodes.COPY_SEED_FAILED, reason: seedResult.reason });
         return;
     }
 

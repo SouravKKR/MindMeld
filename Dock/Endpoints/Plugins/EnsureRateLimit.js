@@ -3,6 +3,7 @@ const { getSession } = require("../Helpers/GetSession");
 const RateLimiter = require("../../Globals/Classes/Security/RateLimiter");
 const RateLimitEventQueryEngine = require("../../Globals/Classes/Database/RateLimitEventQueryEngine");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 /**
  * EnsureRateLimit
@@ -119,7 +120,7 @@ async function resolveIdentity(request)
 
 function logRateLimitEvent(request, response)
 {
-    if (response.statusCode !== 429)
+    if (response.statusCode !== httpStatus.TOO_MANY_REQUESTS)
     {
         return;
     }
@@ -209,7 +210,7 @@ const rateLimitPlugin = new PacketronPlugin
 
             response.statusCode = httpStatus.TOO_MANY_REQUESTS;
             response.setHeader("Retry-After", String(decision.retryAfterSeconds));
-            response.sendJson({ error: "RATE_LIMITED", scope: "PER_USER", retryAfterSeconds: decision.retryAfterSeconds });
+            response.sendJson({ error: ErrorCodes.RATE_LIMITED, scope: "PER_USER", retryAfterSeconds: decision.retryAfterSeconds });
             return true;
         }
 

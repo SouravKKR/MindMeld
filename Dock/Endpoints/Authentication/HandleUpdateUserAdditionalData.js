@@ -2,6 +2,9 @@ const { getUser } = require("../Helpers/GetUser");
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
 const LegalAcceptanceService = require("../../Globals/Classes/Authentication/LegalAcceptanceService");
 const CreditLedger = require("../../Globals/Classes/Credits/CreditLedger");
+const StreakManager = require("../../Globals/Classes/Streak/StreakManager");
+const MetricBadgeManager = require("../../Globals/Classes/Metrics/MetricBadgeManager");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
@@ -24,7 +27,7 @@ async function handleUpdateUserAdditionalData(request, response)
 
     if (!user)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -33,7 +36,7 @@ async function handleUpdateUserAdditionalData(request, response)
 
     if (!partialAdditionalData || typeof partialAdditionalData !== "object")
     {
-        response.sendStatusCode(400);
+        response.sendStatusCode(httpStatus.BAD_REQUEST);
         return;
     }
 
@@ -52,13 +55,25 @@ async function handleUpdateUserAdditionalData(request, response)
         {
             continue;
         }
+        // Streak / badge state is awarded server-side only — a client must not
+        // be able to set its own streak length or grant itself badges.
+        if (StreakManager.isStreakOwnedAdditionalDataKey(fieldKey))
+        {
+            continue;
+        }
+        // Achievement metric counters / milestone badges are server-owned too
+        // (mutated only via /Metrics/Report with its clamp + rate limit).
+        if (MetricBadgeManager.isMetricOwnedAdditionalDataKey(fieldKey))
+        {
+            continue;
+        }
         sanitizedAdditionalData[fieldKey] = partialAdditionalData[fieldKey];
     }
 
     if (Object.keys(sanitizedAdditionalData).length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "NO_WRITABLE_FIELDS" });
+        response.sendJson({ error: ErrorCodes.NO_WRITABLE_FIELDS });
         return;
     }
 
@@ -66,7 +81,7 @@ async function handleUpdateUserAdditionalData(request, response)
 
     if (!updatedAdditionalData)
     {
-        response.sendStatusCode(500);
+        response.sendStatusCode(httpStatus.INTERNAL_SERVER_ERROR);
         return;
     }
 

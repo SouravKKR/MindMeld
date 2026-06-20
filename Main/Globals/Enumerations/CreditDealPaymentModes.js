@@ -1,0 +1,6 @@
+export const creditDealPaymentModes =
+{
+  NONE: 0,
+  ON_SPOT_RAZORPAY: 1,
+  INDEPENDENT: 2,
+}

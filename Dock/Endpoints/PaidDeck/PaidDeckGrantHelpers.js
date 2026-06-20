@@ -4,6 +4,7 @@ const LicenseConstants = require("../../Globals/Constants/LicenseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const { deckLicenseStatuses } = require("../../Globals/Enumerations/DeckLicenseStatuses");
 const { entityTypes } = require("../../Globals/Enumerations/EntityTypes");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 // The buyer's root deck id — a freshly provisioned paid deck attaches its
 // bundle root under this so it appears as a top-level deck in the buyer's tree.
@@ -165,13 +166,13 @@ async function seedProtectedContentForLicense(database, userId, deckId, license,
 
     if (!paidDeckDocument)
     {
-        return { success: false, reason: "PAID_DECK_NOT_FOUND" };
+        return { success: false, reason: ErrorCodes.PAID_DECK_NOT_FOUND };
     }
 
     const masterManifest = await KeyManagementService.getMasterManifest(deckId, paidDeckDocument.keyVersion);
     if (!masterManifest)
     {
-        return { success: false, reason: "MASTER_DECRYPT_FAILED" };
+        return { success: false, reason: ErrorCodes.MASTER_DECRYPT_FAILED };
     }
 
     const rootDeckId = (masterManifest && typeof masterManifest.rootDeckId === "string") ? masterManifest.rootDeckId : "";
@@ -269,7 +270,7 @@ async function seedProtectedContentForLicense(database, userId, deckId, license,
     catch (writeError)
     {
         console.error(`[PaidDeckGrant] Normalized seed failed for user ${userId} deck ${deckId}:`, writeError);
-        return { success: false, reason: "USER_CONTENT_WRITE_FAILED" };
+        return { success: false, reason: ErrorCodes.USER_CONTENT_WRITE_FAILED };
     }
 
     // Record this copy on the license registry and bump rotatedAt so the next
@@ -323,7 +324,7 @@ async function seedProtectedContentForLicense(database, userId, deckId, license,
     }
     catch (persistError)
     {
-        return { success: false, reason: "LICENSE_PERSIST_FAILED" };
+        return { success: false, reason: ErrorCodes.LICENSE_PERSIST_FAILED };
     }
 
     return { success: true };

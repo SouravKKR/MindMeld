@@ -1,0 +1,82 @@
+{
+    "CARDS_STUDIED":
+    {
+        "metricKey": "cardsStudied",
+        "unit": "cards",
+        "xpPerUnit": 1,
+        "badges":
+        [
+            { "threshold": 10, "name": "First Pages", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/FirstPages.webp" },
+            { "threshold": 100, "name": "Card Collector", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/CardCollector.webp" },
+            { "threshold": 250, "name": "Knowledge Sprout", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/KnowledgeSprout.webp" },
+            { "threshold": 500, "name": "Memory Builder", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/MemoryBuilder.webp" },
+            { "threshold": 1000, "name": "Information Harvester", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/InformationHarvester.webp" },
+            { "threshold": 2500, "name": "Archive Keeper", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/ArchiveKeeper.webp" },
+            { "threshold": 5000, "name": "Grand Archivist", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/GrandArchivist.webp" },
+            { "threshold": 10000, "name": "Infinite Library", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/InfiniteLibrary.webp" },
+            { "threshold": 25000, "name": "Spaced Repetition God", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/SpacedRepetitionGod.webp" }
+        ]
+    },
+    "MOCK_TESTS_TAKEN":
+    {
+        "metricKey": "mockTestsTaken",
+        "unit": "mock tests",
+        "xpPerUnit": 100,
+        "badges":
+        [
+            { "threshold": 1, "name": "First Attempt", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/FirstAttempt.webp" },
+            { "threshold": 3, "name": "Test Taker", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/TestTaker.webp" },
+            { "threshold": 5, "name": "Exam Explorer", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/ExamExplorer.webp" },
+            { "threshold": 10, "name": "Practice Warrior", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/PracticeWarrior.webp" },
+            { "threshold": 25, "name": "Assessment Specialist", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/AssessmentSpecialist.webp" },
+            { "threshold": 50, "name": "Evaluation Expert", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/EvaluationExpert.webp" },
+            { "threshold": 100, "name": "Exam Veteran", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/ExamVeteran.webp" },
+            { "threshold": 250, "name": "Examination Master", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/ExaminationMaster.webp" },
+            { "threshold": 500, "name": "Grand Evaluator", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/GrandEvaluator.webp" },
+            { "threshold": 1000, "name": "Supreme Examiner", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/SupremeExaminer.webp" }
+        ]
+    },
+    "HOURS_STUDIED":
+    {
+        "metricKey": "minutesStudied",
+        "unit": "minutes",
+        "displayUnit": "hours",
+        "xpPerUnit": 2,
+        "badges":
+        [
+            { "threshold": 30, "name": "First Session", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/FirstSession.webp" },
+            { "threshold": 60, "name": "One-Hour Wonder", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/OneHourWonder.webp" },
+            { "threshold": 180, "name": "Focus Finder", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/FocusFinder.webp" },
+            { "threshold": 300, "name": "Study Starter", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/StudyStarter.webp" },
+            { "threshold": 600, "name": "Time Investor", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/TimeInvestor.webp" },
+            { "threshold": 1500, "name": "Dedicated Learner", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/DedicatedLearner.webp" },
+            { "threshold": 3000, "name": "Focus Warrior", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/FocusWarrior.webp" },
+            { "threshold": 6000, "name": "Deep Diver", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/DeepDiver.webp" },
+            { "threshold": 15000, "name": "Scholar in Residence", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/ScholarInResidence.webp" },
+            { "threshold": 30000, "name": "Knowledge Craftsman", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/KnowledgeCraftsman.webp" },
+            { "threshold": 60000, "name": "Master of Focus", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/MasterOfFocus.webp" },
+            { "threshold": 120000, "name": "Academic Legend", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/AcademicLegend.webp" },
+            { "threshold": 300000, "name": "Living Library", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/LivingLibrary.webp" },
+            { "threshold": 600000, "name": "Eternal Scholar", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/EternalScholar.webp" }
+        ]
+    },
+    "DOUBTS_ASKED":
+    {
+        "metricKey": "doubtsAsked",
+        "unit": "doubts",
+        "xpPerUnit": 10,
+        "badges":
+        [
+            { "threshold": 1, "name": "First Question", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/FirstQuestion.webp" },
+            { "threshold": 5, "name": "Curiosity Spark", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/CuriositySpark.webp" },
+            { "threshold": 10, "name": "Inquisitive Soul", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/InquisitiveSoul.webp" },
+            { "threshold": 25, "name": "Knowledge Hunter", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/KnowledgeHunter.webp" },
+            { "threshold": 50, "name": "Question Architect", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/QuestionArchitect.webp" },
+            { "threshold": 100, "name": "Understanding Seeker", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/UnderstandingSeeker.webp" },
+            { "threshold": 250, "name": "Inquiry Master", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/InquiryMaster.webp" },
+            { "threshold": 500, "name": "Wisdom Chaser", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/WisdomChaser.webp" },
+            { "threshold": 1000, "name": "Truth Explorer", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/TruthExplorer.webp" },
+            { "threshold": 5000, "name": "Oracle of Curiosity", "imagePath": "./Globals/Assets/Images/Icons/MilestoneBadges/OracleOfCuriosity.webp" }
+        ]
+    }
+}

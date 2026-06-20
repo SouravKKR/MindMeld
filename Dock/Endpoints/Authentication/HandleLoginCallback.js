@@ -10,6 +10,7 @@ const UserRoleReconciliator = require("../../Globals/Classes/Authentication/User
 const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
 const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/OrganizationAutoAssigner");
 const Logger = require("../../Globals/Classes/Logger");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function handleLoginCallback(request, response)
 {
@@ -32,7 +33,7 @@ async function handleLoginCallback(request, response)
         response.clearCookie("loginState");
         response.clearCookie("provider");
         response.setHeader("Location", App.getOrigin());
-        response.sendStatusCode(302);
+        response.sendStatusCode(httpStatus.FOUND);
         return;
     }
 
@@ -229,7 +230,7 @@ async function handleLoginCallback(request, response)
     response.clearCookie("provider");
 
     response.setHeader("Location", App.getOrigin());
-    response.sendStatusCode(302);
+    response.sendStatusCode(httpStatus.FOUND);
 
 }
 

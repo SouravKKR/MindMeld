@@ -4,6 +4,7 @@ const paymentProviders =
   STRIPE: 1,
   PAYPAL: 2,
   ORG_AUTO_ASSIGN: 3,
+  ZOHO: 4,
 }
 
 module.exports = { paymentProviders };

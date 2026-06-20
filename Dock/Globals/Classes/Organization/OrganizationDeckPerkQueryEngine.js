@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const DatabaseConnector = require("../Database/DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
+const ErrorCodes = require("../../Constants/ErrorCodes");
 const OrganizationDeckPerk = require("../../Model/OrganizationDeckPerk");
 const { organizationDeckPerkTypes } = require("../../Enumerations/OrganizationDeckPerkTypes");
 
@@ -33,28 +34,28 @@ class OrganizationDeckPerkQueryEngine
     {
         if (!perkInput || typeof perkInput !== "object")
         {
-            return { valid: false, reason: "INVALID_SHAPE" };
+            return { valid: false, reason: ErrorCodes.INVALID_SHAPE };
         }
         if (typeof perkInput.deckId !== "string" || perkInput.deckId.length === 0)
         {
-            return { valid: false, reason: "INVALID_DECK_ID" };
+            return { valid: false, reason: ErrorCodes.INVALID_DECK_ID };
         }
         const enumValues = Object.values(organizationDeckPerkTypes);
         if (!enumValues.includes(perkInput.perkType))
         {
-            return { valid: false, reason: "INVALID_PERK_TYPE" };
+            return { valid: false, reason: ErrorCodes.INVALID_PERK_TYPE };
         }
         if (!Number.isInteger(perkInput.perkValue) || perkInput.perkValue < 0)
         {
-            return { valid: false, reason: "INVALID_PERK_VALUE" };
+            return { valid: false, reason: ErrorCodes.INVALID_PERK_VALUE };
         }
         if (perkInput.perkType === organizationDeckPerkTypes.PERCENTAGE_DISCOUNT && perkInput.perkValue > 100)
         {
-            return { valid: false, reason: "PERCENTAGE_OUT_OF_RANGE" };
+            return { valid: false, reason: ErrorCodes.PERCENTAGE_OUT_OF_RANGE };
         }
         if (!Number.isInteger(perkInput.durationDays) || perkInput.durationDays < 0)
         {
-            return { valid: false, reason: "INVALID_DURATION_DAYS" };
+            return { valid: false, reason: ErrorCodes.INVALID_DURATION_DAYS };
         }
         return { valid: true };
     }

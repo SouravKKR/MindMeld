@@ -10,8 +10,10 @@ const { getUser } = require("../Helpers/GetUser");
 const { purchaseStatuses } = require("../../Globals/Enumerations/PurchaseStatuses");
 const { seedProtectedContentForLicense, checkUserHasPaidDeckPassword } = require("./PaidDeckGrantHelpers");
 const LicenseClientView = require("../../Globals/Classes/Security/LicenseClientView");
+const ZohoInvoiceService = require("../../Globals/Classes/Invoicing/ZohoInvoiceService");
 const GrantSources = require("../../Globals/Constants/GrantSources");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 const MILLISECONDS_PER_DAY = 86_400_000;
 
@@ -21,7 +23,7 @@ async function verifyPurchase(request, response)
 
     if (!session)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -31,12 +33,14 @@ async function verifyPurchase(request, response)
     // from the body — they come from the server-side pending-order row created
     // at InitiatePurchase. This closes the bypass where a buyer pays for a
     // cheap/free deck then claims licenses for arbitrary expensive decks.
-    const { providerOrderId, providerPaymentId, signature, paymentProvider } = body || {};
+    // paymentProvider is intentionally NOT read from the client — the verifier
+    // is resolved from the trusted server-side pending-order row below.
+    const { providerOrderId, providerPaymentId, signature } = body || {};
 
     if (!providerOrderId || !providerPaymentId || !signature)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_FIELDS" });
+        response.sendJson({ error: ErrorCodes.MISSING_FIELDS });
         return;
     }
 
@@ -46,24 +50,29 @@ async function verifyPurchase(request, response)
     if (!pendingOrder)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "ORDER_NOT_FOUND" });
+        response.sendJson({ error: ErrorCodes.ORDER_NOT_FOUND });
         return;
     }
 
     if (pendingOrder.userId !== session.getUserId())
     {
         response.statusCode = httpStatus.FORBIDDEN;
-        response.sendJson({ error: "ORDER_OWNER_MISMATCH" });
+        response.sendJson({ error: ErrorCodes.ORDER_OWNER_MISMATCH });
         return;
     }
 
-    const provider = PaymentProviderFactory.getProvider(paymentProvider);
+    // Resolve the provider that actually created this order from the trusted
+    // pending row (falls back to the configured default for legacy rows).
+    const storedProvider = pendingOrder.paymentProvider;
+    const provider = storedProvider !== null && storedProvider !== undefined
+        ? PaymentProviderFactory.getProvider(storedProvider)
+        : PaymentProviderFactory.getDefaultProvider();
     const verification = await provider.verifyPayment({ providerOrderId, providerPaymentId, signature });
 
     if (!verification.verified)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "PAYMENT_NOT_VERIFIED", reason: verification.reason });
+        response.sendJson({ error: ErrorCodes.PAYMENT_NOT_VERIFIED, reason: verification.reason });
         return;
     }
 
@@ -71,7 +80,7 @@ async function verifyPurchase(request, response)
     const hasExistingPaidDeckPassword = await checkUserHasPaidDeckPassword(database, session.getUserId());
 
     // Replay guard: a verified payment grants exactly once. A duplicate /
-    // replayed verify (Razorpay retries, double-clicks) short-circuits to an
+    // replayed verify (provider retries, double-clicks) short-circuits to an
     // idempotent success rather than re-granting.
     if (pendingOrder.status === PendingOrderQueryEngine.STATUS_CONSUMED)
     {
@@ -180,6 +189,31 @@ async function verifyPurchase(request, response)
     // are idempotent upserts). The transition is atomic, so concurrent verifies
     // still grant exactly once.
     await PendingOrderQueryEngine.markConsumed(providerOrderId, session.getUserId());
+
+    // Invoice the paid acquisition (customer purchase) — best-effort, never
+    // blocks the grant. Uses the server-recomputed total, not the client body.
+    // Only reached on the first-time grant path; a replay short-circuits above.
+    if (ZohoInvoiceService.isEnabled() && Number(serverPricing.totalMinor) > 0)
+    {
+        try
+        {
+            const buyerEmail = user ? (user.getAdditionalData()?.email || "") : "";
+            const deckLabel = authoritativeDeckIds.length === 1 ? "MindMeld deck" : `MindMeld decks (${authoritativeDeckIds.length})`;
+            await ZohoInvoiceService.createPaidInvoice
+            ({
+                email: buyerEmail,
+                name: user && user.getDisplayName ? user.getDisplayName() : "",
+                amountMinor: serverPricing.totalMinor,
+                currency: serverPricing.currency || pendingOrder.currency || "INR",
+                description: deckLabel,
+                referenceNumber: providerPaymentId || providerOrderId
+            });
+        }
+        catch (invoiceError)
+        {
+            console.warn(`[VerifyPurchase] Invoice step failed for order ${providerOrderId} (non-fatal): ${invoiceError?.message || invoiceError}`);
+        }
+    }
 
     response.statusCode = httpStatus.OK;
     response.sendJson

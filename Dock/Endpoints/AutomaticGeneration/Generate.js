@@ -19,6 +19,7 @@ const { taskExecutionTargets } = require("../../Globals/Enumerations/TaskExecuti
 const { getUser } = require("../Helpers/GetUser");
 const { moveToDatabase } = require("../Helpers/MoveToDatabase");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const MaintenanceGate = require("../../Globals/Classes/Maintenance/MaintenanceGate");
 
 
@@ -134,7 +135,7 @@ async function handleGenerate(request, response)
         // Out-of-credits is recoverable: save a resumable task state so the
         // user can resume this exact generation after topping up. A disabled
         // service is a permanent refusal, so it is NOT saved.
-        const bIsResumable = creditPreflight.reason === "INSUFFICIENT_CREDITS";
+        const bIsResumable = creditPreflight.reason === ErrorCodes.INSUFFICIENT_CREDITS;
         if (bIsResumable)
         {
             try { await TaskStateManager.save({ userId: userId, taskType: taskTypes.PREPARE_FOR_GENERATION, route: "/Generate", payload: body, pausedReason: creditPreflight.reason }); }

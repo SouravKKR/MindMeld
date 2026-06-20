@@ -1,5 +1,6 @@
 const ReleaseNoteQueryEngine = require("../../../Globals/Classes/Database/ReleaseNoteQueryEngine");
 const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../../Globals/Constants/ErrorCodes");
 
 
 /**
@@ -18,7 +19,7 @@ async function deleteReleaseNote(request, response)
     const requester = request.user;
     if (!requester)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -47,7 +48,7 @@ async function deleteReleaseNote(request, response)
         const result = await ReleaseNoteQueryEngine.deleteById(noteId);
         if (!result.removed)
         {
-            if (result.reason === "NOT_FOUND")
+            if (result.reason === ErrorCodes.NOT_FOUND)
             {
                 response.statusCode = httpStatus.NOT_FOUND;
                 response.sendJson({ error: "Release note not found.", reason: result.reason });

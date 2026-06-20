@@ -18,6 +18,7 @@ const CreditPreflight = require("../../Globals/Classes/Credits/CreditPreflight")
 const TaskStateManager = require("../../Globals/Classes/Task/TaskStateManager");
 const { getUser } = require("../Helpers/GetUser");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const MaintenanceGate = require("../../Globals/Classes/Maintenance/MaintenanceGate");
 
 
@@ -180,7 +181,7 @@ async function handleEvaluateAttempt(request, response)
     const creditPreflight = await CreditPreflight.check(userId, taskTypes.EVALUATE_MOCK_TEST_ATTEMPT);
     if (!creditPreflight.allowed)
     {
-        const bIsResumable = creditPreflight.reason === "INSUFFICIENT_CREDITS";
+        const bIsResumable = creditPreflight.reason === ErrorCodes.INSUFFICIENT_CREDITS;
         if (bIsResumable)
         {
             try { await TaskStateManager.save({ userId: userId, taskType: taskTypes.EVALUATE_MOCK_TEST_ATTEMPT, route: "/MockTest/EvaluateAttempt", payload: body, pausedReason: creditPreflight.reason }); }

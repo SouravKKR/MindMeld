@@ -4,6 +4,7 @@ const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/Org
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 
 async function addOrganizationMember(request, response)
@@ -15,13 +16,13 @@ async function addOrganizationMember(request, response)
     if (!organizationId)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "MISSING_ORGANIZATION_ID" });
+        response.sendJson({ success: false, error: ErrorCodes.MISSING_ORGANIZATION_ID });
         return;
     }
     if (!submittedEmail || submittedEmail.indexOf("@") < 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: "INVALID_EMAIL" });
+        response.sendJson({ success: false, error: ErrorCodes.INVALID_EMAIL });
         return;
     }
 
@@ -29,7 +30,7 @@ async function addOrganizationMember(request, response)
     if (!organization)
     {
         response.statusCode = httpStatus.NOT_FOUND;
-        response.sendJson({ success: false, error: "ORG_NOT_FOUND" });
+        response.sendJson({ success: false, error: ErrorCodes.ORG_NOT_FOUND });
         return;
     }
 
@@ -37,13 +38,13 @@ async function addOrganizationMember(request, response)
     if (user.getRole() !== userRoles.ADMIN && organization.getAdminUserId() !== user.getId())
     {
         response.statusCode = httpStatus.FORBIDDEN;
-        response.sendJson({ success: false, error: "NOT_ORG_ADMIN" });
+        response.sendJson({ success: false, error: ErrorCodes.NOT_ORG_ADMIN });
         return;
     }
     if (organization.getStatus() !== organizationStatus.ACTIVE)
     {
         response.statusCode = httpStatus.CONFLICT;
-        response.sendJson({ success: false, error: "ORG_NOT_ACTIVE" });
+        response.sendJson({ success: false, error: ErrorCodes.ORG_NOT_ACTIVE });
         return;
     }
 
@@ -56,7 +57,7 @@ async function addOrganizationMember(request, response)
     if (!capResult.ok)
     {
         response.statusCode = httpStatus.CONFLICT;
-        response.sendJson({ success: false, error: "CAP_REACHED" });
+        response.sendJson({ success: false, error: ErrorCodes.CAP_REACHED });
         return;
     }
 
@@ -70,7 +71,7 @@ async function addOrganizationMember(request, response)
         await OrganizationQueryEngine.decrementMemberCountBy(organizationId, 1);
         console.error(`[AddOrganizationMember] addMember threw for org=${organizationId} email=${submittedEmail}: ${addError.message}`);
         response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
-        response.sendJson({ success: false, error: "ADD_MEMBER_FAILED" });
+        response.sendJson({ success: false, error: ErrorCodes.ADD_MEMBER_FAILED });
         return;
     }
 
@@ -86,7 +87,7 @@ async function addOrganizationMember(request, response)
         });
         return;
     }
-    if (addResult.status === "INVALID_EMAIL")
+    if (addResult.status === ErrorCodes.INVALID_EMAIL)
     {
         await OrganizationQueryEngine.decrementMemberCountBy(organizationId, 1);
         response.statusCode = httpStatus.OK;

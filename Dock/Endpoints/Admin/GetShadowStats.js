@@ -2,6 +2,7 @@ const { getUser } = require("../Helpers/GetUser");
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const ShadowComparisonConstants = require("../../Globals/Constants/ShadowComparisonConstants");
+const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 
 function buildEmptyCellStats()
@@ -79,7 +80,7 @@ async function handleGetShadowStats(request, response)
 
     if (!user)
     {
-        response.sendStatusCode(401);
+        response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
     }
 
@@ -87,7 +88,7 @@ async function handleGetShadowStats(request, response)
 
     if (!database)
     {
-        response.sendStatusCode(503);
+        response.sendStatusCode(httpStatus.SERVICE_UNAVAILABLE);
         return;
     }
 

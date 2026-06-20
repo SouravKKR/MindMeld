@@ -1,6 +1,7 @@
 const CreditGrantTargetResolver = require("../../Globals/Classes/Credits/CreditGrantTargetResolver");
 const CreditGrantExecutor = require("../../Globals/Classes/Credits/CreditGrantExecutor");
 const { creditGrantAmountModes } = require("../../Globals/Enumerations/CreditGrantAmountModes");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
 
 /**
@@ -23,21 +24,21 @@ async function previewCreditGrant(request, response)
     if (!target || typeof target !== "object")
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_TARGET" });
+        response.sendJson({ error: ErrorCodes.MISSING_TARGET });
         return;
     }
 
     if (!isFinite(amount) || amount <= 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "INVALID_AMOUNT" });
+        response.sendJson({ error: ErrorCodes.INVALID_AMOUNT });
         return;
     }
 
     if (!Object.values(creditGrantAmountModes).includes(amountMode) || amountMode === creditGrantAmountModes.UNKNOWN)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "INVALID_AMOUNT_MODE" });
+        response.sendJson({ error: ErrorCodes.INVALID_AMOUNT_MODE });
         return;
     }
 

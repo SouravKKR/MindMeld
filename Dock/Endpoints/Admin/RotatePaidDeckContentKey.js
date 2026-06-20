@@ -1,4 +1,5 @@
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 /**
@@ -22,7 +23,7 @@ async function rotatePaidDeckContentKey(request, response)
     if (!KeyManagementService.isReady())
     {
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
-        response.sendJson({ error: "KEY_MANAGEMENT_NOT_READY" });
+        response.sendJson({ error: ErrorCodes.KEY_MANAGEMENT_NOT_READY });
         return;
     }
 
@@ -34,7 +35,7 @@ async function rotatePaidDeckContentKey(request, response)
     if (typeof deckId !== "string" || deckId.length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: "MISSING_DECK_ID" });
+        response.sendJson({ error: ErrorCodes.MISSING_DECK_ID });
         return;
     }
 
@@ -43,14 +44,14 @@ async function rotatePaidDeckContentKey(request, response)
         if (typeof targetUserId !== "string" || targetUserId.length === 0)
         {
             response.statusCode = httpStatus.BAD_REQUEST;
-            response.sendJson({ error: "MISSING_USER_ID" });
+            response.sendJson({ error: ErrorCodes.MISSING_USER_ID });
             return;
         }
         const license = await KeyManagementService.getLicense(targetUserId, deckId);
         if (!license)
         {
             response.statusCode = httpStatus.NOT_FOUND;
-            response.sendJson({ error: "LICENSE_NOT_FOUND" });
+            response.sendJson({ error: ErrorCodes.LICENSE_NOT_FOUND });
             return;
         }
         await KeyManagementService.rotatePaidDeckContentKeyForLicense(license);
@@ -75,7 +76,7 @@ async function rotatePaidDeckContentKey(request, response)
     }
 
     response.statusCode = httpStatus.BAD_REQUEST;
-    response.sendJson({ error: "UNSUPPORTED_MODE" });
+    response.sendJson({ error: ErrorCodes.UNSUPPORTED_MODE });
 }
 
 module.exports = { rotatePaidDeckContentKey };

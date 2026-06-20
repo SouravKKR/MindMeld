@@ -1,0 +1,114 @@
+{
+    "name": "PeriodicCreditAssignment",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "name":
+        {
+            "datatype": "string",
+            "minLength": 1,
+            "maxLength": 256
+        },
+        "scopeType":
+        {
+            "datatype": "enum:PeriodicScopeTypes",
+            "defaultValue": 0
+        },
+        "organizationId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "peopleEmails":
+        {
+            "datatype": "array",
+            "defaultValue": []
+        },
+        "amount":
+        {
+            "datatype": "float",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "amountMode":
+        {
+            "datatype": "enum:CreditGrantAmountModes",
+            "defaultValue": 1
+        },
+        "scheduleType":
+        {
+            "datatype": "enum:PeriodicScheduleTypes",
+            "defaultValue": 0
+        },
+        "intervalDays":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "dayOfWeek":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0,
+            "max": 6
+        },
+        "dayOfMonth":
+        {
+            "datatype": "int",
+            "defaultValue": 1,
+            "min": 1,
+            "max": 31
+        },
+        "onJoinMode":
+        {
+            "datatype": "enum:PeriodicOnJoinModes",
+            "defaultValue": 0
+        },
+        "startAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "hasValidUntil":
+        {
+            "datatype": "boolean",
+            "defaultValue": false
+        },
+        "validUntil":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "status":
+        {
+            "datatype": "enum:PeriodicAssignmentStatuses",
+            "defaultValue": 0
+        },
+        "terminatedAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "createdByUserId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "createdAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "additionalData":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        }
+    }
+}
