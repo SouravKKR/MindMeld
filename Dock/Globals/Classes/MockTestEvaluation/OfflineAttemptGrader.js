@@ -23,21 +23,24 @@ class OfflineAttemptGrader
 
         for (const questionRow of buildResult.payload.questions)
         {
-            const awardedScore = OfflineQuestionGrader.scoreOptionBased(
+            const rawScore = OfflineQuestionGrader.scoreOptionBased(
                 questionRow.typeKey,
                 questionRow.userAnswer,
                 questionRow.expectedAnswer,
                 questionRow.markingRule
             );
+            const questionMax = Number.isFinite(questionRow.questionMaxMarks) ? questionRow.questionMaxMarks : 0;
+            const awardedScore = rawScore > 0 && questionMax > 0 ? Math.min(rawScore, questionMax) : rawScore;
 
             totalScore += awardedScore;
-            totalMaxScore += Number.isFinite(questionRow.questionMaxMarks) ? questionRow.questionMaxMarks : 0;
+            totalMaxScore += questionMax;
 
             gradedQuestions.push({
                 questionId: questionRow.questionId,
                 index: questionRow.index,
                 score: awardedScore,
                 remarks: "",
+                questionMaxMarks: questionMax,
                 gradingSource: "offline"
             });
         }

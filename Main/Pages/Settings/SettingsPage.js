@@ -9,6 +9,7 @@ import SettingFlags from '../../Globals/Constants/SettingFlags.js';
 import ErrorCodes from '../../Globals/Constants/ErrorCodes.js';
 import DialogBox from '../../CommonComponents/DialogBox.js';
 import SyncManager from '../../Globals/Classes/SyncManager.js';
+import Persistence from '../../Globals/Classes/Persistence.js';
 import LlmTierSelect from '../../CommonComponents/LlmTierSelect.js';
 import LanguageSelect from '../../CommonComponents/LanguageSelect.js';
 import AppearanceSettingsPanel from './Components/AppearanceSettingsPanel.js';
@@ -185,6 +186,13 @@ class SettingsPage extends HTMLElement
                         </div>
                         <button class="settings-clear-server-data-button" type="button">Clear All Server Data</button>
                     </div>
+                    <div class="settings-danger-zone-row">
+                        <div class="settings-danger-zone-description">
+                            <strong>Delete account</strong>
+                            <span>Permanently deletes your MindMeld account and every record tied to it — decks, cards, study materials, mock tests and sync history — and signs you out of every device. <strong>You will lose everything, including all paid content: purchased decks, their licenses and your access are revoked with no refund and cannot be recovered.</strong> This is irreversible and cannot be undone.</span>
+                        </div>
+                        <button class="settings-delete-account-button" type="button">Delete Account</button>
+                    </div>
                 </div>
             `
             : '';
@@ -209,6 +217,12 @@ class SettingsPage extends HTMLElement
         if(clearServerDataButton)
         {
             clearServerDataButton.addEventListener('click', () => this.#handleClearServerDataClick());
+        }
+
+        const deleteAccountButton = this.querySelector('.settings-delete-account-button');
+        if(deleteAccountButton)
+        {
+            deleteAccountButton.addEventListener('click', () => this.#handleDeleteAccountClick());
         }
 
         const refreshButton = this.querySelector('.settings-refresh-button');
@@ -596,6 +610,78 @@ class SettingsPage extends HTMLElement
             console.error("[SettingsPage] Clear server data request failed:", networkError);
             await DialogBox.alert("Failed", "Could not reach the server. No data may have been cleared. Please try again later.");
         }
+    }
+
+    async #handleDeleteAccountClick()
+    {
+        const confirmed = await DialogBox.confirm
+        (
+            "Permanently delete your account?",
+            "WARNING: You will lose EVERYTHING. This deletes your MindMeld account and every record tied to it — decks, cards, study materials, mock tests and sync history — from MindMeld's servers, and signs you out of every device.<br><br>This INCLUDES all paid content: any decks you have purchased, their licenses and your access to them will be permanently revoked. You will NOT be refunded and you will NOT be able to recover or re-download purchased content. This is irreversible and cannot be undone."
+        );
+
+        if(!confirmed)
+        {
+            return;
+        }
+
+        // Typed confirmation — the user must spell out the exact phrase before
+        // the irreversible delete fires. A plain OK/Cancel is too easy to
+        // dismiss by reflex for an action this destructive.
+        const typedConfirmation = await DialogBox.prompt
+        (
+            "Type DELETE MY ACCOUNT to confirm",
+            "Enter the phrase DELETE MY ACCOUNT (uppercase) to permanently delete your account."
+        );
+
+        if(typedConfirmation !== "DELETE MY ACCOUNT")
+        {
+            await DialogBox.alert("Cancelled", "Confirmation text did not match. Your account was not deleted.");
+            return;
+        }
+
+        try
+        {
+            const deleteResponse = await fetch("/Auth/DeleteAccount", { method: "POST", credentials: "same-origin" });
+
+            if(!deleteResponse.ok)
+            {
+                await DialogBox.alert("Failed", `Server returned ${deleteResponse.status}. Your account may not have been deleted. Please try again later.`);
+                return;
+            }
+        }
+        catch(networkError)
+        {
+            console.error("[SettingsPage] Delete account request failed:", networkError);
+            await DialogBox.alert("Failed", "Could not reach the server. Your account was not deleted. Please try again later.");
+            return;
+        }
+
+        // The account and its sessions are gone server-side and the sessionId
+        // cookie has been cleared. Wipe this device's local copy too so no
+        // orphaned decks/progress linger, then hard-reload — the next boot
+        // lands on the sign-in screen because the cookie is dead.
+        try
+        {
+            await Persistence.reset();
+        }
+        catch(resetError)
+        {
+            console.error("[SettingsPage] Local data wipe after account deletion failed:", resetError);
+        }
+
+        try
+        {
+            sessionStorage.clear();
+        }
+        catch(storageError)
+        {
+            console.error("[SettingsPage] sessionStorage clear after account deletion failed:", storageError);
+        }
+
+        await DialogBox.alert("Account deleted", "Your account and all associated data have been permanently deleted. You will now be signed out.");
+
+        window.location.reload();
     }
 
     connectedCallback()

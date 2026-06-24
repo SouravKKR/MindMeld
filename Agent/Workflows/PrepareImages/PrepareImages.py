@@ -9,9 +9,11 @@ from Globals.Classes.Automation.AutomationCaller import AutomationCaller
 from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Automation.AutomationRequest import AutomationRequest
 from Globals.Classes.Automation.Pools.ModelPool import ModelPool
+from Globals.Classes.Automation.Pools.PromptPool import PromptPool
 from Globals.Classes.Database.DatabaseConnector import DatabaseConnector
 from Globals.Classes.Decorators.ExtractableInformationSource import ExtractableInformationSource
 from Globals.Classes.Generic.Persistence import Persistence
+from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Constants.DatabaseConstants import DatabaseConstants
 from Globals.Constants.PersistenceConstants import PersistenceConstants
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
@@ -53,17 +55,29 @@ _DOCUMENT_SOURCE_TYPES = (
 
 class PrepareImages(Workflow):
 
+    # Checkpoint-resume completion marker (coarse). PrepareImages has several
+    # "nothing to do" exit paths and no single output file, so completion is
+    # marked explicitly. On resume, its presence skips re-extracting figures and
+    # re-running Tier-3 verification; the figure-assignment sidecar it already
+    # wrote stays in GCS for EnhanceImages to consume.
+    _PREPARE_IMAGES_COMPLETE_MARKER_NAME = "_prepare_images_complete.json"
+
     _EMBED_MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
     _SENTENCE_EMBED_BATCH_SIZE = 32
-    # Tuned to a middle ground. 0.70 (original) was too strict — academic
-    # illustrations whose generated phrasing differed from the figure's
-    # caption + vision description fell off entirely. 0.45 (the recall
-    # patch) was too loose and let in topically-adjacent but irrelevant
-    # junk. 0.58 catches genuine same-topic matches without inviting
-    # ambient logos, decorative borders, or generic stock visuals. Tier 3
-    # LLM verification (see _verify_pairs_with_vision) still has final say.
-    _STUDY_MATERIAL_SIMILARITY_THRESHOLD = 0.58
+    # Card relevance gate. Study materials from the uploaded document are placed
+    # purely by source page (no threshold), but a figure only joins a card when
+    # the question is genuinely relevant, so cards keep this similarity floor
+    # before Tier 3 vision verification. 0.70 was too strict (academic
+    # illustrations whose generated phrasing differed from the figure's caption +
+    # description fell off); 0.45 too loose (topically-adjacent junk got in);
+    # 0.58 is the tuned middle.
     _CARD_SIMILARITY_THRESHOLD = 0.58
+    # Relevance gate for page-less figures (web-sourced, or document figures with
+    # no usable page provenance) when placing into study materials. Document
+    # figures that DO carry a page are placed by page with no threshold; this
+    # floor only stops loosely-related supplementary web images from flooding the
+    # lesson when there is no page to anchor them.
+    _PAGELESS_STUDY_MATERIAL_SIMILARITY_THRESHOLD = 0.58
     _MAX_FIGURES_PER_CARD = 1
     _TOP_CANDIDATES_PER_FIGURE = 3
 
@@ -269,6 +283,7 @@ class PrepareImages(Workflow):
                 phash = figure["perceptualImageHash"]
                 if phash in cached_hashes:
                     figure["textEmbedding"] = cached_hashes[phash]["textEmbedding"]
+                    figure["informationSourceHash"] = source_hash
                     cached_figures.append(figure)
                 else:
                     uncached_figures.append(figure)
@@ -297,22 +312,11 @@ class PrepareImages(Workflow):
             inputs = [
                 AutomationContent(
                     AutomationContentTypes.SYSTEM,
-                    "You are an expert educational content validator evaluating images extracted from textbooks and lecture slide decks. You will receive multiple images. Evaluate each one."
+                    PromptPool.FIGURE_VALIDATION_SYSTEM,
                 ),
                 AutomationContent(
                     AutomationContentTypes.TEXT,
-                    (
-                        f"Look at these {batch_size} images. For each one, decide whether it should appear in a study deck. "
-                        f"Include the image if it contains technical detail, illustrates something that could be discussed "
-                        f"in the surrounding text, or looks like the kind of figure that could be asked about in an exam. "
-                        f"Exclude headers, footers, page numbers, watermarks, logos, decorative borders, and any other "
-                        f"ambient junk. "
-                        f"Reply strictly with a JSON array containing exactly {batch_size} objects. "
-                        f"Each object must have imageCategory (string), isEducationalContent (boolean), and "
-                        f"visionModelGeneratedDescription (string). "
-                        f"If false, leave the description empty. "
-                        f"If true, write a dense 2-sentence description of the visual concept."
-                    ),
+                    PromptPool.FIGURE_VALIDATION_USER.format(batch_size=batch_size),
                 ),
             ]
             for figure in batch:
@@ -387,6 +391,7 @@ class PrepareImages(Workflow):
                     )
 
                 figure["textEmbedding"] = text_embedding
+                figure["informationSourceHash"] = source_hash
                 validated_new_figures.append(figure)
 
         print(
@@ -718,12 +723,48 @@ class PrepareImages(Workflow):
         # the record).
         return self.__compute_figure_scratch_path(figure["perceptualImageHash"])
 
+    async def __update_progress(self, completion: float):
+        # PrepareImages is a long, mostly-local stage (PDF figure extraction,
+        # embedding, vision validation, injection). Without these milestones the
+        # progress node sat at 0% for the whole run and read as a hang. Each
+        # phase boundary nudges the bar so the user can see it advancing.
+        current_task = await TaskManager.get_current_task()
+        if current_task is None:
+            return
+        current_task.set_completion(completion)
+        await TaskManager.set_task(current_task)
+
+    def __completion_marker_path(self) -> str:
+        return join_path(
+            "/",
+            PersistenceConstants.TASKS_DIRECTORY,
+            self._generation_task_id,
+            PrepareImages._PREPARE_IMAGES_COMPLETE_MARKER_NAME,
+        )
+
+    async def __finish(self):
+        # Mark the stage complete (so a resume skips it) and flip progress to
+        # 100%. Called at every normal exit so the marker exists regardless of
+        # which "nothing to do" branch ended the run.
+        await Persistence.write(self.__completion_marker_path(), json.dumps({"complete": True}))
+        await self.__update_progress(1.0)
+
     async def run(self, args={}):
         # PrepareImages always reaches fitz via ImageExtractor — pay the
         # MuPDF silence cost once at the top so log noise stays out of
         # the worker pipe.
         from Globals.Classes.Generic.MuPdfBootstrap import MuPdfBootstrap
         MuPdfBootstrap.silence_parser_warnings()
+
+        # Checkpoint-resume: skip the whole stage if it already completed in a
+        # prior run (the figure-assignment sidecar it wrote is still in GCS for
+        # EnhanceImages to consume).
+        if await Persistence.exists(self.__completion_marker_path()):
+            print("[PrepareImages] Already complete — reusing prior figure work (resume); skipping stage.")
+            await self.__update_progress(1.0)
+            return
+
+        await self.__update_progress(0.02)
 
         # ── 1. Extract figures from every image source PDF ─────────────────────
         figures_by_source: list[tuple[str, list[dict]]] = []
@@ -734,6 +775,11 @@ class PrepareImages(Workflow):
         else:
             image_extractor = None
             print("[PrepareImages] No PDF image sources provided — looking for web-sourced images instead.")
+
+        # Figure extraction from large PDFs is the slowest opening phase, so
+        # spread its progress across the source list (0.05 → 0.35).
+        image_source_count = len(self._image_sources or [])
+        processed_image_source_count = 0
 
         for extractable_source in (self._image_sources or []):
             information_source = extractable_source.get_information_source()
@@ -772,11 +818,16 @@ class PrepareImages(Workflow):
             figures_by_source.append((information_source.get_hash(), extracted_figures))
             print(f"[PrepareImages] Extracted {len(extracted_figures)} figure(s) from '{information_source.get_name()}' (pages: {len(allowed_pages)}).")
 
+            processed_image_source_count += 1
+            if image_source_count > 0:
+                await self.__update_progress(0.05 + 0.30 * (processed_image_source_count / image_source_count))
+
         # ── 1b. Load web-sourced images from per-task cache (no MongoDB writes) ─
         web_figures = await self._load_web_figures()
 
         if not figures_by_source and not web_figures:
             print("[PrepareImages] No figures extracted from PDFs or web cache — skipping injection.")
+            await self.__finish()
             return
 
         # ── 2. Load generated study material and flashcard JSON files ───────────
@@ -805,15 +856,24 @@ class PrepareImages(Workflow):
 
         if not study_material_files and not flashcard_files:
             print("[PrepareImages] No generated content files found — skipping injection.")
+            await self.__finish()
             return
+
+        await self.__update_progress(0.40)
 
         # ── 3. Load embedding model ─────────────────────────────────────────────
         print("[PrepareImages] Loading sentence embedding model...")
         embedding_model = SentenceTransformer(PrepareImages._EMBED_MODEL_NAME)
 
+        await self.__update_progress(0.45)
+
         # ── 4. Phase 3: Vision validation with DB cache ─────────────────────────
         print("[PrepareImages] Running vision validation...")
         all_validated_figures: list[dict] = []
+
+        # Vision validation calls the LLM per source — spread it 0.48 → 0.65.
+        vision_source_count = len(figures_by_source) + (1 if web_figures else 0)
+        processed_vision_source_count = 0
 
         for source_hash, extracted_figures in figures_by_source:
             validated = await self._validate_figures_with_vision(
@@ -821,17 +881,27 @@ class PrepareImages(Workflow):
             )
             all_validated_figures.extend(validated)
 
+            processed_vision_source_count += 1
+            if vision_source_count > 0:
+                await self.__update_progress(0.48 + 0.17 * (processed_vision_source_count / vision_source_count))
+
         if web_figures:
             validated_web = await self._validate_figures_with_vision(
                 web_figures, _WEB_SOURCE_HASH_MARKER, embedding_model, persist_to_database=False
             )
             all_validated_figures.extend(validated_web)
 
+            processed_vision_source_count += 1
+            if vision_source_count > 0:
+                await self.__update_progress(0.48 + 0.17 * (processed_vision_source_count / vision_source_count))
+
         if not all_validated_figures:
             print("[PrepareImages] No educational figures found — skipping injection.")
+            await self.__finish()
             return
 
         print(f"[PrepareImages] {len(all_validated_figures)} total educational figure(s) after validation.")
+        await self.__update_progress(0.68)
 
         # ── 5. Tier 1: Reference-based assignments ──────────────────────────────
         print("[PrepareImages] Building reference-based assignments (Tier 1)...")
@@ -841,7 +911,7 @@ class PrepareImages(Workflow):
         reference_match_count = len(reference_sm_assignments) + len(reference_card_assignments)
         print(f"[PrepareImages] {reference_match_count} figure(s) matched via explicit reference.")
 
-        # ── 6. Extract sentence records for Tier 2 semantic matching ───────────
+        # ── 6. Extract sentence records for block selection + card matching ────
         study_material_sentence_records = []
 
         for study_material_index, study_material_file in enumerate(study_material_files):
@@ -900,55 +970,135 @@ class PrepareImages(Workflow):
             for record_index, record in enumerate(card_sentence_records):
                 record["embedding"] = all_embeddings[card_offset + record_index].tolist()
 
-        # ── 8. Tier 2: Semantic candidate selection (0.70 threshold) ───────────
-        # For each figure, find top N candidate SM blocks and card fields.
-        # Candidates are stored as proposal dicts for Tier 3 batch verification.
-        sm_proposals: list[dict] = []
-        card_proposals: list[dict] = []
+        await self.__update_progress(0.74)
+
+        # ── 8. Page-based study-material placement + page-scoped card matching ──
+        #
+        # Study materials: every approved figure is placed on the study material
+        # built from the figure's own source page — the page is the gate, with no
+        # relevance check. Semantic similarity only decides which page-material
+        # (when a page maps to several) and which block within it the figure sits
+        # next to. Figures whose page produced no study material fall back to the
+        # best semantic match so they still land somewhere.
+        #
+        # Cards keep the stricter relevance gate (Tier 2 similarity + Tier 3
+        # vision verification) but only consider cards generated from the
+        # figure's own page, so an image attaches to a card only when that page's
+        # question is genuinely relevant.
+
+        # Build (source_hash, page_number) -> entity index maps from the page
+        # provenance carried on each staged study-material / flashcard file.
+        study_material_indices_by_page: dict[tuple, list] = {}
+        for study_material_index, study_material_file in enumerate(study_material_files):
+            for source_page in study_material_file.get("sourcePages", []) or []:
+                page_key = (source_page.get("sourceHash"), source_page.get("page"))
+                study_material_indices_by_page.setdefault(page_key, []).append(study_material_index)
+
+        flashcard_file_indices_by_page: dict[tuple, set] = {}
+        for flashcard_file_index, flashcard_file in enumerate(flashcard_files):
+            for source_page in flashcard_file.get("sourcePages", []) or []:
+                page_key = (source_page.get("sourceHash"), source_page.get("page"))
+                flashcard_file_indices_by_page.setdefault(page_key, set()).add(flashcard_file_index)
+
+        # ── 8a. Study materials — page selects the material, semantic the block ─
+        page_based_sm_assignments: dict = {}
 
         for figure_index, figure in enumerate(all_validated_figures):
             if figure_index in reference_sm_assignments:
                 continue
 
             figure_embedding = figure["textEmbedding"]
-            best_score_per_study_material: dict[int, dict] = {}
 
+            # Best-scoring block within every study material — used to rank the
+            # figure's page-matched materials and to pick the placement block.
+            best_block_per_study_material: dict[int, dict] = {}
             for sentence_record in study_material_sentence_records:
                 sm_index = sentence_record["study_material_index"]
                 score = cosine_similarity(figure_embedding, sentence_record["embedding"])
-                existing = best_score_per_study_material.get(sm_index)
+                existing = best_block_per_study_material.get(sm_index)
                 if existing is None or score > existing["score"]:
-                    best_score_per_study_material[sm_index] = {
+                    best_block_per_study_material[sm_index] = {
                         "score": score,
                         "block_index": sentence_record["block_index"],
-                        "sentence_text": sentence_record["sentence_text"],
                     }
 
-            qualifying_sm = [
-                (sm_index, data)
-                for sm_index, data in best_score_per_study_material.items()
-                if data["score"] >= PrepareImages._STUDY_MATERIAL_SIMILARITY_THRESHOLD
-            ]
-            qualifying_sm.sort(key=lambda x: x[1]["score"], reverse=True)
+            has_real_page = (
+                figure.get("pageNumber") is not None
+                and figure.get("informationSourceHash") not in (None, _WEB_SOURCE_HASH_MARKER)
+            )
+            figure_page_key = (figure.get("informationSourceHash"), figure.get("pageNumber"))
+            candidate_sm_indices = study_material_indices_by_page.get(figure_page_key, [])
 
-            for sm_index, data in qualifying_sm[:PrepareImages._TOP_CANDIDATES_PER_FIGURE]:
-                sm_proposals.append({
-                    "figure_index": figure_index,
-                    "study_material_index": sm_index,
-                    "block_index": data["block_index"],
-                    "score": data["score"],
-                    "candidateText": data["sentence_text"],
-                    "imageBytes": figure["imageBytes"],
-                })
+            chosen_sm_index = None
+            chosen_block_index = 0
+            chosen_score = 0.0
+
+            best_overall = None
+            if best_block_per_study_material:
+                best_overall = max(
+                    best_block_per_study_material.items(),
+                    key=lambda study_material_entry: study_material_entry[1]["score"],
+                )
+
+            if candidate_sm_indices:
+                # Page is the gate; semantic similarity only ranks the page's
+                # materials and finds the block to sit next to.
+                for sm_index in candidate_sm_indices:
+                    block_data = best_block_per_study_material.get(sm_index)
+                    candidate_score = block_data["score"] if block_data else 0.0
+                    if chosen_sm_index is None or candidate_score > chosen_score:
+                        chosen_sm_index = sm_index
+                        chosen_score = candidate_score
+                        chosen_block_index = block_data["block_index"] if block_data else 0
+            elif has_real_page and best_overall is not None:
+                # Document figure whose page produced no study material (title
+                # slide, garbage-filtered page text): semantic fallback with no
+                # threshold so the approved figure still lands somewhere.
+                chosen_sm_index, fallback_data = best_overall
+                chosen_score = fallback_data["score"]
+                chosen_block_index = fallback_data["block_index"]
+            elif best_overall is not None and best_overall[1]["score"] >= PrepareImages._PAGELESS_STUDY_MATERIAL_SIMILARITY_THRESHOLD:
+                # Page-less figure (web-sourced): no page to anchor it, so keep a
+                # relevance floor to avoid flooding the lesson with loosely
+                # related supplementary images.
+                chosen_sm_index, fallback_data = best_overall
+                chosen_score = fallback_data["score"]
+                chosen_block_index = fallback_data["block_index"]
+
+            if chosen_sm_index is not None:
+                page_based_sm_assignments[figure_index] = {
+                    "study_material_index": chosen_sm_index,
+                    "block_index": chosen_block_index,
+                    "score": chosen_score,
+                }
+
+        # ── 8b. Cards — page-scoped Tier 2 candidate selection ─────────────────
+        card_proposals: list[dict] = []
 
         for figure_index, figure in enumerate(all_validated_figures):
             if figure_index in reference_card_assignments:
                 continue
 
             figure_embedding = figure["textEmbedding"]
-            best_score_per_card: dict[tuple, dict] = {}
 
+            # Restrict to the figure's own page when it has a real page; web /
+            # page-less figures stay eligible for any card (the gates below still
+            # decide relevance).
+            has_real_page = (
+                figure.get("pageNumber") is not None
+                and figure.get("informationSourceHash") not in (None, _WEB_SOURCE_HASH_MARKER)
+            )
+            figure_page_key = (figure.get("informationSourceHash"), figure.get("pageNumber"))
+            allowed_flashcard_file_indices = (
+                flashcard_file_indices_by_page.get(figure_page_key, set())
+                if has_real_page else None
+            )
+
+            best_score_per_card: dict[tuple, dict] = {}
             for sentence_record in card_sentence_records:
+                if allowed_flashcard_file_indices is not None and \
+                        sentence_record["flashcard_file_index"] not in allowed_flashcard_file_indices:
+                    continue
                 card_key = (
                     sentence_record["flashcard_file_index"],
                     sentence_record["card_index"],
@@ -968,7 +1118,7 @@ class PrepareImages(Workflow):
                 for card_key, data in best_score_per_card.items()
                 if data["score"] >= PrepareImages._CARD_SIMILARITY_THRESHOLD
             ]
-            qualifying_cards.sort(key=lambda x: x[1]["score"], reverse=True)
+            qualifying_cards.sort(key=lambda card_entry: card_entry[1]["score"], reverse=True)
 
             for card_key, data in qualifying_cards[:PrepareImages._TOP_CANDIDATES_PER_FIGURE]:
                 card_proposals.append({
@@ -983,26 +1133,13 @@ class PrepareImages(Workflow):
                 })
 
         print(
-            f"[PrepareImages] Tier 2 produced {len(sm_proposals)} SM proposal(s) "
-            f"and {len(card_proposals)} card proposal(s). Running Tier 3 verification..."
+            f"[PrepareImages] Page-based placement produced {len(page_based_sm_assignments)} "
+            f"study-material assignment(s); {len(card_proposals)} card proposal(s) for Tier 3 verification."
         )
+        await self.__update_progress(0.80)
 
-        # ── 9. Tier 3: LLM batch verification ──────────────────────────────────
-        verified_sm_assignments: dict = {}
+        # ── 9. Tier 3: LLM verification — card proposals only ──────────────────
         verified_card_assignments: dict = {}
-
-        if sm_proposals:
-            sm_verdicts = await self._verify_pairs_with_vision(sm_proposals)
-            for proposal, verdict in zip(sm_proposals, sm_verdicts):
-                if not verdict:
-                    continue
-                fig_idx = proposal["figure_index"]
-                if fig_idx not in verified_sm_assignments:
-                    verified_sm_assignments[fig_idx] = {
-                        "study_material_index": proposal["study_material_index"],
-                        "block_index": proposal["block_index"],
-                        "score": proposal["score"],
-                    }
 
         if card_proposals:
             card_verdicts = await self._verify_pairs_with_vision(card_proposals)
@@ -1018,10 +1155,17 @@ class PrepareImages(Workflow):
                     "field_name": proposal["field_name"],
                     "block_index": proposal["block_index"],
                 })
+                # Record the strongest card-match score on the figure so the
+                # inline / sidecar injectors can rank competing figures for one
+                # card field (previously never set — selection was arbitrary).
+                figure = all_validated_figures[fig_idx]
+                figure["_score"] = max(figure.get("_score", 0.0), proposal["score"])
 
-        # ── 10. Merge reference assignments over semantic/verified ones ─────────
+        await self.__update_progress(0.92)
+
+        # ── 10. Merge reference (Tier 1) assignments over the above ────────────
         figure_to_study_material_assignment = {
-            **verified_sm_assignments,
+            **page_based_sm_assignments,
             **reference_sm_assignments,
         }
         figure_to_card_assignments = {
@@ -1057,6 +1201,8 @@ class PrepareImages(Workflow):
         # • Inline mode (enhance disabled): the original behaviour —
         #   build the figure HTML right here with the source bytes
         #   embedded, splice into each affected block, write JSON back.
+        await self.__update_progress(0.95)
+
         if self._enhance_images_enabled:
             await self.__write_sidecar_and_stage_figure_bytes(
                 all_validated_figures,
@@ -1098,11 +1244,12 @@ class PrepareImages(Workflow):
             extra_count = max(0, len(unassigned_figures) - 20)
             extra_suffix = f" (+{extra_count} more)" if extra_count > 0 else ""
             print(
-                f"[PrepareImages] {len(unassigned_figures)} validated figure(s) had no Tier-1/2/3 "
-                f"match and were NOT injected{extra_suffix}:\n"
+                f"[PrepareImages] {len(unassigned_figures)} validated figure(s) were placed in "
+                f"neither a study material nor a card{extra_suffix}:\n"
                 + "\n".join(unassigned_summary_lines)
             )
 
         print(
             f"[PrepareImages] Done. {len(figure_number_map)} unique figure(s) assigned."
         )
+        await self.__finish()

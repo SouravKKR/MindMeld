@@ -33,11 +33,13 @@ class AskAiResultView extends HTMLElement
 
     #titleElement = null;
     #bodyElement = null;
+    #imagesElement = null;
     #citationsElement = null;
     #statusElement = null;
     #actionsElement = null;
     #accumulatedMarkup = "";
     #bCitationsRendered = false;
+    #bImagesRendered = false;
     #bDoneReceived = false;
 
     connectedCallback()
@@ -48,6 +50,7 @@ class AskAiResultView extends HTMLElement
             <div class="ask-ai-streaming-body generated-content ask-ai-pending" data-role="streaming-body">
                 <p class="ask-ai-pending-indicator">Thinking…</p>
             </div>
+            <div class="ask-ai-images" data-role="images" hidden></div>
             <div class="ask-ai-citations" data-role="citations" hidden></div>
             <div class="ask-ai-status" data-role="status" hidden></div>
             <div class="ask-ai-actions" data-role="actions" hidden>
@@ -62,6 +65,7 @@ class AskAiResultView extends HTMLElement
 
         this.#titleElement     = this.querySelector('[data-role="title"]');
         this.#bodyElement      = this.querySelector('[data-role="streaming-body"]');
+        this.#imagesElement    = this.querySelector('[data-role="images"]');
         this.#citationsElement = this.querySelector('[data-role="citations"]');
         this.#statusElement    = this.querySelector('[data-role="status"]');
         this.#actionsElement   = this.querySelector('[data-role="actions"]');
@@ -90,6 +94,67 @@ class AskAiResultView extends HTMLElement
         }
         this.#accumulatedMarkup += chunkValue;
         AskAiStreamRenderer.render(this.#accumulatedMarkup, this.#bodyElement);
+    }
+
+    /**
+     * Render the web-image thumbnail strip. Items come from the worker's
+     * DDGS image search ({imageUrl, thumbnailUrl, sourceUrl, title}) on the
+     * Pro / Pro Plus path. Idempotent + hidden when empty, mirroring
+     * renderCitations. Each thumbnail links out to its source page and
+     * drops itself if the image fails to load (404 / hotlink-blocked), so
+     * the learner never sees a broken-image icon.
+     */
+    renderImages(imageItems)
+    {
+        if (this.#bImagesRendered || !this.#imagesElement)
+        {
+            return;
+        }
+        const items = (Array.isArray(imageItems) ? imageItems : [])
+            .filter((imageItem) => imageItem && /^https?:\/\//i.test(imageItem.imageUrl || ""));
+        if (items.length === 0)
+        {
+            return;
+        }
+        this.#bImagesRendered = true;
+
+        const titleElement = document.createElement("h3");
+        titleElement.className = "ask-ai-images-title";
+        titleElement.textContent = "Images";
+
+        const stripElement = document.createElement("div");
+        stripElement.className = "ask-ai-images-strip";
+
+        for (const imageItem of items)
+        {
+            const linkElement = document.createElement("a");
+            linkElement.className = "ask-ai-image-link";
+            linkElement.href = imageItem.sourceUrl || imageItem.imageUrl;
+            linkElement.target = "_blank";
+            linkElement.rel = "noopener noreferrer";
+
+            const imageElement = document.createElement("img");
+            imageElement.className = "ask-ai-image-thumb";
+            imageElement.src = imageItem.thumbnailUrl || imageItem.imageUrl;
+            imageElement.alt = imageItem.title || "Related image";
+            imageElement.loading = "lazy";
+            // Model-supplied / scraped URLs may 404 or be hotlink-blocked;
+            // drop the whole thumbnail (its link wrapper) on load failure.
+            imageElement.addEventListener("error", () =>
+            {
+                linkElement.remove();
+                if (stripElement.querySelectorAll("img").length === 0)
+                {
+                    this.#imagesElement.hidden = true;
+                }
+            });
+
+            linkElement.appendChild(imageElement);
+            stripElement.appendChild(linkElement);
+        }
+
+        this.#imagesElement.hidden = false;
+        this.#imagesElement.replaceChildren(titleElement, stripElement);
     }
 
     renderCitations(citationSources)

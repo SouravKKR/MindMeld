@@ -4,7 +4,12 @@ import { taskStatus } from "../../Globals/Enumerations/TaskStatus.js";
 import { taskTypes } from "../../Globals/Enumerations/TaskTypes.js";
 import { enumerationToTitleCase } from "../../Globals/UtilityFunctions/EnumerationToTitleCase.js";
 import OutOfCreditsResumeFlow from "../../Globals/Classes/Credits/OutOfCreditsResumeFlow.js";
+import PartialGenerationRetryFlow from "../../Globals/Classes/Task/PartialGenerationRetryFlow.js";
 import { formatCredits } from "../../Globals/UtilityFunctions/FormatCredits.js";
+import GenerationNotifier from "../../Globals/Classes/Notifications/GenerationNotifier.js";
+import TutorialEngine from "../../Globals/Classes/TutorialEngine.js";
+import TutorialDemoResponses from "../../Globals/Constants/TutorialDemoResponses.js";
+import TutorialSampleDeckBuilder from "../../Globals/Classes/Tutorials/TutorialSampleDeckBuilder.js";
 
 const POLL_INTERVAL_MILLIS = 2000;
 const DEFAULT_PROGRESS_ENDPOINT = "/Generate/Progress";
@@ -36,6 +41,7 @@ class ProgressPage extends HTMLElement
     #continueBehavior = "home";
     #pollIntervalId = null;
     #bTerminated = false;
+    #demoTimeoutId = null;
 
     initialize(taskId, options = {})
     {
@@ -91,6 +97,7 @@ class ProgressPage extends HTMLElement
             }
 
             this.#getProgressComponent().update(payload);
+            this.#updateLiveStatus(payload);
 
             // The !bTerminated guard prevents a second, overlapping poll from
             // re-firing onTerminated (and a duplicate out-of-credits popup) in
@@ -113,6 +120,44 @@ class ProgressPage extends HTMLElement
         this.#pollIntervalId = setInterval(() => this.#poll(), POLL_INTERVAL_MILLIS);
     }
 
+    /**
+     * Tutorial demo: instead of polling /Generate/Progress, drive the
+     * progress component through a canned sequence of task-tree snapshots
+     * that climb to completion, then show the success banner and drop a
+     * flagged local "generated" deck onto the home page. No fetch, no
+     * credits, no real task.
+     */
+    #playTutorialDemo()
+    {
+        const progressComponent = this.#getProgressComponent();
+        const snapshots = TutorialDemoResponses.getGenerationProgressSnapshots();
+        let snapshotIndex = 0;
+
+        const advance = () =>
+        {
+            if (!this.isConnected || this.#bTerminated)
+            {
+                return;
+            }
+
+            const snapshot = snapshots[snapshotIndex];
+            progressComponent.update(snapshot);
+            snapshotIndex += 1;
+
+            if (snapshotIndex < snapshots.length)
+            {
+                this.#demoTimeoutId = setTimeout(advance, TutorialDemoResponses.GENERATION_STEP_DELAY_MILLISECONDS);
+                return;
+            }
+
+            this.#onTerminated(snapshot);
+            TutorialSampleDeckBuilder.createGeneratedSampleForUser().catch((buildError) =>
+                console.warn("[ProgressPage] Tutorial generated-deck build failed:", buildError));
+        };
+
+        advance();
+    }
+
     #stopPolling()
     {
         if (this.#pollIntervalId !== null)
@@ -125,6 +170,16 @@ class ProgressPage extends HTMLElement
     #onTerminated(payload)
     {
         this.#bTerminated = true;
+
+        // The live-only notices (provider-busy banner, TTL note) and the pause
+        // control are meaningless once the run is terminal — hide them so the
+        // terminal status banner stands alone.
+        const liveBanner = this.querySelector(".progress-page-live-banner");
+        if (liveBanner) liveBanner.style.display = "none";
+        const ttlNote = this.querySelector(".progress-page-ttl-note");
+        if (ttlNote) ttlNote.style.display = "none";
+        const pauseButton = this.querySelector(".progress-page-pause-button");
+        if (pauseButton) pauseButton.style.display = "none";
 
         // For an AI generation, append the per-task credit-spend breakdown so
         // the user can see where their credits went (regardless of outcome).
@@ -148,6 +203,24 @@ class ProgressPage extends HTMLElement
             return;
         }
 
+        // Partial completion: one output type failed but the others were kept.
+        // Offer "keep them and retry the rest" instead of a dead-end "Failed".
+        if (payload && payload.partialCompletion)
+        {
+            this.#renderPartialCompletion(payload.partialCompletion);
+            return;
+        }
+
+        // User-initiated pause: recoverable, not a failure. Point the user at
+        // the home-screen resume banner; the saved state lives for 7 days.
+        if (payload && payload.paused === true)
+        {
+            statusBanner.textContent = "Generation paused. Resume it within 7 days from the banner on your home screen — it picks up from where it left off.";
+            statusBanner.classList.add("progress-page-status-banner--warning");
+            statusBanner.style.display = "block";
+            return;
+        }
+
         const bSuccess = payload && payload.status === taskStatus.COMPLETED;
 
         if (bSuccess)
@@ -162,6 +235,41 @@ class ProgressPage extends HTMLElement
         }
 
         statusBanner.style.display = "block";
+    }
+
+    /**
+     * Renders the partial-completion banner: a description of what was kept plus
+     * a "keep them and retry the rest" button that re-runs only the failed
+     * output types.
+     * @param {object} partialCompletion
+     */
+    #renderPartialCompletion(partialCompletion)
+    {
+        const statusBanner = this.querySelector(".progress-page-status-banner");
+
+        const description = PartialGenerationRetryFlow.describeKept(partialCompletion);
+
+        statusBanner.innerHTML =
+        `
+            <span class="progress-page-partial-text">${ProgressPage.#escape(description)}</span>
+            <button class="progress-page-partial-retry-button" type="button" style="margin-left: 10px; padding: 7px 14px; border-radius: 8px; border: none; cursor: pointer; font-weight: 600; font-size: 13px; background: var(--primary-background-gradient); color: var(--primary-text-color);">Keep &amp; retry the rest</button>
+        `;
+        statusBanner.classList.add("progress-page-status-banner--error");
+        statusBanner.style.display = "block";
+
+        const retryButton = statusBanner.querySelector(".progress-page-partial-retry-button");
+        if (retryButton)
+        {
+            retryButton.addEventListener("click", () =>
+            {
+                retryButton.disabled = true;
+                PartialGenerationRetryFlow.retry(partialCompletion).catch(retryError =>
+                {
+                    console.error("[ProgressPage] partial retry error:", retryError);
+                    retryButton.disabled = false;
+                });
+            });
+        }
     }
 
     #renderHistorical(payload)
@@ -181,17 +289,23 @@ class ProgressPage extends HTMLElement
         }
 
         const statusBanner = this.querySelector(".progress-page-status-banner");
-        if (payload.status === taskStatus.FAILED)
+        if (payload.partialCompletion)
+        {
+            // An archived partial run — still continuable from Activity.
+            this.#renderPartialCompletion(payload.partialCompletion);
+        }
+        else if (payload.status === taskStatus.FAILED)
         {
             statusBanner.textContent = "This task ended with a failure.";
             statusBanner.classList.add("progress-page-status-banner--error");
+            statusBanner.style.display = "block";
         }
         else
         {
             statusBanner.textContent = "This task has been completed.";
             statusBanner.classList.add("progress-page-status-banner--success");
+            statusBanner.style.display = "block";
         }
-        statusBanner.style.display = "block";
 
         const leftColumn = this.querySelector(".progress-page-left");
         if (leftColumn && !leftColumn.querySelector(".progress-page-historical"))
@@ -221,6 +335,13 @@ class ProgressPage extends HTMLElement
      */
     async #renderCreditSummary(mainTaskId)
     {
+        // The tutorial demo never spends credits and has no real task, so
+        // there is nothing to fetch — and fetching would contact the server.
+        if (TutorialEngine.isRunning())
+        {
+            return;
+        }
+
         if (!mainTaskId)
         {
             return;
@@ -375,6 +496,9 @@ class ProgressPage extends HTMLElement
         const additionalData = (payload.additionalData && typeof payload.additionalData === "object") ? payload.additionalData : {};
         for (const key of Object.keys(additionalData))
         {
+            // partialCompletion is surfaced as its own banner + retry button, not
+            // as a raw JSON metadata row.
+            if (key === "partialCompletion") continue;
             const rawValue = additionalData[key];
             if (rawValue === null || rawValue === undefined) continue;
             const displayValue = typeof rawValue === "object" ? JSON.stringify(rawValue) : String(rawValue);
@@ -459,6 +583,126 @@ class ProgressPage extends HTMLElement
                 PageNavigator.clearAndOpen("home-page");
             }
         });
+
+        const pauseButton = this.querySelector(".progress-page-pause-button");
+        if (pauseButton)
+        {
+            pauseButton.addEventListener("click", () => { this.#handlePause(); });
+        }
+    }
+
+    /**
+     * Updates the in-progress notices: the amber "AI provider is busy" banner
+     * (driven by the self-expiring providerSlowdown flag) and the "you can leave
+     * and resume" line (driven by the live Redis TTL). Both auto-hide when their
+     * underlying signal is absent, so a recovered provider clears the banner on
+     * the next poll with no extra bookkeeping.
+     * @param {object} payload
+     */
+    #updateLiveStatus(payload)
+    {
+        const liveBanner = this.querySelector(".progress-page-live-banner");
+        if (liveBanner)
+        {
+            if (payload && payload.providerSlowdown === true)
+            {
+                liveBanner.textContent = "⚠ The AI provider is busy right now — generation is slower than usual but has not stopped.";
+                liveBanner.style.display = "block";
+            }
+            else
+            {
+                liveBanner.style.display = "none";
+            }
+        }
+
+        const ttlNote = this.querySelector(".progress-page-ttl-note");
+        if (ttlNote)
+        {
+            const remainingText = ProgressPage.#formatRemainingCoarse(payload && payload.remainingTtlMillis);
+            if (remainingText)
+            {
+                ttlNote.textContent = `You can safely leave this page — your progress is saved for about ${remainingText}. Reopen it from Activity to keep watching.`;
+                ttlNote.style.display = "block";
+            }
+            else
+            {
+                ttlNote.style.display = "none";
+            }
+        }
+
+        // Reveal Pause only for a live, still-running generation (whether opened
+        // fresh after Generate or restored from Activity). Not for other task
+        // types, paused runs, or terminal/historical views. Once "Pausing…" has
+        // been clicked the button is disabled — leave its label alone then.
+        const pauseButton = this.querySelector(".progress-page-pause-button");
+        if (pauseButton && !pauseButton.disabled)
+        {
+            const bIsLiveGeneration = !!payload
+                && payload.historical !== true
+                && payload.paused !== true
+                && payload.type === taskTypes.PREPARE_FOR_GENERATION
+                && !this.#getProgressComponent().isTerminal();
+
+            pauseButton.style.display = bIsLiveGeneration ? "inline-block" : "none";
+        }
+    }
+
+    /**
+     * Asks the server to pause this generation. The pause takes effect at the
+     * next stage boundary (a running stage finishes first), so the button
+     * reports "Pausing…" and stays disabled — the poll loop reflects the actual
+     * paused state when the chain stops launching new tasks.
+     */
+    async #handlePause()
+    {
+        const pauseButton = this.querySelector(".progress-page-pause-button");
+        if (!pauseButton || pauseButton.disabled)
+        {
+            return;
+        }
+
+        pauseButton.disabled = true;
+        pauseButton.textContent = "Pausing…";
+
+        try
+        {
+            const response = await fetch("/Generate/Pause",
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ taskId: this.#taskId })
+            });
+
+            if (!response.ok)
+            {
+                console.warn(`[ProgressPage] Pause returned ${response.status}`);
+                pauseButton.disabled = false;
+                pauseButton.textContent = "Pause";
+                return;
+            }
+
+            pauseButton.textContent = "Pausing after current step…";
+        }
+        catch (pauseError)
+        {
+            console.error("[ProgressPage] Pause error:", pauseError);
+            pauseButton.disabled = false;
+            pauseButton.textContent = "Pause";
+        }
+    }
+
+    static #formatRemainingCoarse(rawMillis)
+    {
+        const millis = Number(rawMillis);
+        if (!Number.isFinite(millis) || millis <= 0) return "";
+        const totalMinutes = Math.floor(millis / 60000);
+        if (totalMinutes <= 0) return "less than a minute";
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        const parts = [];
+        if (hours > 0) parts.push(`${hours}h`);
+        if (minutes > 0) parts.push(`${minutes}m`);
+        return parts.join(" ");
     }
 
     connectedCallback()
@@ -473,8 +717,10 @@ class ProgressPage extends HTMLElement
 
                 <div class="progress-page-left">
                     <div class="progress-page-section-title">Generation Pipeline</div>
+                    <div class="progress-page-live-banner"></div>
                     <div class="progress-page-status-banner"></div>
                     <generation-progress-component></generation-progress-component>
+                    <div class="progress-page-ttl-note"></div>
                 </div>
 
                 <div class="progress-page-right">
@@ -488,14 +734,41 @@ class ProgressPage extends HTMLElement
             </div>
 
             <div class="progress-page-footer">
-                <button class="progress-page-continue-button">Continue Studying →</button>
+                <div class="progress-page-footer-actions">
+                    <button class="progress-page-pause-button" type="button" style="display: none;">Pause</button>
+                    <button class="progress-page-continue-button">Continue Studying →</button>
+                </div>
             </div>
         `;
 
         this.#handleEvents();
 
+        // Tutorial demo runs entirely client-side — no notifier tracking,
+        // no polling, no server.
+        if (TutorialEngine.isRunning())
+        {
+            this.#playTutorialDemo();
+            return;
+        }
+
         if (this.#taskId)
         {
+            // A live generation tracked in the background as well, so the
+            // completion notification still fires if the user navigates away
+            // or backgrounds the tab. Historical/Activity views (a different
+            // endpoint) are already terminal and must not be tracked.
+            if (this.#endpointUrl === DEFAULT_PROGRESS_ENDPOINT)
+            {
+                // Pass an empty label deliberately: when generation was started
+                // from AutomaticGenerationPage it already tracked this task with
+                // the real subject name, and track() keeps the first non-empty
+                // label — so an empty label here preserves the subject. When the
+                // ProgressPage is reached without a prior track (no existing
+                // entry), track() supplies its own "Your generation" default.
+                GenerationNotifier.track(this.#taskId, "");
+                GenerationNotifier.setForegroundTask(this.#taskId);
+            }
+
             this.#startPolling();
         }
     }
@@ -503,6 +776,15 @@ class ProgressPage extends HTMLElement
     disconnectedCallback()
     {
         this.#stopPolling();
+        if (this.#demoTimeoutId !== null)
+        {
+            clearTimeout(this.#demoTimeoutId);
+            this.#demoTimeoutId = null;
+        }
+        if (this.#taskId)
+        {
+            GenerationNotifier.clearForegroundTask(this.#taskId);
+        }
     }
 }
 

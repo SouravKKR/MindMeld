@@ -1,4 +1,5 @@
 import PaidDeckRegistry from "../PaidDeckRegistry.js";
+import PaidDeckStudyGate from "../PaidDeckStudyGate.js";
 import AuthenticationEvents from "../../Events/AuthenticationEvents.js";
 import SyncEvents from "../../Events/SyncEvents.js";
 
@@ -53,6 +54,15 @@ class PaidDeckLicenseSyncer
             PaidDeckLicenseSyncer.pullLicenses().catch((pullError) =>
             {
                 console.warn("[PaidDeckLicenseSyncer] License pull failed:", pullError);
+            });
+
+            // Re-decrypt any paid deck cards that arrived encrypted from this
+            // sync cycle while the session was already unlocked — prevents the
+            // locked placeholder from appearing after a background sync replaces
+            // Card objects mid-session.
+            PaidDeckStudyGate.redecryptUnlockedDecks().catch((redecryptError) =>
+            {
+                console.warn("[PaidDeckLicenseSyncer] Background re-decrypt failed:", redecryptError);
             });
         });
     }

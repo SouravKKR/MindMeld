@@ -123,8 +123,13 @@ class MockTestAttempt
                 continue;
             }
 
-            const awardedScore = MockTestAttempt.#scoreOptionBasedQuestion(typeKey, questionItem, markingRule);
+            const rawScore = MockTestAttempt.#scoreOptionBasedQuestion(typeKey, questionItem, markingRule);
+            const schemeMax = Number.isFinite(markingRule.correctMarks) ? markingRule.correctMarks : 0;
+            const staticMarks = Number.isFinite(questionItem.getMarks?.()) ? questionItem.getMarks() : 0;
+            const questionMaxMarks = staticMarks > 1 ? staticMarks : (schemeMax || staticMarks);
+            const awardedScore = rawScore > 0 ? Math.min(rawScore, questionMaxMarks) : rawScore;
             questionItem.setScore(awardedScore);
+            questionItem.setMarks(questionMaxMarks);
             questionItem.setRemarks("");
             totalAwarded += awardedScore;
         }
@@ -196,7 +201,7 @@ class MockTestAttempt
         if (anyCorrectSelected && Number.isFinite(markingRule.partialMarks) && markingRule.partialMarks !== 0)
         {
             const correctSelectedCount = [...userSelectedIndices].filter((selectedIndex) => expectedIndices.has(selectedIndex)).length;
-            return markingRule.partialMarks * correctSelectedCount;
+            return Math.min(markingRule.partialMarks * correctSelectedCount, markingRule.correctMarks);
         }
 
         return markingRule.wrongMarks;

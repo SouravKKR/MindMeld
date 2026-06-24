@@ -11,6 +11,7 @@ from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Generic.RedisSemaphore import RedisSemaphore
 from Globals.Classes.WebScraping.WebContentFetcher import WebContentFetcher
 from Globals.Classes.Credits.CreditMeter import CreditMeter
+from Globals.Classes.Automation.ProviderHealthSignal import ProviderHealthSignal
 from Globals.Constants.ApiConcurrencyLimits import ApiConcurrencyLimits
 
 import httpx
@@ -104,8 +105,6 @@ class GeminiProvider(AutomationProvider):
         user_parts = []
         links_to_fetch = []
         enable_search  = False
-        generate_image = False
-        image_aspect_ratio = None
         thinking_level = None
         response_as_text = False
         response_schema_override = None
@@ -124,10 +123,6 @@ class GeminiProvider(AutomationProvider):
 
             if metadata and metadata.get("enable_search", False):
                 enable_search = True
-            if metadata and metadata.get("generate_image", False):
-                generate_image = True
-            if metadata and metadata.get("image_aspect_ratio"):
-                image_aspect_ratio = metadata.get("image_aspect_ratio")
             if metadata and metadata.get("thinking_level"):
                 thinking_level = metadata.get("thinking_level")
             if metadata and metadata.get("response_as_text", False):
@@ -173,9 +168,6 @@ class GeminiProvider(AutomationProvider):
 
         if system_prompts:
             config_args["system_instruction"] = "\n".join(system_prompts)
-
-        if generate_image:
-            return await self.__fetch_image_generation(request, user_parts, config_args, thinking_level, image_aspect_ratio)
 
         config_args["response_mime_type"] = "text/plain" if response_as_text else "application/json"
 
@@ -368,6 +360,7 @@ class GeminiProvider(AutomationProvider):
                     f"(attempt {attempt_index + 1}/{GeminiProvider.MAX_TRANSIENT_RETRIES}). "
                     f"Sleeping {sleep_seconds:.1f}s then retrying."
                 )
+                await ProviderHealthSignal.mark_slowdown(error_label)
 
             except Exception as unexpected_error:
                 yield { "type": "error", "message": str(unexpected_error) }
@@ -461,6 +454,7 @@ class GeminiProvider(AutomationProvider):
                         f"(attempt {attempt_index + 1}/{GeminiProvider.MAX_TRANSIENT_RETRIES}). "
                         f"Sleeping {sleep_seconds:.1f}s then retrying."
                     )
+                    await ProviderHealthSignal.mark_slowdown(error_label)
 
             # Sleep is OUTSIDE the semaphore — we have already released
             # the slot back to the pool, so other workers can use it
@@ -570,119 +564,3 @@ class GeminiProvider(AutomationProvider):
             return float(match.group(1))
         except ValueError:
             return None
-
-    async def __stream_image_with_retry(self, model: str, contents, config) -> dict[int, bytearray]:
-        """
-        Streams generate_content_stream into image_buffers, retrying the
-        whole stream on transient errors. Buffers are reset between
-        attempts so a partial payload from a failed attempt cannot
-        contaminate the next attempt's data.
-        """
-        attempt_index = 0
-
-        while True:
-            sleep_seconds = None
-            image_buffers: dict[int, bytearray] = {}
-
-            async with RedisSemaphore.slot(
-                bucket = model,
-                max_concurrent = GeminiProvider.__resolve_concurrent_limit(model),
-                hold_timeout_seconds = ApiConcurrencyLimits.SLOT_HOLD_TIMEOUT_SECONDS,
-                poll_interval_seconds = ApiConcurrencyLimits.ACQUIRE_POLL_INTERVAL_SECONDS,
-            ):
-                def stream_sync():
-                    last_chunk = None
-                    for chunk in self.__client.models.generate_content_stream(
-                        model = model,
-                        contents = contents,
-                        config = config,
-                    ):
-                        last_chunk = chunk
-                        if chunk.parts is None:
-                            continue
-                        for part in chunk.parts:
-                            if part.inline_data and part.inline_data.data:
-                                buf = image_buffers.setdefault(0, bytearray())
-                                buf.extend(part.inline_data.data)
-                            elif hasattr(part, "text") and part.text:
-                                print(f"[GeminiProvider] stream text: {part.text}")
-
-                    # The final stream chunk carries the usage_metadata for the
-                    # whole image generation; record it for per-token billing.
-                    if last_chunk is not None:
-                        CreditMeter.record_from_response(last_chunk, model = model)
-
-                try:
-                    await asyncio.to_thread(stream_sync)
-                    return image_buffers
-                except (genai_errors.ClientError, genai_errors.ServerError) as api_error:
-                    if not GeminiProvider.__is_transient_error(api_error):
-                        raise
-
-                    error_label = GeminiProvider.__describe_transient_error(api_error)
-
-                    if attempt_index >= GeminiProvider.MAX_TRANSIENT_RETRIES:
-                        print(
-                            f"[GeminiProvider] {error_label} after "
-                            f"{attempt_index} retries on image stream (model {model}) — giving up."
-                        )
-                        raise
-
-                    sleep_seconds = GeminiProvider.__resolve_retry_delay_seconds(api_error, attempt_index)
-                    print(
-                        f"[GeminiProvider] {error_label} on image stream (model {model}, "
-                        f"attempt {attempt_index + 1}/{GeminiProvider.MAX_TRANSIENT_RETRIES}). "
-                        f"Sleeping {sleep_seconds:.1f}s then retrying."
-                    )
-
-            if sleep_seconds is not None:
-                await asyncio.sleep(sleep_seconds)
-            attempt_index += 1
-
-    async def __fetch_image_generation(
-        self,
-        request:            AutomationRequest,
-        user_parts:         list,
-        config_args:        dict,
-        thinking_level:     str | None = None,
-        image_aspect_ratio: str | None = None,
-    ) -> AutomationResponse:
-        if "system_instruction" in config_args:
-            config_args["system_instruction"] = [types.Part.from_text(text=config_args.pop("system_instruction"))]
-
-        image_config_arguments = {"image_size": "1K"}
-        if image_aspect_ratio is not None:
-            image_config_arguments["aspect_ratio"] = image_aspect_ratio
-
-        config_args["thinking_config"]     = types.ThinkingConfig(thinking_level=thinking_level or "HIGH")
-        config_args["image_config"]        = types.ImageConfig(**image_config_arguments)
-        config_args["response_modalities"] = ["IMAGE"]
-
-        config   = types.GenerateContentConfig(**config_args)
-        contents = [types.Content(role="user", parts=user_parts)]
-
-        print(f"[GeminiProvider] Starting image generation stream (model={request.get_model()})...")
-
-        # The streaming endpoint hits the same transient-error surface as
-        # generate_content (429 / 5xx). Mirror the retry policy of
-        # __generate_content_with_retry so EnhanceImages survives a
-        # Gemini-side capacity blip mid-batch instead of failing the task.
-        image_buffers: dict[int, bytearray] = await self.__stream_image_with_retry(
-            model = request.get_model(),
-            contents = contents,
-            config = config,
-        )
-
-        if not image_buffers:
-            print("[GeminiProvider] Image generation stream produced no image data")
-            return AutomationResponse([])
-
-        outputs = [
-            AutomationContent(AutomationContentTypes.IMAGE, bytes(buf))
-            for buf in image_buffers.values()
-        ]
-
-        print(f"[GeminiProvider] Image generation complete — {len(outputs)} image(s), "
-              f"{sum(len(b) for b in image_buffers.values()):,} bytes total")
-
-        return AutomationResponse(outputs)

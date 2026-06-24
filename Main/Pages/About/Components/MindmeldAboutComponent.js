@@ -464,6 +464,32 @@ class MindmeldAboutComponent extends HTMLElement
         `;
     }
 
+    static #SUPPORT_EMAIL = "support@cogniumlabs.co.in";
+
+    #renderContact()
+    {
+        const supportEmail = MindmeldAboutComponent.#SUPPORT_EMAIL;
+
+        return `
+            <section class="about-contact-section">
+                <div class="about-section-label">We're here to help</div>
+                <h2 class="about-section-title">Get in touch</h2>
+                <p class="about-section-body">
+                    Questions, feedback, or running into trouble? Reach out to the MindMeld team directly —
+                    we read every message.
+                </p>
+                <a class="about-contact-card" href="mailto:${supportEmail}">
+                    <img class="about-contact-icon" src="${MindmeldAboutComponent.#ICON_PATH}/AboutMailIcon.svg" alt="">
+                    <div class="about-contact-text">
+                        <div class="about-contact-label">Support</div>
+                        <div class="about-contact-email">${supportEmail}</div>
+                    </div>
+                    <span class="about-contact-arrow">›</span>
+                </a>
+            </section>
+        `;
+    }
+
     #renderCallToAction()
     {
         return `
@@ -652,6 +678,7 @@ class MindmeldAboutComponent extends HTMLElement
                 ${this.#renderLifecycle()}
                 ${this.#renderFeatures()}
                 ${this.#renderDifferentiators()}
+                ${this.#renderContact()}
                 ${this.#renderCallToAction()}
             </div>
         `;

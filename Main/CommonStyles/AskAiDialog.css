@@ -280,6 +280,57 @@ ask-ai-result-view
     color: var(--content-muted-text-color);
 }
 
+/* ── Web image strip ──────────────────────────────────────────────
+   Rendered between the body and the citations footer when the worker's
+   image search returns results (Pro / Pro Plus). A horizontal wrapping
+   row of thumbnails, each linking out to its source page. */
+
+.ask-ai-images
+{
+    padding: 10px 14px;
+    background-color: var(--secondary-background-color);
+    border-radius: 6px;
+}
+
+.ask-ai-images-title
+{
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--content-muted-text-color);
+    margin: 0 0 8px 0;
+}
+
+.ask-ai-images-strip
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.ask-ai-image-link
+{
+    display: block;
+    line-height: 0;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.ask-ai-image-thumb
+{
+    width: 104px;
+    height: 104px;
+    object-fit: cover;
+    display: block;
+    transition: transform 0.15s ease;
+}
+
+.ask-ai-image-link:hover .ask-ai-image-thumb
+{
+    transform: scale(1.04);
+}
+
 /* ── Citations footer ─────────────────────────────────────────────
    Rendered after the body once Google Search grounding fires on
    Pro / Pro Plus. Subtler than the body so it reads as "sources",

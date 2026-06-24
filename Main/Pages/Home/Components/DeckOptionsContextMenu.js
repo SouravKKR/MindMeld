@@ -146,7 +146,7 @@ class DeckOptionsContextMenu extends ContextMenu
                 return;
             }
 
-            if (!await AiFeatureGate.ensureAdminOrShowAlert())
+            if (!await AiFeatureGate.ensureAllowedOrShowAlert())
             {
                 return;
             }

@@ -107,7 +107,7 @@ class TopicInsights extends HTMLElement
                 return;
             }
 
-            if (!await AiFeatureGate.ensureAdminOrShowAlert())
+            if (!await AiFeatureGate.ensureAllowedOrShowAlert())
             {
                 return;
             }

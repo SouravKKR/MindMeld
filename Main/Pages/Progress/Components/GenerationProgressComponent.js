@@ -70,6 +70,20 @@ class GenerationProgressComponent extends HTMLElement
         return overallStatus === taskStatus.COMPLETED || overallStatus === taskStatus.FAILED;
     }
 
+    /**
+     * Returns the canonical overall pipeline status (TaskStatus enum value),
+     * derived from every node's effective status. Exposed so background
+     * consumers (e.g. GenerationNotifier) can distinguish a COMPLETED pipeline
+     * from a FAILED one without re-implementing the roll-up logic that powers
+     * the visible tree. Returns NOT_STARTED when there is no task tree yet.
+     * @returns {number}
+     */
+    getOverallStatus()
+    {
+        if (!this.#taskTree) return taskStatus.NOT_STARTED;
+        return this.#computeOverallStatus(this.#taskTree);
+    }
+
     // ─────────────────────────────────────────────
     //  Accumulation Detection
     // ─────────────────────────────────────────────

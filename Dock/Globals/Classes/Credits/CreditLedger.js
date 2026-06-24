@@ -177,6 +177,10 @@ class CreditLedger
 
         const now = new Date();
 
+        // Idempotency claim — insert PENDING first (mirroring charge). A duplicate
+        // referenceKey means this exact grant already ran; report its prior
+        // outcome and stop. Inserting as APPLIED up front would lie about a grant
+        // that has not actually credited the user yet (see the null-user case).
         try
         {
             await transactionsCollection.insertOne
@@ -185,7 +189,7 @@ class CreditLedger
                 userId: userId,
                 type: transactionType,
                 amount: roundedAmount,
-                status: CreditLedger.#STATUS_APPLIED,
+                status: CreditLedger.#STATUS_PENDING,
                 metadata: metadata || {},
                 createdAt: now,
             });
@@ -194,7 +198,13 @@ class CreditLedger
         {
             if (insertError && insertError.code === CreditLedger.#DUPLICATE_KEY_ERROR_CODE)
             {
-                return { applied: false, alreadyApplied: true, amount: roundedAmount };
+                const existing = await transactionsCollection.findOne({ referenceKey: referenceKey });
+                return {
+                    applied: existing?.status === CreditLedger.#STATUS_APPLIED,
+                    alreadyApplied: true,
+                    amount: existing ? Math.abs(existing.amount) : roundedAmount,
+                    balanceAfter: existing?.balanceAfter ?? null,
+                };
             }
             throw insertError;
         }
@@ -207,12 +217,26 @@ class CreditLedger
         );
 
         const updatedDocument = updateResult?.value || updateResult;
-        const balanceAfter = updatedDocument?.additionalData?.credits ?? null;
+
+        if (!updatedDocument)
+        {
+            // The target user does not exist, so no credits were applied. Mark the
+            // claim rejected and report applied:false so the caller can compensate
+            // (e.g. undo a promo redemption) instead of reporting a false success.
+            await transactionsCollection.updateOne
+            (
+                { referenceKey: referenceKey },
+                { $set: { status: CreditLedger.#STATUS_REJECTED, resolvedAt: new Date() } }
+            );
+            return { applied: false, alreadyApplied: false, rejected: true, amount: roundedAmount };
+        }
+
+        const balanceAfter = updatedDocument.additionalData?.credits ?? null;
 
         await transactionsCollection.updateOne
         (
             { referenceKey: referenceKey },
-            { $set: { balanceAfter: balanceAfter, resolvedAt: new Date() } }
+            { $set: { status: CreditLedger.#STATUS_APPLIED, balanceAfter: balanceAfter, resolvedAt: new Date() } }
         );
 
         return { applied: true, alreadyApplied: false, amount: roundedAmount, balanceAfter: balanceAfter };

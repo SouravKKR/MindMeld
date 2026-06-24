@@ -7,7 +7,7 @@ expensive halves of the MindMeld image pipeline:
 
   1. YOLO figure detection           (Agent/Workflows/PrepareImages/ImageExtractor.py)
   2. LLM "is this educational" gate   (mirrors PrepareImages._validate_figures_with_vision)
-  3. Image enhancement                (Agent/Workflows/EnhanceImages/AssetEnhancer.py)
+  3. Image enhancement                (Agent/Workflows/EnhanceImages/DiagramImageEnhancer.py -> Gemini describe -> GPT-Image)
 
 It does NOT touch any production code. It imports the real Agent classes,
 runs them against a PDF you pick from Explorer, and writes every
@@ -70,33 +70,43 @@ try:
 except Exception as environment_load_error:
     print(f"[startup] Could not load Agent/.env: {environment_load_error}")
 
+# Put the local portable Graphviz `dot` binary on PATH so the SVG enhancer's
+# complex -> DOT -> Graphviz route works in local testing. Production gets `dot`
+# from the Docker image's apt graphviz package instead, so this is dev-only.
+import glob
+for _graphviz_bin in glob.glob(os.path.join(AGENT_DIRECTORY, ".tools", "Graphviz*", "bin")):
+    if os.path.isdir(_graphviz_bin) and _graphviz_bin not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = _graphviz_bin + os.pathsep + os.environ.get("PATH", "")
+
 
 # ----------------------------------------------------------------------------
 # EDITABLE PRICING TABLE  -- USD per 1,000,000 tokens, (input, output).
 #
 # Source: https://ai.google.dev/gemini-api/docs/pricing  (fetched 2026-06-20).
-#   - The two text models mirror Agent/Globals/Constants/ModelPricing.py, the
-#     repo's own source of truth for billing normalisation.
-#   - gemini-3.1-flash-image-preview is an IMAGE-output model: output tokens are
-#     image tokens billed at $60.00 / 1M (standard tier). At the 1K image size
-#     the enhance stage now requests (GeminiProvider.__fetch_image_generation),
-#     that works out to ~$0.067 per image (~1,117 output tokens); 2K was ~$0.101
-#     (~1,683 tokens). Input (prompt text + the reference image) is $0.50 / 1M.
-#     The cost report below reads REAL returned token counts, so it always
-#     reflects whatever image size the provider actually used.
+#   - The Gemini text models mirror Agent/Globals/Constants/ModelPricing.py, the
+#     repo's own source of truth for billing normalisation. They cover the YOLO
+#     LLM validation gate (Stage 2).
+#   - claude-sonnet-4-6 serves Stage 3: the vision -> SVG enhancement. Published
+#     rate $3.00 input / $15.00 output per 1M. Output tokens include the
+#     extended-thinking tokens (max effort), so the per-figure cost is dominated
+#     by the SVG + thinking output. The cost report below reads REAL returned
+#     token counts.
 #
 # Tweak these freely while you experiment -- the cost report reads straight
 # from this dict.
 # ----------------------------------------------------------------------------
 PRICING_USD_PER_MILLION_TOKENS = {
-    "gemini-2.5-flash-lite":          {"input": 0.10, "output": 0.40},
-    "gemini-3.1-flash-lite":          {"input": 0.25, "output": 1.50},
-    "gemini-3.1-flash-image-preview": {"input": 0.50, "output": 60.00},
+    "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40},
+    "gemini-3.1-flash-lite": {"input": 0.25, "output": 1.50},
+    "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
 }
 # Any model not in the table is costed at the cheapest text model's rate, with a
 # one-line warning in the report, so an unregistered model never silently reads
 # as free.
 PRICING_FALLBACK_MODEL_NAME = "gemini-2.5-flash-lite"
+
+# GPT-Image-2 is billed per image (not per token). High quality 1024x1024 = $0.04.
+GPT_IMAGE_2_COST_PER_IMAGE_USD = 0.04
 
 # Mirrors PrepareImages._VISION_BATCH_SIZE -- how many images go to the LLM
 # validation gate per request.
@@ -130,6 +140,25 @@ def measure_aspect_ratio(image_bytes: bytes) -> float | None:
         return width / height
     except Exception:
         return None
+
+
+def measure_svg_aspect_ratio(svg_markup: str) -> float | None:
+    """Width / height of an SVG from its viewBox (preferred) or width/height attributes."""
+    import re
+    try:
+        viewbox_match = re.search(r'viewBox\s*=\s*["\']\s*[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)', svg_markup, re.IGNORECASE)
+        if viewbox_match:
+            width = float(viewbox_match.group(1))
+            height = float(viewbox_match.group(2))
+            return width / height if height > 0 else None
+        width_match = re.search(r'\bwidth\s*=\s*["\']([\d.]+)', svg_markup, re.IGNORECASE)
+        height_match = re.search(r'\bheight\s*=\s*["\']([\d.]+)', svg_markup, re.IGNORECASE)
+        if width_match and height_match:
+            height_value = float(height_match.group(1))
+            return float(width_match.group(1)) / height_value if height_value > 0 else None
+    except Exception:
+        return None
+    return None
 
 
 def parse_page_range_text(page_range_text: str) -> set | None:
@@ -216,11 +245,12 @@ async def run_pipeline(
     yolo_confidence_threshold: float,
     run_directory: str,
     log,
+    stop_event: threading.Event | None = None,
 ) -> dict:
     # Lazy imports so the GUI opens instantly and any import failure is logged
     # rather than crashing startup.
     from Workflows.PrepareImages.ImageExtractor import ImageExtractor
-    from Workflows.EnhanceImages.AssetEnhancer import AssetEnhancer
+    from Workflows.EnhanceImages.DiagramImageEnhancer import DiagramImageEnhancer
     from Globals.Classes.Automation.Pools.ModelPool import ModelPool
     from Globals.Classes.Automation.AutomationCaller import AutomationCaller
     from Globals.Classes.Automation.AutomationRequest import AutomationRequest
@@ -469,13 +499,17 @@ async def run_pipeline(
                     log(f"Capping enhancement to the first {len(figures_to_enhance)} of "
                         f"{len(confirmed_figures)} confirmed figure(s) (your limit).")
 
-            log(f"Enhancing {len(figures_to_enhance)} figure(s). Each is a 2-call "
-                f"Gemini pipeline (extraction + image generation) -- this is the slow, "
-                f"costly part. Running cost printed after each.")
+            log(f"Enhancing {len(figures_to_enhance)} figure(s). "
+                f"Each figure: Gemini describe -> GPT-Image generate. "
+                f"Running cost printed after each.")
 
-            asset_enhancer = AssetEnhancer()
+            asset_enhancer = DiagramImageEnhancer()
 
             for enhance_index, figure in enumerate(figures_to_enhance):
+                if stop_event is not None and stop_event.is_set():
+                    log(f"   Stopped by user after {enhance_index} image(s).")
+                    break
+
                 base_name = os.path.splitext(figure["_savedFileName"])[0]
                 log(f"   [{enhance_index + 1}/{len(figures_to_enhance)}] {figure['_savedFileName']} ...")
 
@@ -486,30 +520,46 @@ async def run_pipeline(
                 error_text = None
                 original_aspect = None
                 enhanced_aspect = None
+                enhancement_complexity = None
+                enhancement_renderer = None
+                per_image_flat_cost_usd = 0.0
 
                 try:
                     enhancement_result = await asset_enhancer.enhance(figure["imageBytes"])
                     enhancement_kind = enhancement_result["kind"]
+                    enhancement_complexity = enhancement_result.get("complexity")
+                    enhancement_renderer = enhancement_result.get("renderer")
 
-                    if enhancement_kind == "DIAGRAM":
-                        output_file_name = f"{base_name}__ENHANCED.png"
-                        with open(os.path.join(enhanced_directory, output_file_name), "wb") as enhanced_file:
-                            enhanced_file.write(enhancement_result["imageBytes"])
-                        # Drop the original alongside it for easy A/B comparison.
-                        with open(os.path.join(enhanced_directory, f"{base_name}__ORIGINAL.png"), "wb") as original_file:
-                            original_file.write(figure["imageBytes"])
+                    # Always drop the original alongside for easy A/B comparison.
+                    with open(os.path.join(enhanced_directory, f"{base_name}__ORIGINAL.png"), "wb") as original_file:
+                        original_file.write(figure["imageBytes"])
 
-                        # Framing check: the regenerated diagram should keep the
-                        # source's proportions. A large aspect-ratio drift means
-                        # the figure was clipped / squeezed (the cut-off bug the
-                        # crop + aspect-ratio fixes address).
+                    if enhancement_kind == "DIAGRAM_SVG":
+                        output_file_name = f"{base_name}__ENHANCED.svg"
+                        with open(os.path.join(enhanced_directory, output_file_name), "w", encoding="utf-8") as svg_file:
+                            svg_file.write(enhancement_result["svg"])
                         original_aspect = measure_aspect_ratio(figure["imageBytes"])
-                        enhanced_aspect = measure_aspect_ratio(enhancement_result["imageBytes"])
-                    else:
-                        # TEXT_DATA or DIAGRAM_TEXT_FALLBACK -> markdown, no image generated.
-                        output_file_name = f"{base_name}__{enhancement_kind}.md"
+                        enhanced_aspect = measure_svg_aspect_ratio(enhancement_result["svg"])
+
+                    elif enhancement_kind == "DIAGRAM_IMAGE_PNG":
+                        # GPT-Image-2 generated a fresh PNG. Flat per-image billing.
+                        output_file_name = f"{base_name}__ENHANCED.png"
+                        with open(os.path.join(enhanced_directory, output_file_name), "wb") as png_file:
+                            png_file.write(enhancement_result["image_bytes"])
+                        original_aspect = measure_aspect_ratio(figure["imageBytes"])
+                        enhanced_aspect = measure_aspect_ratio(enhancement_result["image_bytes"])
+                        per_image_flat_cost_usd = GPT_IMAGE_2_COST_PER_IMAGE_USD
+
+                    elif enhancement_kind == "TEXT_DATA":
+                        output_file_name = f"{base_name}__TEXT_DATA.md"
                         with open(os.path.join(enhanced_directory, output_file_name), "w", encoding="utf-8") as markdown_file:
                             markdown_file.write(enhancement_result.get("markdown", ""))
+
+                    else:
+                        # DIAGRAM_FALLBACK_ORIGINAL: both paths failed; production
+                        # keeps the original image here.
+                        log("      enhancement fell back to the original figure")
+
                 except Exception as enhance_error:
                     error_text = str(enhance_error)
                     enhancement_kind = "ERROR"
@@ -519,7 +569,8 @@ async def run_pipeline(
                 per_image_cost = cost_usd_for_ledger_entries(
                     token_ledger[per_image_ledger_start:], unknown_models_seen
                 )
-                enhancement_cost_total_usd += per_image_cost["totalUsd"]
+                per_image_total_usd = per_image_cost["totalUsd"] + per_image_flat_cost_usd
+                enhancement_cost_total_usd += per_image_total_usd
                 enhancement_seconds += per_image_seconds
 
                 framing_note = ""
@@ -536,6 +587,8 @@ async def run_pipeline(
                 enhancement_records.append({
                     "savedFileName": figure["_savedFileName"],
                     "kind": enhancement_kind,
+                    "complexity": enhancement_complexity,
+                    "renderer": enhancement_renderer,
                     "outputFileName": output_file_name,
                     "error": error_text,
                     "seconds": round(per_image_seconds, 1),
@@ -543,11 +596,17 @@ async def run_pipeline(
                     "enhancedAspect": round(enhanced_aspect, 3) if enhanced_aspect else None,
                     "aspectDriftFraction": round(framing_drift, 3) if framing_drift is not None else None,
                     "framingFlag": framing_flag,
-                    "cost": per_image_cost,
+                    "tokenCost": per_image_cost,
+                    "flatCostUsd": per_image_flat_cost_usd,
+                    "totalCostUsd": per_image_total_usd,
                 })
 
-                log(f"      kind={enhancement_kind}  {per_image_seconds:.1f}s  "
-                    f"${per_image_cost['totalUsd']:.4f}  "
+                thinking_label = "thinking OFF" if enhancement_complexity == "simple" else "thinking ON"
+                route_label = f", {enhancement_renderer}" if enhancement_renderer else ""
+                complexity_note = f"  [{enhancement_complexity} -> {thinking_label}{route_label}]" if enhancement_complexity else ""
+                flat_cost_note = f" + ${per_image_flat_cost_usd:.4f} GPT-img" if per_image_flat_cost_usd else ""
+                log(f"      kind={enhancement_kind}{complexity_note}  {per_image_seconds:.1f}s  "
+                    f"${per_image_cost['totalUsd']:.4f}{flat_cost_note}  "
                     f"(running enhance total ${enhancement_cost_total_usd:.4f}){framing_note}")
 
             report["enhancement"] = {
@@ -646,7 +705,7 @@ def build_text_report(report: dict) -> str:
                 framing_text = (f"  aspect {record.get('originalAspect')}->{record.get('enhancedAspect')} "
                                 f"[{record['framingFlag']}]")
             lines.append(f"      {record['savedFileName']}: kind={record['kind']} "
-                         f"{record['seconds']}s ${record['cost'].get('totalUsd', 0):.4f}{framing_text}")
+                         f"{record['seconds']}s ${record.get('totalCostUsd', record.get('tokenCost', {}).get('totalUsd', 0)):.4f}{framing_text}")
         lines.append("")
 
     lines.append(f"GRAND TOTAL: ${report.get('grandTotalUsd', 0):.4f}")
@@ -664,7 +723,7 @@ def launch_gui():
     from tkinter import filedialog, scrolledtext, messagebox
 
     log_message_queue: "queue.Queue[str]" = queue.Queue()
-    worker_state = {"running": False, "lastRunDirectory": None, "logFilePath": None}
+    worker_state = {"running": False, "lastRunDirectory": None, "logFilePath": None, "stopEvent": None}
 
     root = tkinter_module.Tk()
     root.title("MindMeld -- YOLO + Image Enhance Lab")
@@ -718,6 +777,8 @@ def launch_gui():
     button_frame.pack(fill="x")
     run_button = tkinter_module.Button(button_frame, text="Run pipeline", width=18)
     run_button.pack(side="left", pady=6)
+    stop_button = tkinter_module.Button(button_frame, text="Stop after current", width=20, state="disabled")
+    stop_button.pack(side="left", padx=8, pady=6)
     open_output_button = tkinter_module.Button(button_frame, text="Open output folder", width=18)
     open_output_button.pack(side="left", padx=8)
 
@@ -738,6 +799,7 @@ def launch_gui():
                 if message == "__DONE__":
                     worker_state["running"] = False
                     run_button.configure(state="normal", text="Run pipeline")
+                    stop_button.configure(state="disabled")
                 else:
                     append_to_log_view(message)
         except queue.Empty:
@@ -753,7 +815,7 @@ def launch_gui():
 
     open_output_button.configure(command=open_output_folder)
 
-    def worker_main(pdf_path, allowed_pages, enhance_enabled, maximum_images, yolo_confidence, run_directory):
+    def worker_main(pdf_path, allowed_pages, enhance_enabled, maximum_images, yolo_confidence, run_directory, stop_event):
         import asyncio
 
         log_file_path = os.path.join(run_directory, "run.log")
@@ -776,6 +838,7 @@ def launch_gui():
                 yolo_confidence_threshold=yolo_confidence,
                 run_directory=run_directory,
                 log=log,
+                stop_event=stop_event,
             ))
         except Exception:
             log("PIPELINE CRASHED:")
@@ -834,13 +897,23 @@ def launch_gui():
         log_view.delete("1.0", "end")
         log_view.configure(state="disabled")
 
+        stop_event = threading.Event()
+        worker_state["stopEvent"] = stop_event
         worker_state["running"] = True
         run_button.configure(state="disabled", text="Running...")
+        stop_button.configure(state="normal")
+
+        def request_stop():
+            if worker_state["stopEvent"]:
+                worker_state["stopEvent"].set()
+            stop_button.configure(state="disabled", text="Stopping...")
+
+        stop_button.configure(command=request_stop, text="Stop after current")
 
         worker_thread = threading.Thread(
             target=worker_main,
             args=(pdf_path, allowed_pages, enhance_enabled_variable.get(),
-                  maximum_images, yolo_confidence, run_directory),
+                  maximum_images, yolo_confidence, run_directory, stop_event),
             daemon=True,
         )
         worker_thread.start()

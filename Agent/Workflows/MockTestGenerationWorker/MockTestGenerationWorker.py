@@ -524,9 +524,29 @@ class MockTestGenerationWorker(Workflow):
         topic_cells = []
 
         for topic_index, (topic, topic_questions) in enumerate(zip(topics, topic_question_counts)):
+            topic_chain = topic["topicChain"]
+            safe_unit = sanitize_filename(topic_chain[0]) if topic_chain else "Uncategorised"
+            safe_topic = sanitize_filename(topic_chain[-1]) if topic_chain else "Unknown"
+            output_path = join_path(
+                "/",
+                PersistenceConstants.TASKS_DIRECTORY,
+                main_task_id,
+                PersistenceConstants.MOCK_TEST_QUESTIONS_DIRECTORY,
+                safe_unit,
+                f"{safe_topic}.json",
+            )
+
+            # Checkpoint-resume: if this topic's questions were already written in
+            # a prior (paused) run, reuse them — no cells, no LLM. Its full weight
+            # is granted in the aggregation loop below.
+            if await Persistence.exists(output_path):
+                wlog(f"[MockTestGenerationWorker] Reusing existing questions for '{' -> '.join(topic_chain)}' — skipping generation.")
+                topic_cells.append({"topic_index": topic_index, "topic": topic, "cells": [], "reused": True, "output_path": output_path})
+                continue
+
             type_allocation = topic_type_allocations[topic_index]
             if not type_allocation:
-                topic_cells.append({"topic_index": topic_index, "topic": topic, "cells": []})
+                topic_cells.append({"topic_index": topic_index, "topic": topic, "cells": [], "reused": False, "output_path": output_path})
                 continue
 
             wlog(f"[MockTestGenerationWorker] Topic {topic_index} type allocation: {type_allocation}")
@@ -551,7 +571,7 @@ class MockTestGenerationWorker(Workflow):
                     "expected":     type_q_count,
                 })
 
-            topic_cells.append({"topic_index": topic_index, "topic": topic, "cells": cells})
+            topic_cells.append({"topic_index": topic_index, "topic": topic, "cells": cells, "reused": False, "output_path": output_path})
 
         # ── 4. Pre-submit safety check + telemetry ─────────────────────────────
         total_cell_count = sum(len(entry["cells"]) for entry in topic_cells)
@@ -589,6 +609,16 @@ class MockTestGenerationWorker(Workflow):
 
         live_fallback_caller = AutomationCaller(GeminiProvider())
 
+        # Grant the submit-time share of each topic's weight up front so the
+        # parent bar advances when batches are dispatched, not only when every
+        # batch returns minutes later. The remaining share lands per topic below.
+        # Reused topics are skipped here — their full weight lands in the
+        # aggregation loop instead.
+        for entry in topic_cells:
+            if entry.get("reused"):
+                continue
+            await TaskManager.increment_completion(parent_task_id, BatchSubmitter.SUBMIT_PROGRESS_SHARE * entry["topic"]["weight"])
+
         responses_by_key = {}
         for submitter in batch_submitters_by_model.values():
             submitter_results = await live_fallback_caller.call_batch(
@@ -606,8 +636,13 @@ class MockTestGenerationWorker(Workflow):
             topic           = entry["topic"]
             topic_chain     = topic["topicChain"]
             topic_chain_str = " -> ".join(topic_chain)
-            safe_unit       = sanitize_filename(topic_chain[0]) if topic_chain else "Uncategorised"
-            safe_topic      = sanitize_filename(topic_chain[-1]) if topic_chain else "Unknown"
+
+            # Reused topic: its questions are already on disk — grant the full
+            # weight and leave the existing file untouched (do NOT overwrite with
+            # an empty list, which the no-cells path below would otherwise do).
+            if entry.get("reused"):
+                await TaskManager.increment_completion(parent_task_id, topic["weight"])
+                continue
 
             raw_questions = []
             for cell in entry["cells"]:
@@ -636,14 +671,7 @@ class MockTestGenerationWorker(Workflow):
                 "generatedAt": datetime.now(timezone.utc).isoformat(),
             }
 
-            file_path = join_path(
-                "/",
-                PersistenceConstants.TASKS_DIRECTORY,
-                main_task_id,
-                PersistenceConstants.MOCK_TEST_QUESTIONS_DIRECTORY,
-                safe_unit,
-                f"{safe_topic}.json",
-            )
+            file_path = entry["output_path"]
 
             try:
                 await Persistence.write(file_path, json.dumps(output, ensure_ascii=False))
@@ -653,7 +681,7 @@ class MockTestGenerationWorker(Workflow):
 
             await flush_wlog()
 
-            await TaskManager.increment_completion(parent_task_id, topic["weight"])
+            await TaskManager.increment_completion(parent_task_id, (1.0 - BatchSubmitter.SUBMIT_PROGRESS_SHARE) * topic["weight"])
 
         if total_questions_persisted < self.__num_questions:
             wlog(

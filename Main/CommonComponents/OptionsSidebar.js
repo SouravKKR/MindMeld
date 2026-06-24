@@ -12,6 +12,8 @@ import AlertNotifier from "../Pages/AdminPanel/Components/AlertNotifier.js";
 
 class OptionsSidebar extends HTMLElement
 {
+    static #SUPPORT_EMAIL = "support@cogniumlabs.co.in";
+
     static get()
     {
         const existing = document.querySelector('options-sidebar');
@@ -241,6 +243,10 @@ class OptionsSidebar extends HTMLElement
                 <button class="release-notes-button">Release Notes</button>
                 <button class="admin-panel-button" hidden>Admin Panel</button>
                 <button class="clear-data-button">Clear Local Data</button>
+            </div>
+            <div class="options-sidebar-contact">
+                <span class="options-sidebar-contact-label">Need help?</span>
+                <a class="options-sidebar-contact-email" href="mailto:${OptionsSidebar.#SUPPORT_EMAIL}">${OptionsSidebar.#SUPPORT_EMAIL}</a>
             </div>
         `;
 

@@ -24,6 +24,11 @@ class TaskManager
     // CreditPreflight. Used to detect a mid-pipeline out-of-credits stop.
     static INSUFFICIENT_CREDITS_REASON = "INSUFFICIENT_CREDITS";
 
+    // The payload.error reason stamped on a generation root when the user
+    // manually pauses it. Surfaced by GetProgress (tree.paused) and used as the
+    // TaskState pausedReason so the resume banner can word itself correctly.
+    static USER_PAUSED_REASON = "USER_PAUSED";
+
     // ── Reliable polling queue ──────────────────────────────────────────────
     // Producer side. Dock pushes a small JSON envelope onto the pending list;
     // long-lived Agent workers (Agent/Worker.py) atomically move it to the
@@ -66,6 +71,16 @@ class TaskManager
     }
     static #POST_PIPELINE_PREFIX = "PostPipeline/";
     static #POST_PIPELINE_TASKS_PREFIX = "PostPipelineTasks/";
+    // Short-lived "the AI provider is busy" signal, keyed by the generation root
+    // task id. The Agent refreshes it (Globals/Classes/Automation/ProviderHealthSignal.py)
+    // every time a live call or batch poll hits a transient 5xx/429 and backs off.
+    // GetProgress reads it so the client can show "provider busy, not halted".
+    // This prefix MUST stay byte-identical to the Agent's ProviderHealthSignal.KEY_PREFIX.
+    static #PROVIDER_SLOWDOWN_PREFIX = "ProviderSlowdown/";
+    // Manual-pause flag, keyed by the generation root task id. Set by the
+    // /Generate/Pause endpoint, read by execute() to stop launching new stages.
+    // Carries the task TTL so a never-resumed pause flag can't leak forever.
+    static #PAUSED_PREFIX = "Paused/";
     static #SYNC_LOCK_TTL_SECONDS = 5 * 60;
     static #SYNC_LOCK_PREFIX = "SyncLock/";
     // Per-user index of top-level task ids so the Activity preview can
@@ -305,6 +320,22 @@ class TaskManager
         if(mainTask == null)
         {
             mainTask = taskDescriptor;
+        }
+
+        // Manual-pause gate. Once the user pauses this generation, every task
+        // that hasn't started yet bails here. A task already running (its
+        // subprocess / Gemini batch can't be cleanly interrupted) finishes on
+        // its own; its not-yet-started children then hit this same gate.
+        //
+        // We return FALSE so the pause propagates up as pipelineSucceeded ===
+        // false. That is exactly what lets the Generate completion handler tell
+        // a genuine mid-run pause (some work was skipped → false) apart from a
+        // pause clicked a moment after the run already finished (nothing skipped
+        // → still true → normal completion, no work discarded).
+        if (await TaskManager.isPaused(mainTask.getId()))
+        {
+            Logger.log(`Pause active for ${mainTask.getId()} — not launching task ${taskDescriptor.getId()}.`);
+            return false;
         }
 
         while (attempt <= retries)
@@ -577,6 +608,111 @@ class TaskManager
             return;
         }
         await TaskManager.#redisClient.del(TaskManager.#POST_PIPELINE_TASKS_PREFIX + mainTaskId);
+    }
+
+    /**
+     * Returns true while the AI provider is signalling a transient slowdown for
+     * this generation root — i.e. the Agent hit a 5xx/429 and backed off within
+     * the last ProviderHealthSignal.SIGNAL_TTL_SECONDS. The key self-expires once
+     * the provider recovers, so this naturally returns to false with no cleanup.
+     *
+     * @param {string} rootTaskId
+     * @returns {Promise<boolean>}
+     */
+    static async isProviderSlowdownActive(rootTaskId)
+    {
+        if (!rootTaskId)
+        {
+            return false;
+        }
+        const exists = await TaskManager.#redisClient.exists(TaskManager.#PROVIDER_SLOWDOWN_PREFIX + rootTaskId);
+        return exists === 1;
+    }
+
+    /**
+     * Marks a generation root as paused so execute() stops launching tasks that
+     * haven't started yet. Carries the task TTL so an unresumed flag self-clears.
+     * @param {string} rootTaskId
+     */
+    static async markPaused(rootTaskId)
+    {
+        if (!rootTaskId)
+        {
+            return;
+        }
+        await TaskManager.#redisClient.set(TaskManager.#PAUSED_PREFIX + rootTaskId, "1", { EX: TaskManager.#TASK_TTL_SECONDS });
+    }
+
+    /**
+     * Returns true while a generation root is flagged paused.
+     * @param {string} rootTaskId
+     * @returns {Promise<boolean>}
+     */
+    static async isPaused(rootTaskId)
+    {
+        if (!rootTaskId)
+        {
+            return false;
+        }
+        const exists = await TaskManager.#redisClient.exists(TaskManager.#PAUSED_PREFIX + rootTaskId);
+        return exists === 1;
+    }
+
+    /**
+     * Clears the pause flag for a generation root. Called once the pause has
+     * been settled (resumable state saved) so a stale flag can't linger.
+     * @param {string} rootTaskId
+     */
+    static async clearPaused(rootTaskId)
+    {
+        if (!rootTaskId)
+        {
+            return;
+        }
+        await TaskManager.#redisClient.del(TaskManager.#PAUSED_PREFIX + rootTaskId);
+    }
+
+    /**
+     * Clears the Redis state of a paused generation root so it can be re-run
+     * under the SAME id on resume: drops the old (FAILED/USER_PAUSED) task blob
+     * and its atomic completion key — so the fresh setTask(NX) lands instead of
+     * being shadowed by the stale blob — and clears the pause flag. The durable
+     * GCS artifacts under Tasks/{rootTaskId}/ are deliberately left untouched;
+     * they are the checkpoint the resumed run reuses.
+     * @param {string} rootTaskId
+     */
+    static async resetForResume(rootTaskId)
+    {
+        if (!rootTaskId)
+        {
+            return;
+        }
+        await TaskManager.#redisClient.del(TaskManager.#TASK_PREFIX + rootTaskId);
+        await TaskManager.#redisClient.del(TaskManager.#TASK_PREFIX + rootTaskId + TaskManager.#TASK_COMPLETION_SUFFIX);
+        await TaskManager.#redisClient.del(TaskManager.#PAUSED_PREFIX + rootTaskId);
+    }
+
+    /**
+     * Returns how many milliseconds remain before the live task blob expires from
+     * Redis (the 5h window during which the progress tree can still be watched
+     * live). Returns null when the key has no expiry or no longer exists.
+     *
+     * @param {string} taskId
+     * @returns {Promise<number|null>}
+     */
+    static async getRemainingTtlMillis(taskId)
+    {
+        if (!taskId)
+        {
+            return null;
+        }
+        const remainingMillis = await TaskManager.#redisClient.pTTL(TaskManager.#TASK_PREFIX + taskId);
+        // redis pTTL returns -2 (no key) or -1 (no expiry) as sentinels.
+        if (typeof remainingMillis !== "number" || remainingMillis < 0)
+        {
+            return null;
+        }
+        return remainingMillis;
     }
 
     /**

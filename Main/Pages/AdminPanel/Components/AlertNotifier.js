@@ -1,5 +1,5 @@
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
-import AiFeatureGate from "../../../Globals/Classes/AiFeatureGate.js";
+import { userRoles } from "../../../Globals/Enumerations/UserRoles.js";
 
 /**
  * AlertNotifier
@@ -31,6 +31,16 @@ class AlertNotifier
     static isSupported()
     {
         return typeof window !== "undefined" && "Notification" in window;
+    }
+
+    static #isAdmin()
+    {
+        const currentUser = window["user"];
+        if (!currentUser || typeof currentUser.getRole !== "function")
+        {
+            return false;
+        }
+        return currentUser.getRole() === userRoles.ADMIN;
     }
 
     static getPermission()
@@ -74,7 +84,7 @@ class AlertNotifier
         {
             return;
         }
-        if (!AlertNotifier.isSupported() || !AiFeatureGate.isAdmin())
+        if (!AlertNotifier.isSupported() || !AlertNotifier.#isAdmin())
         {
             return;
         }

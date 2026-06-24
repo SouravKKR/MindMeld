@@ -62,9 +62,17 @@ class FlashcardGenerationWorker(Workflow):
         # ── 1. Load and build topic objects ───────────────────────────────────
         topics = []
 
+        # Topic-chain -> source pages, so the thin-batch path (which only carries
+        # topicChain through the LLM response) can recover each topic's pages when
+        # writing its output file.
+        source_pages_by_topic_chain = {}
+
         for path in self.__paths:
             content_bytes = await Persistence.read(path)
             raw = json.loads(content_bytes.decode("utf-8"))
+
+            source_pages = raw.get("sourcePages", [])
+            source_pages_by_topic_chain[" -> ".join(raw["topicChain"])] = source_pages
 
             content = "\n\n".join(raw["chunks"])
             content = TokenSafeContent.cap_content_for_prompt(
@@ -76,13 +84,38 @@ class FlashcardGenerationWorker(Workflow):
 
             topics.append({
                 "topic_chain": raw["topicChain"],
+                "source_pages": source_pages,
                 "content": content,
                 "weight": float(raw.get("weight", 0.0)),
                 "word_count": word_count,
             })
 
-        # ── 2. Separate thin topics and batch them ────────────────────────────
-        thin_topics = [topic for topic in topics if topic["word_count"] < 100]
+        # ── 1b. Checkpoint-resume: flag topics already generated in a prior run ─
+        # The per-topic Flashcards/{unit}/{topic}.json file in GCS is the
+        # checkpoint. A topic whose file already exists is granted its full weight
+        # here and skipped during generation below (both thin and thick paths), so
+        # a resumed run regenerates only the missing topics. Reused topics stay in
+        # main_topics so the card-count distribution math over the full set is
+        # unchanged — only their generation is skipped.
+        for topic in topics:
+            topic_chain = topic["topic_chain"]
+            safe_unit = sanitize_filename(topic_chain[0]) if topic_chain else "Uncategorised"
+            safe_topic = sanitize_filename(topic_chain[-1]) if topic_chain else "Unknown"
+            topic["output_path"] = join_path(
+                "/",
+                PersistenceConstants.TASKS_DIRECTORY,
+                main_task_id,
+                PersistenceConstants.FLASHCARDS_DIRECTORY,
+                safe_unit,
+                f"{safe_topic}.json",
+            )
+            topic["reused"] = await Persistence.exists(topic["output_path"])
+            if topic["reused"]:
+                print(f"[FlashcardGenerationWorker] Reusing existing cards for '{' -> '.join(topic_chain)}' — skipping generation.")
+                await TaskManager.increment_completion(parent_task_id, topic["weight"])
+
+        # ── 2. Separate thin topics and batch them (reused topics excluded) ────
+        thin_topics = [topic for topic in topics if topic["word_count"] < 100 and not topic["reused"]]
         main_topics = [topic for topic in topics if topic["word_count"] >= 100]
 
         thin_topic_batches = []
@@ -264,6 +297,8 @@ class FlashcardGenerationWorker(Workflow):
 
         for topic in main_topics:
             topic["requests"] = []
+            if topic["reused"]:
+                continue
             topic_chain_string = " -> ".join(topic["topic_chain"])
 
             for model_tuple, cells in topic["model_groups"].items():
@@ -345,6 +380,11 @@ class FlashcardGenerationWorker(Workflow):
 
         # ── 11. Aggregate per topic, deduplicate, trim, persist and report ────
         for topic in main_topics:
+            # Reused topics were granted their weight up front and have no
+            # requests — leave the existing file untouched.
+            if topic["reused"]:
+                continue
+
             target_count = topic["card_count"]
 
             raw_card_lists = []
@@ -388,6 +428,7 @@ class FlashcardGenerationWorker(Workflow):
             output = {
                 "topicChain": topic_chain,
                 "cards": final_cards,
+                "sourcePages": topic["source_pages"],
                 "totalCards": len(final_cards),
                 "generatedAt": datetime.now(timezone.utc).isoformat(),
             }
@@ -450,6 +491,12 @@ class FlashcardGenerationWorker(Workflow):
                     "batch_weight": batch_weight,
                 })
 
+            # Grant the submit-time share of each thin batch's weight up front so
+            # the parent bar moves when the batch is dispatched rather than only
+            # when Gemini returns it. The remaining share lands per entry below.
+            for entry in thin_batch_entries:
+                await TaskManager.increment_completion(parent_task_id, BatchSubmitter.SUBMIT_PROGRESS_SHARE * entry["batch_weight"])
+
             thin_results = await live_fallback_caller.call_batch(
                 thin_submitter,
                 live_fallback_caller = live_fallback_caller,
@@ -461,7 +508,7 @@ class FlashcardGenerationWorker(Workflow):
 
                 if response is None:
                     print(f"[WARN] Thin batch '{entry['key']}' failed after all retries — skipping.")
-                    await TaskManager.increment_completion(parent_task_id, entry["batch_weight"])
+                    await TaskManager.increment_completion(parent_task_id, (1.0 - BatchSubmitter.SUBMIT_PROGRESS_SHARE) * entry["batch_weight"])
                     continue
 
                 try:
@@ -469,7 +516,7 @@ class FlashcardGenerationWorker(Workflow):
                     parsed = strip_json_markdown(data) if isinstance(data, str) else data
                 except Exception:
                     print(f"[WARN] Failed to parse thin batch response — skipping.")
-                    await TaskManager.increment_completion(parent_task_id, entry["batch_weight"])
+                    await TaskManager.increment_completion(parent_task_id, (1.0 - BatchSubmitter.SUBMIT_PROGRESS_SHARE) * entry["batch_weight"])
                     continue
 
                 for topic_entry in parsed:
@@ -485,6 +532,7 @@ class FlashcardGenerationWorker(Workflow):
                     output = {
                         "topicChain":  topic_chain,
                         "cards":       converted_cards,
+                        "sourcePages": source_pages_by_topic_chain.get(" -> ".join(topic_chain), []),
                         "totalCards":  len(converted_cards),
                         "generatedAt": datetime.now(timezone.utc).isoformat(),
                     }
@@ -501,4 +549,4 @@ class FlashcardGenerationWorker(Workflow):
                     await Persistence.write(file_path, json.dumps(output, ensure_ascii=False))
                     print(f"[OK] {' -> '.join(topic_chain)} — {len(converted_cards)} card(s) written (thin).")
 
-                await TaskManager.increment_completion(parent_task_id, entry["batch_weight"])
+                await TaskManager.increment_completion(parent_task_id, (1.0 - BatchSubmitter.SUBMIT_PROGRESS_SHARE) * entry["batch_weight"])

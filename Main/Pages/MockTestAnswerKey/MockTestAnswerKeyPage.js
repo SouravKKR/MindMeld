@@ -13,7 +13,9 @@ import TaskProgressTracker from "../../Globals/Classes/Task/TaskProgressTracker.
 import CuratedStudyProgressOverlay from "../Study/Components/CuratedStudyProgressOverlay.js";
 import EvaluationInstructionsDialog from "../Study/Components/EvaluationInstructionsDialog.js";
 import MockTestAnswerKeyPdfBuilder from "./Classes/MockTestAnswerKeyPdfBuilder.js";
+import MockTestEvaluationConstants from "../../Globals/Constants/MockTestEvaluationConstants.js";
 import MetricTracker from "../../Globals/Classes/Metrics/MetricTracker.js";
+import TutorialEngine from "../../Globals/Classes/TutorialEngine.js";
 
 
 const WAIT_OVERLAY_PHASE_LABELS = Object.freeze({
@@ -93,7 +95,10 @@ class MockTestAnswerKeyPage extends HTMLElement
 
         // A graded (COMPLETED) attempt is the moment an LLM-graded mock test
         // becomes countable — recompute server-side so its badge is awarded now.
-        if (this.#attempt && this.#attempt.getEvaluationStatus?.() === mockTestEvaluationStatuses.COMPLETED)
+        // Skipped during a tutorial: the graded attempt shown there is a local
+        // sample, so there is nothing to count and no reason to contact the server.
+        if (!TutorialEngine.isRunning()
+            && this.#attempt && this.#attempt.getEvaluationStatus?.() === mockTestEvaluationStatuses.COMPLETED)
         {
             MetricTracker.sync({ recompute: true });
         }
@@ -696,7 +701,7 @@ class MockTestAnswerKeyPage extends HTMLElement
         {
             return true;
         }
-        const offlineGradableTypeKeys = new Set(["MULTIPLE_CHOICE", "MULTIPLE_CORRECT"]);
+        const offlineGradableTypeKeys = new Set(MockTestEvaluationConstants.OFFLINE_GRADABLE_QUESTION_TYPES);
         for (const item of this.#attempt.getItems() || [])
         {
             if (!item || item.getType?.() !== mockTestItemTypes.QUESTION)

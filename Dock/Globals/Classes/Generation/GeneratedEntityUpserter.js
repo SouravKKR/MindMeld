@@ -37,12 +37,14 @@ class GeneratedEntityUpserter
 
             if (reusedDeckIdSet.has(leafDeckId) && !normalizedExistingQuestionsByDeckId.has(leafDeckId))
             {
-                const existingCards = await cardCollection.find(
-                    { userId: userId, deckId: leafDeckId },
-                    { projection: { _id: 0, question: 1 } },
+                // Card rows are stored as { userId, data: {...card}, serverUpdatedAt },
+                // so the question and owning deck live under `data.*`.
+                const existingCardDocuments = await cardCollection.find(
+                    { userId: userId, "data.deckId": leafDeckId },
+                    { projection: { _id: 0, "data.question": 1 } },
                 ).toArray();
 
-                const normalizedSet = new Set(existingCards.map(existingCard => GeneratedEntityUpserter.#normalizeQuestionText(existingCard.question)));
+                const normalizedSet = new Set(existingCardDocuments.map(existingCardDocument => GeneratedEntityUpserter.#normalizeQuestionText(existingCardDocument.data?.question)));
                 normalizedExistingQuestionsByDeckId.set(leafDeckId, normalizedSet);
             }
 

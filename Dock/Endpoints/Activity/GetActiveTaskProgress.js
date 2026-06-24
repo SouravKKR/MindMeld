@@ -63,6 +63,15 @@ class GetActiveTaskProgressEndpoint
             // Flag a mid-pipeline out-of-credits stop so the client can offer
             // the top-up / resume flow instead of a generic failure.
             tree.outOfCredits = GetActiveTaskProgressEndpoint.#treeHasInsufficientCredits(tree);
+            // Surface the partialCompletion marker so the client can offer
+            // "keep what's here, retry the rest" — mirrors /Generate/Progress.
+            const rootPayload = typeof rootTask.getPayload === "function" ? rootTask.getPayload() : null;
+            tree.partialCompletion = (rootPayload && typeof rootPayload === "object") ? (rootPayload.partialCompletion || null) : null;
+            // Mirror /Generate/Progress so reopening a live generation from
+            // Activity gets the same paused / provider-busy / TTL signals.
+            tree.paused = !!(rootPayload && typeof rootPayload === "object" && rootPayload.error === TaskManager.USER_PAUSED_REASON);
+            tree.providerSlowdown = await TaskManager.isProviderSlowdownActive(taskId);
+            tree.remainingTtlMillis = await TaskManager.getRemainingTtlMillis(taskId);
             response.sendJson(tree);
             return;
         }
@@ -155,7 +164,13 @@ class GetActiveTaskProgressEndpoint
             parentTaskId: historyRow.parentTaskId || null,
             additionalData: (historyRow.additionalData && typeof historyRow.additionalData === "object")
                 ? historyRow.additionalData
-                : {}
+                : {},
+            // Lifted out of additionalData so the historical ProgressPage can
+            // offer "keep what's here, retry the rest" the same way the live
+            // view does.
+            partialCompletion: (historyRow.additionalData && typeof historyRow.additionalData === "object")
+                ? (historyRow.additionalData.partialCompletion || null)
+                : null
         };
     }
 }

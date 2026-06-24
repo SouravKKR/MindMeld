@@ -28,6 +28,10 @@ Catalogued deterministic functions (coverage denominator):
   14) Globals/Model/MaintenanceWindow.js                :: isUpcomingWithin
   15) Globals/Model/MaintenanceWindow.js                :: toJson
   16) Globals/Model/MaintenanceWindow.js                :: fromJson
+  17) Globals/Model/CreditDealPayment.js                :: fromJson/toJson round-trip
+  18) Globals/Model/CreditDealPayment.js                :: setter coercion (money/enum)
+  19) Globals/Model/PeriodicCreditAssignment.js         :: fromJson/toJson round-trip
+  20) Globals/Model/PeriodicCreditAssignment.js         :: setter coercion (amount/day/enum)
 
 Test cases:
   - PBKDF2 password KEK derivation is deterministic (same password+salt ->
@@ -62,13 +66,27 @@ Test cases:
     and within the lead window; false once already started.
   - MaintenanceWindow.toJson / fromJson round-trip preserves the fields (dates
     as ISO strings); fromJson(null) -> null.
+  - CreditDealPayment.fromJson(toJson(x)) preserves the stored id (restored via
+    _restoreId_id) and every field bit-for-bit; amountMinor coercion clamps
+    negatives to 0 and parses to integer minor units; currency truncates to 8
+    chars; an out-of-range status enum coerces to the first valid member.
+  - PeriodicCreditAssignment.fromJson(toJson(x)) is likewise id-stable; amount
+    clamps negatives/NaN to 0; an empty name becomes null and a long name
+    truncates at 256; dayOfWeek clamps to [0,6], dayOfMonth to [1,31],
+    intervalDays to >= 0; an invalid status coerces to the first enum member.
 
 Notes:
   - Pure Security classes and the hand-written MaintenanceWindow model are
-    catalogued here. Other Dock model classes (User, Device, PaidDeck, ...)
-    generate a random UUID in their constructor, so their toJson/fromJson are not
-    bit-for-bit deterministic; their field coercion is validated indirectly by
-    the endpoint suite rather than duplicated here.
+    catalogued here. Most other Dock model classes (User, Device, PaidDeck, ...)
+    generate a random UUID in their constructor AND do not restore it on load, so
+    their toJson/fromJson are not bit-for-bit deterministic; their field coercion
+    is validated indirectly by the endpoint suite rather than duplicated here.
+  - CreditDealPayment and PeriodicCreditAssignment are the exception: although the
+    constructor generates a random UUID, fromJson restores the persisted id, so a
+    fromJson(toJson()) round-trip IS deterministic. They are catalogued here both
+    for that round-trip and because they carry money-/credit-amount clamping that
+    is security-relevant (a buyer must never widen an amount or grant cadence by
+    tampering with the stored document).
 
 -----------------------------------------------------------------------------
 SUITE 2 - Endpoints + Auth isolation (server required)
@@ -94,16 +112,20 @@ Folder "Protected (must reject anonymous = 401/403, never 200/5xx)":
   401 or 403. The full catalogued set lives in run_newman.js PROTECTED_ROUTES
   (~100 routes) and is kept in lock-step with the server; the groups are:
   - Account / auth: /UpdateUserAdditionalData, /Auth/Devices(+SignOut/Register),
-    /Auth/Heartbeat, /Legal/Accept
+    /Auth/Heartbeat, /Auth/DeleteAccount, /Legal/Accept
   - Sync: /Sync, /Sync/Lock, /Sync/Unlock, /Sync/ForceUnlock,
     GET /Sync/BulkSnapshot, /Sync/Licenses
   - Generation: /Generate, /Generate/EstimateCost, GET /Generate/Progress,
-    /InformationSource/*, /Templates/*
+    /InformationSource/*, /Templates/*, /Decks/BeautifyShortNames,
+    GET /Decks/BeautifyShortNames/Result
   - Paid decks (buyer): /PaidDecks/Purchase/*, /PaidDecks/MyPurchases,
     /PaidDecks/Purchases/Invoice, /PaidDecks/SetPassword, /UnlockSession,
     /ChangePassword, /Manifest, /Entities/*, /Copies/*, /ScreenshotAttempt
   - Activity / analysis / profile: /Activity/Search, /Activity/Tasks/*,
-    /Analysis/QueueDeckAnalysis, /Profile/ClearUserData
+    /Analysis/QueueDeckAnalysis, /Profile/ClearUserData, /Profile/RedeemPromoCode
+  - Streak / metrics / leaderboard: /Streak/AcknowledgeBadges,
+    /Streak/ReportStudyActivity, /Metrics/Sync, /Metrics/AcknowledgeBadges,
+    GET /Leaderboard/Me
   - AI / mock test / task state: /AskAi/Query/{Basic,Pro,ProPlus},
     /BrowserLlm/Manifest, /MockTest/EvaluateAttempt, GET /TaskState,
     /TaskState/Discard
@@ -112,20 +134,28 @@ Folder "Protected (must reject anonymous = 401/403, never 200/5xx)":
   - Organization (org admin): /Organization/Mine/List, /Get, /Members/{List,Add,
     Remove,BulkAdd,BulkRemove}
   - Admin (ensureAdmin): /Admin/ShadowStats, /Admin/PaidDecks/{List,Upload,Update,
-    Pricing,Bundle,RotateKey,RotateContentKey,BulkUpdate}, /Admin/Stats/Revenue,
-    /Admin/Users/SetRole, /Admin/Decks/BeautifyShortNames, /Admin/AdminEmails(+Add/
-    Remove), /Admin/ReleaseNotes/*, /Admin/Maintenance/*, /Admin/Organizations/*,
+    GenerateField,Pricing,Bundle,RotateKey,RotateContentKey,BulkUpdate},
+    /Admin/Stats/Revenue, /Admin/Users/SetRole, /Admin/AdminEmails(+Add/
+    Remove), /Admin/ReleaseNotes/*, /Admin/Maintenance/*,
+    /Admin/Organizations/* (incl. Rename, SetMaxMembers),
     /Admin/RateLimits/List, /Admin/Audit/List, /Admin/Alerts/*,
-    /Admin/Credits/{Config,Config/Save,Grant/Preview,Grant/Apply}
+    /Admin/Lists/{Metadata,Query}, /Admin/Streak/SetUserStreak,
+    /Admin/Credits/{Config,Config/Save,Grant/Preview,Grant/Apply},
+    /Admin/Credits/Deals/{Create,VerifyPayment,UploadInvoice,Invoice,List},
+    /Admin/Credits/Periodic/{Create,List,Terminate,Report},
+    /Admin/Credits/Promo/{Create,CreateBulk,SetEnabled,Delete}
 
 Folder "Static-only isolation guarantee":
   - A request to a protected API path with an INVALID sessionId cookie is still
     rejected (401/403), proving the cookie is validated against the store.
 
 Intentional public exception NOT exercised by the suite:
-  - POST /Webhooks/Razorpay is session-less but HMAC-signed (validates a payment
-    signature, not a cookie) and side-effecting, so the automated suite does not
-    POST to it. It is the one non-static unauthenticated route, documented here.
+  - POST /Webhooks/Razorpay and POST /Webhooks/Zoho are session-less but signed
+    (each validates a payment-provider signature, not a cookie) and side-effecting,
+    so the automated suite does not POST to them. They are the non-static
+    unauthenticated routes, documented here. (The OAuth flow endpoints /Login,
+    /Login/Callback and /Logout are likewise not probed: they are redirect /
+    cookie-clearing routes, not JSON API surface.)
 
 Notes:
   - The collection asserts on STATUS CODES and the public/protected boundary,

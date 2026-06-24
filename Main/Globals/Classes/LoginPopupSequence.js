@@ -2,7 +2,6 @@ import AuthenticationEvents from "../Events/AuthenticationEvents.js";
 import InitializationEvents from "../Events/InitializationEvents.js";
 import TermsAndConditionsManager from "./TermsAndConditionsManager.js";
 import TutorialBootstrap from "./TutorialBootstrap.js";
-import BrowserLlmDownloadBootstrap from "./BrowserLlm/BrowserLlmDownloadBootstrap.js";
 import ReleaseNotesBootstrap from "./ReleaseNotesBootstrap.js";
 
 /**
@@ -10,8 +9,8 @@ import ReleaseNotesBootstrap from "./ReleaseNotesBootstrap.js";
  *
  * Centralises the post-login popup choreography so the user never sees
  * two welcome popups visible at the same time. Without this class each
- * subsystem (terms, tutorial, model download, release notes) reacted to
- * ON_USER_LOGGED_IN on its own — and because the four use different
+ * subsystem (terms, tutorial, release notes) reacted to
+ * ON_USER_LOGGED_IN on its own — and because they use different
  * presentation layers (DialogBox queue vs raw <dialog-box> vs
  * <tutorial-overlay>) they had no way to coordinate. New users were
  * therefore "blasted" with overlapping modals.
@@ -22,10 +21,11 @@ import ReleaseNotesBootstrap from "./ReleaseNotesBootstrap.js";
  *      until every server-listed legal document is accepted.
  *   2. Beginners tutorial (auto-play once per device; carries the
  *      MindMeld Knowledge Consolidation Lifecycle diagram on step 1).
- *   3. Local AI model download prompt (only when WebGPU exists and the
- *      download state is NOT_STARTED — i.e. the device is compatible
- *      and the user hasn't already accepted/declined on this device).
- *   4. Release notes for any version the user hasn't seen yet.
+ *   3. Release notes for any version the user hasn't seen yet.
+ *
+ * The offline-AI-model download is deliberately NOT part of this
+ * choreography — it is offered on demand from Settings ▸ AI (the Free
+ * row of the model picker), never as a login-time prompt.
  *
  * Each step is invoked through the subsystem's public runForLogin(user)
  * method. The subsystems no longer install their own ON_USER_LOGGED_IN
@@ -36,7 +36,7 @@ import ReleaseNotesBootstrap from "./ReleaseNotesBootstrap.js";
  *
  * Gating prerequisites:
  *   - ON_USER_LOGGED_IN must have fired (to know who to prompt for).
- *   - InitializationEvents.COMPLETE must have fired before steps 2-4 so
+ *   - InitializationEvents.COMPLETE must have fired before steps 2-3 so
  *     the home page has rendered (the tutorial highlights real deck
  *     tiles). Terms doesn't need init complete and runs as soon as the
  *     login event arrives — getting the legal modal up ASAP is the whole
@@ -121,9 +121,8 @@ class LoginPopupSequence
             return;
         }
 
-        // Steps 2-4 all touch the home page (tutorial highlights real
-        // deck tiles, model-download prompt expects the app to look
-        // ready). Hold here until the deck tree boot has fired.
+        // Steps 2-3 both touch the home page (the tutorial highlights
+        // real deck tiles). Hold here until the deck tree boot has fired.
         if (!LoginPopupSequence.#bInitializationComplete)
         {
             await LoginPopupSequence.#initializationCompletePromise;
@@ -139,18 +138,11 @@ class LoginPopupSequence
             console.error("[LoginPopupSequence] Tutorial step failed:", tutorialError);
         }
 
-        // Step 3 — Local AI model download (only if WebGPU is present
-        // and state is NOT_STARTED; the subsystem handles those gates).
-        try
-        {
-            await BrowserLlmDownloadBootstrap.runForLogin(user);
-        }
-        catch (modelDownloadError)
-        {
-            console.error("[LoginPopupSequence] Model-download step failed:", modelDownloadError);
-        }
+        // The offline-AI-model download is intentionally NOT prompted here
+        // anymore — it is offered only on demand from Settings ▸ AI (the
+        // Free row of the model picker). See LlmTierSelect.
 
-        // Step 4 — Release notes for any unseen version. Runs last so a
+        // Step 3 — Release notes for any unseen version. Runs last so a
         // returning user with no other pending step still sees them.
         try
         {

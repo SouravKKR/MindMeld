@@ -44,6 +44,7 @@ const PUBLIC_ROUTES = [
 // the automated suite — POSTing junk to a live payment webhook is unsafe. They
 // are documented in DockTests.txt as the explicit non-static public exception.
 //   POST /Webhooks/Razorpay  -> 200 (validates an HMAC signature, not a cookie)
+//   POST /Webhooks/Zoho      -> 200 (validates a Zoho payment signature, not a cookie)
 
 // Must reject an anonymous request with 401 or 403 (never 200, never 5xx).
 const PROTECTED_ROUTES = [
@@ -66,6 +67,8 @@ const PROTECTED_ROUTES = [
     { method: "GET", path: "/InformationSource/Download" },
     { method: "GET", path: "/Templates/Search" },
     { method: "GET", path: "/Templates/Get" },
+    { method: "POST", path: "/Decks/BeautifyShortNames" },
+    { method: "GET", path: "/Decks/BeautifyShortNames/Result" },
     { method: "POST", path: "/Legal/Accept" },
     { method: "GET", path: "/ReleaseNotes/List" },
     { method: "POST", path: "/PaidDecks/Purchase/Initiate" },
@@ -115,7 +118,6 @@ const PROTECTED_ROUTES = [
     { method: "POST", path: "/Admin/PaidDecks/BulkUpdate" },
     { method: "GET", path: "/Admin/Stats/Revenue" },
     { method: "POST", path: "/Admin/Users/SetRole" },
-    { method: "POST", path: "/Admin/Decks/BeautifyShortNames" },
     { method: "GET", path: "/Admin/AdminEmails" },
     { method: "POST", path: "/Admin/AdminEmails/Add" },
     { method: "POST", path: "/Admin/AdminEmails/Remove" },
@@ -146,6 +148,41 @@ const PROTECTED_ROUTES = [
     { method: "POST", path: "/Admin/Credits/Config/Save" },
     { method: "POST", path: "/Admin/Credits/Grant/Preview" },
     { method: "POST", path: "/Admin/Credits/Grant/Apply" },
+    // Account: hard-delete is login-gated.
+    { method: "POST", path: "/Auth/DeleteAccount" },
+    // Profile: promo-code redemption (login-gated, credit-granting).
+    { method: "POST", path: "/Profile/RedeemPromoCode" },
+    // Login-streak + achievement metrics + leaderboard (all ensureLogin).
+    { method: "POST", path: "/Streak/AcknowledgeBadges" },
+    { method: "POST", path: "/Streak/ReportStudyActivity" },
+    { method: "POST", path: "/Metrics/Sync" },
+    { method: "POST", path: "/Metrics/AcknowledgeBadges" },
+    { method: "GET", path: "/Leaderboard/Me" },
+    // Admin: organization rename / capacity (ensureAdmin).
+    { method: "POST", path: "/Admin/Organizations/Rename" },
+    { method: "POST", path: "/Admin/Organizations/SetMaxMembers" },
+    // Admin: paid-deck field generation + per-user streak override (ensureAdmin).
+    { method: "POST", path: "/Admin/PaidDecks/GenerateField" },
+    { method: "POST", path: "/Admin/Streak/SetUserStreak" },
+    // Admin: generic list metadata + query console (ensureAdmin).
+    { method: "GET", path: "/Admin/Lists/Metadata" },
+    { method: "POST", path: "/Admin/Lists/Query" },
+    // Admin: credit deal payments (manual enterprise deals + invoices, ensureAdmin).
+    { method: "POST", path: "/Admin/Credits/Deals/Create" },
+    { method: "POST", path: "/Admin/Credits/Deals/VerifyPayment" },
+    { method: "POST", path: "/Admin/Credits/Deals/UploadInvoice" },
+    { method: "GET", path: "/Admin/Credits/Deals/Invoice" },
+    { method: "GET", path: "/Admin/Credits/Deals/List" },
+    // Admin: periodic (recurring) credit assignments (ensureAdmin).
+    { method: "POST", path: "/Admin/Credits/Periodic/Create" },
+    { method: "GET", path: "/Admin/Credits/Periodic/List" },
+    { method: "POST", path: "/Admin/Credits/Periodic/Terminate" },
+    { method: "GET", path: "/Admin/Credits/Periodic/Report" },
+    // Admin: promo-code management (ensureAdmin).
+    { method: "POST", path: "/Admin/Credits/Promo/Create" },
+    { method: "POST", path: "/Admin/Credits/Promo/CreateBulk" },
+    { method: "POST", path: "/Admin/Credits/Promo/SetEnabled" },
+    { method: "POST", path: "/Admin/Credits/Promo/Delete" },
 ];
 
 const TOTAL_ENDPOINTS = PUBLIC_ROUTES.length + PROTECTED_ROUTES.length;

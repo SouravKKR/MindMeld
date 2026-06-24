@@ -8,6 +8,7 @@ from Globals.Classes.Automation.AutomationProvider import AutomationProvider
 from Globals.Classes.Automation.AutomationResponse import AutomationResponse
 from Globals.Classes.Automation.AutomationRequest import AutomationRequest
 from Globals.Classes.Automation.AutomationContent import AutomationContent
+from Globals.Classes.Automation.ProviderHealthSignal import ProviderHealthSignal
 from Globals.Classes.Generic.RedisSemaphore import RedisSemaphore
 from Globals.Classes.WebScraping.WebContentFetcher import WebContentFetcher
 from Globals.Classes.Credits.CreditMeter import CreditMeter
@@ -17,6 +18,7 @@ import httpx
 from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
+from google.oauth2 import service_account
 
 
 class GoogleVertexAiProvider(AutomationProvider):
@@ -39,8 +41,12 @@ class GoogleVertexAiProvider(AutomationProvider):
     differences — everything else is mirrored verbatim):
 
       1. Client construction. Vertex authenticates with Google Cloud
-         credentials (Application Default Credentials) scoped to a project +
-         location rather than a flat API key. See __build_client.
+         credentials scoped to a project + location rather than a flat API
+         key. The enterprise path reads VERTEX_ENTERPRISE_PROJECT /
+         VERTEX_ENTERPRISE_LOCATION / VERTEX_ENTERPRISE_CREDENTIALS (all
+         deliberately tagged ENTERPRISE so they can't be confused with the
+         Gemini Developer API key or the express-mode key). See
+         __build_client.
 
       2. Video inputs. The Files API (client.files.upload) is a
          Gemini-Developer-API-only feature; it is NOT available on Vertex.
@@ -70,7 +76,7 @@ class GoogleVertexAiProvider(AutomationProvider):
     DEFAULT_RETRY_SLEEP_SECONDS = 8.0
     MAX_RETRY_SLEEP_SECONDS = 60.0
 
-    # Default Vertex region when GOOGLE_CLOUD_LOCATION is unset. "global"
+    # Default Vertex region when VERTEX_ENTERPRISE_LOCATION is unset. "global"
     # is the multi-region endpoint Vertex now offers for the Gemini model
     # family and gives the broadest model availability with the least
     # capacity contention; override per deployment via the env var.
@@ -104,23 +110,25 @@ class GoogleVertexAiProvider(AutomationProvider):
         """
         Builds a google-genai client bound to the Vertex AI backend.
 
-        Two authentication shapes are supported, checked in priority order:
+        Two authentication shapes are supported, checked in priority order.
+        Every variable carries an explicit ENTERPRISE / EXPRESS tag so the
+        intended Vertex auth mode is unambiguous at a glance:
 
-          1. Standard enterprise Vertex (recommended): a Google Cloud
-             project + location. Credentials come from Application Default
-             Credentials (GOOGLE_APPLICATION_CREDENTIALS service-account
-             file, gcloud auth, or the workload's attached identity). Reads
-             GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION.
+          1. Enterprise Vertex (recommended): a Google Cloud project +
+             location. Reads VERTEX_ENTERPRISE_PROJECT and
+             VERTEX_ENTERPRISE_LOCATION. Credentials come from the
+             service-account key JSON at VERTEX_ENTERPRISE_CREDENTIALS when
+             set; otherwise the ambient Application Default Credentials
+             (gcloud auth or the workload's attached identity) are used.
 
           2. Vertex Express Mode: a single Vertex API key passed via
-             GOOGLE_VERTEX_API_KEY, for setups that haven't provisioned a
-             full project/ADC. Used only when no project is configured.
+             VERTEX_EXPRESS_API_KEY, for setups that haven't provisioned a
+             full project/ADC. Used only when no enterprise project is set.
 
-        Setting GOOGLE_GENAI_USE_VERTEXAI / GOOGLE_CLOUD_PROJECT /
-        GOOGLE_CLOUD_LOCATION in the environment would let the SDK
-        self-configure, but we pass them explicitly so the wiring is
-        readable and a misconfiguration fails loudly here rather than
-        silently falling back to the Developer API.
+        The configuration is passed explicitly (rather than via the SDK's
+        GOOGLE_GENAI_USE_VERTEXAI / GOOGLE_CLOUD_* auto-discovery) so the
+        wiring is readable and a misconfiguration fails loudly here rather
+        than silently falling back to the Developer API.
         """
         sync_client, async_client = GoogleVertexAiProvider.__build_ipv4_httpx_clients()
         http_options = types.HttpOptions(
@@ -128,18 +136,22 @@ class GoogleVertexAiProvider(AutomationProvider):
             httpx_async_client = async_client,
         )
 
-        project  = os.getenv("GOOGLE_CLOUD_PROJECT")
-        location = os.getenv("GOOGLE_CLOUD_LOCATION") or GoogleVertexAiProvider.DEFAULT_VERTEX_LOCATION
+        enterprise_project  = os.getenv("VERTEX_ENTERPRISE_PROJECT")
+        enterprise_location = os.getenv("VERTEX_ENTERPRISE_LOCATION") or GoogleVertexAiProvider.DEFAULT_VERTEX_LOCATION
 
-        if project:
-            return genai.Client(
-                vertexai     = True,
-                project      = project,
-                location     = location,
-                http_options = http_options,
-            )
+        if enterprise_project:
+            client_arguments = {
+                "vertexai":     True,
+                "project":      enterprise_project,
+                "location":     enterprise_location,
+                "http_options": http_options,
+            }
+            enterprise_credentials = GoogleVertexAiProvider.__load_enterprise_credentials()
+            if enterprise_credentials is not None:
+                client_arguments["credentials"] = enterprise_credentials
+            return genai.Client(**client_arguments)
 
-        express_api_key = os.getenv("GOOGLE_VERTEX_API_KEY")
+        express_api_key = os.getenv("VERTEX_EXPRESS_API_KEY")
         if express_api_key:
             return genai.Client(
                 vertexai     = True,
@@ -149,9 +161,29 @@ class GoogleVertexAiProvider(AutomationProvider):
 
         raise RuntimeError(
             "GoogleVertexAiProvider requires Vertex AI credentials: set "
-            "GOOGLE_CLOUD_PROJECT (with Application Default Credentials and "
-            "an optional GOOGLE_CLOUD_LOCATION), or GOOGLE_VERTEX_API_KEY for "
-            "Vertex Express Mode."
+            "VERTEX_ENTERPRISE_PROJECT (with VERTEX_ENTERPRISE_CREDENTIALS or "
+            "ambient ADC, and an optional VERTEX_ENTERPRISE_LOCATION), or "
+            "VERTEX_EXPRESS_API_KEY for Vertex Express Mode."
+        )
+
+    # Scope every Vertex AI call needs; the service-account key carries no
+    # scopes of its own, so we attach the broad cloud-platform scope here.
+    _VERTEX_CREDENTIAL_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
+
+    @staticmethod
+    def __load_enterprise_credentials():
+        """
+        Loads service-account credentials from the JSON key file named by
+        VERTEX_ENTERPRISE_CREDENTIALS. Returns None when the variable is
+        unset, in which case the SDK falls back to ambient Application
+        Default Credentials (gcloud auth / attached workload identity).
+        """
+        credentials_path = os.getenv("VERTEX_ENTERPRISE_CREDENTIALS")
+        if not credentials_path:
+            return None
+        return service_account.Credentials.from_service_account_file(
+            credentials_path,
+            scopes = list(GoogleVertexAiProvider._VERTEX_CREDENTIAL_SCOPES),
         )
 
     def __init__(self):
@@ -454,6 +486,7 @@ class GoogleVertexAiProvider(AutomationProvider):
                     f"(attempt {attempt_index + 1}/{GoogleVertexAiProvider.MAX_TRANSIENT_RETRIES}). "
                     f"Sleeping {sleep_seconds:.1f}s then retrying."
                 )
+                await ProviderHealthSignal.mark_slowdown(error_label)
 
             except Exception as unexpected_error:
                 yield { "type": "error", "message": str(unexpected_error) }
@@ -547,6 +580,7 @@ class GoogleVertexAiProvider(AutomationProvider):
                         f"(attempt {attempt_index + 1}/{GoogleVertexAiProvider.MAX_TRANSIENT_RETRIES}). "
                         f"Sleeping {sleep_seconds:.1f}s then retrying."
                     )
+                    await ProviderHealthSignal.mark_slowdown(error_label)
 
             # Sleep is OUTSIDE the semaphore — we have already released
             # the slot back to the pool, so other workers can use it
@@ -720,6 +754,7 @@ class GoogleVertexAiProvider(AutomationProvider):
                         f"attempt {attempt_index + 1}/{GoogleVertexAiProvider.MAX_TRANSIENT_RETRIES}). "
                         f"Sleeping {sleep_seconds:.1f}s then retrying."
                     )
+                    await ProviderHealthSignal.mark_slowdown(error_label)
 
             if sleep_seconds is not None:
                 await asyncio.sleep(sleep_seconds)

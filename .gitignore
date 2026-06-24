@@ -401,4 +401,11 @@ Common/Reports/.results/
 Common/Testing/Dock/node_modules/
 Common/Testing/Main/node_modules/
 Common/Testing/**/package-lock.json
+Commmon/Testing/Experimental/**/Output/
+Common/Testing/Experimental/**/Output/
+Common/Testing/Experimental/_iter/
 .production.env
+
+# Local-only portable Graphviz binaries used for dev/testing of the SVG enhancer
+# (production gets `dot` from the Docker image's apt graphviz package instead).
+Agent/.tools/

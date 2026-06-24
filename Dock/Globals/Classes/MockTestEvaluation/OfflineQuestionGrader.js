@@ -47,7 +47,7 @@ class OfflineQuestionGrader
         if (partialMarks !== 0)
         {
             const correctSelectedCount = [...userSelectedIndices].filter((selectedIndex) => expectedIndices.has(selectedIndex)).length;
-            return partialMarks * correctSelectedCount;
+            return Math.min(partialMarks * correctSelectedCount, correctMarks);
         }
 
         return wrongMarks;

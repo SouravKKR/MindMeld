@@ -71,6 +71,70 @@ progress-page
     color: #DC5050;
 }
 
+.progress-page-status-banner--warning
+{
+    background: rgba(240, 170, 50, 0.1);
+    border: 1px solid rgba(240, 170, 50, 0.35);
+    color: #F0AA32;
+}
+
+/* Transient "AI provider is busy" notice shown while the generation is still
+   running. Amber so it reads as "heads up", not "error". Hidden until a poll
+   reports providerSlowdown, then auto-hidden again once the signal clears. */
+.progress-page-live-banner
+{
+    display: none;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    background: rgba(240, 170, 50, 0.1);
+    border: 1px solid rgba(240, 170, 50, 0.35);
+    color: #F0AA32;
+}
+
+/* Subtle "you can leave and come back" line driven by the live Redis TTL. */
+.progress-page-ttl-note
+{
+    display: none;
+    font-size: 12px;
+    font-weight: 500;
+    color: #777777;
+    padding: 0 2px;
+}
+
+.progress-page-footer-actions
+{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.progress-page-pause-button
+{
+    padding: 10px 24px;
+    border-radius: 8px;
+    background: rgba(240, 170, 50, 0.08);
+    border: 1px solid rgba(240, 170, 50, 0.35);
+    color: #F0AA32;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.progress-page-pause-button:hover
+{
+    background: rgba(240, 170, 50, 0.16);
+    border-color: rgba(240, 170, 50, 0.6);
+}
+
+.progress-page-pause-button:disabled
+{
+    opacity: 0.55;
+    cursor: default;
+}
+
 .progress-page-right
 {
     display: flex;

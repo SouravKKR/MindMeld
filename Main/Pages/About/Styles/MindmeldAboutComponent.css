@@ -738,6 +738,87 @@ mindmeld-about-component
     color: #888888;
 }
 
+/* ─── Contact ───────────────────────────────────────────────────────────────── */
+
+.about-contact-section
+{
+    padding: 80px 60px;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.about-contact-card
+{
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    max-width: 420px;
+    padding: 22px 26px;
+    border-radius: 16px;
+    background: var(--secondary-background-color, #1f1f1f);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    text-decoration: none;
+    color: inherit;
+    transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out, transform 0.2s ease-in-out;
+}
+
+.about-contact-card:hover
+{
+    background: rgba(0, 152, 196, 0.08);
+    border-color: rgba(0, 152, 196, 0.35);
+    transform: translateY(-3px);
+}
+
+.about-contact-icon
+{
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    display: block;
+}
+
+.about-contact-text
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+}
+
+.about-contact-label
+{
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #888888;
+}
+
+.about-contact-email
+{
+    font-size: 16px;
+    font-weight: bold;
+    color: #dddddd;
+    word-break: break-all;
+}
+
+.about-contact-arrow
+{
+    color: var(--gradient-start-color);
+    font-size: 22px;
+    font-weight: bold;
+    line-height: 1;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.15s ease-in-out, transform 0.15s ease-in-out;
+}
+
+.about-contact-card:hover .about-contact-arrow
+{
+    opacity: 1;
+    transform: translateX(3px);
+}
+
 /* ─── Call To Action ────────────────────────────────────────────────────────── */
 
 .about-call-to-action
@@ -851,6 +932,7 @@ mindmeld-about-component
     .about-lifecycle-section,
     .about-features-section,
     .about-differentiators-section,
+    .about-contact-section,
     .about-call-to-action
     {
         padding: 60px 28px;

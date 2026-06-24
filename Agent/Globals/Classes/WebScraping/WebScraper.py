@@ -11,6 +11,8 @@ class WebScraper:
 
     DEFAULT_MAX_RESULTS_PER_PASS = 10
     MAX_SITE_OPERATORS_PER_QUERY = 10
+    DEFAULT_MAX_IMAGE_RESULTS    = 6
+    IMAGE_URL_EXTENSIONS         = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg")
 
     def __init__(self):
         pass
@@ -57,6 +59,19 @@ class WebScraper:
         """
         effective_count = result_count or WebScraper.DEFAULT_MAX_RESULTS_PER_PASS
         return self.__run_ddgs_rich(query, effective_count)
+
+    async def search_images(self, query: str, result_count: int = None) -> List[dict]:
+        """
+        DDGS image search. Returns a deduped list of image result dicts
+        ({imageUrl, thumbnailUrl, sourceUrl, title}) for the AskAi feature —
+        the Pro / Pro Plus prompt embeds the direct URLs inline and the
+        result view also renders them as a thumbnail strip. Only http(s)
+        URLs that point at a real image file (by extension) survive, so a
+        hostile or non-image link never reaches the browser. Failures
+        degrade to [] rather than aborting the reply.
+        """
+        effective_count = result_count or WebScraper.DEFAULT_MAX_IMAGE_RESULTS
+        return self.__run_ddgs_images(query, effective_count)
 
     async def search_scoped_rich(
         self,
@@ -170,6 +185,56 @@ class WebScraper:
         reputed_count = sum(1 for entry in rich_results if ReputedSources.is_reputed_domain(entry["url"]))
         print(f"[WebScraper] rich pass \"{query}\" -> {len(rich_results)} URLs ({reputed_count} reputed)")
         return rich_results
+
+    def __run_ddgs_images(self, query: str, max_results: int) -> List[dict]:
+        image_results: List[dict] = []
+        seen: set = set()
+
+        try:
+            with DDGS() as ddgs:
+                results_generator = ddgs.images(
+                    query,
+                    region     = "wt-wt",
+                    safesearch = "moderate",
+                    max_results= max_results * 3,
+                )
+
+                for result in results_generator:
+                    image_url = result.get("image", "") or ""
+                    if not image_url or image_url in seen:
+                        continue
+                    if not WebScraper.__is_direct_image_url(image_url):
+                        continue
+                    seen.add(image_url)
+
+                    image_results.append({
+                        "imageUrl":     image_url,
+                        "thumbnailUrl": result.get("thumbnail", "") or "",
+                        "sourceUrl":    result.get("url", "") or "",
+                        "title":        result.get("title", "") or "",
+                    })
+
+                    if len(image_results) >= max_results:
+                        break
+        except Exception as search_error:
+            print(f"[WebScraper] DDGS image error on query \"{query}\": {search_error}")
+
+        print(f"[WebScraper] image pass \"{query}\" -> {len(image_results)} images")
+        return image_results
+
+    @staticmethod
+    def __is_direct_image_url(image_url: str) -> bool:
+        """
+        True only for an http(s) URL whose path ends in a real image
+        extension. DDGS occasionally returns redirect / tracking links or
+        HTML pages under the "image" key; those would render as a broken
+        thumbnail, so they're dropped here before reaching the browser.
+        """
+        lowered = image_url.lower()
+        if not lowered.startswith(("http://", "https://")):
+            return False
+        path_without_query = lowered.split("?")[0]
+        return path_without_query.endswith(WebScraper.IMAGE_URL_EXTENSIONS)
 
     def __run_ddgs(self, query: str, max_results: int, target_extension: str) -> List[str]:
         links: List[str] = []

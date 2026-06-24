@@ -37,6 +37,21 @@ class PausedTaskBanner extends HTMLElement
         return taskTypeName ? enumerationToTitleCase(taskTypeName) : "task";
     }
 
+    // The banner reads differently depending on why the task paused: a manual
+    // user pause is simply resumable, whereas a credit pause needs a top-up
+    // first. pausedReason comes through on the fetched TaskState.
+    #messageHtml()
+    {
+        const labelHtml = `<strong>${PausedTaskBanner.#escape(this.#taskLabel())}</strong>`;
+
+        if (this.#taskState.pausedReason === "USER_PAUSED")
+        {
+            return `Your ${labelHtml} was paused. Resume it to continue from where it left off.`;
+        }
+
+        return `Your ${labelHtml} was paused (out of credits). Top up your credits, then resume it.`;
+    }
+
     #render()
     {
         this.innerHTML =
@@ -96,7 +111,7 @@ class PausedTaskBanner extends HTMLElement
                 .paused-task-banner-resume:disabled { opacity: 0.6; cursor: default; }
             </style>
             <div class="paused-task-banner-inner">
-                <span class="paused-task-banner-text">Your <strong>${PausedTaskBanner.#escape(this.#taskLabel())}</strong> was paused (out of credits). Top up your credits, then resume it.</span>
+                <span class="paused-task-banner-text">${this.#messageHtml()}</span>
                 <div class="paused-task-banner-actions">
                     <button class="paused-task-banner-resume">Resume</button>
                     <button class="paused-task-banner-discard">Discard</button>

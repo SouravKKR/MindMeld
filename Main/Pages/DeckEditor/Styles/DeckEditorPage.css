@@ -71,6 +71,21 @@
     padding: 4px 0;
 }
 
+deck-editor-page .credit-warning-note
+{
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--warning-color, #e0a800);
+    white-space: nowrap;
+}
+
+/* Inside the checkbox label rows the warning note sits inline next to the
+   option name rather than on its own line. */
+.deck-field-checkbox-label .credit-warning-note
+{
+    margin-left: 4px;
+}
+
 .deck-field-checkbox-label
 {
     display: flex;

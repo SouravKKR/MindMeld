@@ -18,6 +18,8 @@ const TaskStateManager = require("../../Globals/Classes/Task/TaskStateManager");
 const { taskExecutionTargets } = require("../../Globals/Enumerations/TaskExecutionTargets");
 const { getUser } = require("../Helpers/GetUser");
 const { moveToDatabase } = require("../Helpers/MoveToDatabase");
+const GenerationOutcomeInspector = require("../Helpers/GenerationOutcomeInspector");
+const { clearPartialCompletionOnDecks } = require("../Helpers/ClearPartialCompletion");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const MaintenanceGate = require("../../Globals/Classes/Maintenance/MaintenanceGate");
@@ -42,6 +44,40 @@ function buildVirtualWebSource(sourceTypeValue)
 }
 
 
+/**
+ * Builds a /Generate request body that re-runs ONLY the output scopes that
+ * failed, merging into the same parent deck (so SyllabusFingerprintMatcher
+ * reuses the existing partial subtree and the dedup in GeneratedEntityUpserter
+ * suppresses any overlap with what was already kept). The general settings are
+ * carried forward verbatim — re-mapping topics is required to regenerate the
+ * missing content type.
+ *
+ * @param {string} parentDeckId
+ * @param {object} generalGenerationJson
+ * @param {string[]} failedScopes  subset of the scope body-keys
+ * @param {{ [scopeKey: string]: (object|null) }} scopeJsonByKey
+ * @returns {object}
+ */
+function buildRetryBody(parentDeckId, generalGenerationJson, failedScopes, scopeJsonByKey)
+{
+    const retryBody =
+    {
+        parentDeckId: parentDeckId,
+        generalGeneration: generalGenerationJson,
+    };
+
+    for (const scopeKey of failedScopes)
+    {
+        if (scopeJsonByKey[scopeKey] !== null && typeof scopeJsonByKey[scopeKey] === "object")
+        {
+            retryBody[scopeKey] = scopeJsonByKey[scopeKey];
+        }
+    }
+
+    return retryBody;
+}
+
+
 async function handleGenerate(request, response)
 {
     console.log("Generating...");
@@ -56,13 +92,10 @@ async function handleGenerate(request, response)
         return;
     }
 
-    const { userRoles } = require("../../Globals/Enumerations/UserRoles");
-    if (user.getRole() !== userRoles.ADMIN && user.getRole() !== userRoles.CREATOR)
-    {
-        response.statusCode = httpStatus.FORBIDDEN;
-        response.end("Generation is restricted to authorized roles.");
-        return;
-    }
+    // AI generation is open to every signed-in user — affordability is
+    // enforced authoritatively below by CreditPreflight (and per-task by the
+    // Agent). The closed-test admin/creator role lock has been retired now
+    // that the credits system is live.
 
     // Scheduled-maintenance gate. Blocks STARTING new work only — tasks already
     // in flight are untouched (this runs at endpoint entry, never inside the DAG).
@@ -76,6 +109,19 @@ async function handleGenerate(request, response)
 
     const deckId = body["parentDeckId"] || "0";
     const userId = user.getId();
+
+    // Checkpoint-resume: a resumed run carries the paused run's main task id so
+    // the whole pipeline reuses the same Tasks/{mainTaskId}/ GCS namespace and
+    // every already-generated item is found and skipped (continue from midway
+    // instead of re-running). Null on a normal first run.
+    const resumeMainTaskId = body["resumeMainTaskId"] || null;
+
+    // A "retry the rest" run carries the ids of the partial decks to clear once
+    // it succeeds (see PartialGenerationRetryFlow / MoveToDatabase). Its presence
+    // also marks this as a retry, which lets the survivors fold back into the
+    // existing partial subtree even when the user generated at the root deck.
+    const clearPartialCompletionDeckIds = Array.isArray(body["clearPartialCompletionDeckIds"]) ? body["clearPartialCompletionDeckIds"] : [];
+    const bIsRetry = clearPartialCompletionDeckIds.length > 0;
 
     let generalGenerationSettings = null;
     let flashcardGenerationSettings = null;
@@ -220,6 +266,15 @@ async function handleGenerate(request, response)
         payload: normalizedGeneralGenerationJson,
         nextTaskIds: [processSyllabusTaskDescriptor.getId()],
     });
+
+    if (resumeMainTaskId)
+    {
+        // Reuse the paused run's id so this run reads/writes the same GCS
+        // namespace. Clear any stale Redis state first so the fresh setTask(NX)
+        // lands and the old paused (FAILED/USER_PAUSED) blob can't shadow it.
+        mainTaskDescriptor._restoreId_id(resumeMainTaskId);
+        await TaskManager.resetForResume(resumeMainTaskId);
+    }
 
     await TaskManager.setTask(mainTaskDescriptor);
     await TaskManager.trackForUser(userId, mainTaskDescriptor.getId());
@@ -437,7 +492,7 @@ async function handleGenerate(request, response)
     response.sendJson({taskId: mainTaskId});
 
     TaskManager.execute(mainTaskDescriptor)
-    .then(async () =>
+    .then(async (pipelineSucceeded) =>
     {
         // If the pipeline stopped because the user ran out of credits mid-run,
         // save a resumable snapshot of this exact generation and stop here.
@@ -454,7 +509,9 @@ async function handleGenerate(request, response)
                     userId: userId,
                     taskType: taskTypes.PREPARE_FOR_GENERATION,
                     route: "/Generate",
-                    payload: body,
+                    // Carry the main task id so Resume continues from midway,
+                    // reusing every item already staged under Tasks/{mainTaskId}/.
+                    payload: { ...body, resumeMainTaskId: mainTaskId },
                     pausedReason: TaskManager.INSUFFICIENT_CREDITS_REASON,
                 });
             }
@@ -480,7 +537,107 @@ async function handleGenerate(request, response)
             return;
         }
 
+        // If the user manually paused this run, the chain stopped launching new
+        // stages. Save a resumable snapshot (same machinery as the credit pause)
+        // and stop here WITHOUT moving partial output to the user's library. The
+        // root is flagged USER_PAUSED so the progress page shows a paused (not
+        // failed) terminal state, and the home-screen banner offers Resume.
+        //
+        // Gate on pipelineSucceeded === false: the pause gate returns false only
+        // when it actually skipped not-yet-started work. A pause clicked after
+        // the run already finished leaves pipelineSucceeded true, so a completed
+        // generation is never discarded by a late click.
+        if (pipelineSucceeded === false && await TaskManager.isPaused(mainTaskId))
+        {
+            console.log(`[Generate] Task ${mainTaskId} paused by user. Saving resumable state.`);
+
+            try
+            {
+                await TaskStateManager.save({
+                    userId: userId,
+                    taskType: taskTypes.PREPARE_FOR_GENERATION,
+                    route: "/Generate",
+                    // Carry the main task id so Resume continues from midway,
+                    // reusing every item already staged under Tasks/{mainTaskId}/.
+                    payload: { ...body, resumeMainTaskId: mainTaskId },
+                    pausedReason: TaskManager.USER_PAUSED_REASON,
+                });
+            }
+            catch (saveError)
+            {
+                console.warn(`[Generate] Failed to save resumable task state for paused ${mainTaskId}: ${saveError.message}`);
+            }
+
+            try
+            {
+                const pausedTask = await TaskManager.getTask(mainTaskId);
+                if (pausedTask)
+                {
+                    pausedTask.setStatus(taskStatus.FAILED);
+                    const existingPayload = pausedTask.getPayload() || {};
+                    pausedTask.setPayload({ ...existingPayload, error: TaskManager.USER_PAUSED_REASON });
+                    await TaskManager.updateTask(pausedTask);
+                    await TaskHistoryQueryEngine.recordCompletion(pausedTask);
+                }
+            }
+            catch (historyError)
+            {
+                console.error(`[Generate] Failed to settle paused task ${mainTaskId}: ${historyError.message}`);
+            }
+
+            await TaskManager.clearPaused(mainTaskId);
+            await TaskManager.untrackForUser(userId, mainTaskId);
+            return;
+        }
+
         console.log(`[Generate] Pipeline complete for task ${mainTaskId}. Moving to database...`);
+
+        // ── Per-scope outcome inspection ──────────────────────────────────────
+        // A multi-output run (flashcards + study material + mock tests) can
+        // have one sibling fail while the others succeed. The pipeline does NOT
+        // abort the survivors, so their staged output is real and worth keeping.
+        // Walk the finished task tree to classify each requested scope, then
+        // (below) keep what exists and either stamp a partialCompletion marker
+        // or, when nothing usable was produced, mark the whole run FAILED — so
+        // partial output is never silently presented as a bare success/failure.
+        const scopeTaskIdsByKey =
+        {
+            flashcardGeneration: flashcardGenerationTask ? flashcardGenerationTask.getId() : null,
+            studyMaterialGeneration: studyMaterialGenerationTask ? studyMaterialGenerationTask.getId() : null,
+            mockTestGeneration: mockTestGenerationTask ? mockTestGenerationTask.getId() : null,
+        };
+
+        const scopeOutcome = await GenerationOutcomeInspector.inspect(mainTaskId, scopeTaskIdsByKey);
+
+        // pipelineSucceeded is the boolean TaskManager.execute resolves to; a
+        // false here with no classified scope failure means an auxiliary task
+        // (e.g. a similarity-search prep) failed without affecting any output
+        // type, which we treat as success since the user got everything asked.
+        if (pipelineSucceeded === false && scopeOutcome.failedScopes.length === 0)
+        {
+            console.warn(`[Generate] Task ${mainTaskId} reported a non-scope failure but every requested output type completed — treating as success.`);
+        }
+
+        let generationFailureContext = null;
+        if (scopeOutcome.failedScopes.length > 0)
+        {
+            generationFailureContext =
+            {
+                mainTaskId: mainTaskId,
+                completedScopes: scopeOutcome.completedScopes,
+                failedScopes: scopeOutcome.failedScopes,
+                retryBody: buildRetryBody(
+                    deckId,
+                    normalizedGeneralGenerationJson,
+                    scopeOutcome.failedScopes,
+                    {
+                        flashcardGeneration: flashcardGenerationSettingsJson,
+                        studyMaterialGeneration: studyMaterialGenerationSettingsJson,
+                        mockTestGeneration: mockTestGenerationSettingsJson,
+                    },
+                ),
+            };
+        }
 
         const completedTask = await TaskManager.getTask(mainTaskId);
 
@@ -555,7 +712,7 @@ async function handleGenerate(request, response)
             }
         }
 
-        await moveToDatabase(
+        const moveResult = await moveToDatabase(
             userId,
             mainTaskId,
             deckId,
@@ -563,13 +720,62 @@ async function handleGenerate(request, response)
             flashcardGenerationSettings,
             studyMaterialGenerationSettings,
             mockTestGenerationSettings,
+            generationFailureContext,
+            bIsRetry,
         );
 
         console.log(`[Generate] Database move complete for task ${mainTaskId}.`);
 
+        // A retry that fully succeeded must drop the partial badge from the
+        // decks the original partial run flagged — done explicitly by id so it
+        // works even when this retry built no deck rows of its own (e.g. a
+        // mock-tests-only retry whose bundle just attaches to an existing deck).
+        if (bIsRetry && generationFailureContext === null)
+        {
+            try
+            {
+                await clearPartialCompletionOnDecks(userId, clearPartialCompletionDeckIds);
+                console.log(`[Generate] Cleared partial-completion marker on ${clearPartialCompletionDeckIds.length} deck(s) after successful retry of ${mainTaskId}.`);
+            }
+            catch (clearError)
+            {
+                console.error(`[Generate] Failed to clear partial-completion markers for ${mainTaskId}: ${clearError.message}`);
+            }
+        }
+
+        // ── Settle the run's terminal state for failed-sibling runs ───────────
+        if (generationFailureContext !== null)
+        {
+            const partialCompletion = moveResult ? moveResult.partialCompletion : null;
+            const settledTask = await TaskManager.getTask(mainTaskId);
+            const existingPayload = settledTask.getPayload() || {};
+
+            if (partialCompletion)
+            {
+                // Survivors were kept. The task's own work finished, so it stays
+                // COMPLETED; the marker carries the failed-sibling story that the
+                // frontend turns into a "kept N, retry the rest" prompt.
+                settledTask.setPayload({ ...existingPayload, partialCompletion: partialCompletion });
+                console.log(`[Generate] Task ${mainTaskId} completed partially — failed scopes: ${generationFailureContext.failedScopes.join(", ")}.`);
+            }
+            else
+            {
+                // A failure occurred and nothing usable was produced — a genuine
+                // total failure.
+                settledTask.setStatus(taskStatus.FAILED);
+                settledTask.setPayload({ ...existingPayload, error: existingPayload.error || "Generation failed before any content could be created." });
+                console.log(`[Generate] Task ${mainTaskId} failed — no usable content produced.`);
+            }
+
+            await TaskManager.updateTask(settledTask);
+        }
+
         try
         {
-            await TaskHistoryQueryEngine.recordCompletion(completedTask);
+            // Re-fetch so the archived record reflects any FAILED/partial status
+            // just written above rather than the stale completedTask snapshot.
+            const taskForHistory = await TaskManager.getTask(mainTaskId);
+            await TaskHistoryQueryEngine.recordCompletion(taskForHistory);
         }
         catch (historyError)
         {

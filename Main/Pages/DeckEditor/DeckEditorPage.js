@@ -11,6 +11,7 @@ import TutorialEngine from "../../Globals/Classes/TutorialEngine.js";
 import AutoAnalysisDeckFields from "../../Globals/Classes/Analysis/AutoAnalysisDeckFields.js";
 import StudyMaterial from "../../Globals/Model/StudyMaterial.js";
 import AiFeatureGate from "../../Globals/Classes/AiFeatureGate.js";
+import CreditNotice from "../../Globals/Classes/Credits/CreditNotice.js";
 import MockTestAttemptCleaner from "../../Globals/Classes/MockTestAttemptCleaner.js";
 import TaskProgressTracker from "../../Globals/Classes/Task/TaskProgressTracker.js";
 import { taskStatus } from "../../Globals/Enumerations/TaskStatus.js";
@@ -174,7 +175,7 @@ class DeckEditorPage extends HTMLElement
             // 1. Kick off the beautify task. It returns a taskId immediately and
             //    runs the AI workflow in the background, so this request never
             //    blocks past Cloudflare's ~100s edge timeout (HTTP 524).
-            const startResponse = await fetch("/Admin/Decks/BeautifyShortNames",
+            const startResponse = await fetch("/Decks/BeautifyShortNames",
             {
                 method:  "POST",
                 headers: { "Content-Type": "application/json" },
@@ -224,6 +225,20 @@ class DeckEditorPage extends HTMLElement
 
             if (!finalTaskTree || finalTaskTree.status !== taskStatus.COMPLETED)
             {
+                // The Agent's per-task credit gate is authoritative: a denial
+                // marks the task FAILED with a credit error, which GetProgress
+                // surfaces as tree.outOfCredits / node.error. Route those to the
+                // shared credit notice (with a top-up path) rather than the
+                // generic "model overloaded" message they're not.
+                const failureReason = finalTaskTree && finalTaskTree.error;
+                if ((finalTaskTree && finalTaskTree.outOfCredits === true)
+                    || failureReason === CreditNotice.INSUFFICIENT_CREDITS_ERROR
+                    || failureReason === "SERVICE_DISABLED")
+                {
+                    await CreditNotice.showInsufficientCredits({ error: failureReason || CreditNotice.INSUFFICIENT_CREDITS_ERROR });
+                    return;
+                }
+
                 await DialogBox.alert(
                     "Beautification failed",
                     "The AI service did not finish. The model may be temporarily overloaded — please try again."
@@ -232,7 +247,7 @@ class DeckEditorPage extends HTMLElement
             }
 
             // 3. Fetch the beautified deck-key → short-name map the worker produced.
-            const resultResponse = await fetch(`/Admin/Decks/BeautifyShortNames/Result?taskid=${encodeURIComponent(taskId)}`,
+            const resultResponse = await fetch(`/Decks/BeautifyShortNames/Result?taskid=${encodeURIComponent(taskId)}`,
             {
                 method: "GET"
             });
@@ -430,7 +445,7 @@ class DeckEditorPage extends HTMLElement
             // Only the toggle-ON path costs LLM credits — toggle-OFF is
             // always allowed so a non-admin who somehow ended up with the
             // flag set can still disable it.
-            if (autoPerformanceAnalysisInput.checked && !await AiFeatureGate.ensureAdminOrShowAlert())
+            if (autoPerformanceAnalysisInput.checked && !await AiFeatureGate.ensureAllowedOrShowAlert())
             {
                 autoPerformanceAnalysisInput.checked = false;
                 return;
@@ -453,7 +468,7 @@ class DeckEditorPage extends HTMLElement
 
         autoGenerateCuratedStudyInput.addEventListener("change", async () =>
         {
-            if (autoGenerateCuratedStudyInput.checked && !await AiFeatureGate.ensureAdminOrShowAlert())
+            if (autoGenerateCuratedStudyInput.checked && !await AiFeatureGate.ensureAllowedOrShowAlert())
             {
                 autoGenerateCuratedStudyInput.checked = false;
                 return;
@@ -474,21 +489,13 @@ class DeckEditorPage extends HTMLElement
             );
         });
 
-        const beautifyShortNamesContainer = this.querySelector(".deck-beautify-short-names-container");
         const beautifyShortNamesButton = this.querySelector(".deck-beautify-short-names-input");
 
-        if (AiFeatureGate.isAdmin())
-        {
-            beautifyShortNamesContainer.style.display = "";
-        }
-
+        // The manual "Beautify Short Names" button is open to any signed-in
+        // user; the BEAUTIFY_DECK_SHORT_NAMES task it queues is billed by the
+        // Agent's per-task credit charger like any other metered AI feature.
         beautifyShortNamesButton.addEventListener("click", async () =>
         {
-            if (!await AiFeatureGate.ensureAdminOrShowAlert())
-            {
-                return;
-            }
-
             await this.#beautifyShortNames(beautifyShortNamesButton);
         });
 
@@ -655,6 +662,7 @@ class DeckEditorPage extends HTMLElement
                     <label class="deck-field-checkbox-label">
                         <input type="checkbox" class="deck-auto-performance-analysis-input">
                         <span>Auto Performance Analysis</span>
+                        <span class="credit-warning-note">⚠ Uses AI credits</span>
                     </label>
                     <div class="deck-field-helper">Once a week, find the weakest and strongest topics in this deck (eligible after 10+ progress points).</div>
                 </div>
@@ -662,14 +670,16 @@ class DeckEditorPage extends HTMLElement
                     <label class="deck-field-checkbox-label">
                         <input type="checkbox" class="deck-auto-generate-curated-study-input">
                         <span>Auto Generate Curated Study Material</span>
+                        <span class="credit-warning-note">⚠ Uses AI credits</span>
                     </label>
                     <div class="deck-field-helper">Generate one tailored study material per weak topic each week. Uses generation credits.</div>
                 </div>
                 <div class="deck-field deck-clear-analysis-data-container">
                     <button class="deck-field-input deck-clear-analysis-data-input">Clear Analysis Data</button>
                 </div>
-                <div class="deck-field deck-beautify-short-names-container" style="display: none;">
+                <div class="deck-field deck-beautify-short-names-container">
                     <button class="deck-field-input deck-beautify-short-names-input">Beautify Short Names (AI)</button>
+                    <span class="credit-warning-note">⚠ Uses AI credits</span>
                     <div class="deck-field-helper">Rewrites the short name of this deck and every sub-deck using AI based on the full deck hierarchy.</div>
                 </div>
                 <div style="height: 25px"></div>

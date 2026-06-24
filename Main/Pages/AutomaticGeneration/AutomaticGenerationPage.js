@@ -12,6 +12,8 @@ import GenerationTemplate from "../../Globals/Classes/GenerationTemplate.js";
 import AiFeatureGate from "../../Globals/Classes/AiFeatureGate.js";
 import CreditNotice from "../../Globals/Classes/Credits/CreditNotice.js";
 import MaintenanceNotice from "../../Globals/Classes/MaintenanceNotice.js";
+import GenerationNotifier from "../../Globals/Classes/Notifications/GenerationNotifier.js";
+import TutorialEngine from "../../Globals/Classes/TutorialEngine.js";
 
 class AutomaticGenerationPage extends HTMLElement
 {
@@ -338,6 +340,15 @@ class AutomaticGenerationPage extends HTMLElement
 
         generateButton.addEventListener("click", async () =>
         {
+            // Tutorial demo: never submit to /Generate (no credits, no server,
+            // no real task). Jump straight to the progress page, which plays a
+            // canned pipeline to completion. The form doesn't need to be filled.
+            if (TutorialEngine.isRunning())
+            {
+                PageNavigator.open("progress-page", "tutorial-demo");
+                return;
+            }
+
             if (!this.#validate())
             {
                 await DialogBox.alert("Error", "Please fill out all the fields and make sure the values are valid.");
@@ -347,6 +358,11 @@ class AutomaticGenerationPage extends HTMLElement
             console.log("Settings are valid.");
 
             const generationSettingsMap = this.#buildGenerationSettingsMap();
+
+            // Prompt for notification permission inside the click handler — the
+            // browser only shows the permission prompt from a user gesture.
+            // Fire-and-forget so it never blocks kicking off the generation.
+            GenerationNotifier.requestPermission().catch(() => { /* non-fatal */ });
 
             generateButton.disabled = true;
             generateButton.textContent = "Starting...";
@@ -385,6 +401,11 @@ class AutomaticGenerationPage extends HTMLElement
                 }
 
                 const { taskId } = await response.json();
+
+                // Track in the background so completion is notified even if the
+                // user closes the progress page or backgrounds the tab. Labelled
+                // with the subject so the notification is meaningful.
+                GenerationNotifier.track(taskId, this.#deriveGenerationLabel());
 
                 PageNavigator.open("progress-page", taskId);
             }
@@ -447,6 +468,28 @@ class AutomaticGenerationPage extends HTMLElement
      * /Generate, so the Compute Cost button can estimate against an identical
      * payload. Only the enabled secondary generation types are included.
      */
+    /**
+     * Derives a human label for the completion notification from the form —
+     * subject name preferred, exam name as fallback, generic last.
+     * @returns {string}
+     */
+    #deriveGenerationLabel()
+    {
+        const generalFields = this.querySelector("general-generation-fields");
+        const settings = generalFields?.getSettings?.();
+        const subjectName = settings?.getSubjectName?.();
+        if (typeof subjectName === "string" && subjectName.trim().length > 0)
+        {
+            return subjectName.trim();
+        }
+        const examName = settings?.getExamName?.();
+        if (typeof examName === "string" && examName.trim().length > 0)
+        {
+            return examName.trim();
+        }
+        return "Your generation";
+    }
+
     #buildGenerationSettingsMap()
     {
         const generationSettingsMap = {};
@@ -585,13 +628,13 @@ class AutomaticGenerationPage extends HTMLElement
 
         // Belt-and-suspenders gate: DeckOptionsContextMenu already checks
         // before navigating here, but a deep-link or future entry point
-        // could still land a non-admin on this page. Show the standard
-        // restricted-feature alert and back out so the user is never left
+        // could still land a signed-out visitor on this page. Show the
+        // standard sign-in alert and back out so the user is never left
         // staring at a generation form they can't submit.
-        if (!AiFeatureGate.isAdmin())
+        if (!AiFeatureGate.isAllowed())
         {
             this.innerHTML = `<header-component title="Automatic Generation"></header-component>`;
-            await AiFeatureGate.ensureAdminOrShowAlert();
+            await AiFeatureGate.ensureAllowedOrShowAlert();
             PageNavigator.back();
             return;
         }

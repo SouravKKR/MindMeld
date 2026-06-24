@@ -13,6 +13,7 @@ import TextSelectionContextMenu from "./Components/TextSelectionContextMenu.js";
 import StudyContextMenu from "./Components/StudyContextMenu.js";
 import StudyActivityReporter from "../../Globals/Classes/Streak/StudyActivityReporter.js";
 import MetricTracker from "../../Globals/Classes/Metrics/MetricTracker.js";
+import TutorialEngine from "../../Globals/Classes/TutorialEngine.js";
 
 class StudyPage extends HTMLElement
 {
@@ -311,12 +312,17 @@ class StudyPage extends HTMLElement
 
         // Session boundary: ship pending hours/doubts and recompute cards/mock
         // tests server-side (so a crossed badge is awarded AFTER the session).
-        MetricTracker.sync({ recompute: true });
+        // Skipped during a tutorial — the sample session must spend nothing and
+        // contact no server, and its activity should never count toward metrics.
+        if (!TutorialEngine.isRunning())
+        {
+            MetricTracker.sync({ recompute: true });
 
-        // If the user owes study to recover a broken streak, report today's
-        // spaced-repetition count now that this session's attempts are recorded.
-        // Fire-and-forget; it self-skips when no recovery is pending.
-        StudyActivityReporter.reportIfRecoveryPending();
+            // If the user owes study to recover a broken streak, report today's
+            // spaced-repetition count now that this session's attempts are recorded.
+            // Fire-and-forget; it self-skips when no recovery is pending.
+            StudyActivityReporter.reportIfRecoveryPending();
+        }
 
         if (this.#selectionChangeHandler)
         {

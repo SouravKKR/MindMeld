@@ -8,7 +8,6 @@ const KeyManagementService = require("../../Globals/Classes/Security/KeyManageme
 const CreditPreflight = require("../../Globals/Classes/Credits/CreditPreflight");
 const TaskStateManager = require("../../Globals/Classes/Task/TaskStateManager");
 const { getUser } = require("../Helpers/GetUser");
-const { userRoles } = require("../../Globals/Enumerations/UserRoles");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const MaintenanceGate = require("../../Globals/Classes/Maintenance/MaintenanceGate");
@@ -60,8 +59,9 @@ async function handleQueueDeckAnalysis(request, response)
     // agent uses it to read the buyer's cards from paidDeckUserContentEntities
     // and write results back into that same encrypted per-user store. Paid
     // analysis is gated by an ACTIVE license (ownership); regular own-deck
-    // analysis stays admin-only during the closed-test phase. (A stale client
-    // or a direct curl can still reach here, so both checks are server-side.)
+    // analysis is open to every signed-in user (a stale client or direct curl
+    // could still reach here, so the license check stays server-side).
+    // Affordability for both paths is enforced below by CreditPreflight.
     const paidDeckId = typeof body?.paidDeckId === "string" ? body.paidDeckId : "";
     const isPaidDeckAnalysis = paidDeckId.length > 0;
 
@@ -74,12 +74,6 @@ async function handleQueueDeckAnalysis(request, response)
             response.sendJson({ error: ErrorCodes.NO_ACTIVE_LICENSE });
             return;
         }
-    }
-    else if (user.getRole() !== userRoles.ADMIN)
-    {
-        response.statusCode = httpStatus.FORBIDDEN;
-        response.end("AI features are restricted to authorized roles.");
-        return;
     }
 
     const autoGenerateCuratedStudy = body?.autoGenerateCuratedStudy === true;

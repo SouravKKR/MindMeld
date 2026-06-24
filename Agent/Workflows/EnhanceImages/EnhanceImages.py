@@ -6,8 +6,7 @@ from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Constants.PersistenceConstants import PersistenceConstants
 from Globals.Utility.JoinPath import join_path
 
-from Workflows.EnhanceImages.AssetEnhancer import AssetEnhancer
-from Workflows.EnhanceImages.HtmlImageRewriter import HtmlImageRewriter
+from Workflows.EnhanceImages.DiagramImageEnhancer import DiagramImageEnhancer
 from Workflows.PrepareImages.HtmlInjector import HtmlInjector
 from Workflows.Workflow import Workflow
 
@@ -20,12 +19,13 @@ _FIGURE_ASSIGNMENTS_SIDECAR_FILENAME = "figure_assignments.json"
 
 class EnhanceImages(Workflow):
     """
-    Copyright-safe / brand-consistent image pass that runs AFTER
+    Copyright-safe image pass that runs AFTER
     PrepareImages and BEFORE moveToDatabase. Reads the per-task figure
     assignments sidecar emitted by PrepareImages, fetches each figure's
-    bytes from GCS, enhances them via Gemini (AssetEnhancer), and
-    injects the result directly into the per-task flashcard /
-    study-material JSON files.
+    bytes from GCS, enhances them via DiagramImageEnhancer (Gemini describes
+    the figure, GPT-Image regenerates it as a copyright-clean new image), and
+    injects the result directly into the per-task flashcard / study-material
+    JSON files.
 
     Sidecar-driven design rationale:
       * PrepareImages skipping injection when this workflow is in the
@@ -49,12 +49,13 @@ class EnhanceImages(Workflow):
         This workflow only writes the per-task flashcard / study-
         material JSONs that moveToDatabase later persists into the cards
         and studyMaterials collections.
-      * Per-image failures (Gemini error, malformed extraction, empty
-        image payload, markdown render failure) are propagated as
-        task failures. The user explicitly chose strict error semantics
-        over silent fallback to the original image -- a half-enhanced
-        deck leaking copyrighted source artwork is worse than no deck
-        at all.
+      * Hard errors (missing gcsImagePath, unreadable figure bytes, or an
+        unrecognized enhancer kind) propagate as task failures so a broken
+        deck is never persisted. A FAILED enhancement (Gemini describe error,
+        GPT-Image generation error, missing OPENAI_API_KEY, or empty image
+        payload) instead returns DIAGRAM_FALLBACK_ORIGINAL and embeds the
+        original extracted figure, so the figure still appears and any
+        "see Figure N" reference keeps resolving.
     """
 
     def __init__(self, payload = {}):
@@ -100,7 +101,7 @@ class EnhanceImages(Workflow):
 
         await self.__update_progress(0.10)
 
-        asset_enhancer = AssetEnhancer()
+        asset_enhancer = DiagramImageEnhancer()
         total_assignment_count = len(assignments)
         completed_assignment_count = 0
 
@@ -177,7 +178,7 @@ class EnhanceImages(Workflow):
         self,
         file_document: dict,
         file_assignments: list,
-        asset_enhancer: AssetEnhancer,
+        asset_enhancer: DiagramImageEnhancer,
     ):
         """
         Splices every assignment for a single content file into its HTML.
@@ -206,7 +207,7 @@ class EnhanceImages(Workflow):
         self,
         study_material_document: dict,
         assignment: dict,
-        asset_enhancer: AssetEnhancer,
+        asset_enhancer: DiagramImageEnhancer,
     ):
         content_html = study_material_document.get("content") or ""
         block_elements = HtmlInjector.extract_block_elements(content_html)
@@ -225,7 +226,7 @@ class EnhanceImages(Workflow):
         self,
         flashcard_document: dict,
         assignment: dict,
-        asset_enhancer: AssetEnhancer,
+        asset_enhancer: DiagramImageEnhancer,
     ):
         cards = flashcard_document.get("cards") or []
         card_index = assignment.get("cardIndex")
@@ -253,15 +254,15 @@ class EnhanceImages(Workflow):
     async def __build_enhanced_html(
         self,
         assignment: dict,
-        asset_enhancer: AssetEnhancer,
+        asset_enhancer: DiagramImageEnhancer,
     ) -> str:
         """
         Fetches the original figure bytes from the GCS path embedded in
-        the assignment, runs AssetEnhancer, and returns the final HTML
-        snippet to splice into the surrounding content. AssetEnhancer
-        decides DIAGRAM vs TEXT_DATA per figure; we render each branch
-        through its existing builder so the markup matches inline-mode
-        injection exactly.
+        the assignment, runs DiagramImageEnhancer, and returns the final HTML
+        snippet to splice into the surrounding content. The enhancer returns a
+        regenerated PNG (DIAGRAM_IMAGE_PNG) or, when describe / generate fails,
+        DIAGRAM_FALLBACK_ORIGINAL; both embed through build_figure_html so the
+        markup matches inline-mode injection exactly.
         """
         gcs_image_path = assignment.get("gcsImagePath")
         if not gcs_image_path:
@@ -277,12 +278,12 @@ class EnhanceImages(Workflow):
 
         enhancement_result = await asset_enhancer.enhance(original_image_bytes)
 
-        if enhancement_result["kind"] == "DIAGRAM":
-            # Reuse HtmlInjector.build_figure_html so the enhanced figure
-            # carries the same figure-number caption, attribution, and
-            # max-width sizing as an inline-mode injection.
+        if enhancement_result["kind"] == "DIAGRAM_IMAGE_PNG":
+            # GPT-Image generated a fresh PNG from the Gemini description.
+            # Embed it the same way as an original figure -- it is already a
+            # copyright-clean new expression.
             return HtmlInjector.build_figure_html(
-                enhancement_result["imageBytes"],
+                enhancement_result["image_bytes"],
                 assignment.get("captionText") or "",
                 assignment.get("figureNumber") or 0,
                 source_url      = assignment.get("sourceUrl"),
@@ -290,25 +291,20 @@ class EnhanceImages(Workflow):
                 bounding_box    = assignment.get("boundingBoxCoordinates"),
             )
 
-        if enhancement_result["kind"] == "TEXT_DATA":
-            return HtmlImageRewriter.build_text_data_replacement_html(
-                enhancement_result["markdown"],
-            )
-
-        if enhancement_result["kind"] == "DIAGRAM_TEXT_FALLBACK":
-            # Stage 2 image generation came back empty (intermittent
-            # preview-model behaviour). AssetEnhancer already synthesised
-            # a markdown description from Stage 1's structured extraction;
-            # render it in a visually distinct box so the student still
-            # sees the diagram's content and any "see Figure N" reference
-            # in the surrounding text continues to resolve.
-            return HtmlImageRewriter.build_diagram_text_fallback_html(
-                enhancement_result["markdown"],
+        if enhancement_result["kind"] == "DIAGRAM_FALLBACK_ORIGINAL":
+            # The enhancement call failed (transient API error, refusal, or no
+            # usable output). Embed the ORIGINAL extracted figure so the diagram
+            # still appears and any "see Figure N" reference keeps resolving.
+            return HtmlInjector.build_figure_html(
+                original_image_bytes,
                 assignment.get("captionText") or "",
                 assignment.get("figureNumber") or 0,
+                source_url      = assignment.get("sourceUrl"),
+                source_page_url = assignment.get("sourcePageUrl"),
+                bounding_box    = assignment.get("boundingBoxCoordinates"),
             )
 
         raise RuntimeError(
-            f"EnhanceImages: AssetEnhancer returned unrecognized kind "
+            f"EnhanceImages: DiagramImageEnhancer returned unrecognized kind "
             f"'{enhancement_result.get('kind')}'."
         )

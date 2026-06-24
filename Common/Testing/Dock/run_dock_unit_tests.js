@@ -23,6 +23,8 @@ const CATALOGUED = [
     "PaidDeckEntityTooLargeError", "RateLimiter.consume",
     "MaintenanceWindow.isActiveAt", "MaintenanceWindow.isUpcomingWithin",
     "MaintenanceWindow.toJson", "MaintenanceWindow.fromJson",
+    "CreditDealPayment.roundTrip", "CreditDealPayment.coercion",
+    "PeriodicCreditAssignment.roundTrip", "PeriodicCreditAssignment.coercion",
 ];
 
 // The Dock modules resolve their own dependencies against Dock/node_modules, so
@@ -33,8 +35,12 @@ let LicenseClientView;
 let PaidDeckEntityTooLargeError;
 let RateLimiter;
 let MaintenanceWindow;
+let CreditDealPayment;
+let PeriodicCreditAssignment;
 let deckLicenseStatuses;
 let entityTypes;
+let creditDealPaymentStatuses;
+let periodicAssignmentStatuses;
 try
 {
     KeyManagementService = require(path.join(DOCK_ROOT, "Globals/Classes/Security/KeyManagementService"));
@@ -43,8 +49,12 @@ try
     PaidDeckEntityTooLargeError = require(path.join(DOCK_ROOT, "Globals/Classes/Security/PaidDeckEntityTooLargeError"));
     RateLimiter = require(path.join(DOCK_ROOT, "Globals/Classes/Security/RateLimiter"));
     MaintenanceWindow = require(path.join(DOCK_ROOT, "Globals/Model/MaintenanceWindow"));
+    CreditDealPayment = require(path.join(DOCK_ROOT, "Globals/Model/CreditDealPayment"));
+    PeriodicCreditAssignment = require(path.join(DOCK_ROOT, "Globals/Model/PeriodicCreditAssignment"));
     ({ deckLicenseStatuses } = require(path.join(DOCK_ROOT, "Globals/Enumerations/DeckLicenseStatuses")));
     ({ entityTypes } = require(path.join(DOCK_ROOT, "Globals/Enumerations/EntityTypes")));
+    ({ creditDealPaymentStatuses } = require(path.join(DOCK_ROOT, "Globals/Enumerations/CreditDealPaymentStatuses")));
+    ({ periodicAssignmentStatuses } = require(path.join(DOCK_ROOT, "Globals/Enumerations/PeriodicAssignmentStatuses")));
 }
 catch (error)
 {
@@ -311,6 +321,115 @@ harness.test("MaintenanceWindow.toJson / fromJson: round-trip preserves the fiel
 harness.test("MaintenanceWindow.fromJson: null input returns null", "MaintenanceWindow.fromJson", () =>
 {
     assertEqual(MaintenanceWindow.fromJson(null), null);
+});
+
+// -- CreditDealPayment (credit-ledger payment record) -------------------------
+// Unlike the random-UUID models excluded from this catalog, fromJson restores
+// the stored id (via _restoreId_id), so a fromJson(toJson()) round-trip IS
+// bit-for-bit deterministic and the money-field coercion is worth asserting.
+
+function fullDealPaymentJson()
+{
+    return {
+        id: "cdp-1",
+        targetType: Object.values(require(path.join(DOCK_ROOT, "Globals/Enumerations/CreditDealTargetTypes")).creditDealTargetTypes)[0],
+        targetId: "org-9",
+        label: "Q1 enterprise deal",
+        mode: Object.values(require(path.join(DOCK_ROOT, "Globals/Enumerations/CreditDealPaymentModes")).creditDealPaymentModes)[0],
+        status: Object.values(creditDealPaymentStatuses)[0],
+        amountMinor: 500000,
+        currency: "INR",
+        paymentProvider: Object.values(require(path.join(DOCK_ROOT, "Globals/Enumerations/PaymentProviders")).paymentProviders)[0],
+        providerOrderId: "order_abc",
+        providerPaymentId: "pay_abc",
+        invoiceFileName: "invoice.pdf",
+        invoiceMimeType: "application/pdf",
+        invoiceBucketPath: "deals/cdp-1/invoice.pdf",
+        invoiceSizeBytes: 20480,
+        invoiceUploadedAt: "2026-03-01T00:00:00.000Z",
+        hasInvoice: true,
+        createdByUserId: "admin-1",
+        createdAt: "2026-02-01T00:00:00.000Z",
+        additionalData: { note: "negotiated" },
+    };
+}
+
+harness.test("CreditDealPayment: fromJson(toJson()) round-trip preserves id and every field", "CreditDealPayment.roundTrip", () =>
+{
+    const original = CreditDealPayment.fromJson(fullDealPaymentJson());
+    const restored = CreditDealPayment.fromJson(original.toJson());
+    assertEqual(restored.getId(), "cdp-1", "stored id is restored, not regenerated");
+    assertEqual(JSON.stringify(restored.toJson()), JSON.stringify(original.toJson()), "round-trip is stable");
+});
+
+harness.test("CreditDealPayment: amountMinor coercion clamps negatives and parses to an integer", "CreditDealPayment.coercion", () =>
+{
+    assertEqual(new CreditDealPayment({ amountMinor: -100 }).getAmountMinor(), 0, "negative -> 0");
+    assertEqual(new CreditDealPayment({ amountMinor: "abc" }).getAmountMinor(), 0, "non-numeric -> 0");
+    assertEqual(new CreditDealPayment({ amountMinor: "150.9" }).getAmountMinor(), 150, "string float -> integer minor units");
+});
+
+harness.test("CreditDealPayment: currency truncates to 8 chars and status coerces an invalid enum", "CreditDealPayment.coercion", () =>
+{
+    assertEqual(new CreditDealPayment({ currency: "TOOLONGCURRENCY" }).getCurrency(), "TOOLONGC", "currency capped at 8");
+    const coercedStatus = new CreditDealPayment({ status: 9999 }).getStatus();
+    assert(Object.values(creditDealPaymentStatuses).includes(coercedStatus), "out-of-range status falls back to a valid enum member");
+    assertEqual(coercedStatus, Object.values(creditDealPaymentStatuses)[0], "invalid enum coerces to the first member");
+});
+
+// -- PeriodicCreditAssignment (recurring credit grant rule) -------------------
+
+function fullPeriodicJson()
+{
+    return {
+        id: "pca-1",
+        name: "Weekly team top-up",
+        scopeType: Object.values(require(path.join(DOCK_ROOT, "Globals/Enumerations/PeriodicScopeTypes")).periodicScopeTypes)[0],
+        organizationId: "org-9",
+        peopleEmails: ["a@example.com", "b@example.com"],
+        amount: 50,
+        amountMode: Object.values(require(path.join(DOCK_ROOT, "Globals/Enumerations/CreditGrantAmountModes")).creditGrantAmountModes)[0],
+        scheduleType: Object.values(require(path.join(DOCK_ROOT, "Globals/Enumerations/PeriodicScheduleTypes")).periodicScheduleTypes)[0],
+        intervalDays: 7,
+        dayOfWeek: 1,
+        dayOfMonth: 15,
+        onJoinMode: Object.values(require(path.join(DOCK_ROOT, "Globals/Enumerations/PeriodicOnJoinModes")).periodicOnJoinModes)[0],
+        startAt: "2026-03-01T00:00:00.000Z",
+        hasValidUntil: true,
+        validUntil: "2026-12-31T00:00:00.000Z",
+        status: Object.values(periodicAssignmentStatuses)[0],
+        terminatedAt: "2026-06-01T00:00:00.000Z",
+        createdByUserId: "admin-1",
+        createdAt: "2026-02-01T00:00:00.000Z",
+        additionalData: { source: "console" },
+    };
+}
+
+harness.test("PeriodicCreditAssignment: fromJson(toJson()) round-trip preserves id and every field", "PeriodicCreditAssignment.roundTrip", () =>
+{
+    const original = PeriodicCreditAssignment.fromJson(fullPeriodicJson());
+    const restored = PeriodicCreditAssignment.fromJson(original.toJson());
+    assertEqual(restored.getId(), "pca-1", "stored id is restored, not regenerated");
+    assertEqual(JSON.stringify(restored.toJson()), JSON.stringify(original.toJson()), "round-trip is stable");
+});
+
+harness.test("PeriodicCreditAssignment: amount clamps negatives/NaN to 0 and name empties to null, truncates at 256", "PeriodicCreditAssignment.coercion", () =>
+{
+    assertEqual(new PeriodicCreditAssignment({ amount: -5 }).getAmount(), 0, "negative amount -> 0");
+    assertEqual(new PeriodicCreditAssignment({ amount: "abc" }).getAmount(), 0, "non-numeric amount -> 0");
+    assertEqual(new PeriodicCreditAssignment({ name: "" }).getName(), null, "empty name -> null");
+    assertEqual(new PeriodicCreditAssignment({ name: "x".repeat(300) }).getName().length, 256, "name truncated to 256");
+});
+
+harness.test("PeriodicCreditAssignment: dayOfWeek clamps to [0,6], dayOfMonth to [1,31], intervalDays >= 0", "PeriodicCreditAssignment.coercion", () =>
+{
+    assertEqual(new PeriodicCreditAssignment({ dayOfWeek: 99 }).getDayOfWeek(), 6, "dayOfWeek upper-clamped to 6");
+    assertEqual(new PeriodicCreditAssignment({ dayOfWeek: -3 }).getDayOfWeek(), 0, "dayOfWeek lower-clamped to 0");
+    assertEqual(new PeriodicCreditAssignment({ dayOfMonth: 99 }).getDayOfMonth(), 31, "dayOfMonth upper-clamped to 31");
+    assertEqual(new PeriodicCreditAssignment({ dayOfMonth: 0 }).getDayOfMonth(), 1, "dayOfMonth lower-clamped to 1");
+    assertEqual(new PeriodicCreditAssignment({ intervalDays: -10 }).getIntervalDays(), 0, "intervalDays clamped to >= 0");
+    const coercedStatus = new PeriodicCreditAssignment({ status: 9999 }).getStatus();
+    assertEqual(coercedStatus, Object.values(periodicAssignmentStatuses)[0], "invalid status coerces to the first enum member");
 });
 
 harness.runAndWrite(RESULT_FILE);

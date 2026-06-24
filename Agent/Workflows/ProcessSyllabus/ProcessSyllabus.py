@@ -316,6 +316,15 @@ class ProcessSyllabus(Workflow):
 
         print(f"[ProcessSyllabus] Curriculum sources: {len(curriculum_sources)}, Document sources: {len(document_sources)}")
 
+        # Checkpoint-resume: the syllabus defines every downstream topic path, so
+        # it MUST stay stable across a resume — re-deriving it via the LLM could
+        # yield a different structure and orphan all already-generated items. If
+        # Syllabus.json already exists, reuse it verbatim and skip extraction/merge.
+        if await Persistence.exists(syllabus_file_destination_path):
+            print("[ProcessSyllabus] Syllabus already exists — reusing it (resume); skipping extraction and merge.")
+            await self.__update_progress(1.0)
+            return
+
         await self.__update_progress(0.05)
 
         partial_syllabi: List[dict] = []

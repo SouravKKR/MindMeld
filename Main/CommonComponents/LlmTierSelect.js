@@ -3,6 +3,7 @@ import { browserLlmDownloadStates } from "../Globals/Enumerations/BrowserLlmDown
 import ModelTierMetadata from "../Globals/Constants/ModelTierMetadata.js";
 import BrowserLlmDownloadEvents from "../Globals/Events/BrowserLlmDownloadEvents.js";
 import BrowserLlmCapability from "../Globals/Classes/BrowserLlm/BrowserLlmCapability.js";
+import BrowserLlmDownloadManager from "../Globals/Classes/BrowserLlm/BrowserLlmDownloadManager.js";
 import PreferredModelTier from "../Globals/Classes/BrowserLlm/PreferredModelTier.js";
 
 
@@ -64,10 +65,42 @@ class LlmTierSelect extends HTMLElement
             this.#handleChange();
         });
 
+        // The status line doubles as the one-click download trigger when
+        // the offline model is in a user-recoverable state (NOT_STARTED /
+        // DECLINED / FAILED). Its reason text already invites the click;
+        // #renderStatus flips data-clickable + role so it only behaves as
+        // a button when an action is actually possible (never while
+        // DOWNLOADING or on an UNSUPPORTED device).
+        this.#statusElement.addEventListener("click", () =>
+        {
+            this.#handleStatusActivation();
+        });
+        this.#statusElement.addEventListener("keydown", (keyboardEvent) =>
+        {
+            if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ")
+            {
+                keyboardEvent.preventDefault();
+                this.#handleStatusActivation();
+            }
+        });
+
         // Re-pick the persisted tier as soon as Persistence finishes
         // hydration — first render uses the in-memory default (BASIC)
         // because hydrate is async.
         PreferredModelTier.hydrate().then(() => this.#syncSelectionFromCache());
+
+        // Resolve device capability + persisted download state, then
+        // re-render. The first render uses the default (NOT_STARTED)
+        // because initialize() is async (WebGPU adapter probe + a
+        // Persistence read), so this is what makes the Free row reflect a
+        // prior READY / DECLINED / UNSUPPORTED the moment the picker
+        // mounts — independent of any boot hook having run yet. initialize()
+        // shares one in-flight promise, so repeated calls are cheap.
+        BrowserLlmCapability.initialize().then(() =>
+        {
+            this.#renderOptions();
+            this.#renderStatus();
+        });
 
         // Capability flips Free between enabled / disabled; PROGRESS
         // updates the status percentage; PREFERRED_TIER_CHANGED keeps
@@ -186,10 +219,59 @@ class LlmTierSelect extends HTMLElement
         {
             this.#statusElement.hidden = true;
             this.#statusElement.textContent = "";
+            this.#setStatusClickable(false);
             return;
         }
         this.#statusElement.hidden = false;
         this.#statusElement.textContent = `Free unavailable — ${reasonText}`;
+        this.#setStatusClickable(BrowserLlmCapability.isRecoverableByUser());
+    }
+
+    /**
+     * Toggles the affordances that turn the status line into a button.
+     * Only set when the state is recoverable so the line doesn't look
+     * clickable while a download is mid-flight or the device is
+     * UNSUPPORTED. The `data-clickable` attribute drives the cursor /
+     * underline styling.
+     */
+    #setStatusClickable(bClickable)
+    {
+        if (!this.#statusElement)
+        {
+            return;
+        }
+        if (bClickable)
+        {
+            this.#statusElement.setAttribute("data-clickable", "");
+            this.#statusElement.setAttribute("role", "button");
+            this.#statusElement.setAttribute("tabindex", "0");
+        }
+        else
+        {
+            this.#statusElement.removeAttribute("data-clickable");
+            this.#statusElement.removeAttribute("role");
+            this.#statusElement.removeAttribute("tabindex");
+        }
+    }
+
+    /**
+     * Click / keyboard activation of the status line — the settings-only
+     * entry point for starting the offline-model download. Inert unless
+     * the current state is user-recoverable (UNSUPPORTED and DOWNLOADING
+     * do nothing). BrowserLlmDownloadManager.start() clears any DECLINED
+     * pin and no-ops while a download is already running, so it safely
+     * covers every recoverable case.
+     */
+    #handleStatusActivation()
+    {
+        if (!BrowserLlmCapability.isRecoverableByUser())
+        {
+            return;
+        }
+        BrowserLlmDownloadManager.start().catch((startError) =>
+        {
+            console.error("[LlmTierSelect] Failed to start model download:", startError);
+        });
     }
 
     async #handleChange()

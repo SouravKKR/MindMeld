@@ -11,26 +11,18 @@ import PreferredModelTier from "./PreferredModelTier.js";
 /**
  * BrowserLlmDownloadBootstrap
  *
- * Step 3 of `LoginPopupSequence`. Invoked once the legal modal and the
- * Beginners tutorial have both resolved. Checks whether the Free-tier
- * model should be offered on this device. Conditions:
+ * Boot-time setup for the offline-model subsystem. Its static block runs
+ * at module load and (a) hydrates `PreferredModelTier` and (b) resolves
+ * `BrowserLlmCapability` — so the tier dropdown and the Activity feed
+ * have accurate state the first time they render, before any user action.
  *
- *   1. WebGPU is available — without `navigator.gpu` the model can't
- *      run, so `BrowserLlmCapability.initialize()` pins the state to
- *      UNSUPPORTED and this step short-circuits without showing
- *      anything. (This is the "show only if the device is compatible"
- *      gate.)
- *   2. State is NOT_STARTED — i.e. the user hasn't already accepted,
- *      declined, succeeded, or failed on this device.
- *
- * Both met → DialogBox.confirm with a ~2 GB background-download
- * explanation. Accept → start. Decline → persist the declined flag so
- * we never re-prompt on this device.
- *
- * Independent of the welcome chain: `PreferredModelTier.hydrate()` is
- * kicked off at module-load time because the tier dropdown reads it the
- * first time the user opens the text-selection menu — that can happen
- * before the welcome chain finishes.
+ * `runForLogin(user)` shows the legacy login-time "Download the offline
+ * AI model?" confirm dialog. It is intentionally NO LONGER wired into
+ * `LoginPopupSequence` — the download is offered on demand from
+ * Settings ▸ AI (the Free row of the model picker) instead. The method is
+ * kept (dormant) so the login-time prompt can be re-enabled without
+ * resurrecting code; it self-gates on capability (UNSUPPORTED → no-op)
+ * and on the state being NOT_STARTED.
  */
 class BrowserLlmDownloadBootstrap
 {
@@ -42,6 +34,15 @@ class BrowserLlmDownloadBootstrap
         // and needs to run early so the dropdown has data the first
         // time the user opens it.
         PreferredModelTier.hydrate();
+
+        // Resolve offline-model capability + persisted download state at
+        // boot so every surface that reads BrowserLlmCapability.getState()
+        // (the model picker, the Activity feed) is accurate without
+        // waiting for a user action. This is what runForLogin used to
+        // trigger; now that the login-time prompt is gone (the download is
+        // offered on demand from Settings ▸ AI), it runs here at module
+        // load instead. initialize() shares one in-flight promise.
+        BrowserLlmCapability.initialize();
 
         // Reset the once-per-session guard on logout so re-login within
         // the same page lifecycle can re-prompt where applicable.

@@ -138,5 +138,5 @@ class ModelPool:
     # low enough that the (future) credit deduction won't sting.
     MOCK_TEST_GRADING_MODEL = ("gemini-2.5-flash-lite", GeminiProvider)
 
-    IMAGE_VALIDATION_MODEL                      = ("gemini-2.5-flash-lite", GeminiProvider)
-    IMAGE_VERIFICATION_MODEL                    = ("gemini-3.1-flash-lite", GeminiProvider)
+    IMAGE_VALIDATION_MODEL = ("gemini-2.5-flash-lite", GeminiProvider)
+    IMAGE_VERIFICATION_MODEL = ("gemini-3.1-flash-lite", GeminiProvider)

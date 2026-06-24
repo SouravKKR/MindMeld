@@ -59,3 +59,21 @@ llm-tier-select
 {
     display: none;
 }
+
+/* When the offline-model state is user-recoverable, #setStatusClickable
+   adds data-clickable + role="button" so the reason line ("Click to
+   start the background download." / "Click to retry.") becomes an actual
+   button — the settings-only entry point for the download. */
+.llm-tier-select-status[data-clickable]
+{
+    color: var(--accent-color);
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.llm-tier-select-status[data-clickable]:hover,
+.llm-tier-select-status[data-clickable]:focus
+{
+    color: var(--accent-color-hover);
+    outline: none;
+}

@@ -12,6 +12,7 @@ import MockTestAttempt from "../../../Globals/Model/MockTestEntities/MockTestAtt
 import MockTestItemFactory from "../../../Globals/Model/MockTestEntities/MockTestItemFactory.js";
 import MetricTracker from "../../../Globals/Classes/Metrics/MetricTracker.js";
 import EvaluationInstructionsDialog from "../Components/EvaluationInstructionsDialog.js";
+import TutorialEngine from "../../../Globals/Classes/TutorialEngine.js";
 import "../Components/MockTestRunner.js";
 
 class MockTestSession extends StudySession
@@ -164,7 +165,7 @@ class MockTestSession extends StudySession
             return;
         }
 
-        const maxScore = MockTestSession.#computeMaxScore(clonedItems);
+        const maxScore = MockTestSession.#computeMaxScore(clonedItems, this.#mockTest);
         const attempt = new MockTestAttempt(undefined, new Date(), clonedItems, 0, maxScore);
         if (additionalData)
         {
@@ -177,13 +178,21 @@ class MockTestSession extends StudySession
         const paidDeckId = this.#mockTest.getDeck()?.getAdditionalData?.()?.paidDeckId || null;
 
         const isOfflineOnlyCandidate = MockTestSession.#attemptIsOfflineOnly(clonedItems);
-        const dialogResult = await EvaluationInstructionsDialog.open({
-            initialInstructions: "",
-            initialEnableLlmMcqFeedback: false,
-            isOfflineOnly: isOfflineOnlyCandidate,
-            title: "Submit & Evaluate",
-            confirmLabel: "Submit"
-        });
+
+        // While a tutorial is running, never open the evaluation dialog or
+        // call the grading server: grade locally and instantly. The sample
+        // mock test is MCQ-only, so offline grading produces real scores
+        // with zero credits and no network call.
+        const bTutorialDemo = TutorialEngine.isRunning();
+        const dialogResult = bTutorialDemo
+            ? { confirmed: true, instructions: "", enableLlmMcqFeedback: false }
+            : await EvaluationInstructionsDialog.open({
+                initialInstructions: "",
+                initialEnableLlmMcqFeedback: false,
+                isOfflineOnly: isOfflineOnlyCandidate,
+                title: "Submit & Evaluate",
+                confirmLabel: "Submit"
+            });
 
         if (!dialogResult.confirmed)
         {
@@ -201,7 +210,7 @@ class MockTestSession extends StudySession
         // Even an MCQ-only paper goes to the server when the candidate
         // opted in to LLM feedback — that's the only way to get remarks
         // on a deterministically-scored attempt.
-        const shouldRunInlineOfflineGrading = isOfflineOnlyCandidate && dialogResult.enableLlmMcqFeedback !== true;
+        const shouldRunInlineOfflineGrading = bTutorialDemo || (isOfflineOnlyCandidate && dialogResult.enableLlmMcqFeedback !== true);
 
         if (shouldRunInlineOfflineGrading)
         {
@@ -218,7 +227,12 @@ class MockTestSession extends StudySession
             }
 
             // Offline attempt is COMPLETED + saved — recompute counts it.
-            MetricTracker.sync({ recompute: true });
+            // During a tutorial the attempt is a throwaway sample, so skip the
+            // server recompute (keeps the tutorial fully offline).
+            if (!bTutorialDemo)
+            {
+                MetricTracker.sync({ recompute: true });
+            }
 
             if (document.fullscreenElement)
             {
@@ -385,7 +399,7 @@ class MockTestSession extends StudySession
         return null;
     }
 
-    static #computeMaxScore(items)
+    static #computeMaxScore(items, mockTest = null)
     {
         let totalMarks = 0;
         let currentSection = null;
@@ -398,7 +412,7 @@ class MockTestSession extends StudySession
             }
             if (item.getType() === mockTestItemTypes.QUESTION)
             {
-                totalMarks += MockTestSession.resolveEffectiveQuestionMarks(null, item, currentSection);
+                totalMarks += MockTestSession.resolveEffectiveQuestionMarks(mockTest, item, currentSection);
             }
         }
         return totalMarks;

@@ -6,6 +6,7 @@ import bson
 from Globals.Classes.Task.TaskDescriptor import TaskDescriptor
 from Globals.Enumerations.TaskStatus import TaskStatus
 from Globals.Enumerations.TaskExecutionTargets import TaskExecutionTargets
+from Globals.Enumerations.TaskTypes import TaskTypes
 
 
 class TaskManager:
@@ -275,6 +276,13 @@ class TaskManager:
 
 
     @staticmethod
+    def __resolve_task_type_name(task_type) -> str:
+        try:
+            return TaskTypes(task_type).name
+        except (ValueError, KeyError):
+            return str(task_type)
+
+    @staticmethod
     async def execute(task_descriptor: TaskDescriptor, main_task: TaskDescriptor = None, parent_task_id: str = None, total_weight: float = 0.0, wait: bool = True) -> dict | None:
         from Globals.Utility.LaunchPythonScript import launch_python_script
 
@@ -302,12 +310,29 @@ class TaskManager:
                     f"--total-weight={total_weight}",
                 ]
 
-                if "--debug" in sys.argv:
+                debug_enabled = "--debug" in sys.argv
+                if debug_enabled:
                     args.append("--debug")
 
-                result = await launch_python_script(python_path, script_path, args, wait=wait)
+                # In debug mode, stream the child's output line-by-line so a
+                # parent-spawned worker (e.g. FLASHCARD_GENERATION_WORKER) is
+                # visible while it runs instead of going silent until it exits.
+                # Without this, communicate() buffers everything and the console
+                # looks frozen for the whole worker run.
+                on_line = None
+                if debug_enabled:
+                    type_label = TaskManager.__resolve_task_type_name(task_descriptor.get_type())
+                    short_id = task_descriptor.get_id()[-6:]
+                    line_prefix = f"[{type_label}:{short_id}]"
 
-                if result:
+                    def on_line(stream_name, line, line_prefix=line_prefix):
+                        print(f"{line_prefix} {line}")
+
+                result = await launch_python_script(python_path, script_path, args, wait=wait, on_line=on_line)
+
+                # Non-debug runs still dump the buffered output here. Debug runs
+                # already printed each line live, so re-printing would duplicate.
+                if result and not debug_enabled:
                     print(result["stdout"])
                     print(result["stderr"])
 

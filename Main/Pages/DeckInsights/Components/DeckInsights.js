@@ -22,9 +22,9 @@ class DeckInsights extends HTMLElement
         }
 
         const deckId = this.#deck.getId();
-        const bAdmin = AiFeatureGate.isAdmin();
+        const bAiAllowed = AiFeatureGate.isAllowed();
 
-        const adminOnlyBlock = bAdmin
+        const adminOnlyBlock = bAiAllowed
             ? `
                 <study-activity-heatmap deck-id="${deckId}"></study-activity-heatmap>
 

@@ -75,6 +75,14 @@ class TaskHistoryQueryEngine
         const completedAt = new Date();
         const durationMillis = Math.max(0, completedAt.getTime() - new Date(startDate).getTime());
 
+        // Carry the partialCompletion marker into the archive so the Activity
+        // page can still offer "keep what's here, retry the rest" long after the
+        // live Redis descriptor has expired.
+        const payload = typeof taskDescriptor.getPayload === "function" ? taskDescriptor.getPayload() : null;
+        const archivedAdditionalData = (payload && typeof payload === "object" && payload.partialCompletion)
+            ? { partialCompletion: payload.partialCompletion }
+            : {};
+
         const record = new TaskHistoryRecord
         ({
             id: taskDescriptor.getId(),
@@ -87,7 +95,7 @@ class TaskHistoryQueryEngine
             durationMillis: durationMillis,
             payloadSummary: TaskHistoryQueryEngine.#buildPayloadSummary(taskDescriptor),
             parentTaskId: taskDescriptor.getParentTaskId() || "",
-            additionalData: {}
+            additionalData: archivedAdditionalData
         });
 
         const update =
@@ -106,7 +114,8 @@ class TaskHistoryQueryEngine
                 status: record.getStatus(),
                 completion: record.getCompletion(),
                 payloadSummary: record.getPayloadSummary(),
-                parentTaskId: record.getParentTaskId()
+                parentTaskId: record.getParentTaskId(),
+                additionalData: record.getAdditionalData()
             }
         };
 

@@ -60,6 +60,7 @@ class StudyMaterialGenerationWorker(Workflow):
             raw = json.loads(content_bytes.decode("utf-8"))
 
             topic_chain = raw["topicChain"]
+            source_pages = raw.get("sourcePages", [])
             content = "\n\n".join(raw["chunks"])
             content = TokenSafeContent.cap_content_for_prompt(
                 content,
@@ -93,64 +94,92 @@ class StudyMaterialGenerationWorker(Workflow):
                     ]
                 )
 
+                safe_unit = sanitize_filename(topic_chain[0]) if topic_chain else "Uncategorised"
+                safe_topic = sanitize_filename(topic_chain[-1]) if topic_chain else "Unknown"
+                safe_level = sanitize_filename(level_name)
+                output_path = join_path(
+                    "/",
+                    PersistenceConstants.TASKS_DIRECTORY,
+                    main_task_id,
+                    PersistenceConstants.STUDY_MATERIALS_DIRECTORY,
+                    safe_unit,
+                    f"{safe_topic}__{safe_level}.json",
+                )
+
                 loaded_jobs.append({
                     "topic_chain": topic_chain,
+                    "source_pages": source_pages,
                     "detail_level": int(detail_level),
                     "level_name": level_name,
                     "weight": per_level_weight,
                     "request": request,
                     "key": f"job-{len(loaded_jobs)}",
+                    "output_path": output_path,
                 })
 
         if not loaded_jobs:
             return
 
-        # ── 2. Enqueue every request into a single-model BatchSubmitter ───────
+        # ── 2. Checkpoint-resume: skip jobs already generated in a prior run ──
+        # The per-topic output file in GCS is the checkpoint — if it exists the
+        # work is done, so grant its full weight and don't regenerate. This is
+        # what lets a resumed run continue from midway instead of re-running.
+        jobs_to_generate = []
+        for job in loaded_jobs:
+            if await Persistence.exists(job["output_path"]):
+                print(f"[StudyMaterialGenerationWorker] Reusing existing output for '{' -> '.join(job['topic_chain'])}' ({job['level_name']}) — skipping generation.")
+                await TaskManager.increment_completion(parent_task_id, job["weight"])
+            else:
+                jobs_to_generate.append(job)
+
+        if not jobs_to_generate:
+            print("[StudyMaterialGenerationWorker] All study material already generated — nothing to do.")
+            return
+
+        # ── 3. Enqueue the remaining requests into a single-model BatchSubmitter
         main_task = await TaskManager.get_task(main_task_id)
 
         submitter = BatchSubmitter(model_string, main_task = main_task)
-        for job in loaded_jobs:
+        for job in jobs_to_generate:
             submitter.enqueue(job["key"], job["request"])
 
         caller = AutomationCaller(provider_class())
 
-        # ── 3. Submit batch + collect (with live-API fallback per missing key)
+        # Grant the submit-time share of each job's weight up front so the parent
+        # bar visibly advances when the batch is dispatched, not only minutes
+        # later when Gemini returns. The remaining share lands per result below.
+        for job in jobs_to_generate:
+            await TaskManager.increment_completion(parent_task_id, BatchSubmitter.SUBMIT_PROGRESS_SHARE * job["weight"])
+
+        # ── 4. Submit batch + collect (with live-API fallback per missing key)
         batch_results = await caller.call_batch(
             submitter,
             live_fallback_caller = caller,
             validators           = None,
         )
 
-        # ── 4. Persist per (topic, detail_level) + increment completion ───────
-        for job in loaded_jobs:
+        # ── 5. Persist per (topic, detail_level) + increment completion ───────
+        for job in jobs_to_generate:
             response = batch_results.get(job["key"])
             if response is None:
+                # Still grant the result-share so the job's full weight is
+                # accounted for even when it produced nothing — otherwise the
+                # parent bar lags low for every missing response (the submit
+                # share alone was already granted above).
+                await TaskManager.increment_completion(parent_task_id, (1.0 - BatchSubmitter.SUBMIT_PROGRESS_SHARE) * job["weight"])
                 continue
 
             data = response.get_output().get_data()
             parsed = sanitize_html_response(str(data))
 
-            topic_chain = job["topic_chain"]
-            safe_unit = sanitize_filename(topic_chain[0]) if topic_chain else "Uncategorised"
-            safe_topic = sanitize_filename(topic_chain[-1]) if topic_chain else "Unknown"
-            safe_level = sanitize_filename(job["level_name"])
-
             output = {
-                "topicChain": topic_chain,
+                "topicChain": job["topic_chain"],
                 "content": parsed,
+                "sourcePages": job["source_pages"],
                 "detailLevel": job["detail_level"],
                 "generatedAt": datetime.now(timezone.utc).isoformat(),
             }
 
-            file_path = join_path(
-                "/",
-                PersistenceConstants.TASKS_DIRECTORY,
-                main_task_id,
-                PersistenceConstants.STUDY_MATERIALS_DIRECTORY,
-                safe_unit,
-                f"{safe_topic}__{safe_level}.json",
-            )
+            await Persistence.write(job["output_path"], json.dumps(output, ensure_ascii=False))
 
-            await Persistence.write(file_path, json.dumps(output, ensure_ascii=False))
-
-            await TaskManager.increment_completion(parent_task_id, job["weight"])
+            await TaskManager.increment_completion(parent_task_id, (1.0 - BatchSubmitter.SUBMIT_PROGRESS_SHARE) * job["weight"])

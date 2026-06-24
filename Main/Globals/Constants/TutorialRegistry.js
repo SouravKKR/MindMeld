@@ -27,6 +27,18 @@ const buildNonEmptyTextValidator = (selector) =>
 };
 
 /**
+ * Opens a page during a tutorial step's setupAction. PageNavigator is
+ * lazy-imported (it pulls in every page module, several of which
+ * transitively reference the tutorial engine) to avoid a load-time
+ * import cycle — mirroring how TutorialEngine imports it.
+ */
+const openTutorialPage = async (pageTagName, ...pageArguments) =>
+{
+    const pageNavigatorModule = await import("../Classes/PageNavigator.js");
+    pageNavigatorModule.default.open(pageTagName, ...pageArguments);
+};
+
+/**
  * TutorialRegistry
  *
  * Single source of truth for every interactive tutorial the app ships
@@ -53,6 +65,11 @@ class TutorialRegistry
 {
     static BEGINNERS_ID      = "beginners";
     static HOW_TO_STUDY_ID   = "how-to-study";
+    static ASK_AI_ID         = "ask-ai";
+    static MOCK_TESTS_ID     = "mock-tests";
+    static AI_GENERATION_ID  = "ai-generation";
+    static DECK_INSIGHTS_ID  = "deck-insights";
+    static PAID_LIBRARY_ID   = "paid-library";
 
     static #beginnersTutorial =
     {
@@ -63,10 +80,10 @@ class TutorialRegistry
         steps:
         [
             {
-                type:                 tutorialStepTypes.MODAL,
-                title:                "Welcome to MindMeld",
-                tooltipWidth:         "xwide",
-                expectedPageTagName:  "home-page",
+                type: tutorialStepTypes.MODAL,
+                title: "Welcome to MindMeld",
+                tooltipWidth: "xwide",
+                expectedPageTagName: "home-page",
                 body:
                 `
                     <p>
@@ -85,10 +102,10 @@ class TutorialRegistry
                 `
             },
             {
-                type:                 tutorialStepTypes.MODAL,
-                bWideTooltip:         true,
-                title:                "The 5 phases of learning",
-                expectedPageTagName:  "home-page",
+                type: tutorialStepTypes.MODAL,
+                bWideTooltip: true,
+                title: "The 5 phases of learning",
+                expectedPageTagName: "home-page",
                 body:
                 `
                     <ol>
@@ -102,10 +119,10 @@ class TutorialRegistry
                 `
             },
             {
-                type:                 tutorialStepTypes.MODAL,
-                bWideTooltip:         true,
-                title:                "What's a deck?",
-                expectedPageTagName:  "home-page",
+                type: tutorialStepTypes.MODAL,
+                bWideTooltip: true,
+                title: "What's a deck?",
+                expectedPageTagName: "home-page",
                 body:
                 `
                     <p>In most flashcard apps a deck is just a stack of cards — questions on one side, answers on the other. That's it.</p>
@@ -120,9 +137,9 @@ class TutorialRegistry
                 `
             },
             {
-                type:                 tutorialStepTypes.MODAL,
-                title:                "Let's create your first deck",
-                expectedPageTagName:  "home-page",
+                type: tutorialStepTypes.MODAL,
+                title: "Let's create your first deck",
+                expectedPageTagName: "home-page",
                 body:
                 `
                     <p>Now you know what a deck is — time to make one of your own.</p>
@@ -130,60 +147,60 @@ class TutorialRegistry
                 `
             },
             {
-                type:                 tutorialStepTypes.WAIT_FOR_CLICK,
-                title:                "Click the + tile",
-                body:                 "<p>That's the New Deck tile. Click it to open the deck editor.</p>",
-                selector:             "new-deck-tile",
-                expectedPageTagName:  "home-page",
-                fallbackBody:         "<p>If you can't see the + tile, scroll the home page to find it. We'll continue once you click it.</p>"
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Click the + tile",
+                body: "<p>That's the New Deck tile. Click it to open the deck editor.</p>",
+                selector: "new-deck-tile",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>If you can't see the + tile, scroll the home page to find it. We'll continue once you click it.</p>"
             },
             {
-                type:                 tutorialStepTypes.HIGHLIGHT,
-                title:                "Give your deck a name",
-                body:                 "<p>Type a name for your deck in the highlighted field, then click <strong>Next</strong>.</p>",
-                selector:             ".deck-name-input",
-                expectedPageTagName:  "deck-editor-page",
-                canAdvanceValidator:  buildNonEmptyTextValidator(".deck-name-input"),
-                fallbackBody:         "<p>Type a name in the deck name field, then click Next.</p>"
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Give your deck a name",
+                body: "<p>Type a name for your deck in the highlighted field, then click <strong>Next</strong>.</p>",
+                selector: ".deck-name-input",
+                expectedPageTagName: "deck-editor-page",
+                canAdvanceValidator: buildNonEmptyTextValidator(".deck-name-input"),
+                fallbackBody: "<p>Type a name in the deck name field, then click Next.</p>"
             },
             {
-                type:                 tutorialStepTypes.HIGHLIGHT,
-                title:                "Add a short name",
-                body:                 "<p>Pick a short abbreviation for the deck — anything works. Then click <strong>Next</strong>.</p>",
-                selector:             ".deck-short-name-input",
-                expectedPageTagName:  "deck-editor-page",
-                canAdvanceValidator:  buildNonEmptyTextValidator(".deck-short-name-input"),
-                fallbackBody:         "<p>Type a short name (any abbreviation), then click Next.</p>"
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Add a short name",
+                body: "<p>Pick a short abbreviation for the deck — anything works. Then click <strong>Next</strong>.</p>",
+                selector: ".deck-short-name-input",
+                expectedPageTagName: "deck-editor-page",
+                canAdvanceValidator: buildNonEmptyTextValidator(".deck-short-name-input"),
+                fallbackBody: "<p>Type a short name (any abbreviation), then click Next.</p>"
             },
             {
-                type:                 tutorialStepTypes.WAIT_FOR_EVENT,
-                eventName:            DeckEvents.UPDATE,
-                title:                "Save your deck",
+                type: tutorialStepTypes.WAIT_FOR_EVENT,
+                eventName: DeckEvents.UPDATE,
+                title: "Save your deck",
                 body:
                 `
                     <p>Click <strong>Save</strong> to create the deck.</p>
                     <p>Both fields are required — Save won't go through with an empty name or short name.</p>
                 `,
-                selector:             ".deck-save-input",
-                expectedPageTagName:  "deck-editor-page",
-                fallbackBody:         "<p>Click Save to continue. We'll wait until the deck is saved.</p>"
+                selector: ".deck-save-input",
+                expectedPageTagName: "deck-editor-page",
+                fallbackBody: "<p>Click Save to continue. We'll wait until the deck is saved.</p>"
             },
             {
-                type:                 tutorialStepTypes.HIGHLIGHT,
-                title:                "This is your deck",
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "This is your deck",
                 body:
                 `
                     <p>Nice — that's your first deck. Tapping it opens its contents; right-click (or long-press) for options.</p>
                     <p>The <strong>Study</strong> button on the tile is where the five-phase journey begins.</p>
                 `,
-                selector:             "deck-tile",
-                expectedPageTagName:  "home-page",
-                fallbackBody:         "<p>Your deck is now on the home page. Find it whenever you want to add cards or start studying.</p>"
+                selector: "deck-tile",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Your deck is now on the home page. Find it whenever you want to add cards or start studying.</p>"
             },
             {
-                type:                 tutorialStepTypes.MODAL,
-                title:                "What's a card?",
-                expectedPageTagName:  "home-page",
+                type: tutorialStepTypes.MODAL,
+                title: "What's a card?",
+                expectedPageTagName: "home-page",
                 body:
                 `
                     <p>A <strong>card</strong> is the atomic unit of learning — a question/answer pair tracked individually with memory scheduling and confidence-weighted mastery based on the human forgetting curve.</p>
@@ -192,72 +209,72 @@ class TutorialRegistry
                 `
             },
             {
-                type:                 tutorialStepTypes.WAIT_FOR_CLICK,
-                title:                "Open the deck options",
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Open the deck options",
                 body:
                 `
                     <p>Click the <strong>three dots</strong> at the top-right of your deck tile.</p>
                     <p>You can also right-click the tile, or long-press it on a phone — they all open the same options menu.</p>
                 `,
-                selector:             ".deck-options-button",
-                expectedPageTagName:  "home-page",
-                fallbackBody:         "<p>Open your deck's options menu (three-dots button, right-click, or long-press). We'll continue once it's open.</p>"
+                selector: ".deck-options-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Open your deck's options menu (three-dots button, right-click, or long-press). We'll continue once it's open.</p>"
             },
             {
-                type:                 tutorialStepTypes.WAIT_FOR_CLICK,
-                title:                "Click Add",
-                body:                 "<p>Pick <strong>Add</strong> from the menu — that's how you put new content into a deck.</p>",
-                selector:             ".add-button",
-                expectedPageTagName:  "home-page",
-                fallbackBody:         "<p>Click the Add option in the deck menu, then we'll continue.</p>"
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Click Add",
+                body: "<p>Pick <strong>Add</strong> from the menu — that's how you put new content into a deck.</p>",
+                selector: ".add-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click the Add option in the deck menu, then we'll continue.</p>"
             },
             {
-                type:                 tutorialStepTypes.WAIT_FOR_CLICK,
-                title:                "Choose Card",
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Choose Card",
                 body:
                 `
                     <p>A picker just appeared. Click <strong>Card</strong> — that's the flashcard option.</p>
                     <p>(The picker also lets you add Study Materials and Mock Tests, but we'll stick with Card for the tour.)</p>
                 `,
-                selector:             ".entity-picker-button",
-                expectedPageTagName:  "home-page",
-                fallbackBody:         "<p>Click Card from the picker that just appeared, then we'll continue.</p>"
+                selector: ".entity-picker-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click Card from the picker that just appeared, then we'll continue.</p>"
             },
             {
-                type:                 tutorialStepTypes.HIGHLIGHT,
-                title:                "Type your question",
-                body:                 "<p>Type the question you want to be asked. Rich text, images, anything goes. Then click <strong>Next</strong>.</p>",
-                selector:             ".question-editor",
-                expectedPageTagName:  "card-editor-page",
-                canAdvanceValidator:  buildNonEmptyTextValidator(".question-editor"),
-                fallbackBody:         "<p>Type a question in the highlighted editor on the card page, then click Next.</p>"
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Type your question",
+                body: "<p>Type the question you want to be asked. Rich text, images, anything goes. Then click <strong>Next</strong>.</p>",
+                selector: ".question-editor",
+                expectedPageTagName: "card-editor-page",
+                canAdvanceValidator: buildNonEmptyTextValidator(".question-editor"),
+                fallbackBody: "<p>Type a question in the highlighted editor on the card page, then click Next.</p>"
             },
             {
-                type:                 tutorialStepTypes.HIGHLIGHT,
-                title:                "Type the answer",
-                body:                 "<p>Now type the answer you want to recall. Then click <strong>Next</strong>.</p>",
-                selector:             ".answer-editor",
-                expectedPageTagName:  "card-editor-page",
-                canAdvanceValidator:  buildNonEmptyTextValidator(".answer-editor"),
-                fallbackBody:         "<p>Type the answer in the highlighted editor, then click Next.</p>"
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Type the answer",
+                body: "<p>Now type the answer you want to recall. Then click <strong>Next</strong>.</p>",
+                selector: ".answer-editor",
+                expectedPageTagName: "card-editor-page",
+                canAdvanceValidator: buildNonEmptyTextValidator(".answer-editor"),
+                fallbackBody: "<p>Type the answer in the highlighted editor, then click Next.</p>"
             },
             {
-                type:                 tutorialStepTypes.WAIT_FOR_EVENT,
-                eventName:            CardEvents.SAVE,
-                title:                "Save your card",
+                type: tutorialStepTypes.WAIT_FOR_EVENT,
+                eventName: CardEvents.SAVE,
+                title: "Save your card",
                 body:
                 `
                     <p>Click <strong>Save</strong> to create the card. The editor stays open so you can add more — but for now, just one is enough.</p>
                     <p>Both the question and the answer are required.</p>
                 `,
-                selector:             ".save-button",
-                expectedPageTagName:  "card-editor-page",
-                fallbackBody:         "<p>Click Save to create the card. We'll wait for the save to go through.</p>"
+                selector: ".save-button",
+                expectedPageTagName: "card-editor-page",
+                fallbackBody: "<p>Click Save to create the card. We'll wait for the save to go through.</p>"
             },
             {
-                type:                 tutorialStepTypes.MODAL,
-                title:                "Study, Revise, Mock Test, Insights",
-                expectedPageTagName:  "home-page",
+                type: tutorialStepTypes.MODAL,
+                title: "Study, Revise, Mock Test, Insights",
+                expectedPageTagName: "home-page",
                 body:
                 `
                     <ul>
@@ -270,14 +287,14 @@ class TutorialRegistry
                 `
             },
             {
-                type:                 tutorialStepTypes.MODAL,
-                title:                "You're ready",
-                expectedPageTagName:  "home-page",
-                bWideTooltip:         true,
+                type: tutorialStepTypes.MODAL,
+                title: "You're ready",
+                expectedPageTagName: "home-page",
+                bWideTooltip: true,
                 // Lazy: computing the list at class-init time would
                 // try to read sibling private static fields that the
                 // engine hasn't finished initialising yet.
-                body:                 () => TutorialRegistry.#buildFinalStepBody()
+                body: () => TutorialRegistry.#buildFinalStepBody()
             }
         ]
     };
@@ -291,17 +308,17 @@ class TutorialRegistry
         steps:
         [
             {
-                type:                 tutorialStepTypes.MODAL,
-                title:                "How to study with MindMeld",
-                expectedPageTagName:  "home-page",
+                type: tutorialStepTypes.MODAL,
+                title: "How to study with MindMeld",
+                expectedPageTagName: "home-page",
                 // Async sample-deck build runs while the user reads this
                 // modal; #goNext awaits it on Next click so the next
                 // step's selector always finds the freshly-built tile.
-                setupAction:          async () =>
+                setupAction: async () =>
                 {
                     await TutorialSampleDeckBuilder.createForUser();
                 },
-                bWideTooltip:         true,
+                bWideTooltip: true,
                 body:
                 `
                     <p>This walkthrough shows you how MindMeld supports the whole study journey — not just memorisation.</p>
@@ -309,90 +326,90 @@ class TutorialRegistry
                 `
             },
             {
-                type:                 tutorialStepTypes.HIGHLIGHT,
-                title:                "Your sample deck",
-                body:                 "<p>This is the sample deck we set up. It contains a study material and a few flashcards on MindMeld's own learning lifecycle.</p>",
-                selector:             "deck-tile[data-is-tutorial-sample=\"true\"]",
-                expectedPageTagName:  "home-page",
-                fallbackBody:         "<p>Look for the new deck tile on your home page named 'Tutorial Sample Deck'.</p>"
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Your sample deck",
+                body: "<p>This is the sample deck we set up. It contains a study material and a few flashcards on MindMeld's own learning lifecycle.</p>",
+                selector: "deck-tile[data-is-tutorial-sample=\"true\"]",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Look for the new deck tile on your home page named 'Tutorial Sample Deck'.</p>"
             },
             {
-                type:                 tutorialStepTypes.HIGHLIGHT,
-                title:                "Start studying",
-                body:                 "<p>The <strong>Study</strong> button on the tile is where the journey begins. We'll start with reading the study material.</p>",
-                selector:             "deck-tile[data-is-tutorial-sample=\"true\"] .study-button",
-                expectedPageTagName:  "home-page",
-                fallbackBody:         "<p>Find the <strong>Study</strong> button on the sample deck tile.</p>"
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Start studying",
+                body: "<p>The <strong>Study</strong> button on the tile is where the journey begins. We'll start with reading the study material.</p>",
+                selector: "deck-tile[data-is-tutorial-sample=\"true\"] .study-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Find the <strong>Study</strong> button on the sample deck tile.</p>"
             },
             {
-                type:                 tutorialStepTypes.WAIT_FOR_CLICK,
-                title:                "Click Study",
-                body:                 "<p>Click <strong>Study</strong> to open the study-mode picker.</p>",
-                selector:             "deck-tile[data-is-tutorial-sample=\"true\"] .study-button",
-                expectedPageTagName:  "home-page",
-                fallbackBody:         "<p>Click the Study button on the sample deck tile.</p>"
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Click Study",
+                body: "<p>Click <strong>Study</strong> to open the study-mode picker.</p>",
+                selector: "deck-tile[data-is-tutorial-sample=\"true\"] .study-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click the Study button on the sample deck tile.</p>"
             },
             {
-                type:                 tutorialStepTypes.WAIT_FOR_CLICK,
-                title:                "Pick Content Study",
-                body:                 "<p>Choose <strong>Content Study</strong> — this is the mode for reading materials like a textbook.</p>",
-                selector:             ".content-study-button",
-                expectedPageTagName:  "home-page",
-                fallbackBody:         "<p>Click the Content Study option in the picker.</p>"
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Pick Content Study",
+                body: "<p>Choose <strong>Content Study</strong> — this is the mode for reading materials like a textbook.</p>",
+                selector: ".content-study-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click the Content Study option in the picker.</p>"
             },
             {
-                type:                 tutorialStepTypes.WAIT_FOR_CLICK,
-                title:                "Start the session",
-                body:                 "<p>Pick a detail level — Standard is what we'll demo — and click <strong>Start Study</strong>.</p>",
-                selector:             ".detail-level-picker-start",
-                expectedPageTagName:  "home-page",
-                fallbackBody:         "<p>Click Start Study in the detail-level picker.</p>"
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Start the session",
+                body: "<p>Pick a detail level — Standard is what we'll demo — and click <strong>Start Study</strong>.</p>",
+                selector: ".detail-level-picker-start",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click Start Study in the detail-level picker.</p>"
             },
             {
-                type:                 tutorialStepTypes.HIGHLIGHT,
-                title:                "Your study material",
-                body:                 "<p>This is the study material — read it like a textbook. MindMeld supports rich text, images, formulas, everything.</p>",
-                selector:             ".study-material-content-section",
-                expectedPageTagName:  "study-page",
-                fallbackBody:         "<p>The study material content is rendered on the page.</p>"
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Your study material",
+                body: "<p>This is the study material — read it like a textbook. MindMeld supports rich text, images, formulas, everything.</p>",
+                selector: ".study-material-content-section",
+                expectedPageTagName: "study-page",
+                fallbackBody: "<p>The study material content is rendered on the page.</p>"
             },
             {
-                type:                 tutorialStepTypes.HIGHLIGHT,
-                title:                "Ask anything",
-                body:                 "<p>Drop a question about what you're reading into this input and hit Send — the AI answers in context. Multi-line and images both work.</p>",
-                selector:             ".bottom-panel-question-row",
-                expectedPageTagName:  "study-page",
-                fallbackBody:         "<p>The Ask input lives in the bottom panel of the study page.</p>"
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Ask anything",
+                body: "<p>Drop a question about what you're reading into this input and hit Send — the AI answers in context. Multi-line and images both work.</p>",
+                selector: ".bottom-panel-question-row",
+                expectedPageTagName: "study-page",
+                fallbackBody: "<p>The Ask input lives in the bottom panel of the study page.</p>"
             },
             {
-                type:                 tutorialStepTypes.HIGHLIGHT,
-                title:                "Explain",
-                body:                 "<p><strong>Explain</strong> gives you a plain-language summary of the whole material — no question needed.</p>",
-                selector:             ".bottom-panel-explain-button",
-                expectedPageTagName:  "study-page",
-                fallbackBody:         "<p>Look for the Explain button in the bottom panel.</p>"
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Explain",
+                body: "<p><strong>Explain</strong> gives you a plain-language summary of the whole material — no question needed.</p>",
+                selector: ".bottom-panel-explain-button",
+                expectedPageTagName: "study-page",
+                fallbackBody: "<p>Look for the Explain button in the bottom panel.</p>"
             },
             {
-                type:                 tutorialStepTypes.HIGHLIGHT,
-                title:                "Summarize",
-                body:                 "<p><strong>Summarize</strong> produces a tight cheat sheet — perfect for the night before an exam.</p>",
-                selector:             ".bottom-panel-summarize-button",
-                expectedPageTagName:  "study-page",
-                fallbackBody:         "<p>Look for the Summarize button in the bottom panel.</p>"
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Summarize",
+                body: "<p><strong>Summarize</strong> produces a tight cheat sheet — perfect for the night before an exam.</p>",
+                selector: ".bottom-panel-summarize-button",
+                expectedPageTagName: "study-page",
+                fallbackBody: "<p>Look for the Summarize button in the bottom panel.</p>"
             },
             {
-                type:                 tutorialStepTypes.HIGHLIGHT,
-                title:                "Enhance",
-                body:                 "<p><strong>Enhance</strong> applies prebuilt transformations like <em>Make mnemonic</em> or <em>Format</em>, with room for your own instructions. More tools land in this menu over time.</p>",
-                selector:             ".bottom-panel-enhance-button",
-                expectedPageTagName:  "study-page",
-                fallbackBody:         "<p>Look for the Enhance button in the bottom panel.</p>"
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Enhance",
+                body: "<p><strong>Enhance</strong> applies prebuilt transformations like <em>Make mnemonic</em> or <em>Format</em>, with room for your own instructions. More tools land in this menu over time.</p>",
+                selector: ".bottom-panel-enhance-button",
+                expectedPageTagName: "study-page",
+                fallbackBody: "<p>Look for the Enhance button in the bottom panel.</p>"
             },
             {
-                type:                 tutorialStepTypes.MODAL,
-                title:                "Select text → mini menu",
-                expectedPageTagName:  "study-page",
-                bWideTooltip:         true,
+                type: tutorialStepTypes.MODAL,
+                title: "Select text → mini menu",
+                expectedPageTagName: "study-page",
+                bWideTooltip: true,
                 body:
                 `
                     <p>If you only want help with one sentence (or paragraph) inside a card or study material, <strong>select that text</strong>. A small menu pops up over the selection with <em>Explain</em> and a free-form question input — scoped to just the part you highlighted.</p>
@@ -400,40 +417,40 @@ class TutorialRegistry
                 `
             },
             {
-                type:                 tutorialStepTypes.WAIT_FOR_CLICK,
-                title:                "Back to the deck",
-                body:                 "<p>Click <strong>Back</strong> in the header to return to your home page — we'll switch to flashcards next.</p>",
-                selector:             "header-component .back-button",
-                expectedPageTagName:  "study-page",
-                fallbackBody:         "<p>Use the back button in the header to return to Home.</p>"
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Back to the deck",
+                body: "<p>Click <strong>Back</strong> in the header to return to your home page — we'll switch to flashcards next.</p>",
+                selector: "header-component .back-button",
+                expectedPageTagName: "study-page",
+                fallbackBody: "<p>Use the back button in the header to return to Home.</p>"
             },
             {
-                type:                 tutorialStepTypes.WAIT_FOR_CLICK,
-                title:                "Open Study again",
-                body:                 "<p>Click <strong>Study</strong> on the sample deck tile one more time — this time we'll pick Spaced Repetition.</p>",
-                selector:             "deck-tile[data-is-tutorial-sample=\"true\"] .study-button",
-                expectedPageTagName:  "home-page",
-                fallbackBody:         "<p>Click Study on the sample deck tile again.</p>"
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Open Study again",
+                body: "<p>Click <strong>Study</strong> on the sample deck tile one more time — this time we'll pick Spaced Repetition.</p>",
+                selector: "deck-tile[data-is-tutorial-sample=\"true\"] .study-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click Study on the sample deck tile again.</p>"
             },
             {
-                type:                 tutorialStepTypes.WAIT_FOR_CLICK,
-                title:                "Pick Spaced Repetition",
-                body:                 "<p>Pick <strong>Spaced Repetition</strong>. This is the FSRS-driven mode that shows each card the moment your memory of it is about to dip.</p>",
-                selector:             ".spaced-repetition-button",
-                expectedPageTagName:  "home-page",
-                fallbackBody:         "<p>Click Spaced Repetition in the picker.</p>"
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Pick Spaced Repetition",
+                body: "<p>Pick <strong>Spaced Repetition</strong>. This is the mode that shows each card the moment your memory of it is about to dip.</p>",
+                selector: ".spaced-repetition-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click Spaced Repetition in the picker.</p>"
             },
             {
-                type:                 tutorialStepTypes.WAIT_FOR_CLICK,
-                title:                "Reveal the answer",
-                body:                 "<p>Try to recall the answer in your head, then click <strong>Show Answer</strong> to check yourself.</p>",
-                selector:             ".show-answer-button",
-                expectedPageTagName:  "study-page",
-                fallbackBody:         "<p>Click Show Answer to reveal the back of the card.</p>"
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Reveal the answer",
+                body: "<p>Try to recall the answer in your head, then click <strong>Show Answer</strong> to check yourself.</p>",
+                selector: ".show-answer-button",
+                expectedPageTagName: "study-page",
+                fallbackBody: "<p>Click Show Answer to reveal the back of the card.</p>"
             },
             {
-                type:                 tutorialStepTypes.HIGHLIGHT,
-                title:                "Rate your recall",
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Rate your recall",
                 body:
                 `
                     <p>Honest feedback drives the schedule. The four buttons mean:</p>
@@ -444,23 +461,23 @@ class TutorialRegistry
                         <li><strong>Easy</strong> — instant recall. Interval stretches further out.</li>
                     </ul>
                 `,
-                selector:             ".user-score-section",
-                expectedPageTagName:  "study-page",
-                fallbackBody:         "<p>Rate the card using the four feedback buttons below the answer.</p>"
+                selector: ".user-score-section",
+                expectedPageTagName: "study-page",
+                fallbackBody: "<p>Rate the card using the four feedback buttons below the answer.</p>"
             },
             {
-                type:                 tutorialStepTypes.HIGHLIGHT,
-                title:                "Mark important cards for review",
-                body:                 "<p>Use this toggle to mark a card for review. <strong>Revise</strong> mode plays back only marked cards — perfect for a quick polish pass right before an exam.</p>",
-                selector:             ".bottom-panel-mark-review-toggle",
-                expectedPageTagName:  "study-page",
-                fallbackBody:         "<p>The Mark for Review toggle lives in the bottom panel for card sessions.</p>"
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Mark important cards for review",
+                body: "<p>Use this toggle to mark a card for review. <strong>Revise</strong> mode plays back only marked cards — perfect for a quick polish pass right before an exam.</p>",
+                selector: ".bottom-panel-mark-review-toggle",
+                expectedPageTagName: "study-page",
+                fallbackBody: "<p>The Mark for Review toggle lives in the bottom panel for card sessions.</p>"
             },
             {
-                type:                 tutorialStepTypes.MODAL,
-                title:                "Other study features",
-                expectedPageTagName:  "study-page",
-                bWideTooltip:         true,
+                type: tutorialStepTypes.MODAL,
+                title: "Other study features",
+                expectedPageTagName: "study-page",
+                bWideTooltip: true,
                 body:
                 `
                     <ul>
@@ -478,26 +495,26 @@ class TutorialRegistry
                 // sample deck already contains the cards needed for it.
             },
             {
-                type:                 tutorialStepTypes.WAIT_FOR_CLICK,
-                title:                "Last thing — making your own decks",
-                body:                 "<p>Click <strong>Back</strong> to return to home — we'll point out the three ways to create new decks.</p>",
-                selector:             "header-component .back-button",
-                expectedPageTagName:  "study-page",
-                fallbackBody:         "<p>Use the back button in the header to return to Home.</p>"
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Last thing — making your own decks",
+                body: "<p>Click <strong>Back</strong> to return to home — we'll point out the three ways to create new decks.</p>",
+                selector: "header-component .back-button",
+                expectedPageTagName: "study-page",
+                fallbackBody: "<p>Use the back button in the header to return to Home.</p>"
             },
             {
-                type:                 tutorialStepTypes.HIGHLIGHT,
-                title:                "Create a new deck manually",
-                body:                 "<p>Click the <strong>+</strong> tile any time to create a deck from scratch — type your own questions and answers.</p>",
-                selector:             "new-deck-tile",
-                expectedPageTagName:  "home-page",
-                fallbackBody:         "<p>The + tile on the home page creates a new deck manually.</p>"
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Create a new deck manually",
+                body: "<p>Click the <strong>+</strong> tile any time to create a deck from scratch — type your own questions and answers.</p>",
+                selector: "new-deck-tile",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>The + tile on the home page creates a new deck manually.</p>"
             },
             {
-                type:                 tutorialStepTypes.MODAL,
-                title:                "Two faster ways to get a deck",
-                expectedPageTagName:  "home-page",
-                bWideTooltip:         true,
+                type: tutorialStepTypes.MODAL,
+                title: "Two faster ways to get a deck",
+                expectedPageTagName: "home-page",
+                bWideTooltip: true,
                 body:
                 `
                     <ul>
@@ -508,14 +525,376 @@ class TutorialRegistry
                 `
             },
             {
-                type:                 tutorialStepTypes.MODAL,
-                title:                "You're set",
-                expectedPageTagName:  "home-page",
-                bWideTooltip:         true,
+                type: tutorialStepTypes.MODAL,
+                title: "You're set",
+                expectedPageTagName: "home-page",
+                bWideTooltip: true,
                 // Lazy: computing the list at class-init time would
                 // try to read sibling private static fields that the
                 // engine hasn't finished initialising yet.
-                body:                 () => TutorialRegistry.#buildFinalStepBody()
+                body: () => TutorialRegistry.#buildFinalStepBody()
+            }
+        ]
+    };
+
+    static #askAiTutorial =
+    {
+        id: TutorialRegistry.ASK_AI_ID,
+        title: "Ask AI while you study",
+        body: "See how Explain, Summarize, Enhance and Ask help you while reading — shown with built-in sample responses, so the tutorial makes no real AI calls.",
+        bAutoPlayOnFirstLaunch: false,
+        steps:
+        [
+            {
+                type: tutorialStepTypes.MODAL,
+                title: "Ask AI while you study",
+                expectedPageTagName: "home-page",
+                bWideTooltip: true,
+                setupAction: async () =>
+                {
+                    await TutorialSampleDeckBuilder.createForUser();
+                },
+                body:
+                `
+                    <p>While you're studying, the AI can <strong>explain</strong>, <strong>summarize</strong>, <strong>enhance</strong> or <strong>answer a question</strong> about what you're reading — right from the bottom panel.</p>
+                    <p>Let's open a study session on the sample deck and try it. The responses in this tutorial are <strong>built-in samples</strong> — no real AI call is made. (The real AI features use credits.)</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Open Study",
+                body: "<p>Click <strong>Study</strong> on the sample deck tile.</p>",
+                selector: "deck-tile[data-is-tutorial-sample=\"true\"] .study-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click the Study button on the sample deck tile.</p>"
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Pick Content Study",
+                body:
+                `
+                    <p>Choose <strong>Content Study</strong> — the mode for reading materials.</p>
+                    <p>The AI helpers we're about to use also work in <strong>Spaced Repetition</strong> and <strong>Revise</strong> (the other modes in this popup) — Content Study is just what we'll demo here.</p>
+                `,
+                selector: ".content-study-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click the Content Study option in the picker.</p>"
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Start the session",
+                body: "<p>Pick a detail level and click <strong>Start Study</strong> to open the material.</p>",
+                selector: ".detail-level-picker-start",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click Start Study in the detail-level picker.</p>"
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Open the Assistant",
+                body: "<p>The AI tools live in the Assistant panel, which starts hidden. Click <strong>Show Assistant</strong> at the bottom to reveal it.</p>",
+                selector: ".assistant-toggle-button",
+                expectedPageTagName: "study-page",
+                fallbackBody: "<p>Click <strong>Show Assistant</strong> in the footer to reveal the AI tools.</p>"
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Try Explain",
+                body:
+                `
+                    <p>Click <strong>Explain</strong> in the Assistant panel. The answer that appears is a <strong>built-in sample</strong> — during a tutorial the AI buttons show sample responses instead of making a real call.</p>
+                `,
+                selector: ".bottom-panel-explain-button",
+                expectedPageTagName: "study-page",
+                fallbackBody: "<p>Click the Explain button in the Assistant panel.</p>"
+            },
+            {
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "What an AI response looks like",
+                expectedPageTagName: "study-page",
+                selector: ".ask-ai-dialog",
+                fallbackBody: "<p>The AI response popup is open in front of you. Read it, then close it and click Next.</p>",
+                body:
+                `
+                    <p>This is exactly what an AI answer looks like, rendered through the real popup — but it's a <strong>built-in sample</strong>, not a live AI call.</p>
+                    <p>Close the popup (✕ or Escape) when you're done, then click <strong>Next</strong>.</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.MODAL,
+                title: "Summarize, Enhance and Ask",
+                expectedPageTagName: "study-page",
+                bWideTooltip: true,
+                body:
+                `
+                    <p><strong>Summarize</strong> makes a cheat sheet, <strong>Enhance</strong> applies tools like "Make mnemonic", and the <strong>Ask</strong> input answers your own question — all on what you're studying.</p>
+                    <p>They work exactly like Explain, and the same helpers appear in <strong>Spaced Repetition</strong> and <strong>Revise</strong> too. In this tutorial they all show built-in samples instead of making real calls.</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Select text → mini menu",
+                expectedPageTagName: "study-page",
+                // Close the Explain popup if it's still open, so the material is
+                // clear to select text on.
+                setupAction: async () =>
+                {
+                    const askAiHost = document.querySelector(".ask-ai-dialog");
+                    const dialogBoxElement = askAiHost ? askAiHost.closest("dialog-box") : null;
+                    if (dialogBoxElement)
+                    {
+                        if (typeof dialogBoxElement.close === "function")
+                        {
+                            dialogBoxElement.close();
+                        }
+                        else
+                        {
+                            dialogBoxElement.remove();
+                        }
+                    }
+                },
+                selector: ".study-material-content-section",
+                fallbackBody: "<p>Select any text in the material — a small Explain / Ask menu pops up over your selection. Then click Next.</p>",
+                body:
+                `
+                    <p>You can also scope the AI to just part of what you're reading. In the material, find the <strong>Encode</strong> section and select the words <strong>"Spaced Repetition"</strong> — a small menu pops up over your selection with <strong>Explain</strong> and an <strong>Ask</strong> box, scoped to just that text.</p>
+                    <p>Click <strong>Explain</strong> in that menu to see the sample response, then click <strong>Next</strong>. (It's a built-in sample, like the rest of this tutorial.)</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.MODAL,
+                title: "That's Ask AI",
+                expectedPageTagName: "study-page",
+                bWideTooltip: true,
+                body: () => TutorialRegistry.#buildFinalStepBody()
+            }
+        ]
+    };
+
+    static #mockTestsTutorial =
+    {
+        id: TutorialRegistry.MOCK_TESTS_ID,
+        title: "Mock tests & grading",
+        body: "See how a graded mock-test answer key looks — scores, your answers vs the expected ones, and examiner notes — shown from a built-in sample.",
+        bAutoPlayOnFirstLaunch: false,
+        steps:
+        [
+            {
+                type: tutorialStepTypes.MODAL,
+                title: "Mock tests & grading",
+                expectedPageTagName: "home-page",
+                bWideTooltip: true,
+                setupAction: async () =>
+                {
+                    await TutorialSampleDeckBuilder.createForUser();
+                },
+                body:
+                `
+                    <p>MindMeld grades your mock tests — multiple-choice questions instantly and offline, subjective answers with AI. Click <strong>Next</strong> to see a sample <strong>answer key</strong> for an already-graded attempt.</p>
+                    <p>Everything here is a built-in sample — the tutorial doesn't run real grading. (Real grading uses credits.)</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "A graded answer key",
+                expectedPageTagName: "mock-test-answer-key-page",
+                setupAction: async () =>
+                {
+                    const sampleMockTest = TutorialSampleDeckBuilder.findSampleMockTest();
+                    if (!sampleMockTest)
+                    {
+                        return;
+                    }
+                    const gradedAttempt = TutorialSampleDeckBuilder.buildGradedSampleAttempt(sampleMockTest);
+                    await openTutorialPage("mock-test-answer-key-page", sampleMockTest, gradedAttempt);
+                },
+                selector: ".mock-test-answer-key-page-body",
+                fallbackBody: "<p>This is the graded answer key for a sample attempt.</p>",
+                body:
+                `
+                    <p>Each question shows <strong>your answer</strong>, the <strong>expected answer</strong>, the <strong>score</strong> and — where relevant — an <strong>examiner's note</strong>. The score is at the top.</p>
+                    <p>This whole result is a local sample; no grading server was called.</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.MODAL,
+                title: "That's mock-test grading",
+                expectedPageTagName: "mock-test-answer-key-page",
+                bWideTooltip: true,
+                body: () => TutorialRegistry.#buildFinalStepBody()
+            }
+        ]
+    };
+
+    static #aiGenerationTutorial =
+    {
+        id: TutorialRegistry.AI_GENERATION_ID,
+        title: "Generate decks with AI",
+        body: "Watch MindMeld build a deck from your material — demonstrated with a built-in sample run, so the tutorial doesn't start a real generation.",
+        bAutoPlayOnFirstLaunch: false,
+        steps:
+        [
+            {
+                type: tutorialStepTypes.MODAL,
+                title: "Generate decks with AI",
+                expectedPageTagName: "home-page",
+                bWideTooltip: true,
+                body:
+                `
+                    <p>MindMeld can build a whole deck — flashcards, study materials and mock tests — from a syllabus, your notes, a PDF or a web link.</p>
+                    <p>Click <strong>Next</strong> and we'll play a <strong>built-in sample</strong> run so you can see the flow — the tutorial doesn't start a real generation. (Real generation uses credits.)</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Start the generation",
+                expectedPageTagName: "automatic-generation-page",
+                setupAction: async () =>
+                {
+                    await openTutorialPage("automatic-generation-page", null);
+                },
+                selector: ".automatic-generation-start-button",
+                fallbackBody: "<p>Find the <strong>Start Generation</strong> button at the bottom of the page.</p>",
+                body:
+                `
+                    <p>This is the generation form — you'd describe your subject or attach a syllabus / notes / PDF.</p>
+                    <p>Click <strong>Start Generation</strong>. In this tutorial it skips the form and plays a built-in sample run — it doesn't start a real generation.</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Generation in progress",
+                expectedPageTagName: "progress-page",
+                selector: "generation-progress-component",
+                fallbackBody: "<p>The generation pipeline is running here.</p>",
+                body:
+                `
+                    <p>Watch the pipeline climb to completion. On a real run this is where the work happens and credits are spent — here it's a built-in sample played on your device. When it finishes, click <strong>Next</strong>.</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.MODAL,
+                title: "That's AI generation",
+                expectedPageTagName: "progress-page",
+                bWideTooltip: true,
+                body: () => TutorialRegistry.#buildFinalStepBody()
+            }
+        ]
+    };
+
+    static #deckInsightsTutorial =
+    {
+        id: TutorialRegistry.DECK_INSIGHTS_ID,
+        title: "Understand your progress",
+        body: "See how Deck Insights groups your topics into strong, weak and confused — shown on a sample deck so you know what to study next.",
+        bAutoPlayOnFirstLaunch: false,
+        steps:
+        [
+            {
+                type: tutorialStepTypes.MODAL,
+                title: "Understand your progress",
+                expectedPageTagName: "home-page",
+                bWideTooltip: true,
+                setupAction: async () =>
+                {
+                    await TutorialSampleDeckBuilder.createForUser();
+                },
+                body:
+                `
+                    <p>Deck Insights shows you exactly where you stand on a deck. Click <strong>Next</strong> to see it on a sample deck.</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Strong, weak & confused topics",
+                expectedPageTagName: "deck-insights-page",
+                setupAction: async () =>
+                {
+                    const sampleDeck = TutorialSampleDeckBuilder.findSampleDeck();
+                    if (!sampleDeck)
+                    {
+                        return;
+                    }
+                    await openTutorialPage("deck-insights-page", sampleDeck);
+                },
+                selector: "topic-insights",
+                fallbackBody: "<p>The topic breakdown is shown on this page.</p>",
+                body:
+                `
+                    <p>Topics are grouped into <strong>strong</strong>, <strong>weak</strong> and <strong>confused</strong> so you know exactly what to study next. (These are seeded for the demo — your real decks fill this in automatically as you study, with no action needed.)</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.MODAL,
+                title: "That's Deck Insights",
+                expectedPageTagName: "deck-insights-page",
+                bWideTooltip: true,
+                body: () => TutorialRegistry.#buildFinalStepBody()
+            }
+        ]
+    };
+
+    static #paidLibraryTutorial =
+    {
+        id: TutorialRegistry.PAID_LIBRARY_ID,
+        title: "Buy a ready-made deck",
+        body: "Walk through the real flow for getting a ready-made deck — from the + tile on your home page to the storefront — using a sample listing and a demo checkout that makes no real purchase.",
+        bAutoPlayOnFirstLaunch: false,
+        steps:
+        [
+            {
+                type: tutorialStepTypes.MODAL,
+                title: "Buy a ready-made deck",
+                expectedPageTagName: "home-page",
+                bWideTooltip: true,
+                body:
+                `
+                    <p>The <strong>Paid Deck Library</strong> has ready-made decks built by educators — a fast alternative to building your own. You reach it the same way you create a deck: from the <strong>+</strong> tile on your home page. Let's walk through it.</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Click the + tile",
+                expectedPageTagName: "home-page",
+                selector: "new-deck-tile",
+                fallbackBody: "<p>Click the <strong>+</strong> tile on your home page.</p>",
+                body: "<p>Click the <strong>+</strong> tile on your home page — it's how you add a deck.</p>"
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Choose Browse paid decks",
+                expectedPageTagName: "home-page",
+                selector: ".create-deck-choice-buy",
+                fallbackBody: "<p>Pick <strong>Browse paid decks</strong> from the menu.</p>",
+                body: "<p>The menu offers three ways to add a deck. Pick <strong>Browse paid decks</strong> to open the storefront.</p>"
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Open a listing",
+                expectedPageTagName: "paid-deck-library-page",
+                selector: ".paid-deck-card-view",
+                fallbackBody: "<p>Click <strong>View details</strong> on the sample deck card.</p>",
+                body:
+                `
+                    <p>Here's a sample listing — the real library lets you search, filter and sort decks by educators. Click <strong>View details</strong> to open this one.</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Buy the deck",
+                expectedPageTagName: "paid-deck-details-page",
+                selector: ".paid-deck-details-cta",
+                fallbackBody: "<p>Click the <strong>Buy</strong> button.</p>",
+                body:
+                `
+                    <p>The details page shows what's inside. Click <strong>Buy</strong> — in this tutorial <strong>no real purchase is made</strong> and no payment is taken; a sample copy is just added to your home page. (A real purchase uses a secure checkout.)</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.MODAL,
+                title: "That's the Paid Deck Library",
+                expectedPageTagName: "paid-deck-details-page",
+                bWideTooltip: true,
+                body: () => TutorialRegistry.#buildFinalStepBody()
             }
         ]
     };
@@ -546,7 +925,15 @@ class TutorialRegistry
      */
     static getAll()
     {
-        return [TutorialRegistry.#beginnersTutorial, TutorialRegistry.#howToStudyTutorial];
+        return [
+            TutorialRegistry.#beginnersTutorial,
+            TutorialRegistry.#howToStudyTutorial,
+            TutorialRegistry.#askAiTutorial,
+            TutorialRegistry.#mockTestsTutorial,
+            TutorialRegistry.#aiGenerationTutorial,
+            TutorialRegistry.#deckInsightsTutorial,
+            TutorialRegistry.#paidLibraryTutorial
+        ];
     }
 
     /**

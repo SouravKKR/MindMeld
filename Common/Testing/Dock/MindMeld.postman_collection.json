@@ -1058,6 +1058,81 @@
           ]
         },
         {
+          "name": "PROTECTED POST /Decks/BeautifyShortNames",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Decks/BeautifyShortNames",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Decks",
+                "BeautifyShortNames"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED GET /Decks/BeautifyShortNames/Result",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Decks/BeautifyShortNames/Result",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Decks",
+                "BeautifyShortNames",
+                "Result"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "PROTECTED POST /Legal/Accept",
           "request": {
             "method": "POST",
@@ -2935,46 +3010,6 @@
           ]
         },
         {
-          "name": "PROTECTED POST /Admin/Decks/BeautifyShortNames",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/Admin/Decks/BeautifyShortNames",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "Admin",
-                "Decks",
-                "BeautifyShortNames"
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{}"
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('anonymous request is rejected (401/403)', function () {",
-                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
-                  "});"
-                ]
-              }
-            }
-          ]
-        },
-        {
           "name": "PROTECTED GET /Admin/AdminEmails",
           "request": {
             "method": "GET",
@@ -4119,6 +4154,1028 @@
                 "Credits",
                 "Grant",
                 "Apply"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Auth/DeleteAccount",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Auth/DeleteAccount",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Auth",
+                "DeleteAccount"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Profile/RedeemPromoCode",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Profile/RedeemPromoCode",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Profile",
+                "RedeemPromoCode"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Streak/AcknowledgeBadges",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Streak/AcknowledgeBadges",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Streak",
+                "AcknowledgeBadges"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Streak/ReportStudyActivity",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Streak/ReportStudyActivity",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Streak",
+                "ReportStudyActivity"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Metrics/Sync",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Metrics/Sync",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Metrics",
+                "Sync"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Metrics/AcknowledgeBadges",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Metrics/AcknowledgeBadges",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Metrics",
+                "AcknowledgeBadges"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED GET /Leaderboard/Me",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Leaderboard/Me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Leaderboard",
+                "Me"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Admin/Organizations/Rename",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Organizations/Rename",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Organizations",
+                "Rename"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Admin/Organizations/SetMaxMembers",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Organizations/SetMaxMembers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Organizations",
+                "SetMaxMembers"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Admin/PaidDecks/GenerateField",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/PaidDecks/GenerateField",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "PaidDecks",
+                "GenerateField"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Admin/Streak/SetUserStreak",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Streak/SetUserStreak",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Streak",
+                "SetUserStreak"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED GET /Admin/Lists/Metadata",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Lists/Metadata",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Lists",
+                "Metadata"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Admin/Lists/Query",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Lists/Query",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Lists",
+                "Query"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Admin/Credits/Deals/Create",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Credits/Deals/Create",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Credits",
+                "Deals",
+                "Create"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Admin/Credits/Deals/VerifyPayment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Credits/Deals/VerifyPayment",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Credits",
+                "Deals",
+                "VerifyPayment"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Admin/Credits/Deals/UploadInvoice",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Credits/Deals/UploadInvoice",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Credits",
+                "Deals",
+                "UploadInvoice"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED GET /Admin/Credits/Deals/Invoice",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Credits/Deals/Invoice",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Credits",
+                "Deals",
+                "Invoice"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED GET /Admin/Credits/Deals/List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Credits/Deals/List",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Credits",
+                "Deals",
+                "List"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Admin/Credits/Periodic/Create",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Credits/Periodic/Create",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Credits",
+                "Periodic",
+                "Create"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED GET /Admin/Credits/Periodic/List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Credits/Periodic/List",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Credits",
+                "Periodic",
+                "List"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Admin/Credits/Periodic/Terminate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Credits/Periodic/Terminate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Credits",
+                "Periodic",
+                "Terminate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED GET /Admin/Credits/Periodic/Report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Credits/Periodic/Report",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Credits",
+                "Periodic",
+                "Report"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Admin/Credits/Promo/Create",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Credits/Promo/Create",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Credits",
+                "Promo",
+                "Create"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Admin/Credits/Promo/CreateBulk",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Credits/Promo/CreateBulk",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Credits",
+                "Promo",
+                "CreateBulk"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Admin/Credits/Promo/SetEnabled",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Credits/Promo/SetEnabled",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Credits",
+                "Promo",
+                "SetEnabled"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PROTECTED POST /Admin/Credits/Promo/Delete",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Credits/Promo/Delete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Credits",
+                "Promo",
+                "Delete"
               ]
             },
             "body": {

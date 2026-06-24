@@ -97,6 +97,7 @@ class MockTestAnswerKeyPdfBuilder
             {
                 newPage();
             }
+            return cursorY;
         };
 
         const writeText = (text, originX, startY, maxWidth, fontSize, style, color = [0, 0, 0], align = "left") =>
@@ -211,7 +212,7 @@ class MockTestAnswerKeyPdfBuilder
         document.setFont("helvetica", "normal");
         document.setFontSize(10);
         const questionLines = document.splitTextToSize(sanitizeForJsPdf(questionItem.getQuestion() || ""), questionTextWidth);
-        guardSpace(questionLines.length * lineHeightMm + 20);
+        cursorY = guardSpace(questionLines.length * lineHeightMm + 20);
 
         cursorY += 2;
         document.setFont("helvetica", "bold");
@@ -242,7 +243,7 @@ class MockTestAnswerKeyPdfBuilder
                 document.setFontSize(8.5);
                 const optionLines = document.splitTextToSize(sanitizeForJsPdf(options[optionIndex]), questionTextWidth - 14);
                 const rowHeight = optionLines.length * optionLineHeight + 1;
-                guardSpace(rowHeight);
+                cursorY = guardSpace(rowHeight);
 
                 document.setFont("helvetica", isCorrect ? "bold" : "normal");
                 document.setTextColor(isCorrect ? 0 : 60, isCorrect ? 120 : 60, isCorrect ? 0 : 60);
@@ -274,7 +275,7 @@ class MockTestAnswerKeyPdfBuilder
 
         if (answerReason)
         {
-            guardSpace(15);
+            cursorY = guardSpace(15);
             document.setFont("helvetica", "bold");
             document.setFontSize(9);
             document.setTextColor(0, 90, 140);
@@ -289,7 +290,7 @@ class MockTestAnswerKeyPdfBuilder
 
         if (solvingSteps)
         {
-            guardSpace(15);
+            cursorY = guardSpace(15);
             document.setFont("helvetica", "bold");
             document.setFontSize(9);
             document.setTextColor(0, 90, 140);
@@ -323,7 +324,7 @@ class MockTestAnswerKeyPdfBuilder
     {
         const userAnswerDisplay = MockTestAnswerKeyPdfBuilder.#formatUserAnswerForPdf(gradedQuestion.userAnswer, options);
 
-        guardSpace(15);
+        cursorY = guardSpace(15);
         document.setFont("helvetica", "bold");
         document.setFontSize(9);
         document.setTextColor(120, 60, 0);
@@ -335,7 +336,7 @@ class MockTestAnswerKeyPdfBuilder
         document.text(userLines, valueX, cursorY + 3);
         cursorY += userLines.length * (9 * 0.35278 * 1.35) + 1;
 
-        guardSpace(12);
+        cursorY = guardSpace(12);
         document.setFont("helvetica", "bold");
         document.setFontSize(9);
         document.setTextColor(120, 60, 0);
@@ -350,7 +351,7 @@ class MockTestAnswerKeyPdfBuilder
 
         if (gradedQuestion.remarks && String(gradedQuestion.remarks).trim().length > 0)
         {
-            guardSpace(15);
+            cursorY = guardSpace(15);
             document.setFont("helvetica", "bold");
             document.setFontSize(9);
             document.setTextColor(120, 60, 0);
@@ -416,7 +417,7 @@ class MockTestAnswerKeyPdfBuilder
         const tokens = String(rawExpectedAnswer).trim().split(/[,;|\s/]+/).filter((token) => token.length > 0);
         for (const token of tokens)
         {
-            const cleaned = token.replace(/[()\s]/g, "");
+            const cleaned = token.replace(/[()\[\]\s]/g, "");
             const asNumber = parseInt(cleaned, 10);
             if (Number.isFinite(asNumber) && asNumber === optionIndex)
             {

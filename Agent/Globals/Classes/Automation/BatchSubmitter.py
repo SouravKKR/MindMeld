@@ -13,6 +13,7 @@ from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Generic.RedisSemaphore import RedisSemaphore
 from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Classes.Task.TaskDescriptor import TaskDescriptor
+from Globals.Classes.Automation.ProviderHealthSignal import ProviderHealthSignal
 from Globals.Classes.Credits.CreditMeter import CreditMeter
 from Globals.Constants.ApiConcurrencyLimits import ApiConcurrencyLimits
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
@@ -22,6 +23,14 @@ class BatchSubmitter:
 
     POLL_INTERVAL_SECONDS    = 60
     DEFAULT_TIMEOUT_HOURS    = 2
+    # Share of an item's progress weight a worker may grant the moment a batch is
+    # dispatched, with the remaining (1 - share) granted as each result is written.
+    # The Gemini Batch API can sit for minutes before returning, so without this
+    # the parent bar is frozen the entire wait and only jumps at the end. Granting
+    # a slice at submit makes the bar visibly move when work is handed off. Safe by
+    # construction: submit-share + result-share = the item's full weight, so the
+    # per-worker total is unchanged and cannot overshoot.
+    SUBMIT_PROGRESS_SHARE    = 0.15
     SUCCESS_STATE_FRAGMENT   = "SUCCEEDED"
     FAILURE_STATE_FRAGMENTS  = ("FAILED", "CANCELLED", "CANCELED", "EXPIRED")
     SKIPPED_CONTENT_TYPES    = (AutomationContentTypes.IMAGE, AutomationContentTypes.AUDIO, AutomationContentTypes.VIDEO)
@@ -245,6 +254,26 @@ class BatchSubmitter:
             return True
         return "RESOURCE_EXHAUSTED" in str(client_error)
 
+    # Transient status codes / keywords that mean "the provider is busy or
+    # briefly unavailable" rather than "this request is malformed". Mirrors
+    # GeminiProvider's transient classification so a batch poll blip raises the
+    # same user-facing "provider is busy" signal a live call would.
+    __PROVIDER_UNAVAILABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+    __PROVIDER_UNAVAILABLE_KEYWORDS = ("RESOURCE_EXHAUSTED", "UNAVAILABLE", "INTERNAL", "DEADLINE_EXCEEDED")
+
+    @staticmethod
+    def __looks_like_provider_unavailable(error) -> bool:
+        status_code = getattr(error, "code", None)
+        if status_code in BatchSubmitter.__PROVIDER_UNAVAILABLE_STATUS_CODES:
+            return True
+
+        stringified_error = str(error)
+        for keyword in BatchSubmitter.__PROVIDER_UNAVAILABLE_KEYWORDS:
+            if keyword in stringified_error:
+                return True
+
+        return False
+
     @staticmethod
     def __resolve_retry_delay_seconds(client_error, attempt_index: int) -> float:
         seconds = BatchSubmitter.__extract_retry_delay_from_error(client_error)
@@ -318,6 +347,8 @@ class BatchSubmitter:
                 batch_job = await asyncio.to_thread(get_batch_sync)
             except Exception as poll_error:
                 print(f"[BatchSubmitter] Poll error on {self.__batch_name}: {poll_error}")
+                if BatchSubmitter.__looks_like_provider_unavailable(poll_error):
+                    await ProviderHealthSignal.mark_slowdown("batch poll error")
                 if time.time() >= deadline:
                     return False
                 await asyncio.sleep(BatchSubmitter.POLL_INTERVAL_SECONDS)
@@ -339,6 +370,13 @@ class BatchSubmitter:
             if time.time() >= deadline:
                 print(f"[BatchSubmitter] Batch {self.__batch_name} exceeded {self.__timeout_hours}h timeout (state={state_name})")
                 return False
+
+            # Heartbeat: the batch wait is the longest silent stretch in the
+            # whole pipeline. Logging each poll makes "is it stuck or just
+            # waiting on Gemini?" answerable from the log alone — the absence
+            # of a recent heartbeat is the real "stuck" tell.
+            remaining_minutes = max(0, int((deadline - time.time()) / 60))
+            print(f"[BatchSubmitter] Still waiting on batch {self.__batch_name} (state={state_name}); ~{remaining_minutes} min before timeout.")
 
             await asyncio.sleep(BatchSubmitter.POLL_INTERVAL_SECONDS)
 

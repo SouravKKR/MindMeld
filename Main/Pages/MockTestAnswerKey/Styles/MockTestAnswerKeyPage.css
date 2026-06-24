@@ -39,8 +39,8 @@ mock-test-answer-key-page .mock-test-answer-key-page-toolbar-title
 
 mock-test-answer-key-page .mock-test-answer-key-page-toolbar-meta
 {
-    font-size: 12px;
-    opacity: 0.75;
+    font-size: 14px;
+    font-weight: 600;
 }
 
 mock-test-answer-key-page .mock-test-answer-key-page-download-button

@@ -39,3 +39,44 @@ options-sidebar button.admin-panel-button[hidden]
 {
     display: none;
 }
+
+options-sidebar .options-sidebar-container
+{
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    overflow-y: auto;
+}
+
+options-sidebar .options-sidebar-contact
+{
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 16px 20px;
+    border-top: 1px solid var(--outline-color-subtle, rgba(255, 255, 255, 0.1));
+    background-color: var(--tertiary-background-color);
+}
+
+options-sidebar .options-sidebar-contact-label
+{
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #888888;
+}
+
+options-sidebar .options-sidebar-contact-email
+{
+    font-size: 15px;
+    font-weight: bold;
+    color: var(--gradient-start-color, #0098c4);
+    text-decoration: none;
+    word-break: break-all;
+}
+
+options-sidebar .options-sidebar-contact-email:hover
+{
+    text-decoration: underline;
+}

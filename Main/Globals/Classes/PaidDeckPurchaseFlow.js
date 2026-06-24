@@ -2,8 +2,12 @@ import DialogBox from "../../CommonComponents/DialogBox.js";
 import ProgressDialog from "../../CommonComponents/ProgressDialog.js";
 import PaidDeckPasswordPrompt from "./PaidDeckPasswordPrompt.js";
 import PaidDeckLicenseSyncer from "./Syncing/PaidDeckLicenseSyncer.js";
+import PaidDeckSession from "./Crypto/PaidDeckSession.js";
+import SyncManager from "./SyncManager.js";
 import ZohoPaymentsCheckout from "./Payments/ZohoPaymentsCheckout.js";
 import { paymentProviders } from "../Enumerations/PaymentProviders.js";
+import TutorialEngine from "./TutorialEngine.js";
+import TutorialSampleDeckBuilder from "./Tutorials/TutorialSampleDeckBuilder.js";
 
 /**
  * PaidDeckPurchaseFlow
@@ -21,6 +25,16 @@ class PaidDeckPurchaseFlow
         if (!deck)
         {
             return false;
+        }
+
+        // Tutorial demo: never initiate a real order, open Zoho checkout, or
+        // call the server. Silently drop a flagged local sample copy onto the
+        // home page and report success — no alert (it would sit buried behind
+        // the tutorial overlay); the tutorial's own copy explains what happened.
+        if (TutorialEngine.isRunning())
+        {
+            await TutorialSampleDeckBuilder.createPurchasedSampleForUser(deck.title);
+            return true;
         }
 
         let initiateResponse;
@@ -65,7 +79,11 @@ class PaidDeckPurchaseFlow
         {
             if (responseJson.requiresPasswordSetup)
             {
-                await PaidDeckPurchaseFlow.#promptPasswordSetup();
+                const setupOutcome = await PaidDeckPurchaseFlow.#promptPasswordSetup();
+                if (setupOutcome.setupSucceeded)
+                {
+                    await PaidDeckSession.unlock(deck.id, setupOutcome.password).catch(() => {});
+                }
             }
             await PaidDeckPurchaseFlow.#refreshLibraryAfterPurchase();
             await DialogBox.alert("Acquired", "This deck has been added to your library. You'll find it on your home page.");
@@ -126,7 +144,11 @@ class PaidDeckPurchaseFlow
             const verifyResultJson = await verifyResponse.json().catch(() => ({}));
             if (verifyResultJson?.requiresPasswordSetup)
             {
-                await PaidDeckPurchaseFlow.#promptPasswordSetup();
+                const setupOutcome = await PaidDeckPurchaseFlow.#promptPasswordSetup();
+                if (setupOutcome.setupSucceeded)
+                {
+                    await PaidDeckSession.unlock(deck.id, setupOutcome.password).catch(() => {});
+                }
             }
             await PaidDeckPurchaseFlow.#refreshLibraryAfterPurchase();
             await DialogBox.alert("Purchase complete", "Your deck has been added to your library. You'll find it on your home page.");
@@ -178,8 +200,9 @@ class PaidDeckPurchaseFlow
     /**
      * After a successful acquisition, pull the freshly-issued license so the
      * registry + crypto keys update and PaidDeckLibraryPresenter materialises
-     * the home-page tile — making the deck appear without waiting for the next
-     * background sync or a reload.
+     * the home-page tile — then immediately kick off a content sync so the
+     * purchased deck's cards appear without waiting for the next background
+     * sync cycle.
      */
     static async #refreshLibraryAfterPurchase()
     {
@@ -191,6 +214,11 @@ class PaidDeckPurchaseFlow
         {
             console.warn("[PaidDeckPurchaseFlow] Post-purchase library refresh failed:", refreshError);
         }
+
+        SyncManager.sync().catch((syncError) =>
+        {
+            console.warn("[PaidDeckPurchaseFlow] Post-purchase content sync failed:", syncError);
+        });
     }
 
     /**
@@ -200,13 +228,17 @@ class PaidDeckPurchaseFlow
      * refuses to deliver content. Skipping for now is allowed (the
      * buyer can come back later) but they won't be able to study
      * until they set one.
+     *
+     * Returns { confirmed, setupSucceeded, password } so the caller
+     * can pre-unlock the PaidDeckSession immediately — eliminating
+     * the second password prompt when the user first opens the deck.
      */
     static async #promptPasswordSetup()
     {
         const setupResult = await PaidDeckPasswordPrompt.showSetupPrompt();
         if (!setupResult.confirmed)
         {
-            return;
+            return { confirmed: false, setupSucceeded: false };
         }
 
         try
@@ -222,11 +254,15 @@ class PaidDeckPurchaseFlow
             {
                 const errorJson = await setupResponse.json().catch(() => ({}));
                 await DialogBox.alert("Password setup failed", errorJson.error || `HTTP ${setupResponse.status}`);
+                return { confirmed: true, setupSucceeded: false };
             }
+
+            return { confirmed: true, setupSucceeded: true, password: setupResult.password };
         }
         catch (setupError)
         {
             await DialogBox.alert("Password setup failed", setupError.message);
+            return { confirmed: true, setupSucceeded: false };
         }
     }
 }

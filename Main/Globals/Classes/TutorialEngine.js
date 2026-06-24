@@ -419,16 +419,16 @@ class TutorialEngine
             TutorialEngine.#bHoldingCoordinatorSlot = false;
         }
 
-        const bCleanupChosen = await TutorialEngine.#showCleanupDialog({
+        // Always clear everything created during the tutorial — there is no
+        // opt-out. The sample deck / cards / mock test / demo decks only exist
+        // to drive the tour, so removing them on exit is the expected behaviour.
+        const summary = await TutorialEntityCleanup.clearTutorialCreatedItems(TutorialEngine.CREATED_DURING_TUTORIAL_KEY);
+        console.log("[TutorialEngine] Cleared tutorial-created items:", summary);
+
+        await TutorialEngine.#showFinishDialog({
             bSkipped,
             tutorialTitle: tutorial?.title || "Tutorial"
         });
-
-        if (bCleanupChosen)
-        {
-            const summary = await TutorialEntityCleanup.clearTutorialCreatedItems(TutorialEngine.CREATED_DURING_TUTORIAL_KEY);
-            console.log("[TutorialEngine] Cleared tutorial-created items:", summary);
-        }
 
         if (tutorial)
         {
@@ -499,10 +499,11 @@ class TutorialEngine
     }
 
     /**
-     * Promise-based finish dialog with a single checkbox.
-     * Resolves to true if the user opted to clear, false otherwise.
+     * Promise-based finish acknowledgement dialog. Resolves once the user
+     * clicks Done. Cleanup of tutorial-created items already happened before
+     * this is shown, so there is no opt-out checkbox.
      */
-    static #showCleanupDialog({ bSkipped, tutorialTitle })
+    static #showFinishDialog({ bSkipped, tutorialTitle })
     {
         return new Promise((resolve) =>
         {
@@ -517,24 +518,18 @@ class TutorialEngine
                 <div class="title-section">${heading}</div>
                 <div class="message-section">
                     <p>You can replay this tutorial any time from the sidebar's <strong>Tutorial</strong> button.</p>
-                    <label class="tutorial-finish-cleanup-label">
-                        <input type="checkbox" class="tutorial-finish-cleanup-checkbox">
-                        Clear all items created during this tutorial
-                    </label>
                 </div>
                 <div class="button-section">
                     <button class="tutorial-finish-done-button ok-button">Done</button>
                 </div>
             `;
 
-            const checkbox  = dialog.querySelector(".tutorial-finish-cleanup-checkbox");
             const doneButton = dialog.querySelector(".tutorial-finish-done-button");
 
             doneButton.addEventListener("click", () =>
             {
-                const bCleanup = checkbox.checked;
                 dialog.remove();
-                resolve(bCleanup);
+                resolve();
             });
         });
     }

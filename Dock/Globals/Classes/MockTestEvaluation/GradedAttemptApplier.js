@@ -61,6 +61,10 @@ class GradedAttemptApplier
             {
                 itemJson.score = Number.isFinite(graded.score) ? graded.score : 0;
                 itemJson.remarks = typeof graded.remarks === "string" ? graded.remarks : "";
+                if (Number.isFinite(graded.questionMaxMarks) && graded.questionMaxMarks > 0)
+                {
+                    itemJson.marks = graded.questionMaxMarks;
+                }
             }
             else
             {

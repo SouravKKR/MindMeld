@@ -7,6 +7,8 @@ import PaidDeckPurchaseFlow from "../../Globals/Classes/PaidDeckPurchaseFlow.js"
 import RegionMetadata from "../../Globals/Classes/RegionMetadata.js";
 import { paidDeckSortFields } from "../../Globals/Enumerations/PaidDeckSortFields.js";
 import { sortDirections } from "../../Globals/Enumerations/SortDirections.js";
+import TutorialEngine from "../../Globals/Classes/TutorialEngine.js";
+import TutorialDemoResponses from "../../Globals/Constants/TutorialDemoResponses.js";
 
 class PaidDeckLibraryPage extends HTMLElement
 {
@@ -272,6 +274,14 @@ class PaidDeckLibraryPage extends HTMLElement
 
     async #loadFilterMetadata()
     {
+        // Tutorial demo: don't fetch filter metadata from the server. An
+        // empty filter set keeps the storefront usable for the walkthrough.
+        if (TutorialEngine.isRunning())
+        {
+            this.#filterPanel.render([]);
+            return;
+        }
+
         try
         {
             const response = await fetch(PaidDeckLibraryPage.#FILTER_METADATA_ENDPOINT);
@@ -304,6 +314,15 @@ class PaidDeckLibraryPage extends HTMLElement
         const pagination = this.querySelector('[data-role="pagination"]');
 
         grid.innerHTML = `<div class="paid-deck-library-loading">Searching…</div>`;
+
+        // Tutorial demo: skip the /PaidDecks/Search call and render a single
+        // bogus deck so the library / details / purchase flow can be shown
+        // without contacting the server.
+        if (TutorialEngine.isRunning())
+        {
+            this.#renderResults(TutorialDemoResponses.getPaidDeckSearchResult());
+            return;
+        }
 
         this.#latestSearchToken++;
         const searchToken = this.#latestSearchToken;

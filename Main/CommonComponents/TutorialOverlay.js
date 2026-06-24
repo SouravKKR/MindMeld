@@ -32,6 +32,8 @@ class TutorialOverlay extends HTMLElement
     #currentCallbacks = null;
     #targetElement    = null;
     #waitForClickHandler = null;
+    #waitForClickSelector = null;
+    #trackingFrameId     = null;
     #waitForEventHandler = null;
     #waitForEventName    = null;
     #repositionFrameId   = null;
@@ -78,6 +80,7 @@ class TutorialOverlay extends HTMLElement
         this.#detachWaitForClickHandler();
         this.#detachWaitForEventHandler();
         this.#detachValidator();
+        this.#cancelTargetTracking();
 
         if (this.#repositionFrameId)
         {
@@ -190,16 +193,22 @@ class TutorialOverlay extends HTMLElement
         }
         else if (step.type === tutorialStepTypes.HIGHLIGHT)
         {
-            this.#renderHighlightStep(step, { bWaitForClick: false, myToken });
+            this.#renderHighlightStep(step, { myToken });
         }
         else if (step.type === tutorialStepTypes.WAIT_FOR_CLICK)
         {
-            this.#renderHighlightStep(step, { bWaitForClick: true,  myToken });
+            this.#renderHighlightStep(step, { myToken });
+            // Advance on a real click of the target. A document-level,
+            // selector-matching listener (rather than one bound to a single
+            // node) survives re-renders and fires for elements that only
+            // appear after an earlier click — e.g. the study-mode picker that
+            // opens when the user clicks Study.
+            this.#attachWaitForClickHandler(step.selector);
             nextButton.style.display = "none";
         }
         else if (step.type === tutorialStepTypes.WAIT_FOR_EVENT)
         {
-            this.#renderHighlightStep(step, { bWaitForClick: false, myToken });
+            this.#renderHighlightStep(step, { myToken });
             this.#attachWaitForEventHandler(step.eventName);
             // The user advances by completing the real action, not by
             // pressing Next.
@@ -276,7 +285,7 @@ class TutorialOverlay extends HTMLElement
         this.#hideIframe();
     }
 
-    async #renderHighlightStep(step, { bWaitForClick, myToken })
+    async #renderHighlightStep(step, { myToken })
     {
         this.classList.add("tutorial-overlay--highlight");
         this.classList.remove("tutorial-overlay--modal", "tutorial-overlay--iframe", "tutorial-overlay--floating");
@@ -319,9 +328,62 @@ class TutorialOverlay extends HTMLElement
         this.#targetElement = target;
         this.#layoutSpotlightFor(target);
 
-        if (bWaitForClick)
+        // Keep the spotlight glued to the target as it moves or is re-rendered
+        // (home-grid rebuilds, a picker opening on top, layout shifts). Without
+        // this the hole can land on a stale position, leaving the real element
+        // dimmed under the mask and unclickable.
+        this.#startTargetTracking(step.selector, myToken);
+    }
+
+    /**
+     * rAF loop that re-resolves the step's selector and repositions the
+     * spotlight whenever the matched element's rectangle changes. Runs until
+     * the step token changes (a new step started) or the overlay hides.
+     */
+    #startTargetTracking(selector, myToken)
+    {
+        this.#cancelTargetTracking();
+
+        if (!selector)
         {
-            this.#attachWaitForClickHandler(target);
+            return;
+        }
+
+        let lastRectKey = "";
+
+        const trackFrame = () =>
+        {
+            if (myToken !== this.#stepTokenId)
+            {
+                this.#trackingFrameId = null;
+                return;
+            }
+
+            const current = document.querySelector(selector);
+            if (current)
+            {
+                const rect = current.getBoundingClientRect();
+                const rectKey = `${Math.round(rect.top)}:${Math.round(rect.left)}:${Math.round(rect.width)}:${Math.round(rect.height)}`;
+                if (rectKey !== lastRectKey)
+                {
+                    lastRectKey = rectKey;
+                    this.#targetElement = current;
+                    this.#layoutSpotlightFor(current);
+                }
+            }
+
+            this.#trackingFrameId = requestAnimationFrame(trackFrame);
+        };
+
+        this.#trackingFrameId = requestAnimationFrame(trackFrame);
+    }
+
+    #cancelTargetTracking()
+    {
+        if (this.#trackingFrameId)
+        {
+            cancelAnimationFrame(this.#trackingFrameId);
+            this.#trackingFrameId = null;
         }
     }
 
@@ -466,33 +528,58 @@ class TutorialOverlay extends HTMLElement
         // Make sure dimensions are up-to-date.
         const tooltipRect = tooltip.getBoundingClientRect();
 
-        // Prefer placing below; fall back above; else center.
-        const spaceBelow = window.innerHeight - targetRect.bottom;
+        const margin = 16;
+        const viewportWidth  = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+
+        const spaceBelow = viewportHeight - targetRect.bottom;
         const spaceAbove = targetRect.top;
+        const spaceRight = viewportWidth - targetRect.right;
+        const spaceLeft  = targetRect.left;
+
+        const clampLeft = (value) => Math.min(Math.max(margin, value), Math.max(margin, viewportWidth  - tooltipRect.width  - margin));
+        const clampTop  = (value) => Math.min(Math.max(margin, value), Math.max(margin, viewportHeight - tooltipRect.height - margin));
+
+        const centeredLeftOnTarget = clampLeft(targetRect.left + targetRect.width  / 2 - tooltipRect.width  / 2);
+        const centeredTopOnTarget  = clampTop(targetRect.top  + targetRect.height / 2 - tooltipRect.height / 2);
 
         let topPixels;
+        let leftPixels;
 
-        if (spaceBelow >= tooltipRect.height + gap + 16)
+        // Try each side in turn; only place there if the tooltip fits without
+        // overlapping the target. This keeps the highlighted element visible.
+        if (spaceBelow >= tooltipRect.height + gap + margin)
         {
-            topPixels = targetRect.bottom + gap;
+            topPixels  = targetRect.bottom + gap;
+            leftPixels = centeredLeftOnTarget;
         }
-        else if (spaceAbove >= tooltipRect.height + gap + 16)
+        else if (spaceAbove >= tooltipRect.height + gap + margin)
         {
-            topPixels = targetRect.top - tooltipRect.height - gap;
+            topPixels  = targetRect.top - tooltipRect.height - gap;
+            leftPixels = centeredLeftOnTarget;
+        }
+        else if (spaceRight >= tooltipRect.width + gap + margin)
+        {
+            leftPixels = targetRect.right + gap;
+            topPixels  = centeredTopOnTarget;
+        }
+        else if (spaceLeft >= tooltipRect.width + gap + margin)
+        {
+            leftPixels = targetRect.left - tooltipRect.width - gap;
+            topPixels  = centeredTopOnTarget;
         }
         else
         {
-            topPixels = Math.max(16, (window.innerHeight - tooltipRect.height) / 2);
+            // The target is too large to sit the tooltip beside it (e.g. a
+            // full-screen dialog). Anchor to the bottom edge, centred — this
+            // leaves the TOP of the target (where its content usually starts)
+            // visible rather than covering its middle.
+            leftPixels = clampLeft(viewportWidth / 2 - tooltipRect.width / 2);
+            topPixels  = viewportHeight - tooltipRect.height - margin;
         }
 
-        const idealLeft = targetRect.left + (targetRect.width / 2) - (tooltipRect.width / 2);
-        const leftPixels = Math.min(
-            Math.max(16, idealLeft),
-            window.innerWidth - tooltipRect.width - 16
-        );
-
-        tooltip.style.top  = `${Math.max(16, topPixels)}px`;
-        tooltip.style.left = `${leftPixels}px`;
+        tooltip.style.top  = `${Math.max(margin, topPixels)}px`;
+        tooltip.style.left = `${Math.max(margin, leftPixels)}px`;
     }
 
     #applyTooltipCenter()
@@ -506,25 +593,40 @@ class TutorialOverlay extends HTMLElement
 
     // ── WAIT_FOR_CLICK target handler ─────────────────────────────────
 
-    #attachWaitForClickHandler(target)
+    #attachWaitForClickHandler(selector)
     {
-        this.#waitForClickHandler = () =>
+        if (!selector)
         {
+            return;
+        }
+
+        this.#waitForClickSelector = selector;
+        this.#waitForClickHandler = (clickEvent) =>
+        {
+            const clickedElement = clickEvent.target instanceof Element ? clickEvent.target : null;
+            if (!clickedElement || !clickedElement.closest(this.#waitForClickSelector))
+            {
+                return;
+            }
             this.#detachWaitForClickHandler();
             this.#currentCallbacks?.onNext?.();
         };
 
-        target.addEventListener("click", this.#waitForClickHandler, { once: true, capture: true });
+        // Capture phase at the document level so the click is seen even though
+        // the overlay mask sits above the page — clicks that reach the real
+        // element through the spotlight hole still bubble through document.
+        document.addEventListener("click", this.#waitForClickHandler, { capture: true });
     }
 
     #detachWaitForClickHandler()
     {
-        if (this.#waitForClickHandler && this.#targetElement)
+        if (this.#waitForClickHandler)
         {
-            this.#targetElement.removeEventListener("click", this.#waitForClickHandler, { capture: true });
+            document.removeEventListener("click", this.#waitForClickHandler, { capture: true });
         }
 
         this.#waitForClickHandler = null;
+        this.#waitForClickSelector = null;
     }
 
     /**
@@ -564,6 +666,7 @@ class TutorialOverlay extends HTMLElement
 
     #clearTargetState()
     {
+        this.#cancelTargetTracking();
         this.#targetElement = null;
         this.querySelector(".tutorial-overlay-mask").style.clipPath = "";
     }

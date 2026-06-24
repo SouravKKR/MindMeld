@@ -60,7 +60,9 @@ class EvaluationPayloadBuilder
                 currentSectionContext
             );
 
-            const questionMaxMarks = Number.isFinite(itemJson.marks) ? itemJson.marks : markingRule.correctMarks;
+            const staticMarks = Number.isFinite(itemJson.marks) ? itemJson.marks : 0;
+            const schemeCorrectMarks = Number.isFinite(markingRule.correctMarks) ? markingRule.correctMarks : 0;
+            const questionMaxMarks = staticMarks > 1 ? staticMarks : (schemeCorrectMarks || staticMarks);
 
             flattenedQuestions.push({
                 questionId: itemJson.id,

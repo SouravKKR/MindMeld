@@ -23,7 +23,7 @@ from Globals.Utility.StripJsonMarkdown import strip_json_markdown
 from Workflows.Workflow import Workflow
 from Workflows.FetchWebContent.FetchWebContent import FetchWebContent
 
-from Workflows.MapTopicsWithContent.ExtractText import extract_text
+from Workflows.MapTopicsWithContent.ExtractText import extract_text_with_page_map
 from Workflows.MapTopicsWithContent.ChunkUtils import (
     extract_leaves,
     merge_consecutive_groups,
@@ -44,6 +44,21 @@ class MapTopicsWithContent(Workflow):
     WEB_FETCH_PAGE_BUDGET        = 2
     WEB_FETCH_IMAGE_BUDGET       = 3
     REPUTED_DOMAIN_SHORTLIST_MAX = 8
+
+    # Checkpoint-resume completion marker. No-content leaves never write a mapped
+    # file, so "all leaf files present" is not a reliable done-signal — instead
+    # this marker is written once the whole mapping finishes. On resume, its
+    # presence lets the stage skip the expensive re-embedding + web-domain LLM +
+    # web fetch entirely and reuse the mapped files already on disk. Safe because
+    # ProcessSyllabus reuses the same syllabus, so the leaf set (and thus every
+    # downstream topic path) is identical across the resume.
+    MAPPING_COMPLETE_MARKER_NAME = "_mapping_complete.json"
+
+    # Separator inserted between extracted text segments — used both between the
+    # page ranges of one source and between distinct document sources. The page
+    # provenance map offsets every page span by this separator's length so figure
+    # placement can map a chunk's character offset back to its origin page.
+    SOURCE_TEXT_SEPARATOR = "\n\n"
 
     def __init__(self, payload = {}):
         super().__init__(payload)
@@ -73,28 +88,49 @@ class MapTopicsWithContent(Workflow):
             ranges.append((start_page, end_page))
         return ranges
 
-    async def __extract_text_from_provided_document(self, extractable_source: ExtractableInformationSource) -> str:
+    async def __extract_text_from_provided_document(self, extractable_source: ExtractableInformationSource) -> tuple[str, str, list]:
+        """
+        Extracts text from one provided document, concatenating its configured
+        page ranges. Returns (source_hash, combined_text, page_spans) where
+        page_spans is a list of (character_offset, page_number) pairs aligned to
+        combined_text. page_number is 0-indexed to match the figure extractor.
+        """
         information_source = extractable_source.get_information_source()
-        textbook_path      = join_path("/", information_source.get_directory_path(), information_source.get_hash())
+        source_hash        = information_source.get_hash()
+        textbook_path      = join_path("/", information_source.get_directory_path(), source_hash)
 
         try:
             pdf_bytes = await Persistence.read(textbook_path)
         except Exception as read_error:
             print(f"[MapTopicsWithContent] Could not read '{information_source.get_name()}': {read_error}")
-            return ""
+            return source_hash, "", []
 
-        parts = []
+        text_segments = []
+        combined_page_spans = []
+        running_length = 0
+
         for (start_page, end_page) in self.__ranges_to_extract(extractable_source):
             print(f"\n--- Extracting text from '{information_source.get_name()}' (pages {start_page}–{end_page or 'end'}) ---")
             try:
-                extracted_text = extract_text(pdf_bytes, start_page=start_page, end_page=end_page)
-                if extracted_text.strip():
-                    parts.append(extracted_text)
+                extracted_text, page_spans = extract_text_with_page_map(pdf_bytes, start_page=start_page, end_page=end_page)
             except Exception as extract_error:
                 print(f"[MapTopicsWithContent] extract_text failed for '{information_source.get_name()}': {extract_error}")
                 continue
 
-        return "\n\n".join(parts)
+            if not extracted_text.strip():
+                continue
+
+            if text_segments:
+                running_length += len(MapTopicsWithContent.SOURCE_TEXT_SEPARATOR)
+
+            for (character_offset, page_number) in page_spans:
+                combined_page_spans.append((running_length + character_offset, page_number))
+
+            text_segments.append(extracted_text)
+            running_length += len(extracted_text)
+
+        combined_text = MapTopicsWithContent.SOURCE_TEXT_SEPARATOR.join(text_segments)
+        return source_hash, combined_text, combined_page_spans
 
     async def run(self):
         from sentence_transformers import SentenceTransformer, CrossEncoder
@@ -104,6 +140,20 @@ class MapTopicsWithContent(Workflow):
         MuPdfBootstrap.silence_parser_warnings()
 
         main_task_id = os.getenv("MAIN_TASK_ID")
+
+        # Checkpoint-resume: if the mapping already completed in a prior run,
+        # reuse every mapped file on disk and skip this whole (expensive) stage.
+        mapping_complete_marker_path = join_path(
+            "/",
+            PersistenceConstants.TASKS_DIRECTORY,
+            main_task_id,
+            PersistenceConstants.MAPPED_TOPICS_DIRECTORY,
+            MapTopicsWithContent.MAPPING_COMPLETE_MARKER_NAME,
+        )
+        if await Persistence.exists(mapping_complete_marker_path):
+            print("[MapTopicsWithContent] Mapping already complete — reusing mapped topics (resume); skipping stage.")
+            await self.__update_progress(1.0)
+            return
 
         # ── 1. Load syllabus taxonomy written by ProcessSyllabus ──────────────
         syllabus_path = join_path("/", PersistenceConstants.TASKS_DIRECTORY, main_task_id, PersistenceConstants.SYLLABUS_FILE_NAME)
@@ -138,12 +188,27 @@ class MapTopicsWithContent(Workflow):
             await self.__update_progress(0.20)
 
         combined_text_parts = []
-        for extractable_source in document_sources:
-            extracted = await self.__extract_text_from_provided_document(extractable_source)
-            if extracted.strip():
-                combined_text_parts.append(extracted)
+        # Global page provenance for full_text — a list of (character_offset,
+        # source_hash, page_number) entries, kept in ascending offset order so
+        # chunk-to-page attribution downstream is a simple ordered scan.
+        global_page_spans = []
+        running_full_text_length = 0
 
-        full_text = "\n\n".join(combined_text_parts)
+        for extractable_source in document_sources:
+            source_hash, extracted_text, source_page_spans = await self.__extract_text_from_provided_document(extractable_source)
+            if not extracted_text.strip():
+                continue
+
+            if combined_text_parts:
+                running_full_text_length += len(MapTopicsWithContent.SOURCE_TEXT_SEPARATOR)
+
+            for (character_offset, page_number) in source_page_spans:
+                global_page_spans.append((running_full_text_length + character_offset, source_hash, page_number))
+
+            combined_text_parts.append(extracted_text)
+            running_full_text_length += len(extracted_text)
+
+        full_text = MapTopicsWithContent.SOURCE_TEXT_SEPARATOR.join(combined_text_parts)
 
         if not full_text.strip() and not enabled_web_source_types:
             print("[MapTopicsWithContent] No text extracted from any document source and no web sources enabled.")
@@ -174,6 +239,7 @@ class MapTopicsWithContent(Workflow):
             topic_buckets = match_chunks_to_topics(
                 full_text, leaves, topic_strings, topic_embeddings,
                 bi_encoder, cross_encoder, CHUNK_SIZE,
+                page_spans = global_page_spans,
             )
 
         await self.__update_progress(0.65)
@@ -181,6 +247,12 @@ class MapTopicsWithContent(Workflow):
         # ── 4. Persist topic files (with web-source hints when applicable) ────
         print("\n--- Saving results ---")
         saved_count = await self.__save_results(topic_buckets, leaves, main_task_id, enabled_web_source_types)
+
+        # Mark the stage complete so a resume reuses these mapped files instead of
+        # re-embedding and re-fetching from scratch. Written here in run() (where
+        # the marker path lives) only after __save_results returns successfully.
+        await Persistence.write(mapping_complete_marker_path, json.dumps({"savedCount": saved_count}))
+
         await self.__update_progress(1.0)
 
         print(f"\nDone. {saved_count} topic files written.")
@@ -205,6 +277,7 @@ class MapTopicsWithContent(Workflow):
             hierarchy = leaf["path"]
 
             content_chunks = []
+            source_page_keys = set()
             if chunk_list:
                 chunk_list.sort(key=lambda item: item["chunkIndex"])
                 groups = merge_consecutive_groups(chunk_list)
@@ -212,6 +285,14 @@ class MapTopicsWithContent(Workflow):
                     "\n[--- Next Chunk ---]\n".join(item["content"] for item in group)
                     for group in groups
                 ]
+                for item in chunk_list:
+                    for (source_hash, page_number) in item.get("pages", []):
+                        source_page_keys.add((source_hash, page_number))
+
+            source_pages = [
+                {"sourceHash": source_hash, "page": page_number}
+                for (source_hash, page_number) in sorted(source_page_keys)
+            ]
 
             web_chunk_count = 0
             if enabled_web_source_types:
@@ -228,6 +309,7 @@ class MapTopicsWithContent(Workflow):
                 "hierarchy":       hierarchy,
                 "topicStr":        topic_str,
                 "contentChunks":   content_chunks,
+                "sourcePages":     source_pages,
                 "pdfChunkCount":   len(chunk_list),
                 "webChunkCount":   web_chunk_count,
             })
@@ -254,6 +336,7 @@ class MapTopicsWithContent(Workflow):
             output_object = {
                 "topicChain":             payload["topicChain"],
                 "chunks":                 payload["contentChunks"],
+                "sourcePages":            payload["sourcePages"],
                 "weight":                 payload["weight"],
                 "enabledWebSourceTypes":  enabled_web_source_types,
             }

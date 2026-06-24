@@ -10,8 +10,6 @@ const { getRevenueStats } = require("./Admin/GetRevenueStats");
 const { listPaidDecks } = require("./Admin/ListPaidDecks");
 const { setUserRole } = require("./Admin/SetUserRole");
 const { setUserStreak } = require("./Admin/Streak/SetUserStreak");
-const { beautifyDeckShortNames } = require("./Admin/BeautifyDeckShortNames");
-const { getBeautifiedShortNames } = require("./Admin/GetBeautifiedShortNames");
 const { bulkUpdatePaidDecks } = require("./Admin/BulkUpdatePaidDecks");
 const { generatePaidDeckField } = require("./Admin/GeneratePaidDeckField");
 const { listAdminEmails } = require("./Admin/AdminEmails/ListAdminEmails");
@@ -167,23 +165,6 @@ function handleAdminEndpoints(server)
         handler: setUserRole,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
-        plugins: [ensureAdmin]
-    });
-
-    server.handle
-    ({
-        routePath: `/Admin/Decks/BeautifyShortNames`,
-        handler: beautifyDeckShortNames,
-        flags: PacketronHandlerFlags.JSON_BODY,
-        method: PacketronRequestMethod.POST,
-        plugins: [ensureAdmin]
-    });
-
-    server.handle
-    ({
-        routePath: `/Admin/Decks/BeautifyShortNames/Result`,
-        handler: getBeautifiedShortNames,
-        method: PacketronRequestMethod.GET,
         plugins: [ensureAdmin]
     });
 

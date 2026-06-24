@@ -139,6 +139,26 @@ async def _retrieve_grounding_chunks(selected_text: str, user_query: str | None,
     return retrieved_chunks
 
 
+async def _search_web_images(selected_text: str, user_query: str | None) -> list[dict]:
+    """
+    Run a DDGS image search for the AskAi query. Only invoked on the
+    Pro / Pro Plus path (google-search grounding on). The query mirrors
+    the grounding-embed query: the learner's typed question joined with
+    any highlighted fragment. Returns [] on any failure so a flaky image
+    search never aborts the reply.
+    """
+    query_text = (selected_text or "").strip()
+    if user_query:
+        query_text = (query_text + " " + user_query).strip()
+    if not query_text:
+        return []
+
+    from Globals.Classes.WebScraping.WebScraper import WebScraper
+
+    _log(f"Searching web images for: {query_text[:120]}")
+    return await WebScraper().search_images(query_text)
+
+
 async def run() -> int:
     EnvironmentLoader.load()
 
@@ -186,6 +206,20 @@ async def run() -> int:
             _log(f"Grounding retrieval failed, continuing ungrounded: {grounding_error}")
             retrieved_chunks = []
 
+    # Pro / Pro Plus only: fetch real, load-tested web images up front so
+    # the model can embed them inline AND the result view can render them
+    # as a thumbnail strip. Emitted immediately so the strip appears even
+    # if the model embeds none. A failed search degrades to no images.
+    image_candidates: list[dict] = []
+    if b_enable_google_search:
+        try:
+            image_candidates = await _search_web_images(selected_text, user_query)
+        except Exception as image_error:
+            _log(f"Image search failed, continuing without images: {image_error}")
+            image_candidates = []
+        if image_candidates:
+            _emit({ "type": "images", "items": image_candidates })
+
     from Workflows.AskAi.AskAiPromptBuilder import AskAiPromptBuilder
 
     system_prompt, user_prompt = AskAiPromptBuilder.build(
@@ -198,6 +232,7 @@ async def run() -> int:
         b_enable_google_search = b_enable_google_search,
         selected_language      = selected_language,
         b_combine_with_english = b_combine_with_english,
+        candidate_image_urls   = [candidate["imageUrl"] for candidate in image_candidates],
     )
 
     attached_image_parts = _build_attached_image_parts(attached_images)

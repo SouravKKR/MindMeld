@@ -19,14 +19,14 @@ const MockTestAssembler = require("../../Globals/Classes/Generation/MockTestAsse
  * under Globals/Classes/Generation/ — this function is the orchestrator
  * that sequences them.
  */
-async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashcardGenerationSettings, studyMaterialGenerationSettings, mockTestGenerationSettings)
+async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashcardGenerationSettings, studyMaterialGenerationSettings, mockTestGenerationSettings, failureContext = null, bAllowRootMerge = false)
 {
     const refreshedTask = await taskDescriptor;
 
     if (refreshedTask.getStatus() !== taskStatus.COMPLETED)
     {
         console.log(`[MoveToDatabase] Task ${mainTaskId} did not complete — skipping database move.`);
-        return;
+        return { partialCompletion: null, createdFlashcardCount: 0, createdStudyMaterialCount: 0 };
     }
 
     const now = new Date().toISOString();
@@ -81,7 +81,7 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
 
     const beautifiedShortNamesByDeckKey = await GeneratedFileLoader.loadBeautifiedShortNames(mainTaskId);
 
-    const existingDeckIdByChainKey = await SyllabusFingerprintMatcher.findMergeTargetMap(userId, deckId, allTopicChains);
+    const existingDeckIdByChainKey = await SyllabusFingerprintMatcher.findMergeTargetMap(userId, deckId, allTopicChains, bAllowRootMerge);
     if (existingDeckIdByChainKey)
     {
         console.log(`[MoveToDatabase] Merging into existing deck subtree under ${deckId}: ${existingDeckIdByChainKey.size} reusable deck path(s).`);
@@ -128,10 +128,65 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
     }
 
     // ── 7. Upsert all decks exactly once ───────────────────────────────────────
+    // When a sibling output type failed mid-run we keep what the survivors
+    // produced (above) and stamp a partialCompletion marker on the top-level
+    // decks (those whose parent IS the deck the user generated into) so the UI
+    // can offer "kept N, retry the rest" instead of a bare "Failed". On a fully
+    // successful run (failureContext === null) we clear any stale marker that a
+    // prior partial run left on a now-reused deck.
+    const createdFlashcardCount = orderedFlashcardFiles.reduce((runningTotal, flashcardFile) => runningTotal + (Array.isArray(flashcardFile.cards) ? flashcardFile.cards.length : 0), 0);
+    const createdStudyMaterialCount = orderedStudyMaterialFiles.length;
+    const createdMockTests = (failureContext !== null) && Array.isArray(failureContext.completedScopes) && failureContext.completedScopes.includes("mockTestGeneration");
+
+    const bSomethingKept = createdFlashcardCount > 0 || createdStudyMaterialCount > 0 || createdMockTests;
+
+    // Top-level decks (direct children of the deck the user generated into) are
+    // the ones that carry the badge and that a retry must clear on success —
+    // recorded into the marker so the retry can clear them by id even when it
+    // produces no deck rows of its own (e.g. a mock-tests-only retry).
+    const topLevelDeckIds = [];
+    for (const deckData of deckKeyToDataMap.values())
+    {
+        if (deckData.parent === deckId)
+        {
+            topLevelDeckIds.push(deckData.id);
+        }
+    }
+
+    let partialCompletion = null;
+    if (failureContext !== null && bSomethingKept)
+    {
+        partialCompletion =
+        {
+            mainTaskId: failureContext.mainTaskId,
+            generatedAt: now,
+            createdFlashcardCount: createdFlashcardCount,
+            createdStudyMaterialCount: createdStudyMaterialCount,
+            createdMockTests: createdMockTests,
+            completedScopes: failureContext.completedScopes,
+            failedScopes: failureContext.failedScopes,
+            retryBody: { ...failureContext.retryBody, clearPartialCompletionDeckIds: topLevelDeckIds },
+        };
+    }
+
     let decksUpserted = 0;
 
     for (const deckData of deckKeyToDataMap.values())
     {
+        if (deckData.parent === deckId)
+        {
+            if (partialCompletion !== null)
+            {
+                deckData.additionalData = { ...(deckData.additionalData || {}), partialCompletion: partialCompletion };
+            }
+            else if (failureContext === null && deckData.additionalData && deckData.additionalData.partialCompletion)
+            {
+                const clearedAdditionalData = { ...deckData.additionalData };
+                delete clearedAdditionalData.partialCompletion;
+                deckData.additionalData = clearedAdditionalData;
+            }
+        }
+
         await SyncQueryEngine.upsertDeck(userId, deckData);
         decksUpserted++;
     }
@@ -162,6 +217,8 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
     await Promise.all(taskFiles.map(filePath => Persistence.delete(filePath)));
 
     console.log(`[MoveToDatabase] Deleted ${taskFiles.length} GCS file(s) for task ${mainTaskId}.`);
+
+    return { partialCompletion: partialCompletion, createdFlashcardCount: createdFlashcardCount, createdStudyMaterialCount: createdStudyMaterialCount };
 }
 
 module.exports = { moveToDatabase };

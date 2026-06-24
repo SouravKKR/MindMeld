@@ -4,6 +4,7 @@ const { handleLogin } = require("./Authentication/HandleLogin");
 const { handleLoginCallback } = require("./Authentication/HandleLoginCallback");
 const { handleGetUser } = require("./Authentication/HandleGetUser");
 const { handleLogout } = require("./Authentication/HandleLogout");
+const { handleDeleteAccount } = require("./Authentication/HandleDeleteAccount");
 const { handleUpdateUserAdditionalData } = require("./Authentication/HandleUpdateUserAdditionalData");
 const { handleListDevices } = require("./Authentication/HandleListDevices");
 const { handleSignOutDevice } = require("./Authentication/HandleSignOutDevice");
@@ -56,6 +57,14 @@ function handleAuthenticationEndpoints(server)
     ({
         routePath: `/Logout`,
         handler: handleLogout
+    });
+
+    server.handle
+    ({
+        routePath: `/Auth/DeleteAccount`,
+        handler: wrap(handleDeleteAccount),
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureLogin]
     });
 
     server.handle

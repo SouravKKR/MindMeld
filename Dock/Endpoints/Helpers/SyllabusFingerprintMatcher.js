@@ -28,15 +28,28 @@ class SyllabusFingerprintMatcher
      * Returns null when the existing subtree contains so little overlap
      * with the new content that a merge would just be confusing, OR
      * when there is no existing subtree at all.
+     *
+     * `bAllowRootMerge` relaxes the root-target and minimum-chain bail-outs.
+     * It is set ONLY for a "retry the rest" run, where the new content is the
+     * SAME generation re-submitted and must fold back into the exact subtree the
+     * partial run already created — even when the user generated at the root
+     * deck. The 0.80 overlap threshold below still gates the merge, and only
+     * chains that actually exist are mapped, so unrelated root decks are never
+     * touched.
      */
-    static async findMergeTargetMap(userId, parentDeckId, newTopicChains)
+    static async findMergeTargetMap(userId, parentDeckId, newTopicChains, bAllowRootMerge = false)
     {
-        if (typeof parentDeckId !== "string" || parentDeckId.length === 0 || parentDeckId === "0")
+        if (typeof parentDeckId !== "string" || parentDeckId.length === 0 || (parentDeckId === "0" && !bAllowRootMerge))
         {
             return null;
         }
 
-        if (!Array.isArray(newTopicChains) || newTopicChains.length < SyllabusFingerprintMatcher.#MIN_NEW_CHAINS_FOR_MERGE_CHECK)
+        if (!Array.isArray(newTopicChains) || (newTopicChains.length < SyllabusFingerprintMatcher.#MIN_NEW_CHAINS_FOR_MERGE_CHECK && !bAllowRootMerge))
+        {
+            return null;
+        }
+
+        if (!Array.isArray(newTopicChains) || newTopicChains.length === 0)
         {
             return null;
         }
@@ -106,10 +119,14 @@ class SyllabusFingerprintMatcher
 
             for (const parentId of frontier)
             {
-                const children = await collection.find(
-                    { userId: userId, parent: parentId },
-                    { projection: { _id: 0, id: 1, name: 1, parent: 1 } },
+                // Deck rows are stored as { userId, data: {...deck}, serverUpdatedAt },
+                // so structural fields live under `data.*` — query and read them there.
+                const childDocuments = await collection.find(
+                    { userId: userId, "data.parent": parentId },
+                    { projection: { _id: 0, "data.id": 1, "data.name": 1, "data.parent": 1 } },
                 ).toArray();
+
+                const children = childDocuments.map(document => document.data).filter(Boolean);
 
                 if (children.length === 0)
                 {

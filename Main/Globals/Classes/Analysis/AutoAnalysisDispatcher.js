@@ -92,10 +92,11 @@ class AutoAnalysisDispatcher
         }
 
         // Silent gate — this fires automatically on every fresh login, so
-        // popping the standard "AI restricted" dialog would surprise a
-        // non-admin who never asked to run an analysis. They only see the
-        // gate when they explicitly toggle a checkbox or click Generate.
-        if (!AiFeatureGate.isAdmin())
+        // popping the sign-in dialog would surprise a visitor who never asked
+        // to run an analysis. A signed-out user simply skips auto-analysis;
+        // they only see the gate dialog when they explicitly toggle a
+        // checkbox or click Generate.
+        if (!AiFeatureGate.isAllowed())
         {
             return;
         }

@@ -75,6 +75,23 @@ class AskAiPromptBuilder:
         "structural tags listed above."
     )
 
+    # Stronger variant used when the worker has already run an image search
+    # and can hand the model a list of REAL, load-tested image URLs. The
+    # plain guidance above relies on the model knowing direct image URLs,
+    # which google-search grounding does not actually supply — so without
+    # this list the model almost always omits images. The {image_url_list}
+    # placeholder is filled with one URL per line.
+    WEB_IMAGE_GUIDANCE_WITH_CANDIDATES = (
+        "Web search found the following real, verified image URLs for this "
+        "topic. When an image would aid understanding — and always when the "
+        "learner explicitly asks for one — embed the genuinely relevant ones "
+        "inline using <img src=\"URL\" alt=\"short description\">, choosing "
+        "ONLY from this list and copying each URL exactly. Omit any that are "
+        "not clearly relevant; never invent, guess, or alter a URL. The <img> "
+        "tag is permitted in addition to the structural tags listed above.\n"
+        "{image_url_list}"
+    )
+
     # Output-language steer — appended to the user prompt LAST (strongest
     # position) only when the learner picked a non-English language. When
     # the language is English this is never used, so the prompt is
@@ -151,7 +168,7 @@ class AskAiPromptBuilder:
     )
 
     @staticmethod
-    def build(prompt_mode: int, context_kind: int, context_payload: dict, selected_text: str, user_query: str, retrieved_chunks: list[dict], b_enable_google_search: bool = False, selected_language: str = "ENGLISH", b_combine_with_english: bool = False) -> tuple[str, str]:
+    def build(prompt_mode: int, context_kind: int, context_payload: dict, selected_text: str, user_query: str, retrieved_chunks: list[dict], b_enable_google_search: bool = False, selected_language: str = "ENGLISH", b_combine_with_english: bool = False, candidate_image_urls: list[str] = None) -> tuple[str, str]:
         information_source_block = AskAiPromptBuilder.__build_information_source_block(retrieved_chunks)
         safe_selected_text       = AskAiPromptBuilder.__sanitise_for_prompt(selected_text)
         # SUMMARIZE and FORMAT genuinely need the whole entity in view
@@ -202,9 +219,18 @@ class AskAiPromptBuilder:
         # Web images are only viable when google-search grounding is on
         # (Pro / Pro Plus). Append the steer last so it overrides the
         # style block's structural-tags-only enumeration with the <img>
-        # exception.
+        # exception. When the worker handed us real, load-tested image
+        # URLs from its own search, use the stronger variant that pins the
+        # model to that verified list — the bare guidance otherwise relies
+        # on the model knowing direct image URLs, which grounding does not
+        # actually supply.
         if b_enable_google_search:
-            user_prompt = user_prompt + "\n\n" + AskAiPromptBuilder.WEB_IMAGE_GUIDANCE
+            if candidate_image_urls:
+                image_url_list = "\n".join(f"- {image_url}" for image_url in candidate_image_urls)
+                image_guidance = AskAiPromptBuilder.WEB_IMAGE_GUIDANCE_WITH_CANDIDATES.replace("{image_url_list}", image_url_list)
+            else:
+                image_guidance = AskAiPromptBuilder.WEB_IMAGE_GUIDANCE
+            user_prompt = user_prompt + "\n\n" + image_guidance
 
         # Output-language steer goes LAST so it is the final, strongest
         # instruction. English (the default) is a deliberate no-op — the

@@ -174,10 +174,15 @@ class DeckHierarchyBuilder
             dataByDeckId.set(deckData.id, deckData);
         }
 
-        const existingDecks = await deckCollection.find(
-            { userId: userId, id: { $in: Array.from(reusedDeckIds) } },
-            { projection: { _id: 0 } },
+        // Deck rows are stored as { userId, data: {...deck}, serverUpdatedAt };
+        // unwrap `data` so the field reads below (id / subDecks / additionalData /
+        // lifecycle) hit the actual deck object.
+        const existingDeckDocuments = await deckCollection.find(
+            { userId: userId, "data.id": { $in: Array.from(reusedDeckIds) } },
+            { projection: { _id: 0, data: 1 } },
         ).toArray();
+
+        const existingDecks = existingDeckDocuments.map(document => document.data).filter(Boolean);
 
         for (const existingDeck of existingDecks)
         {

@@ -13,6 +13,7 @@ import DetailLevelPickerDialog from "../../../CommonComponents/DetailLevelPicker
 import DeckMergeFlow from "./DeckMergeFlow.js";
 import FullscreenImageViewer from "../../../CommonComponents/FullscreenImageViewer.js";
 import PaidDeckStudyGate from "../../../Globals/Classes/PaidDeckStudyGate.js";
+import PartialGenerationRetryFlow from "../../../Globals/Classes/Task/PartialGenerationRetryFlow.js";
 
 class DeckTile extends HTMLElement
 {
@@ -191,7 +192,7 @@ class DeckTile extends HTMLElement
             // those have their own click handlers and shouldn't initiate a
             // drag.
             const pressTarget = pointerDownEvent.target;
-            if (pressTarget && pressTarget.closest(".deck-options-button, .study-button"))
+            if (pressTarget && pressTarget.closest(".deck-options-button, .study-button, .deck-tile-incomplete-badge"))
             {
                 return;
             }
@@ -354,7 +355,41 @@ class DeckTile extends HTMLElement
         `;
 
         this.#renderPaidDeckOverlay();
+        this.#renderIncompleteGenerationBadge();
         this.#handleEvents();
+    }
+
+    /**
+     * A deck whose AI generation finished partially (one output type failed,
+     * the others were kept) carries a partialCompletion marker in its
+     * additionalData. Badge the tile so the incompleteness is discoverable from
+     * the home grid, and let a tap re-run the failed output types.
+     */
+    #renderIncompleteGenerationBadge()
+    {
+        const additionalData = this.#deck.getAdditionalData?.() || {};
+        if (!additionalData.partialCompletion)
+        {
+            return;
+        }
+
+        this.setAttribute("data-incomplete-generation", "true");
+
+        const badgeButton = document.createElement("button");
+        badgeButton.className = "deck-tile-incomplete-badge";
+        badgeButton.type = "button";
+        badgeButton.title = "Generation incomplete — keep what's here and retry the rest";
+        badgeButton.setAttribute("aria-label", "Generation incomplete — keep what's here and retry the rest");
+        badgeButton.textContent = "!";
+
+        badgeButton.addEventListener("click", (clickEvent) =>
+        {
+            clickEvent.stopPropagation();
+            clickEvent.preventDefault();
+            PartialGenerationRetryFlow.presentForDeck(this.#deck).catch(retryError => console.error("[DeckTile] partial retry error:", retryError));
+        });
+
+        this.appendChild(badgeButton);
     }
 
     #getPaidDeckId()

@@ -10,6 +10,8 @@ import AskAiResultView from "../Components/AskAiResultView.js";
 import AskAiActionDispatcher from "./AskAiActionDispatcher.js";
 import MaintenanceNotice from "../../../Globals/Classes/MaintenanceNotice.js";
 import MilestoneBadgeCelebrationController from "../../../Globals/Classes/Metrics/MilestoneBadgeCelebrationController.js";
+import TutorialEngine from "../../../Globals/Classes/TutorialEngine.js";
+import TutorialDemoResponses from "../../../Globals/Constants/TutorialDemoResponses.js";
 
 
 /**
@@ -76,7 +78,18 @@ class AskAiSession
 
     async run()
     {
-        if (!await AiFeatureGate.ensureAdminOrShowAlert())
+        // While a tutorial is running, never touch the server: replay a
+        // canned response through the real dialog + rendering path. No
+        // credits are spent, no request is made, and there is nothing to
+        // exploit (the client simply never contacts the server). This also
+        // closes the "user clicks a real AI button mid-tutorial" gap.
+        if (TutorialEngine.isRunning())
+        {
+            await this.#runTutorialDemo();
+            return;
+        }
+
+        if (!await AiFeatureGate.ensureAllowedOrShowAlert())
         {
             return;
         }
@@ -162,6 +175,40 @@ class AskAiSession
                 return;
             }
             this.#resultView?.renderError(`Network error: ${fetchError?.message || fetchError}`);
+        }
+    }
+
+    /**
+     * Tutorial demo path for run(). Opens the same streaming dialog the
+     * real flow uses and feeds it a hardcoded NDJSON response (chosen by
+     * prompt mode) through the existing #handleNdjsonLine pipeline, with a
+     * small delay between events so it visibly streams. No fetch, no
+     * credits, no server.
+     */
+    async #runTutorialDemo()
+    {
+        if (!this.#contextEntity)
+        {
+            await DialogBox.alert(
+                "Cannot proceed",
+                "No flashcard or study material is currently in view. Open a deck and start a study session."
+            );
+            return;
+        }
+
+        this.#openStreamingDialog();
+
+        const demoEvents = TutorialDemoResponses.getAskAiEvents(this.#promptMode);
+        for (const demoEvent of demoEvents)
+        {
+            // The dialog's MutationObserver flips this flag when the user
+            // closes the popup mid-playback — stop feeding it then.
+            if (this.#bUserClosedDialog)
+            {
+                return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, TutorialDemoResponses.ASK_AI_CHUNK_DELAY_MILLISECONDS));
+            this.#handleNdjsonLine(JSON.stringify(demoEvent));
         }
     }
 
@@ -310,6 +357,10 @@ class AskAiSession
         {
             this.#resultView?.renderCitations(Array.isArray(event.sources) ? event.sources : []);
         }
+        else if (event?.type === "images")
+        {
+            this.#resultView?.renderImages(Array.isArray(event.items) ? event.items : []);
+        }
         else if (event?.type === "error")
         {
             this.#resultView?.renderError(event.message || "Unknown error.");
@@ -349,6 +400,14 @@ class AskAiSession
      */
     #wirePostStreamActions()
     {
+        // During a tutorial the response is a canned demo — don't offer the
+        // "Insert into card / Append" actions, which would write demo HTML
+        // into a real entity if the user triggered AI on a non-sample one.
+        if (TutorialEngine.isRunning())
+        {
+            return;
+        }
+
         if (!this.#resultView || !this.#contextEntity)
         {
             return;

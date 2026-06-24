@@ -122,6 +122,9 @@ class EvaluateMockTestAttempt(Workflow):
         # ── Stage 1: deterministic offline scoring ──────────────────────────────
         for question_row in offline_gradable:
             awarded_score = EvaluateMockTestAttempt.__score_option_based(question_row)
+            question_max_marks = float(question_row.get("questionMaxMarks") or 0.0)
+            if awarded_score > 0 and question_max_marks > 0:
+                awarded_score = min(awarded_score, question_max_marks)
             graded_questions_by_index[question_row["index"]] = {
                 "index":   question_row["index"],
                 "score":   awarded_score,
@@ -154,7 +157,7 @@ class EvaluateMockTestAttempt(Workflow):
             if expected_normalized and user_normalized and expected_normalized == user_normalized:
                 graded_questions_by_index[question_row["index"]] = {
                     "index":   question_row["index"],
-                    "score":   EvaluateMockTestAttempt.__correct_marks_of(question_row),
+                    "score":   min(EvaluateMockTestAttempt.__correct_marks_of(question_row), float(question_row.get("questionMaxMarks") or 0.0)),
                     "remarks": "",
                     "source":  "normalized_equal",
                 }
@@ -218,7 +221,7 @@ class EvaluateMockTestAttempt(Workflow):
 
                         graded_questions_by_index[question_index] = {
                             "index":      question_index,
-                            "score":      EvaluateMockTestAttempt.__correct_marks_of(question_row),
+                            "score":      min(EvaluateMockTestAttempt.__correct_marks_of(question_row), float(question_row.get("questionMaxMarks") or 0.0)),
                             "remarks":    "",
                             "source":     "semantic_short_circuit",
                             "similarity": similarity,
@@ -387,6 +390,7 @@ class EvaluateMockTestAttempt(Workflow):
                 "index":          question_row["index"],
                 "score":          score_value,
                 "remarks":        remarks_value,
+                "questionMaxMarks": float(question_row.get("questionMaxMarks") or 0.0),
                 "gradingSource":  (graded or {}).get("source", "unscored"),
             })
 
@@ -784,7 +788,7 @@ class EvaluateMockTestAttempt(Workflow):
             return correct_marks
         if partial_marks != 0.0:
             correct_selected_count = sum(1 for index_value in user_indices if index_value in expected_indices)
-            return partial_marks * correct_selected_count
+            return min(partial_marks * correct_selected_count, correct_marks)
         return wrong_marks
 
     @staticmethod

@@ -6,8 +6,11 @@ const { handleInformationSourceUpload } = require("./AutomaticGeneration/Informa
 const { handleListInformationSourcesForUser } = require("./AutomaticGeneration/ListInformationSourcesForUser");
 const { handleInformationSourceDownload } = require("./AutomaticGeneration/InformationSourceDownload");
 const { handleGetProgress } = require("./AutomaticGeneration/GetProgress");
+const { handlePauseGeneration } = require("./AutomaticGeneration/PauseGeneration");
 const { handleTemplatesSearch } = require("./AutomaticGeneration/TemplatesSearch");
 const { handleTemplatesGet } = require("./AutomaticGeneration/TemplatesGet");
+const { beautifyDeckShortNames } = require("./AutomaticGeneration/BeautifyDeckShortNames");
+const { getBeautifiedShortNames } = require("./AutomaticGeneration/GetBeautifiedShortNames");
 const { ensureLogin } = require("./Plugins/EnsureLogin");
 
 /**
@@ -76,6 +79,15 @@ function handleAutomaticGenerationEndpoints(server)
 
     server.handle(
     {
+        routePath: `/Generate/Pause`,
+        handler: handlePauseGeneration,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureLogin],
+    });
+
+    server.handle(
+    {
         routePath: `/Templates/Search`,
         handler: handleTemplatesSearch,
         method: PacketronRequestMethod.GET,
@@ -86,6 +98,26 @@ function handleAutomaticGenerationEndpoints(server)
     {
         routePath: `/Templates/Get`,
         handler: handleTemplatesGet,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureLogin],
+    });
+
+    // Manual deck short-name beautifier — open to any signed-in user. The
+    // BEAUTIFY_DECK_SHORT_NAMES task carries the user id, so the Agent's
+    // per-task credit charger bills it like any other metered AI feature.
+    server.handle(
+    {
+        routePath: `/Decks/BeautifyShortNames`,
+        handler: beautifyDeckShortNames,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureLogin],
+    });
+
+    server.handle(
+    {
+        routePath: `/Decks/BeautifyShortNames/Result`,
+        handler: getBeautifiedShortNames,
         method: PacketronRequestMethod.GET,
         plugins: [ensureLogin],
     });
