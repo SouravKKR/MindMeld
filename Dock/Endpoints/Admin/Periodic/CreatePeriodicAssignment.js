@@ -118,10 +118,12 @@ async function createPeriodicAssignment(request, response)
         return;
     }
 
-    // On-join mode is only meaningful for org scope; force PERIODIC_ONLY for
-    // a people-set (no "join" concept).
+    // On-join applies to both scopes: for an org it fires when a new member
+    // joins; for a people-set it grants an immediate bonus the first time each
+    // listed person is reconciled. Default to PERIODIC_ONLY for a missing or
+    // invalid value.
     let onJoinMode = body.onJoinMode;
-    if (scopeType !== periodicScopeTypes.ORGANIZATION || !Object.values(periodicOnJoinModes).includes(onJoinMode))
+    if (!Object.values(periodicOnJoinModes).includes(onJoinMode))
     {
         onJoinMode = periodicOnJoinModes.PERIODIC_ONLY;
     }

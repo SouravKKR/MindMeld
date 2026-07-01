@@ -583,8 +583,8 @@ class MockTestAnswerKeyPage extends HTMLElement
             this.#attempt.setEvaluationStatus(mockTestEvaluationStatuses.FAILED);
             try { await this.#mockTest.save(); } catch (resaveError) { /* ignore */ }
             await DialogBox.alert(
-                "Re-evaluation failed",
-                `The evaluation server returned an error: ${requestError?.message || "unknown"}. Try again later.`
+                "Couldn't grade your test",
+                "We couldn't reach the grading service just now. Please try again in a moment."
             );
         }
 
@@ -691,7 +691,7 @@ class MockTestAnswerKeyPage extends HTMLElement
         catch (trackError)
         {
             console.error("[MockTestAnswerKeyPage] Wait-for-grading failed:", trackError);
-            overlayHandle.showError("Evaluation didn't finish", trackError?.message || "Try again later.");
+            overlayHandle.showError("Grading didn't finish", "Please try again in a moment.");
         }
     }
 

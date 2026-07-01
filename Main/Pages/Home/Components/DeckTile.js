@@ -3,6 +3,7 @@ import DeckEvents from "../../../Globals/Events/DeckEvents.js";
 import Deck from "../../../Globals/Model/Deck.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import SpacedRepetitonSession from "../../Study/Classes/SpacedRepetitionSession.js";
+import ChatSession from "../../Study/Classes/ChatSession.js";
 import HomePageContextMenu from "./HomePageContextMenu.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import ReviseSession from "../../Study/Classes/ReviseSession.js";
@@ -417,6 +418,8 @@ class DeckTile extends HTMLElement
                 <button class="revise-button">Revise</button>
                 <button class="curated-study-button">Curated Study</button>
                 <button class="mock-test-button">Mock Test</button>
+                <hr class="study-mode-separator" style="align-self:stretch; width:100%; height:0; border:none; border-top:1px solid rgba(255,255,255,0.55); margin:8px 0;">
+                <button class="chat-button">Chat</button>
             </div>
 
             <button class="learn-more-button">Learn More About Study Modes</button>
@@ -428,6 +431,7 @@ class DeckTile extends HTMLElement
         const reviseButton           = studyModeSelectionPopup.querySelector(".revise-button");
         const curatedStudyButton     = studyModeSelectionPopup.querySelector(".curated-study-button");
         const mockTestButton         = studyModeSelectionPopup.querySelector(".mock-test-button");
+        const chatButton             = studyModeSelectionPopup.querySelector(".chat-button");
 
         spacedRepetitionButton.addEventListener("click", () =>
         {
@@ -474,6 +478,12 @@ class DeckTile extends HTMLElement
         {
             studyModeSelectionPopup.close();
             MockTestPickerModal.show(deck);
+        });
+
+        chatButton.addEventListener("click", () =>
+        {
+            studyModeSelectionPopup.close();
+            PageNavigator.open("study-page", ChatSession, deck);
         });
 
         learnMoreButton.addEventListener("click", () =>

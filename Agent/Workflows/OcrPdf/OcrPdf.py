@@ -30,6 +30,10 @@ class OcrPdf(Workflow):
     OCRABLE_SOURCE_TYPES = (
         InformationSourceTypes.PROVIDED_DOCUMENTS,
         InformationSourceTypes.CURRICULUM_OR_SYLLABUS,
+        # Question papers are scanned PDFs that need OCR too — without this, a
+        # fresh QUESTION_PAPER upload early-returns before writing its content
+        # object, so the upload finalizer fails and the source is never saved.
+        InformationSourceTypes.QUESTION_PAPER,
     )
 
     # OcrModes value → list of mode-specific ocrmypdf flags. Shared flags
@@ -178,7 +182,28 @@ class OcrPdf(Workflow):
                 input_file.write(pdf_bytes)
 
             await self.__update_progress(0.20)
-            await self.__run_ocrmypdf(input_path, output_path)
+
+            try:
+                await self.__run_ocrmypdf(input_path, output_path)
+            except Exception as ocr_error:
+                # ocrmypdf could not process THIS particular PDF — e.g. an embedded
+                # image it can't decode (UnsupportedImageFormatError / exit code 2),
+                # a timeout, or a killed subprocess. Failing the task here loses the
+                # whole source (the content object never lands, the upload finalizer
+                # fails) — the "only 4 of my 5 sources" bug. A failed OCR pass must
+                # not cost the user their document: fall back to storing the ORIGINAL
+                # bytes at the content path so the source is still saved and usable
+                # (born-digital text still extracts downstream; only the OCR layer is
+                # missing). This keeps the CAS "content key is populated == ready"
+                # invariant intact so the upload finalizer succeeds.
+                print(
+                    f"[OcrPdf] OCR failed for '{information_source.get_name()}' ({ocr_error}); "
+                    f"storing the original un-OCRed PDF so the source is not lost."
+                )
+                await Persistence.write(gcs_output_path, pdf_bytes)
+                await self.__update_progress(1.0)
+                return
+
             await self.__update_progress(0.80)
 
             with open(output_path, "rb") as output_file:

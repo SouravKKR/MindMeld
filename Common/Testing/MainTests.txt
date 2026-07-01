@@ -2,7 +2,7 @@ Main Test Catalog (browser UI, built app at Dock/Static)
 ========================================================
 
 Scripts: Common/Testing/Main/
-Two suites run here:
+Three suites run here:
 
 -----------------------------------------------------------------------------
 SUITE 1 - Utility functions (no server / no browser needed)
@@ -125,3 +125,67 @@ Notes:
     to the inventory above, so newly added pages are picked up automatically.
   - All findings are written to the per-suite JSON; failing cases carry the
     page, viewport, and captured error text.
+
+-----------------------------------------------------------------------------
+SUITE 3 - Tutorial Walkthrough (server + browser required)
+-----------------------------------------------------------------------------
+Runner:  Common/Testing/Main/run_tutorial_ui_tests.js  (Puppeteer, real Chromium)
+Coverage metric: steps -- (tutorial steps successfully walked) over (total
+steps across all registered tutorials), reported alongside tutorials-completed.
+
+Drives a real browser against the BUILT app at http://127.0.0.1:3000 and plays
+EVERY tutorial in TutorialRegistry from its first step to its finish dialog, the
+same way a user would: clicking the real Next / Finish buttons, clicking the
+real in-app element each WAIT_FOR_CLICK / WAIT_FOR_EVENT step points at, and
+filling any validator-gated field. REQUIRES TEST_SESSION_COOKIE (a seeded,
+terms-accepted session); without it the authenticated Home page / deck tree
+never load and the whole suite is SKIPPED, never FAILED.
+
+How it drives the tutorials:
+  - The app, when loaded with ?tutorialE2E=1, installs window.__tutorialE2E (see
+    Main/Globals/Classes/TutorialBootstrap.js) — a tiny OPT-IN seam that only
+    lists tutorials, starts one, returns to Home, and reports the current page
+    tag, and marks tutorials completed so first-launch autoplay does not race
+    the suite. Every click, visibility check and navigation assertion is done
+    here against the real rendered DOM, so the suite stays black-box. The seam is
+    absent in a normal (no-flag) session; if it is missing the suite SKIPS with a
+    rebuild hint.
+
+Objectives under test (these are the three properties requested for tutorials):
+  1) EVERY CLICK TARGET IS VISIBLE & CLICKABLE TO THE USER
+     - For each WAIT_FOR_CLICK / WAIT_FOR_EVENT step, take the centre of the
+       overlay's spotlight hole and call document.elementFromPoint there. The
+       element returned must be a real page element OUTSIDE the tutorial overlay
+       (the dim mask is clip-path-punched so the target is exposed). FAILS when
+       the selector never resolved (overlay fell back to its floating tooltip),
+       the spotlight is empty, or the point lands back on the overlay/mask
+       (target covered, not clickable).
+     - For HIGHLIGHT acknowledge-steps, additionally record whether the element
+       being pointed at is actually on screen (fails only on a floating fallback).
+
+  2) NO MAGIC NAVIGATION
+     - The current page tag is sampled before and after every step. A page change
+       is legitimate ONLY when the user clicked a real element (a WAIT_FOR_CLICK /
+       WAIT_FOR_EVENT step). If the page changes while the user merely clicked
+       Next / Finish in the tooltip, the tutorial teleported them (e.g. a step
+       whose setupAction calls PageNavigator.open) and the case FAILS. A settle
+       delay after each advance lets a teleporting setupAction manifest so it is
+       reliably caught.
+
+  3) WALKS START TO FINISH
+     - Each tutorial must advance through every step and reach + dismiss its
+       finish dialog. A step that does not advance within the timeout, or a
+       click target that is not exposed, stops that tutorial and is reported with
+       the step number and reason. Between tutorials the runner recovers via the
+       real Skip button so each starts from a clean Home.
+
+  4) NO CLIENT-SIDE ERRORS
+     - A pageerror listener spans the whole run; any uncaught exception during a
+       walkthrough fails the run-wide health case.
+
+Notes:
+  - Tutorials are enumerated at runtime from the registry, so newly added
+    tutorials are walked automatically with no change to this runner.
+  - Sample-deck tutorials build their own throwaway content (flagged
+    bCreatedDuringTutorial) which the engine deletes on Skip/Finish; the
+    walkthrough exits every tutorial cleanly so it leaves nothing behind.

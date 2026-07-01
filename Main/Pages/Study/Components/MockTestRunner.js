@@ -7,6 +7,7 @@ import Persistence from "../../../Globals/Classes/Persistence.js";
 import HtmlSanitizer from "../../../Globals/Classes/HtmlSanitizer.js";
 import MockTestItemFactory from "../../../Globals/Model/MockTestEntities/MockTestItemFactory.js";
 import RichTextEditor from "../../CardEditor/Components/RichTextEditor.js";
+import TutorialEngine from "../../../Globals/Classes/TutorialEngine.js";
 
 // Requires: Pages/Study/Styles/MockTestRunner.css
 
@@ -458,13 +459,19 @@ class MockTestRunner extends HTMLElement
             return;
         }
 
-        const confirmed = await DialogBox.confirm(
-            "Finish Test?",
-            "Are you sure you want to finish the test now? You will not be able to change your answers after this."
-        );
-        if (!confirmed)
+        // During a tutorial, skip the "are you sure?" confirm — the guided
+        // walkthrough drives Finish itself and a blocking confirm would stall
+        // the flow before the demo grading runs.
+        if (!TutorialEngine.isRunning())
         {
-            return;
+            const confirmed = await DialogBox.confirm(
+                "Finish Test?",
+                "Are you sure you want to finish the test now? You will not be able to change your answers after this."
+            );
+            if (!confirmed)
+            {
+                return;
+            }
         }
 
         if (this.#sessionOptions.mode === MockTestRunner.MODE_OFFLINE)
@@ -764,7 +771,9 @@ class MockTestRunner extends HTMLElement
         {
             return;
         }
-        affordance.hidden = !!document.fullscreenElement;
+        // During a tutorial fullscreen is intentionally never requested, so the
+        // "re-enter fullscreen" prompt would be misleading — keep it hidden.
+        affordance.hidden = !!document.fullscreenElement || TutorialEngine.isRunning();
     }
 
     // ── Static helpers ─────────────────────────────────────────────────────────

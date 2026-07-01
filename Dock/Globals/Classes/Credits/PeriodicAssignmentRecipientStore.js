@@ -219,6 +219,25 @@ class PeriodicAssignmentRecipientStore
             .sort({ cumulativeCredits: -1 })
             .toArray();
     }
+
+    /**
+     * Removes every recipient cursor / counter row for an assignment. Called
+     * when the assignment itself is hard-deleted so no orphaned rows linger.
+     * The authoritative creditTransactions ledger is untouched — this only
+     * clears the reconciler's optimisation cursor and the report data source.
+     * @param {string} assignmentId
+     * @returns {Promise<{ deletedCount: number }>}
+     */
+    static async deleteByAssignmentId(assignmentId)
+    {
+        const collection = await PeriodicAssignmentRecipientStore.#getCollection();
+        if (!collection || assignmentId == null)
+        {
+            return { deletedCount: 0 };
+        }
+        const result = await collection.deleteMany({ assignmentId: assignmentId });
+        return { deletedCount: result.deletedCount };
+    }
 }
 
 module.exports = PeriodicAssignmentRecipientStore;

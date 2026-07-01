@@ -53,3 +53,43 @@ general-generation-fields .credit-warning-note
     color: var(--warning-color, #e0a800);
     white-space: nowrap;
 }
+
+/* The Auto Fill helper sits at the bottom of General Settings. Styled as an
+   accent action so it reads as "do something for me" rather than a plain
+   form field, with the warning note wrapping beneath it on narrow widths. */
+general-generation-fields .auto-fill-options-container
+{
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+general-generation-fields .auto-fill-options-button
+{
+    padding: 12px 18px;
+    border-radius: 10px;
+    background: linear-gradient(90deg, var(--gradient-start-color), var(--gradient-end-color));
+    color: var(--primary-text-color);
+    border: none;
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 600;
+    transition: filter 0.15s ease, opacity 0.15s ease;
+}
+
+general-generation-fields .auto-fill-options-button:hover
+{
+    filter: brightness(1.08);
+}
+
+general-generation-fields .auto-fill-options-button:disabled
+{
+    opacity: 0.6;
+    cursor: default;
+}
+
+general-generation-fields .auto-fill-options-container .credit-warning-note
+{
+    white-space: normal;
+}

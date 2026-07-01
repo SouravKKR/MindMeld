@@ -131,13 +131,15 @@ class InitializationOverlay extends HTMLElement
     #handleFailed = (event) =>
     {
         const errorDetail = event.detail && event.detail.error ? String(event.detail.error) : "Unknown error";
+        // Keep the technical detail in the console; show the user a calm, plain message.
+        console.error(`[InitializationOverlay] Library load failed: ${errorDetail}`);
 
         if(this.#panelElement)
         {
             this.#panelElement.innerHTML =
             `
                 <div class="initialization-overlay-title">Couldn't load your library</div>
-                <div class="initialization-overlay-message">${errorDetail}</div>
+                <div class="initialization-overlay-message">Something went wrong while loading your data. Please check your connection and try again.</div>
                 <button class="initialization-overlay-retry">Retry</button>
             `;
 

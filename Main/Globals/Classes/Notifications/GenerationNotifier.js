@@ -3,6 +3,7 @@ import { taskStatus } from "../../Enumerations/TaskStatus.js";
 import { generationOutcomes } from "../../Enumerations/GenerationOutcomes.js";
 import AuthenticationEvents from "../../Events/AuthenticationEvents.js";
 import PageNavigator from "../PageNavigator.js";
+import TaskProgressTracker from "../Task/TaskProgressTracker.js";
 
 /**
  * GenerationNotifier
@@ -466,6 +467,20 @@ class GenerationNotifier
         // double-fire for the same task.
         GenerationNotifier.#notifiedTaskIds.add(taskId);
         GenerationNotifier.stopTracking(taskId);
+
+        // Auto-sync the freshly generated decks/cards/study-materials/mock-tests
+        // down to the local model so they appear without a manual sync. This is
+        // the single, central place that fires for EVERY generation (the notifier
+        // tracks each run in the background from the moment it starts, regardless
+        // of which page the user is on), so it runs exactly once and never double-
+        // syncs. Fire-and-forget — independent of the OS notification below, and a
+        // sync failure is non-fatal (the next routine sync still catches up). Only
+        // a successful run produced new content worth pulling.
+        if (outcome === generationOutcomes.SUCCESS)
+        {
+            TaskProgressTracker.triggerSync().catch((syncError) =>
+                console.warn("[GenerationNotifier] Post-generation auto-sync failed:", syncError));
+        }
 
         if (GenerationNotifier.#shouldSuppress(taskId))
         {

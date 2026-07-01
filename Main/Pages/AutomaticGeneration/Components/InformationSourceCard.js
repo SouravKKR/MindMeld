@@ -106,6 +106,10 @@ class InformationSourceCard extends HTMLElement
                     display: flex;
                     align-items: center;
                     gap: 10px;
+                    /* Let the flex row shrink below its content width so the
+                       name's text-overflow: ellipsis can actually engage —
+                       without this a long file name overflows the card. */
+                    min-width: 0;
                 }
 
                 .information-source-card-icon
@@ -284,7 +288,8 @@ class InformationSourceCard extends HTMLElement
                 }
                 else
                 {
-                    this.#renderErrorState(`Upload failed (${this.#xhr.status})`);
+                    console.error(`[InformationSourceCard] Upload failed (HTTP ${this.#xhr.status}).`);
+                    this.#renderErrorState("Upload failed. Please try again.");
                 }
                 return;
             }

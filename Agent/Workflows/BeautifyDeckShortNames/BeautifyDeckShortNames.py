@@ -19,21 +19,13 @@ class BeautifyDeckShortNames(Workflow):
 
     MODEL_NAME                   = "gemini-2.5-flash-lite"
     MAX_DECKS_PER_BATCH          = 50
-    MAX_SHORT_NAME_LENGTH        = 24
+    # Must match Deck.MAX_SHORT_NAME_LENGTH in Main/Globals/Model/Deck.js — that is
+    # the real storage/display budget the beautified name has to fit into. Targeting
+    # a larger value here just gets the name hard-trimmed to this length downstream.
+    MAX_SHORT_NAME_LENGTH        = 16
     BEAUTIFIED_OUTPUT_FILE_NAME  = "BeautifiedShortNames.json"
     FLASHCARDS_DIRECTORY_NAME    = PersistenceConstants.FLASHCARDS_DIRECTORY
     STUDY_MATERIALS_DIRECTORY_NAME = PersistenceConstants.STUDY_MATERIALS_DIRECTORY
-
-    SYSTEM_PROMPT = (
-        "You are an expert at writing concise, readable short names for flashcard decks. "
-        "Each short name must be a complete, meaningful label in Title Case that is shorter "
-        "than the full topic name but still instantly recognisable. Prefer the full topic "
-        "word when it fits (e.g. 'Limits', 'Algebra'). For multi-word topics, drop filler "
-        "words and keep the most distinctive whole words (e.g. 'The Nervous System' -> "
-        "'Nervous System'). Keep names to about 24 characters, but NEVER cut a word in half "
-        "or abbreviate to an unreadable fragment — always use complete words. A slightly "
-        "longer complete name is far better than a truncated one. Never invent unrelated names."
-    )
 
     def __init__(self, payload = {}):
         super().__init__(payload)
@@ -151,26 +143,39 @@ class BeautifyDeckShortNames(Workflow):
         return unique_entries
 
     async def __beautify_batch(self, batch_entries: list[dict], caller: AutomationCaller) -> list[str | None]:
+        character_limit = BeautifyDeckShortNames.MAX_SHORT_NAME_LENGTH
+
         prompt_lines = []
         for index, entry in enumerate(batch_entries):
             hierarchy_breadcrumb = " > ".join(entry["hierarchy"])
             prompt_lines.append(f"{index + 1}. {hierarchy_breadcrumb}")
 
+        # Kept deliberately generic: no worked examples, no topic-specific hints, so it
+        # behaves the same for every subject. The rules describe HOW to shorten, not
+        # WHAT any particular name should become.
+        system_prompt = (
+            "You write concise, human-readable short names for flashcard decks. "
+            f"Given a deck's topic, produce a label that clearly refers to the same topic and fits within {character_limit} characters. "
+            "To make it fit you may leave out less-important or filler words and/or use widely-recognised "
+            "abbreviations, as long as the result stays clear and unmistakably points to the original topic. "
+            "Always keep whole, readable words or standard abbreviations — never cut a word partway through, "
+            "and never return a meaningless fragment. Use Title Case, and never invent a name unrelated to the "
+            f"original topic. If the topic already fits within {character_limit} characters, return it unchanged."
+        )
+
         user_prompt = (
-            "For each numbered deck path below, produce a concise short name (aim for about 24 "
-            "characters, using complete words only — never cut a word off mid-way) for the LEAF "
-            "segment (the last segment after the final '>'). Consult the parent segments for "
-            "context (so 'Math > Algebra > Limits' should shorten to 'Limits' rather than 'Math "
-            "Limits'). Return the result as JSON matching the requested schema — one item per "
-            "input, with `index` matching the input number and `short_name` containing the "
-            "beautified name.\n\n"
+            f"For each numbered deck path below, write a short name for the LEAF segment (the text after the "
+            f"final '>') that fits within {character_limit} characters. Use the parent segments only for context "
+            "and disambiguation — do not include them in the output. Return the result as JSON matching the "
+            "requested schema: one item per input, with `index` matching the input number and `short_name` "
+            "containing the short name.\n\n"
             + "\n".join(prompt_lines)
         )
 
         request = AutomationRequest(
             BeautifyDeckShortNames.MODEL_NAME,
             [
-                AutomationContent(AutomationContentTypes.SYSTEM, BeautifyDeckShortNames.SYSTEM_PROMPT),
+                AutomationContent(AutomationContentTypes.SYSTEM, system_prompt),
                 AutomationContent(
                     AutomationContentTypes.TEXT,
                     user_prompt,
@@ -218,12 +223,10 @@ class BeautifyDeckShortNames(Workflow):
 
     @staticmethod
     def __fit_short_name(candidate: str) -> str:
-        # Enforce the length budget WITHOUT slicing through the middle of a
-        # word. A blunt candidate[:24] produced stripped names like
-        # "Communication S"; instead we trim back to the last whole-word
-        # boundary that fits, and only when a single token is itself longer
-        # than the budget do we keep that whole word (a slightly long but
-        # complete word reads far better than a truncated fragment).
+        # Safety net for when the model returns something over budget: trim back to
+        # the last whole word that fits rather than slicing through the middle of a
+        # word. Only a single word longer than the budget is hard-capped (unavoidable
+        # at the storage limit). Mirrors Deck.fitShortName on the frontend.
         trimmed = candidate.strip()
         max_length = BeautifyDeckShortNames.MAX_SHORT_NAME_LENGTH
 
@@ -235,7 +238,7 @@ class BeautifyDeckShortNames(Workflow):
         if last_space_index > 0:
             return window[:last_space_index].rstrip()
 
-        return trimmed.split(" ", 1)[0]
+        return window
 
     async def __write_output(self, main_task_id: str, beautified_map: dict) -> None:
         output_path = join_path(

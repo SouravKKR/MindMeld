@@ -29,6 +29,15 @@ class TaskManager
     // TaskState pausedReason so the resume banner can word itself correctly.
     static USER_PAUSED_REASON = "USER_PAUSED";
 
+    // TaskState pausedReason for a generation orphaned by a Dock restart/crash:
+    // a resumable snapshot is saved at generation START and cleared on any
+    // outcome the in-process completion handler actually reaches (success or
+    // handled failure). If the process died before either ran, this snapshot
+    // survives so the home-screen PausedTaskBanner can offer Resume (which
+    // re-runs with resumeMainTaskId and skips finished stages via GCS
+    // checkpoints). Never a real error stamped on a task payload — TaskState only.
+    static INTERRUPTED_REASON = "INTERRUPTED";
+
     // ── Reliable polling queue ──────────────────────────────────────────────
     // Producer side. Dock pushes a small JSON envelope onto the pending list;
     // long-lived Agent workers (Agent/Worker.py) atomically move it to the
@@ -155,8 +164,61 @@ class TaskManager
         return false;
     }
 
+    /**
+     * Returns the rolled-up status of a live generation tree for the Activity
+     * list: FAILED if ANY node in the tree has failed, otherwise IN_PROGRESS. A
+     * task present in the per-user active index is by construction not yet
+     * finalized — the Generate completion handler untracks it (and writes the
+     * settled taskHistory row) only after the whole pipeline finishes — so the
+     * no-op root's own COMPLETED status must never be surfaced as "Completed"
+     * while its children are still running (the "shows Completed while it's going
+     * on" bug). Missing child blobs are skipped; cycles are guarded by a visited
+     * set.
+     * @param {string} rootTaskId
+     * @param {Set<string>} [visitedTaskIds]
+     * @returns {Promise<number>} taskStatus.FAILED or taskStatus.IN_PROGRESS
+     */
+    static async computeActiveTreeStatus(rootTaskId, visitedTaskIds = new Set())
+    {
+        if (!rootTaskId || visitedTaskIds.has(rootTaskId))
+        {
+            return taskStatus.IN_PROGRESS;
+        }
+        visitedTaskIds.add(rootTaskId);
+
+        const task = await TaskManager.getTask(rootTaskId);
+        if (!task)
+        {
+            return taskStatus.IN_PROGRESS;
+        }
+
+        if (task.getStatus() === taskStatus.FAILED)
+        {
+            return taskStatus.FAILED;
+        }
+
+        for (const childTaskId of (task.getNextTaskIds() || []))
+        {
+            if (await TaskManager.computeActiveTreeStatus(childTaskId, visitedTaskIds) === taskStatus.FAILED)
+            {
+                return taskStatus.FAILED;
+            }
+        }
+
+        return taskStatus.IN_PROGRESS;
+    }
+
     static async getTask(taskId)
     {
+        // Defensive: callers occasionally pass a Buffer id (Redis sMembers under
+        // the blob-string type-mapping returns Buffers). Normalize to a string up
+        // front so the id-reconciliation below never stamps a Buffer onto the
+        // descriptor's id (which then serializes as {type:"Buffer",…} and breaks
+        // every downstream taskid lookup).
+        if (Buffer.isBuffer(taskId))
+        {
+            taskId = taskId.toString("utf8");
+        }
         const buffer = await TaskManager.#redisClient.get(TaskManager.#TASK_PREFIX + taskId);
 
         if (buffer === null || buffer === undefined)
@@ -768,7 +830,17 @@ class TaskManager
             return [];
         }
         const key = TaskManager.#USER_TASKS_PREFIX + userId;
-        const taskIds = await TaskManager.#redisClient.sMembers(key);
+        // The client is configured with a Buffer type-mapping for blob strings,
+        // so sMembers returns the ids as Buffers. They MUST be coerced back to
+        // plain strings: getTask(buffer) reconciles its descriptor id to the key
+        // it was given (string !== Buffer), which would stamp a Buffer onto
+        // task.getId(). That Buffer then serializes into the Activity entry as
+        // {type:"Buffer",data:[…]}, the client opens the progress page with a
+        // garbage taskid, and the lookup 404s as "This task is no longer
+        // available" — for live/active tasks only (historical ids are Mongo
+        // strings). Coercing here keeps every downstream id a real string.
+        const taskIds = (await TaskManager.#redisClient.sMembers(key))
+            .map((member) => (Buffer.isBuffer(member) ? member.toString("utf8") : member));
 
         const tasks = [];
         for (const taskId of taskIds)

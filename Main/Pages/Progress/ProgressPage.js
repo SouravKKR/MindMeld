@@ -2,7 +2,7 @@ import PageNavigator from "../../Globals/Classes/PageNavigator.js";
 import GenerationProgressComponent from "./Components/GenerationProgressComponent.js";
 import { taskStatus } from "../../Globals/Enumerations/TaskStatus.js";
 import { taskTypes } from "../../Globals/Enumerations/TaskTypes.js";
-import { enumerationToTitleCase } from "../../Globals/UtilityFunctions/EnumerationToTitleCase.js";
+import { taskTypeDisplayName } from "../../Globals/UtilityFunctions/TaskTypeDisplayName.js";
 import OutOfCreditsResumeFlow from "../../Globals/Classes/Credits/OutOfCreditsResumeFlow.js";
 import PartialGenerationRetryFlow from "../../Globals/Classes/Task/PartialGenerationRetryFlow.js";
 import { formatCredits } from "../../Globals/UtilityFunctions/FormatCredits.js";
@@ -221,7 +221,14 @@ class ProgressPage extends HTMLElement
             return;
         }
 
-        const bSuccess = payload && payload.status === taskStatus.COMPLETED;
+        // Derive success from the COMPUTED overall tree status, not the bare
+        // root status. The root PREPARE_FOR_GENERATION is a no-op that is marked
+        // COMPLETED the instant it exits, so payload.status reads COMPLETED even
+        // when a descendant (e.g. Map Topics With Content) failed — which is how
+        // the green "complete" banner used to show on top of a red "Failed 63%"
+        // tree. getOverallStatus() rolls up every node and returns FAILED if any
+        // node failed, so the banner now agrees with what the tree shows.
+        const bSuccess = this.#getProgressComponent().getOverallStatus() === taskStatus.COMPLETED;
 
         if (bSuccess)
         {
@@ -230,7 +237,13 @@ class ProgressPage extends HTMLElement
         }
         else
         {
-            statusBanner.textContent = "Generation failed. Please try again.";
+            // Surface the actual reason recorded on the failed task (e.g. the
+            // topic-matching error) so the user sees WHY it failed, not just that
+            // it did. Falls back to the generic line when no message was recorded.
+            const failureMessage = this.#getProgressComponent().getFirstFailureMessage();
+            statusBanner.textContent = failureMessage
+                ? `Generation failed: ${failureMessage}`
+                : "Generation failed. Please try again.";
             statusBanner.classList.add("progress-page-status-banner--error");
         }
 
@@ -389,8 +402,7 @@ class ProgressPage extends HTMLElement
 
         const rowsHtml = summary.entries.map((entry) =>
         {
-            const taskTypeName = Object.keys(taskTypes).find(name => taskTypes[name] === entry.taskType);
-            const label = taskTypeName ? enumerationToTitleCase(taskTypeName) : "Unknown task";
+            const label = taskTypeDisplayName(entry.taskType);
             return `
                 <tr>
                     <td>${ProgressPage.#escape(label)}</td>
@@ -524,8 +536,7 @@ class ProgressPage extends HTMLElement
 
     static #humaniseType(typeValue)
     {
-        const typeName = Object.keys(taskTypes).find((key) => taskTypes[key] === typeValue);
-        return typeName ? enumerationToTitleCase(typeName) : "Task";
+        return taskTypeDisplayName(typeValue);
     }
 
     static #humaniseKey(rawKey)

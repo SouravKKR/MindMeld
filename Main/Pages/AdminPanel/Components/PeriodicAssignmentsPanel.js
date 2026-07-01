@@ -183,16 +183,6 @@ class PeriodicAssignmentsPanel extends HTMLElement
                         <label class="periodic-field">Organization
                             <select class="periodic-select" data-field="organizationId"><option value="">Loading organizations…</option></select>
                         </label>
-                        <div class="periodic-grid" style="margin-top:14px;">
-                            <label class="periodic-field">On new join
-                                <select class="periodic-select" data-field="onJoinMode">
-                                    <option value="${periodicOnJoinModes.PERIODIC_ONLY}" selected>Periodic only</option>
-                                    <option value="${periodicOnJoinModes.ON_JOIN_PLUS_PERIODIC}">On join + periodic</option>
-                                    <option value="${periodicOnJoinModes.ON_JOIN_PLUS_PERIODIC_SKIP_FIRST}">On join + periodic (skip first installment)</option>
-                                </select>
-                            </label>
-                        </div>
-                        <div class="periodic-hint">Leaving the org stops the cycle; rejoining never re-grants the on-join bonus. "Skip first installment" avoids double-crediting at join time.</div>
                     </div>
 
                     <div class="periodic-subsection" data-role="people-section" hidden>
@@ -204,6 +194,20 @@ class PeriodicAssignmentsPanel extends HTMLElement
                             <span class="periodic-hint" data-role="people-count">0 valid emails</span>
                         </div>
                         <div class="periodic-hint">Upload a .csv or .xlsx (any column layout) to append emails, or paste above.</div>
+                    </div>
+
+                    <div class="periodic-subsection" data-role="on-join-section">
+                        <div class="periodic-grid">
+                            <label class="periodic-field">On new join
+                                <select class="periodic-select" data-field="onJoinMode">
+                                    <option value="${periodicOnJoinModes.PERIODIC_ONLY}" selected>Periodic only</option>
+                                    <option value="${periodicOnJoinModes.ON_JOIN_PLUS_PERIODIC}">On join + periodic</option>
+                                    <option value="${periodicOnJoinModes.ON_JOIN_PLUS_PERIODIC_SKIP_FIRST}">On join + periodic (skip first installment)</option>
+                                </select>
+                            </label>
+                        </div>
+                        <div class="periodic-hint" data-role="on-join-hint-organization">Leaving the org stops the cycle; rejoining never re-grants the on-join bonus. "Skip first installment" avoids double-crediting at join time.</div>
+                        <div class="periodic-hint" data-role="on-join-hint-people" hidden>Grants an immediate bonus the first time each listed person is reconciled, on top of the periodic schedule. "Skip first installment" avoids double-crediting that first run.</div>
                     </div>
 
                     <div class="periodic-subsection">
@@ -315,6 +319,11 @@ class PeriodicAssignmentsPanel extends HTMLElement
         this.querySelector('[data-role="organization-section"]').hidden = !isOrganization;
         this.querySelector('[data-role="people-section"]').hidden = isOrganization;
 
+        // On-join applies to both scopes; the field stays visible and only the
+        // explanatory hint swaps to match the active scope.
+        this.querySelector('[data-role="on-join-hint-organization"]').hidden = !isOrganization;
+        this.querySelector('[data-role="on-join-hint-people"]').hidden = isOrganization;
+
         // TOTAL_SPLIT is undefined against a dynamic org roster — force + lock
         // PER_USER for org scope.
         const amountModeField = this.querySelector('[data-role="amount-mode-field"]');
@@ -402,7 +411,8 @@ class PeriodicAssignmentsPanel extends HTMLElement
             scheduleType: scheduleType,
             intervalDays: parseInt(this.querySelector('[data-field="intervalDays"]').value, 10),
             dayOfWeek: parseInt(this.querySelector('[data-field="dayOfWeek"]').value, 10),
-            dayOfMonth: parseInt(this.querySelector('[data-field="dayOfMonth"]').value, 10)
+            dayOfMonth: parseInt(this.querySelector('[data-field="dayOfMonth"]').value, 10),
+            onJoinMode: Number(this.querySelector('[data-field="onJoinMode"]').value)
         };
 
         if (scopeType === periodicScopeTypes.ORGANIZATION)
@@ -413,7 +423,6 @@ class PeriodicAssignmentsPanel extends HTMLElement
                 return { error: "Select an organization." };
             }
             payload.organizationId = organizationId;
-            payload.onJoinMode = Number(this.querySelector('[data-field="onJoinMode"]').value);
         }
         else
         {
@@ -555,6 +564,10 @@ class PeriodicAssignmentsPanel extends HTMLElement
         {
             printButton.addEventListener("click", () => this.#print(printButton.dataset.id));
         }
+        for (const deleteButton of this.querySelectorAll('[data-action="delete"]'))
+        {
+            deleteButton.addEventListener("click", () => this.#delete(deleteButton.dataset.id, deleteButton.dataset.name, deleteButton.dataset.active === "1"));
+        }
     }
 
     #renderRow(assignment)
@@ -577,6 +590,7 @@ class PeriodicAssignmentsPanel extends HTMLElement
                     <div class="periodic-row-actions">
                         <button class="periodic-button periodic-button-secondary" data-action="print" data-id="${PeriodicAssignmentsPanel.#escape(assignment.id)}">Print</button>
                         ${isActive ? `<button class="periodic-button periodic-button-danger" data-action="terminate" data-id="${PeriodicAssignmentsPanel.#escape(assignment.id)}" data-name="${PeriodicAssignmentsPanel.#escape(assignment.name)}">Terminate</button>` : ""}
+                        <button class="periodic-button periodic-button-danger" data-action="delete" data-id="${PeriodicAssignmentsPanel.#escape(assignment.id)}" data-name="${PeriodicAssignmentsPanel.#escape(assignment.name)}" data-active="${isActive ? "1" : "0"}">Delete</button>
                     </div>
                 </td>
             </tr>
@@ -609,6 +623,38 @@ class PeriodicAssignmentsPanel extends HTMLElement
         catch (terminateError)
         {
             this.#setStatus(terminateError.message, true);
+        }
+    }
+
+    async #delete(assignmentId, assignmentName, isActive)
+    {
+        const warning = isActive
+            ? `Permanently delete "${assignmentName}"? It is still ACTIVE — deleting also stops all future installments. Already-granted credits are kept, but the assignment and its report are removed for good. This cannot be undone.`
+            : `Permanently delete "${assignmentName}"? Already-granted credits are kept, but the assignment and its report are removed for good. This cannot be undone.`;
+        const confirmed = await DialogBox.confirm("Delete assignment", warning);
+        if (!confirmed)
+        {
+            return;
+        }
+        try
+        {
+            const response = await fetch("/Admin/Credits/Periodic/Delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ assignmentId: assignmentId })
+            });
+            const responseJson = await response.json().catch(() => ({}));
+            if (!response.ok)
+            {
+                this.#setStatus(responseJson.error || `Delete failed (HTTP ${response.status}).`, true);
+                return;
+            }
+            this.#setStatus(`Deleted "${assignmentName}".`, false);
+            this.#reloadList();
+        }
+        catch (deleteError)
+        {
+            this.#setStatus(deleteError.message, true);
         }
     }
 

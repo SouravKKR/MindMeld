@@ -4,8 +4,8 @@ const TaskHistoryQueryEngine = require("../../Globals/Classes/Database/TaskHisto
 const TaskManager = require("../../Globals/Classes/Task/TaskManager");
 const { activityEntryTypes } = require("../../Globals/Enumerations/ActivityEntryTypes");
 const { taskStatus } = require("../../Globals/Enumerations/TaskStatus");
-const { taskTypes } = require("../../Globals/Enumerations/TaskTypes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const { taskTypeDisplayName } = require("../../Globals/UtilityFunctions.js/TaskTypeDisplayName");
 
 
 /**
@@ -120,7 +120,12 @@ class GetMyActivityEndpoint
             const entries = [];
             for (const task of activeTasks)
             {
-                const status = task.getStatus();
+                // Use the rolled-up tree status, NOT the task's own status: the
+                // generation root (PREPARE_FOR_GENERATION) is a no-op marked
+                // COMPLETED the instant it exits, so its own status would show a
+                // still-running generation as "Completed". An actively-tracked
+                // task is in progress (or failed) by construction.
+                const status = await TaskManager.computeActiveTreeStatus(task.getId());
                 if (filterStatus !== null && status !== filterStatus)
                 {
                     continue;
@@ -306,14 +311,7 @@ class GetMyActivityEndpoint
 
     static #humaniseTaskType(taskTypeValue)
     {
-        for (const taskTypeName of Object.keys(taskTypes))
-        {
-            if (taskTypes[taskTypeName] === taskTypeValue)
-            {
-                return taskTypeName.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (firstChar) => firstChar.toUpperCase());
-            }
-        }
-        return "Task";
+        return taskTypeDisplayName(taskTypeValue);
     }
 
     static #statusLabel(statusValue)

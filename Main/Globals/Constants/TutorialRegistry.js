@@ -674,7 +674,7 @@ class TutorialRegistry
     {
         id: TutorialRegistry.MOCK_TESTS_ID,
         title: "Mock tests & grading",
-        body: "See how a graded mock-test answer key looks — scores, your answers vs the expected ones, and examiner notes — shown from a built-in sample.",
+        body: "Take the sample deck's mock test from start to finish — launch it, answer a question, finish, and see it graded — all offline with a built-in sample, so no real grading runs and no credits are spent.",
         bAutoPlayOnFirstLaunch: false,
         steps:
         [
@@ -689,30 +689,79 @@ class TutorialRegistry
                 },
                 body:
                 `
-                    <p>MindMeld grades your mock tests — multiple-choice questions instantly and offline, subjective answers with AI. Click <strong>Next</strong> to see a sample <strong>answer key</strong> for an already-graded attempt.</p>
-                    <p>Everything here is a built-in sample — the tutorial doesn't run real grading. (Real grading uses credits.)</p>
+                    <p>MindMeld grades your mock tests — multiple-choice questions instantly and offline, subjective answers with AI. Let's take the sample deck's mock test <strong>end to end</strong>: launch it, answer a question, finish, and see the graded answer key.</p>
+                    <p>Everything in this tutorial runs offline on your device — no real grading and no credits spent.</p>
                 `
             },
             {
-                type: tutorialStepTypes.HIGHLIGHT,
-                title: "A graded answer key",
-                expectedPageTagName: "mock-test-answer-key-page",
-                setupAction: async () =>
-                {
-                    const sampleMockTest = TutorialSampleDeckBuilder.findSampleMockTest();
-                    if (!sampleMockTest)
-                    {
-                        return;
-                    }
-                    const gradedAttempt = TutorialSampleDeckBuilder.buildGradedSampleAttempt(sampleMockTest);
-                    await openTutorialPage("mock-test-answer-key-page", sampleMockTest, gradedAttempt);
-                },
-                selector: ".mock-test-answer-key-page-body",
-                fallbackBody: "<p>This is the graded answer key for a sample attempt.</p>",
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Open Study",
+                body: "<p>Click <strong>Study</strong> on the sample deck tile to open the study-mode picker.</p>",
+                selector: "deck-tile[data-is-tutorial-sample=\"true\"] .study-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click the Study button on the sample deck tile.</p>"
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Pick Mock Test",
+                body: "<p>Choose <strong>Mock Test</strong> — the exam-style assessment mode.</p>",
+                selector: ".mock-test-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click the Mock Test option in the study-mode picker.</p>"
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Take the test",
+                body: "<p>This is the mock-test picker — every test in the deck is listed here. Click <strong>Take Test</strong> on the sample test.</p>",
+                selector: ".mock-test-picker-take-test-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click Take Test on the sample mock test card.</p>"
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Start the test",
                 body:
                 `
-                    <p>Each question shows <strong>your answer</strong>, the <strong>expected answer</strong>, the <strong>score</strong> and — where relevant — an <strong>examiner's note</strong>. The score is at the top.</p>
-                    <p>This whole result is a local sample; no grading server was called.</p>
+                    <p>Choose <strong>Online</strong> (answer on screen) or <strong>Offline</strong> (write on paper, upload scans), set a duration, then click <strong>Start Test</strong>.</p>
+                    <p>We'll keep the defaults — Online — for this demo.</p>
+                `,
+                selector: ".mock-test-start-start-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click Start Test in the start dialog.</p>"
+            },
+            {
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Answer the questions",
+                expectedPageTagName: "study-page",
+                selector: ".mock-test-runner-items-container",
+                fallbackBody: "<p>Answer the questions in the runner — tick an option for each.</p>",
+                body:
+                `
+                    <p>This is the test runner. A timer counts down in the header, and you answer each question inline — tick an option for these multiple-choice questions. Go ahead and pick an answer, then click <strong>Next</strong>.</p>
+                    <p>(Multiple-choice questions are graded instantly and offline; subjective answers are graded by AI on a real run.)</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Finish the test",
+                body:
+                `
+                    <p>When you're done, click <strong>Finish Test</strong>. In this tutorial your attempt is graded <strong>instantly and offline</strong> — no server call, no credits — and you'll land straight on the answer key.</p>
+                `,
+                selector: ".mock-test-runner-finish-button",
+                expectedPageTagName: "study-page",
+                fallbackBody: "<p>Click Finish Test in the runner header.</p>"
+            },
+            {
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Your graded answer key",
+                expectedPageTagName: "mock-test-answer-key-page",
+                selector: ".mock-test-answer-key-page-body",
+                fallbackBody: "<p>This is the graded answer key for your attempt.</p>",
+                body:
+                `
+                    <p>Here's your graded result. Each question shows <strong>your answer</strong>, the <strong>expected answer</strong>, the <strong>score</strong> and — where relevant — an <strong>examiner's note</strong>. Your total score is at the top.</p>
+                    <p>This was graded entirely on your device — no grading server was called.</p>
                 `
             },
             {
@@ -800,27 +849,50 @@ class TutorialRegistry
                 },
                 body:
                 `
-                    <p>Deck Insights shows you exactly where you stand on a deck. Click <strong>Next</strong> to see it on a sample deck.</p>
+                    <p>Deck Insights shows you exactly where you stand on a deck. Click <strong>Next</strong> and we'll open it on a sample deck together — the same way you would on any of your own decks.</p>
                 `
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Open the deck options",
+                body:
+                `
+                    <p>Click the <strong>three dots</strong> at the top-right of the sample deck tile.</p>
+                    <p>You can also right-click the tile, or long-press it on a phone — they all open the same options menu.</p>
+                `,
+                selector: "deck-tile[data-is-tutorial-sample=\"true\"] .deck-options-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Open the sample deck's options menu (three-dots button, right-click, or long-press). We'll continue once it's open.</p>"
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Open Insights",
+                body: "<p>Pick <strong>Insights</strong> from the menu — that opens Deck Insights for this deck.</p>",
+                selector: ".insights-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click the Insights option in the deck menu, then we'll continue.</p>"
             },
             {
                 type: tutorialStepTypes.HIGHLIGHT,
                 title: "Strong, weak & confused topics",
                 expectedPageTagName: "deck-insights-page",
-                setupAction: async () =>
-                {
-                    const sampleDeck = TutorialSampleDeckBuilder.findSampleDeck();
-                    if (!sampleDeck)
-                    {
-                        return;
-                    }
-                    await openTutorialPage("deck-insights-page", sampleDeck);
-                },
                 selector: "topic-insights",
                 fallbackBody: "<p>The topic breakdown is shown on this page.</p>",
                 body:
                 `
                     <p>Topics are grouped into <strong>strong</strong>, <strong>weak</strong> and <strong>confused</strong> so you know exactly what to study next. (These are seeded for the demo — your real decks fill this in automatically as you study, with no action needed.)</p>
+                `
+            },
+            {
+                type: tutorialStepTypes.HIGHLIGHT,
+                title: "Refresh your insights on demand",
+                expectedPageTagName: "deck-insights-page",
+                selector: ".topic-insights-run-button",
+                fallbackBody: "<p>The <strong>Clear &amp; Re-analyse</strong> button at the top of Topic Insights re-runs the AI analysis to refresh these topics.</p>",
+                body:
+                `
+                    <p><strong>Clear &amp; Re-analyse</strong> re-runs the AI analysis on demand: it clears the current breakdown and regenerates your strong / weak / confused topics from your latest study activity. MindMeld normally does this for you automatically after about a week of studying — this button is the manual override for when you want a fresh read right now.</p>
+                    <p>Try clicking it. During this tutorial it plays a <strong>demo run</strong> — you'll see the progress and the same topics reappear, but no real analysis is queued and no credits are spent. Click <strong>Next</strong> when you're done.</p>
                 `
             },
             {

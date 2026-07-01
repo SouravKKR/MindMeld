@@ -2,7 +2,7 @@ const DatabaseConnector = require("./DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
 const TaskHistoryRecord = require("../../Model/TaskHistoryRecord");
 const { taskStatus } = require("../../Enumerations/TaskStatus");
-const { taskTypes } = require("../../Enumerations/TaskTypes");
+const { taskTypeDisplayName } = require("../../UtilityFunctions.js/TaskTypeDisplayName");
 
 
 /**
@@ -143,7 +143,7 @@ class TaskHistoryQueryEngine
 
     static #buildPayloadSummary(taskDescriptor)
     {
-        const typeName = TaskHistoryQueryEngine.#resolveTypeName(taskDescriptor.getType());
+        const typeName = taskTypeDisplayName(taskDescriptor.getType());
         const payload = taskDescriptor.getPayload();
 
         if (!payload || typeof payload !== "object")
@@ -151,7 +151,10 @@ class TaskHistoryQueryEngine
             return typeName;
         }
 
-        const interesting = payload.parentDeckTitle || payload.deckTitle || payload.title || payload.name || payload.parentDeckId;
+        // subjectName is what a generation run carries (GeneralGenerationSettings),
+        // so an archived "AI Generation" reads "AI Generation — Emotional
+        // Intelligence" instead of the bare type name the user found cryptic.
+        const interesting = payload.parentDeckTitle || payload.deckTitle || payload.title || payload.name || payload.subjectName || payload.parentDeckId;
         if (typeof interesting === "string" && interesting.length > 0)
         {
             const composed = `${typeName} — ${interesting}`;
@@ -163,18 +166,6 @@ class TaskHistoryQueryEngine
         }
 
         return typeName;
-    }
-
-    static #resolveTypeName(typeValue)
-    {
-        for (const taskTypeName of Object.keys(taskTypes))
-        {
-            if (taskTypes[taskTypeName] === typeValue)
-            {
-                return taskTypeName;
-            }
-        }
-        return "TASK";
     }
 
     /**

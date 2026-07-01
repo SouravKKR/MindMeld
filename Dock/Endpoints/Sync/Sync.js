@@ -293,7 +293,10 @@ async function handleSync(request, response)
         const [documentsByPullConfig, pulledDeletions] = await Promise.all(
         [
             Promise.all(pullPromises),
-            SyncQueryEngine.getDeletionsSince(userId, lastSync)
+            // Bounded fetch (sorted by deletedAt asc) — MAX + buffer + 1 lets us
+            // detect overflow and round the cut up to a whole same-timestamp
+            // group without loading every tombstone into memory each cycle.
+            SyncQueryEngine.getDeletionsSince(userId, lastSync, MAX_PULL_DELETIONS + FETCH_BUFFER_BEYOND_MAX + 1)
         ]);
 
         for (let pullConfigIndex = 0; pullConfigIndex < pullConfig.length; pullConfigIndex++)
@@ -404,14 +407,48 @@ async function handleSync(request, response)
 
         if (pulledDeletions.length > MAX_PULL_DELETIONS)
         {
-            const trimmedDeletions = pulledDeletions
-                .slice()
-                .sort((a, b) => a.deletedAt.getTime() - b.deletedAt.getTime())
-                .slice(0, MAX_PULL_DELETIONS);
-            const lastDeletionTimestamp = trimmedDeletions[trimmedDeletions.length - 1].deletedAt.getTime();
-            serverDeletions = trimmedDeletions;
-            overflowWatermarks.push(lastDeletionTimestamp);
-            console.log(`[Sync] Pulled ${MAX_PULL_DELETIONS}/${pulledDeletions.length} deletion(s) (chunked — more pending)`);
+            // Mirror the entity pull's same-timestamp handling (above): round the
+            // cut up to the next distinct deletedAt so a group is never split, and
+            // if a single deletedAt group overruns the fetch buffer, fetch the
+            // whole group directly. Without this, >MAX_PULL_DELETIONS tombstones
+            // sharing one deletedAt (a large cascade delete) would either drop
+            // their tail (the next pull's `deletedAt > lastSync` skips them) or
+            // stall the cursor. Deletion records are tiny, so sending an oversized
+            // same-timestamp group whole is cheap. pulledDeletions is already
+            // sorted ascending by getDeletionsSince.
+            let cutIndex = MAX_PULL_DELETIONS;
+            const lastIncludedTimestamp = pulledDeletions[cutIndex - 1].deletedAt.getTime();
+
+            while (cutIndex < pulledDeletions.length
+                && pulledDeletions[cutIndex].deletedAt.getTime() === lastIncludedTimestamp)
+            {
+                cutIndex++;
+            }
+
+            if (cutIndex === pulledDeletions.length)
+            {
+                // Overran the fetched buffer while still inside one deletedAt
+                // group — fetch the rest of that group so the watermark can
+                // safely advance past it without splitting it.
+                const extraDeletions = await SyncQueryEngine.getDeletionsAtTimestamp(userId, lastIncludedTimestamp);
+                const seenEntityIds  = new Set(pulledDeletions.map((deletion) => deletion.entityId));
+                for (const extraDeletion of extraDeletions)
+                {
+                    if (!seenEntityIds.has(extraDeletion.entityId))
+                    {
+                        pulledDeletions.push(extraDeletion);
+                        seenEntityIds.add(extraDeletion.entityId);
+                    }
+                }
+                serverDeletions = pulledDeletions;
+            }
+            else
+            {
+                serverDeletions = pulledDeletions.slice(0, cutIndex);
+            }
+
+            overflowWatermarks.push(lastIncludedTimestamp);
+            console.log(`[Sync] Pulled ${serverDeletions.length} deletion(s) up to ${new Date(lastIncludedTimestamp).toISOString()} (chunked — more pending)`);
         }
         else
         {

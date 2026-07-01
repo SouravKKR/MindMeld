@@ -96,28 +96,36 @@ class LocalWorkerSupervisor
         }
 
         const startedAtMilliseconds = Date.now();
-        const childProcess = spawn(pythonPath, scriptArgs, { cwd: agentServicePath });
+
+        // In production (no --debug) inherit Dock's stdout/stderr so the worker
+        // writes straight to the journal (journalctl -u mindmeld-dock). This both
+        // captures the full Python traceback of any task failure — which the old
+        // pipe-into-a-no-op path silently discarded, leaving failures like
+        // MapTopics' "[Errno 32] Broken pipe" un-diagnosable — and removes the
+        // Node-managed pipe entirely (systemd/journald always drains). In --debug
+        // keep the piped, per-line-tagged path so dev output stays attributed.
+        const stdioConfiguration = Logger.isEnabled() ? "pipe" : ["ignore", "inherit", "inherit"];
+        const childProcess = spawn(pythonPath, scriptArgs, { cwd: agentServicePath, stdio: stdioConfiguration });
 
         LocalWorkerSupervisor.#workers.set(workerIndex, childProcess);
 
-        const onOutput = (chunk, streamName) =>
+        if (Logger.isEnabled())
         {
-            if (!Logger.isEnabled())
+            const onOutput = (chunk, streamName) =>
             {
-                return;
-            }
-            const text = chunk.toString("utf-8");
-            for (const line of text.split(/\r?\n/))
-            {
-                if (line.length > 0)
+                const text = chunk.toString("utf-8");
+                for (const line of text.split(/\r?\n/))
                 {
-                    Logger.log(`[LocalWorker ${workerIndex}:${streamName}] ${line}`);
+                    if (line.length > 0)
+                    {
+                        Logger.log(`[LocalWorker ${workerIndex}:${streamName}] ${line}`);
+                    }
                 }
-            }
-        };
+            };
 
-        childProcess.stdout.on("data", (chunk) => onOutput(chunk, "stdout"));
-        childProcess.stderr.on("data", (chunk) => onOutput(chunk, "stderr"));
+            childProcess.stdout.on("data", (chunk) => onOutput(chunk, "stdout"));
+            childProcess.stderr.on("data", (chunk) => onOutput(chunk, "stderr"));
+        }
 
         childProcess.on("error", (spawnError) =>
         {

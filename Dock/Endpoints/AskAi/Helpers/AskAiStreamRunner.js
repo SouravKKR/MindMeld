@@ -42,6 +42,9 @@ class AskAiStreamRunner
     static #MAX_ATTACHED_IMAGES     = 4;
     static #MAX_IMAGE_BASE64_BYTES  = 8 * 1024 * 1024;
     static #MAX_INFORMATION_SOURCES = 8;
+    // Bounds the whole DECK chat contextPayload (client-retrieved snippets +
+    // conversation history + deck-image ids) — generous, just catches abuse.
+    static #DECK_CONTEXT_MAX_CHARS  = 200000;
 
     static async run({ taskType, userId, modelId, bEnableGoogleSearch, request, response })
     {
@@ -317,9 +320,35 @@ class AskAiStreamRunner
         }
 
         const contextKind = requestBody.contextKind;
-        if (contextKind !== "CARD" && contextKind !== "STUDY_MATERIAL")
+        if (contextKind !== "CARD" && contextKind !== "STUDY_MATERIAL" && contextKind !== "DECK")
         {
-            return "contextKind must be 'CARD' or 'STUDY_MATERIAL'.";
+            return "contextKind must be 'CARD', 'STUDY_MATERIAL', or 'DECK'.";
+        }
+
+        // DECK = the deck-level Chat mode. The client does its own (client-side)
+        // retrieval and passes the snippets + conversation history + deck-image
+        // ids inside contextPayload; the worker grounds on them. Only bound the
+        // total size here — the worker shapes the prompt.
+        if (contextKind === "DECK")
+        {
+            const contextPayload = requestBody.contextPayload;
+            if (typeof contextPayload !== "object" || contextPayload === null)
+            {
+                return "contextPayload is required for a DECK chat.";
+            }
+            let serializedSize = 0;
+            try
+            {
+                serializedSize = JSON.stringify(contextPayload).length;
+            }
+            catch (serializeError)
+            {
+                return "contextPayload must be JSON-serializable.";
+            }
+            if (serializedSize > AskAiStreamRunner.#DECK_CONTEXT_MAX_CHARS)
+            {
+                return `DECK contextPayload exceeds ${AskAiStreamRunner.#DECK_CONTEXT_MAX_CHARS} chars.`;
+            }
         }
 
         // selectedText is OPTIONAL — when empty/absent, the request acts on

@@ -3,7 +3,7 @@ import CreditNotice from "../Globals/Classes/Credits/CreditNotice.js";
 import DialogBox from "./DialogBox.js";
 import PageNavigator from "../Globals/Classes/PageNavigator.js";
 import { taskTypes } from "../Globals/Enumerations/TaskTypes.js";
-import { enumerationToTitleCase } from "../Globals/UtilityFunctions/EnumerationToTitleCase.js";
+import { taskTypeDisplayName } from "../Globals/UtilityFunctions/TaskTypeDisplayName.js";
 
 /**
  * PausedTaskBanner
@@ -27,14 +27,23 @@ class PausedTaskBanner extends HTMLElement
             return;
         }
 
+        // A generation saves a resumable snapshot at START (so a restart-orphaned
+        // run can be recovered). While the server is still actively driving the
+        // run, that snapshot must NOT be shown as "interrupted" — the task is
+        // running fine and is watchable from Activity. Only surface the resume
+        // prompt once the run is genuinely no longer being driven.
+        if (this.#taskState.isStillRunning)
+        {
+            return;
+        }
+
         this.style.display = "";
         this.#render();
     }
 
     #taskLabel()
     {
-        const taskTypeName = Object.keys(taskTypes).find(name => taskTypes[name] === this.#taskState.taskType);
-        return taskTypeName ? enumerationToTitleCase(taskTypeName) : "task";
+        return taskTypeDisplayName(this.#taskState.taskType);
     }
 
     // The banner reads differently depending on why the task paused: a manual
@@ -47,6 +56,11 @@ class PausedTaskBanner extends HTMLElement
         if (this.#taskState.pausedReason === "USER_PAUSED")
         {
             return `Your ${labelHtml} was paused. Resume it to continue from where it left off.`;
+        }
+
+        if (this.#taskState.pausedReason === "INTERRUPTED")
+        {
+            return `Your ${labelHtml} was interrupted before it finished. Resume it to continue from where it left off.`;
         }
 
         return `Your ${labelHtml} was paused (out of credits). Top up your credits, then resume it.`;

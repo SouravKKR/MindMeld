@@ -207,6 +207,33 @@ class PeriodicAssignmentQueryEngine
 
         return { terminatedCount: result.modifiedCount };
     }
+
+    /**
+     * Permanently removes an assignment document (HARD delete). Used by the
+     * admin "Delete" action to clear an old / irrelevant assignment from the
+     * list — unlike terminate, which keeps the record for reporting. The
+     * authoritative creditTransactions ledger is NOT touched, so already-granted
+     * credits and their audit trail survive; the caller is responsible for
+     * clearing the per-recipient cursor rows.
+     * @param {string} assignmentId
+     * @returns {Promise<{ deleted: boolean }>}
+     */
+    static async deleteById(assignmentId)
+    {
+        if (typeof assignmentId !== "string" || assignmentId.length === 0)
+        {
+            return { deleted: false };
+        }
+
+        const collection = await PeriodicAssignmentQueryEngine.#getCollection();
+        if (!collection)
+        {
+            return { deleted: false };
+        }
+
+        const result = await collection.deleteOne({ id: assignmentId });
+        return { deleted: result.deletedCount === 1 };
+    }
 }
 
 module.exports = PeriodicAssignmentQueryEngine;

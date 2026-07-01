@@ -24,6 +24,7 @@ import UserIdentityManager from "../Classes/UserIdentityManager.js";
 import AutoAnalysisDeckFields from "../Classes/Analysis/AutoAnalysisDeckFields.js";
 import CuratedFlashcardFields from "../Classes/Analysis/CuratedFlashcardFields.js";
 import CuratedStudyMaterialFields from "../Classes/Analysis/CuratedStudyMaterialFields.js";
+import ChatStudyMaterialFields from "../Classes/Analysis/ChatStudyMaterialFields.js";
 import CuratedStudyMaterialMigration from "../Classes/Analysis/CuratedStudyMaterialMigration.js";
 import BrowserLlmDownloadConstants from "../Constants/BrowserLlmDownloadConstants.js";
 import SearchableDropdown from "../../CommonComponents/SearchableDropdown.js";
@@ -38,6 +39,12 @@ class Deck
     static #bBooting = false;
     static #importBaseTimeMilliseconds = null;
     static #importNextOffsetMilliseconds = 0;
+
+    // Storage/display budget for a deck's short name. A blunt slice to this length
+    // produced mid-word fragments like "Communication Sk"; setShortName now trims to
+    // a whole-word boundary instead. The Agent's BeautifyDeckShortNames workflow
+    // targets this same number — keep the two in sync.
+    static MAX_SHORT_NAME_LENGTH = 16;
 
     #id = "";
     #name = "";
@@ -327,8 +334,37 @@ class Deck
      */
     setShortName(name)
     {
-        this.#shortName = name.substring(0, 16);
+        this.#shortName = Deck.fitShortName(name);
         this.#lifecycle?.touch();
+    }
+
+    /**
+     * Fits a short name into MAX_SHORT_NAME_LENGTH without cutting a word in
+     * half. Names that already fit are returned untrimmed; longer ones are
+     * trimmed back to the last whole word that fits. Only a single word that is
+     * itself longer than the budget is hard-capped (unavoidable at the storage
+     * limit) — every other case stays a complete, readable label.
+     * @param {string} name - The proposed short name.
+     * @returns {string} A short name no longer than MAX_SHORT_NAME_LENGTH.
+     */
+    static fitShortName(name)
+    {
+        const trimmed = (name ?? "").trim();
+
+        if (trimmed.length <= Deck.MAX_SHORT_NAME_LENGTH)
+        {
+            return trimmed;
+        }
+
+        const window = trimmed.substring(0, Deck.MAX_SHORT_NAME_LENGTH);
+        const lastSpaceIndex = window.lastIndexOf(" ");
+
+        if (lastSpaceIndex > 0)
+        {
+            return window.substring(0, lastSpaceIndex).trimEnd();
+        }
+
+        return window;
     }
 
     /**
@@ -570,9 +606,17 @@ class Deck
     {
         const materials = this.getStudyMaterials(bRecursive);
         const detailLevelSet = new Set();
+        let hasChatMaterial = false;
 
         for (const material of materials)
         {
+            // Chat-derived materials are their OWN "Chats" category, never a real
+            // detail level — so they don't pollute Summary / Standard.
+            if (typeof material.isChat === "function" && material.isChat())
+            {
+                hasChatMaterial = true;
+                continue;
+            }
             const detailLevel = material.getDetailLevel?.();
             if (typeof detailLevel === "number")
             {
@@ -580,7 +624,12 @@ class Deck
             }
         }
 
-        return Array.from(detailLevelSet).sort((firstLevel, secondLevel) => firstLevel - secondLevel);
+        const levels = Array.from(detailLevelSet).sort((firstLevel, secondLevel) => firstLevel - secondLevel);
+        if (hasChatMaterial)
+        {
+            levels.push(ChatStudyMaterialFields.STUDY_PICKER_LEVEL);
+        }
+        return levels;
     }
 
     addMockTest(mockTest)

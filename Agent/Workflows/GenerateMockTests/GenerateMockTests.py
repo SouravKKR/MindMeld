@@ -261,6 +261,42 @@ class GenerateMockTests(Workflow):
 
         return False
 
+    def __has_question_paper_source(self) -> bool:
+        """Returns True if the user added at least one QUESTION_PAPER source."""
+        sources = self.__settings.get_information_sources() or []
+        for extractable in sources:
+            information_source = extractable.get_information_source() if hasattr(extractable, "get_information_source") else None
+            if information_source and information_source.get_source_type() == InformationSourceTypes.QUESTION_PAPER:
+                return True
+        return False
+
+    async def __extract_question_paper_pdf_bytes(self) -> list[bytes]:
+        """
+        Reads the uploaded bytes of every QUESTION_PAPER information source so
+        their questions can seed the PYQ pool directly — no exam name or web
+        source required (covers courses whose papers aren't online). The bytes
+        feed the same __extract_pyq_from_pdfs path the web harvest uses.
+        """
+        pdf_bytes_list = []
+        sources = self.__settings.get_information_sources() or []
+
+        for extractable in sources:
+            information_source = extractable.get_information_source() if hasattr(extractable, "get_information_source") else None
+            if not information_source:
+                continue
+            if information_source.get_source_type() != InformationSourceTypes.QUESTION_PAPER:
+                continue
+            try:
+                pdf_path  = join_path("/", information_source.get_directory_path(), information_source.get_hash())
+                pdf_bytes = await Persistence.read(pdf_path)
+                if pdf_bytes:
+                    pdf_bytes_list.append(pdf_bytes)
+            except Exception as read_error:
+                print(f"[GenerateMockTests] Failed to read question paper '{information_source.get_name()}': {read_error}")
+                continue
+
+        return pdf_bytes_list
+
     @staticmethod
     def __pyq_validator(response: AutomationResponse) -> bool:
         try:
@@ -282,6 +318,18 @@ class GenerateMockTests(Workflow):
         pdf_bytes_list = await self.__procure_pdf_baselines(PYQ_HARVEST_MAX_PDFS)
         if not pdf_bytes_list:
             print("[GenerateMockTests] PYQ harvest: no PDFs downloaded — pool will be empty.")
+            return []
+
+        return await self.__extract_pyq_from_pdfs(pdf_bytes_list)
+
+    async def __extract_pyq_from_pdfs(self, pdf_bytes_list: list[bytes]) -> list[dict]:
+        """
+        Extracts up to PYQ_POOL_MAX_QUESTIONS structured question objects from
+        the given PDF bytes via the LLM. Shared by the web-harvest path and the
+        user-uploaded QUESTION_PAPER path. Entries:
+            {question, answer, type, difficulty, topicHint}
+        """
+        if not pdf_bytes_list:
             return []
 
         model_string, provider_class = ModelPool.EXAM_QUESTION_TYPE_DETERMINER_MODEL
@@ -576,20 +624,35 @@ class GenerateMockTests(Workflow):
         log(f"[GenerateMockTests] Starting for task {main_task_id}")
         await self.__update_progress(0.05)
 
-        # ── 0. PYQ harvest — only when examName is set AND a web info source
-        #       is present. Templates that ship additionalWebSources (e.g.
-        #       JEE Mains) auto-satisfy this; users who haven't enabled a web
-        #       source skip the harvest silently.
+        # ── 0. PYQ pool — exam-style question seeds the worker rephrases/derives
+        #       from. Two sources, unioned:
+        #       (a) User-uploaded QUESTION_PAPER sources — extracted directly, no
+        #           examName/web needed (covers courses whose papers aren't
+        #           online). Taken FIRST so they win the cap over web seeds.
+        #       (b) Web harvest — only when examName is set AND a web info source
+        #           is present (templates with additionalWebSources auto-satisfy).
         pyq_pool: list[dict] = []
-        if (self.__exam_name and self.__exam_name.strip()) and self.__has_web_information_source():
+
+        try:
+            question_paper_pdfs = await self.__extract_question_paper_pdf_bytes()
+            if question_paper_pdfs:
+                log(f"[GenerateMockTests] Extracting PYQ seeds from {len(question_paper_pdfs)} uploaded question paper(s)...")
+                pyq_pool.extend(await self.__extract_pyq_from_pdfs(question_paper_pdfs))
+                log(f"[GenerateMockTests] Question-paper PYQ seeds: {len(pyq_pool)}")
+        except Exception as paper_error:
+            log(f"[GenerateMockTests] Question-paper extraction failed (continuing): {paper_error}")
+
+        if len(pyq_pool) < PYQ_POOL_MAX_QUESTIONS and (self.__exam_name and self.__exam_name.strip()) and self.__has_web_information_source():
             try:
-                pyq_pool = await self.__harvest_pyq_questions()
-                log(f"[GenerateMockTests] PYQ pool size: {len(pyq_pool)}")
+                pyq_pool.extend(await self.__harvest_pyq_questions())
+                log(f"[GenerateMockTests] PYQ pool size after web harvest: {len(pyq_pool)}")
             except Exception as harvest_error:
-                log(f"[GenerateMockTests] PYQ harvest failed (continuing without seeds): {harvest_error}")
-                pyq_pool = []
-        else:
-            log("[GenerateMockTests] Skipping PYQ harvest (need examName + web info source).")
+                log(f"[GenerateMockTests] PYQ web harvest failed (continuing without seeds): {harvest_error}")
+        elif not pyq_pool:
+            log("[GenerateMockTests] Skipping PYQ harvest (need a Question Paper source, or examName + web info source).")
+
+        # Cap, keeping the uploaded-paper seeds (already at the front) preferentially.
+        pyq_pool = pyq_pool[:PYQ_POOL_MAX_QUESTIONS]
         await flush_log()
 
         # ── 1. Resolve blueprint ───────────────────────────────────────────────

@@ -406,6 +406,10 @@ Common/Testing/Experimental/**/Output/
 Common/Testing/Experimental/_iter/
 .production.env
 
+# Deployment automation config (secrets: Linode token, SSH keys, base-node host).
+# Read by Common/Deployment/deploy.sh. Never commit.
+deployment.env
+
 # Local-only portable Graphviz binaries used for dev/testing of the SVG enhancer
 # (production gets `dot` from the Docker image's apt graphviz package instead).
 Agent/.tools/

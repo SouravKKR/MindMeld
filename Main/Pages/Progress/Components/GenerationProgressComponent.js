@@ -1,6 +1,6 @@
-import { taskTypes } from "../../../Globals/Enumerations/TaskTypes.js";
 import { taskStatus } from "../../../Globals/Enumerations/TaskStatus.js";
-import { enumerationToTitleCase } from "../../../Globals/UtilityFunctions/EnumerationToTitleCase.js";
+import { taskTypes } from "../../../Globals/Enumerations/TaskTypes.js";
+import { taskTypeDisplayName } from "../../../Globals/UtilityFunctions/TaskTypeDisplayName.js";
 
 /**
  * GenerationProgressComponent
@@ -33,6 +33,28 @@ class GenerationProgressComponent extends HTMLElement
 {
     #taskTree = null;
     #overallCompletionHighWaterMark = 0;
+    // Wall-clock (ms) the synthetic GENERATION_FINALIZATION node was first seen,
+    // so its bar can creep over time instead of sitting at a fixed value. Reset
+    // when the node is absent.
+    #finalizationFirstSeenAtMilliseconds = null;
+
+    // Canonical pipeline phases → cumulative bands of the overall bar. The bar
+    // advances as each phase's effective completion rises; a finished phase keeps
+    // contributing its full band while the next phase is still at 0 (fixing the
+    // boundary dip to ~0). Generate is the bulk of the work, so it owns the
+    // widest band. Weights sum to 1.0.
+    static #OVERALL_PHASES =
+    [
+        { types: [taskTypes.PROCESS_SYLLABUS],            weight: 0.15 },
+        { types: [taskTypes.MAP_TOPICS_WITH_CONTENT],     weight: 0.30 },
+        { types: [taskTypes.GENERATE_FLASHCARDS, taskTypes.GENERATE_STUDY_MATERIAL, taskTypes.GENERATE_MOCK_TESTS], weight: 0.45 },
+        { types: [taskTypes.GENERATION_FINALIZATION, taskTypes.PREPARE_IMAGES, taskTypes.ENHANCE_IMAGES, taskTypes.BEAUTIFY_DECK_SHORT_NAMES], weight: 0.10 },
+    ];
+
+    // Finalization-node creep tuning: it climbs asymptotically from its server
+    // start toward this ceiling so "Finalizing…" reads as progressing.
+    static #FINALIZATION_CREEP_CEILING = 0.95;
+    static #FINALIZATION_CREEP_HALF_LIFE_MILLISECONDS = 15 * 1000;
 
     // ─────────────────────────────────────────────
     //  Public API
@@ -45,7 +67,46 @@ class GenerationProgressComponent extends HTMLElement
     update(taskTree)
     {
         this.#taskTree = taskTree;
+        this.#applyFinalizationCreep();
         this.#render();
+    }
+
+    /**
+     * Creeps the synthetic GENERATION_FINALIZATION node's completion upward over
+     * time so the "Finalizing…" row reads as progressing — moveToDatabase has no
+     * real sub-progress to report, and the server emits a deliberately low start.
+     * Asymptotic approach toward a ceiling, mirroring the upload card's OCR-phase
+     * animation. Each poll delivers a fresh tree (low server value again), so the
+     * creep is derived purely from elapsed time and never compounds. No-op when
+     * the node is absent (resets the timer for the next run).
+     */
+    #applyFinalizationCreep()
+    {
+        if (!this.#taskTree)
+        {
+            this.#finalizationFirstSeenAtMilliseconds = null;
+            return;
+        }
+
+        const finalizationNode = this.#flattenTree(this.#taskTree)
+            .find(taskNode => taskNode.type === taskTypes.GENERATION_FINALIZATION);
+
+        if (!finalizationNode)
+        {
+            this.#finalizationFirstSeenAtMilliseconds = null;
+            return;
+        }
+
+        if (this.#finalizationFirstSeenAtMilliseconds === null)
+        {
+            this.#finalizationFirstSeenAtMilliseconds = Date.now();
+        }
+
+        const elapsedMilliseconds = Date.now() - this.#finalizationFirstSeenAtMilliseconds;
+        const serverStart = finalizationNode.completion ?? 0;
+        const approachProgress = 1 - Math.pow(0.5, elapsedMilliseconds / GenerationProgressComponent.#FINALIZATION_CREEP_HALF_LIFE_MILLISECONDS);
+        const creepedCompletion = serverStart + (GenerationProgressComponent.#FINALIZATION_CREEP_CEILING - serverStart) * approachProgress;
+        finalizationNode.completion = Math.max(serverStart, creepedCompletion);
     }
 
     /**
@@ -82,6 +143,37 @@ class GenerationProgressComponent extends HTMLElement
     {
         if (!this.#taskTree) return taskStatus.NOT_STARTED;
         return this.#computeOverallStatus(this.#taskTree);
+    }
+
+    /**
+     * Returns the error message of the first failed node in the tree, or null
+     * when nothing failed (or the failed node carried no message). The Agent
+     * records a concise, user-readable reason on the failing task's
+     * payload.error, which GetProgress surfaces as node.error — this exposes it
+     * so the progress page can tell the user WHY a run failed instead of just
+     * "failed".
+     * @returns {string|null}
+     */
+    getFirstFailureMessage()
+    {
+        if (!this.#taskTree)
+        {
+            return null;
+        }
+
+        for (const taskNode of this.#flattenTree(this.#taskTree))
+        {
+            if (this.#computeEffectiveStatus(taskNode) === taskStatus.FAILED)
+            {
+                const message = (taskNode.error || "").trim();
+                if (message.length > 0)
+                {
+                    return message;
+                }
+            }
+        }
+
+        return null;
     }
 
     // ─────────────────────────────────────────────
@@ -208,38 +300,54 @@ class GenerationProgressComponent extends HTMLElement
     }
 
     /**
-     * Computes the overall pipeline completion percentage.
+     * Computes the overall pipeline completion (0–1) as a phase-weighted sum.
      *
-     * Distinct from `#computeEffectiveCompletion` because the overall bar
-     * needs to TICK SMOOTHLY across sequential phases (Process Syllabus →
-     * Map Topics → Flashcards → …). Per-node display uses the worker-only
-     * accumulator so a finished phase stops mis-reporting its successors'
-     * progress; the overall bar deliberately keeps the old behavior of
-     * averaging across ALL children at every level so the % climbs as
-     * each phase finishes.
+     * The old approach (recursive average across all children) discarded a
+     * finished parent's own completion in favour of its children's average, so
+     * the bar collapsed to ~0 at every stage boundary (e.g. Process Syllabus
+     * done but Map Topics still 0%) — invisible on the live page only because a
+     * high-water-mark masked it, but exposed as "0%" on a fresh mount via
+     * Activity. Instead we map the canonical pipeline phases to cumulative bands
+     * and sum each phase's EFFECTIVE completion (worker-fold-aware) scaled by its
+     * band width. This is monotonic in real progress, starts at 0, and is
+     * recomputed from the tree on every poll — so reopening from Activity shows
+     * the correct value immediately. Generate owns the widest band (it is the
+     * bulk of the work). A phase whose node isn't in the tree yet contributes 0.
      *
-     * @param {object} taskNode
+     * @param {object} taskTree
      * @returns {number}
      */
-    #computeRecursiveAverageAcrossAllChildren(taskNode)
-    {
-        if (Array.isArray(taskNode.children) && taskNode.children.length > 0)
-        {
-            const childCompletions = taskNode.children.map(childNode =>
-                this.#computeRecursiveAverageAcrossAllChildren(childNode)
-            );
-            return childCompletions.reduce((sum, completion) => sum + completion, 0) / childCompletions.length;
-        }
-        return taskNode.completion ?? 0;
-    }
-
     #computeOverallCompletion(taskTree)
     {
         if (!taskTree)
         {
             return 0;
         }
-        return this.#computeRecursiveAverageAcrossAllChildren(taskTree);
+
+        // A finished run reads 100% even though the transient finalization node
+        // is removed from the tree once moveToDatabase clears its marker (which
+        // would otherwise drop the phased sum back to 0.90 at the very end).
+        if (this.#computeOverallStatus(taskTree) === taskStatus.COMPLETED)
+        {
+            return 1.0;
+        }
+
+        const allNodes = this.#flattenTree(taskTree);
+
+        let overallCompletion = 0;
+        for (const phase of GenerationProgressComponent.#OVERALL_PHASES)
+        {
+            const phaseNodes = allNodes.filter(taskNode => phase.types.includes(taskNode.type));
+            if (phaseNodes.length === 0)
+            {
+                continue;
+            }
+            const phaseCompletion = phaseNodes
+                .map(taskNode => this.#computeEffectiveCompletion(taskNode))
+                .reduce((sum, completion) => sum + completion, 0) / phaseNodes.length;
+            overallCompletion += phase.weight * phaseCompletion;
+        }
+        return overallCompletion;
     }
 
     /**
@@ -285,8 +393,7 @@ class GenerationProgressComponent extends HTMLElement
      */
     #getTaskTypeLabel(typeValue)
     {
-        const key = Object.keys(taskTypes).find(taskTypeKey => taskTypes[taskTypeKey] === typeValue);
-        return key ? enumerationToTitleCase(key) : `Task ${typeValue}`;
+        return taskTypeDisplayName(typeValue);
     }
 
     /**
@@ -317,6 +424,24 @@ class GenerationProgressComponent extends HTMLElement
         }
 
         return { label: "Unknown", color: "var(--quaternary-background-color)", pulse: false };
+    }
+
+    /**
+     * Display metadata for the OVERALL bar. A user-paused or out-of-credits run is
+     * recoverable, not failed — but the pipeline stamps the root task FAILED to
+     * stop launching new stages, so #computeOverallStatus would report FAILED and
+     * the bar would read "Failed" right next to the "Generation paused — resume
+     * it" banner. The tree carries a `paused` / `outOfCredits` flag for exactly
+     * this; honour it so the overall status reads "Paused" instead.
+     * @returns {{ label: string, color: string }}
+     */
+    #getOverallStatusDisplay()
+    {
+        if (this.#taskTree && (this.#taskTree.paused === true || this.#taskTree.outOfCredits === true))
+        {
+            return { label: "Paused", color: "var(--status-warning, #F0AA32)" };
+        }
+        return this.#getStatusMetadata(this.#computeOverallStatus(this.#taskTree));
     }
 
     /**
@@ -375,7 +500,6 @@ class GenerationProgressComponent extends HTMLElement
         }
 
         const overallCompletion      = this.#computeOverallCompletion(this.#taskTree);
-        const overallStatus          = this.#computeOverallStatus(this.#taskTree);
 
         // Advance the high water mark but never retreat it.
         // Transitions between pipeline stages cause brief computed dips
@@ -386,7 +510,7 @@ class GenerationProgressComponent extends HTMLElement
         );
 
         const overallCompletionPct   = Math.round(this.#overallCompletionHighWaterMark * 100);
-        const overallStatusMetadata  = this.#getStatusMetadata(overallStatus);
+        const overallStatusMetadata  = this.#getOverallStatusDisplay();
 
         this.querySelector(".overall-progress-fill").style.width         = `${overallCompletionPct}%`;
         this.querySelector(".overall-progress-percentage").textContent   = `${overallCompletionPct}%`;

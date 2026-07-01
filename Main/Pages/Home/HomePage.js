@@ -19,6 +19,9 @@ import "../../Globals/Classes/Streak/ProfileBadgeInjector.js";
 // Side-effect import: starts the metric tracker's flush timer + tab-hide flush
 // and ships any buffer left from a previous session.
 import "../../Globals/Classes/Metrics/MetricTracker.js";
+// Side-effect import: eagerly prefetches the deck-chat embedding table at boot
+// and binds the edit-listener that keeps deck vectors warm (EmbeddingPrewarmer.init()).
+import "../../Globals/Classes/Embeddings/EmbeddingPrewarmer.js";
 
 class HomePage extends HTMLElement
 {

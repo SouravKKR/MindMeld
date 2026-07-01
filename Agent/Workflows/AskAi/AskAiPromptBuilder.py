@@ -92,6 +92,31 @@ class AskAiPromptBuilder:
         "{image_url_list}"
     )
 
+    # Deck-image steer for the Chat mode. The deck images are attached to the
+    # request as vision input in this id order; when one is directly relevant the
+    # model embeds a REFERENCE to it — never base64 — which the chat renderer then
+    # swaps for the real image. Only the listed ids are valid.
+    DECK_IMAGE_GUIDANCE = (
+        "These images are from the deck content above and are attached for you to "
+        "see, in this id order. When one is directly relevant to your answer, embed "
+        "it inline using <img data-deck-image-id=\"ID\"> — use ONLY an id from this "
+        "list and DO NOT include a src or base64 data. Omit images that are not "
+        "clearly relevant. The <img> tag is permitted in addition to the structural "
+        "tags listed above.\n{deck_image_id_list}"
+    )
+
+    # Deck-chat citation steer. The deck excerpts are numbered [1], [2], … only so
+    # the model can read them — that numbering is INTERNAL and the learner never sees
+    # it. Left unchecked the model cites those numbers inline ("[1, 4]"), which the
+    # learner sees as dead, unresolvable text (the chat UI already lists the real
+    # sources as separate clickable chips). Forbid inline citation markers entirely.
+    DECK_CHAT_CITATION_GUIDANCE = (
+        " Do not include citation markers, footnotes, bracketed source numbers, or a "
+        "reference/sources list such as [1], [4], or [1, 4] anywhere in your answer — "
+        "the learner cannot see the excerpt numbering. Weave any facts you use "
+        "directly into your prose."
+    )
+
     # Output-language steer — appended to the user prompt LAST (strongest
     # position) only when the learner picked a non-English language. When
     # the language is English this is never used, so the prompt is
@@ -202,6 +227,14 @@ class AskAiPromptBuilder:
                 user_query               = user_query,
                 information_source_block = information_source_block,
             )
+        elif context_kind == AskAiContextKinds.DECK:
+            # Deck-level Chat: the client did its own retrieval and passed the
+            # nearest cards/materials + conversation + deck-image ids in
+            # context_payload. Ground strictly on those.
+            user_prompt = AskAiPromptBuilder.__build_deck_chat_user_prompt(
+                context_payload = context_payload,
+                user_query      = user_query,
+            )
         else:
             material_excerpt = AskAiPromptBuilder.__html_to_plain_text(context_payload.get("content", ""))
             if len(material_excerpt) > AskAiPromptBuilder.MATERIAL_CONTENT_CHAR_LIMIT:
@@ -224,7 +257,9 @@ class AskAiPromptBuilder:
         # model to that verified list — the bare guidance otherwise relies
         # on the model knowing direct image URLs, which grounding does not
         # actually supply.
-        if b_enable_google_search:
+        # DECK chat brings its own deck-image guidance and is deliberately
+        # deck-grounded, so the web-image steer is skipped for it.
+        if b_enable_google_search and context_kind != AskAiContextKinds.DECK:
             if candidate_image_urls:
                 image_url_list = "\n".join(f"- {image_url}" for image_url in candidate_image_urls)
                 image_guidance = AskAiPromptBuilder.WEB_IMAGE_GUIDANCE_WITH_CANDIDATES.replace("{image_url_list}", image_url_list)
@@ -246,6 +281,86 @@ class AskAiPromptBuilder:
             user_prompt = user_prompt + "\n\n" + guidance_template.replace("{language_name}", language_name)
 
         return system_prompt, user_prompt
+
+    @staticmethod
+    def __build_deck_chat_user_prompt(context_payload: dict, user_query: str) -> str:
+        snippets       = context_payload.get("snippets") if isinstance(context_payload, dict) else None
+        conversation   = context_payload.get("conversation") if isinstance(context_payload, dict) else None
+        deck_image_ids = context_payload.get("deckImageIds") if isinstance(context_payload, dict) else None
+
+        grounding_block    = AskAiPromptBuilder.__build_deck_grounding_block(snippets or [])
+        conversation_block = AskAiPromptBuilder.__build_conversation_block(conversation or [])
+        image_block        = AskAiPromptBuilder.__build_deck_image_block(deck_image_ids or [])
+        safe_user_query    = AskAiPromptBuilder.__sanitise_for_prompt(user_query or "")
+
+        prompt = (
+            "You are a study assistant. Use the excerpts from THIS deck's cards and "
+            "study materials below as your PRIMARY context: ground your answer in them "
+            "and prefer their terminology and framing. You MAY also use your own general "
+            "knowledge to give a complete, correct answer when the excerpts are partial "
+            "or don't fully cover the question — just stay consistent with the deck. If "
+            "the deck doesn't cover the topic at all, still answer from general knowledge "
+            "and briefly note that it isn't covered in this deck.\n\n"
+            f"=== Deck excerpts ===\n{grounding_block}\n\n"
+        )
+        if conversation_block:
+            prompt += f"=== Conversation so far ===\n{conversation_block}\n\n"
+        prompt += f"=== Learner's question ===\n{safe_user_query}\n"
+        if image_block:
+            prompt += "\n" + image_block
+        # The deck-chat prompt is assembled inline (unlike the card/material modes,
+        # which inject {html_style_block} via their templates), so the load-bearing
+        # "Output is HTML, NOT markdown" clause must be appended here too — without it
+        # the model defaults to markdown and the learner sees raw **asterisks** / *bullets.
+        prompt += (
+            "\n\n=== Output format ===\n"
+            + AskAiPromptBuilder.HTML_STYLE_BLOCK
+            + AskAiPromptBuilder.DECK_CHAT_CITATION_GUIDANCE
+        )
+        return prompt
+
+    @staticmethod
+    def __build_deck_grounding_block(snippets: list) -> str:
+        lines = []
+        # Defensive cap — the client retriever already returns far fewer, but a
+        # crafted request could pack many tiny snippets under the Dock size cap.
+        for index, snippet in enumerate(snippets[:30]):
+            if not isinstance(snippet, dict):
+                continue
+            kind = (snippet.get("kind") or "").upper()
+            if kind == "CARD":
+                question = AskAiPromptBuilder.__sanitise_for_prompt(snippet.get("question", ""))[: AskAiPromptBuilder.QUESTION_CHAR_LIMIT]
+                answer   = AskAiPromptBuilder.__sanitise_for_prompt(snippet.get("answer", ""))[: AskAiPromptBuilder.ANSWER_CHAR_LIMIT]
+                lines.append(f"[{index + 1}] (card) Q: {question}\n    A: {answer}")
+            else:
+                content = AskAiPromptBuilder.__html_to_plain_text(snippet.get("content", ""))
+                if len(content) > AskAiPromptBuilder.MATERIAL_CONTENT_CHAR_LIMIT:
+                    content = content[: AskAiPromptBuilder.MATERIAL_CONTENT_CHAR_LIMIT] + " …"
+                lines.append(f"[{index + 1}] (study material) {content}")
+
+        return "\n\n".join(lines) if lines else "(no matching deck content was found)"
+
+    @staticmethod
+    def __build_conversation_block(conversation: list) -> str:
+        lines = []
+        for turn in conversation:
+            if not isinstance(turn, dict):
+                continue
+            text = AskAiPromptBuilder.__sanitise_for_prompt(turn.get("text", ""))
+            if not text:
+                continue
+            speaker = "Learner" if (turn.get("role") or "").lower() == "user" else "Assistant"
+            lines.append(f"{speaker}: {text}")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def __build_deck_image_block(deck_image_ids: list) -> str:
+        valid_ids = [str(image_id) for image_id in deck_image_ids if str(image_id).strip()]
+        if not valid_ids:
+            return ""
+        id_list = "\n".join(f"- {image_id}" for image_id in valid_ids)
+        return AskAiPromptBuilder.DECK_IMAGE_GUIDANCE.replace("{deck_image_id_list}", id_list)
 
     @staticmethod
     def __build_card_user_prompt(prompt_mode, b_whole_entity, question_text, answer_text, safe_selected_text, user_query, information_source_block) -> str:

@@ -1,6 +1,10 @@
 import DialogBox from "../../CommonComponents/DialogBox.js";
 import HeaderComponent from "../../CommonComponents/HeaderComponent.js";
 import { automaticGenerationModes } from "../../Globals/Enumerations/AutomaticGenerationModes.js";
+import { automationLevels } from "../../Globals/Enumerations/AutomationLevels.js";
+import { questionTypes } from "../../Globals/Enumerations/QuestionTypes.js";
+import { difficultyLevels } from "../../Globals/Enumerations/DifficultyLevels.js";
+import { studyMaterialDetailLevels } from "../../Globals/Enumerations/StudyMaterialDetailLevels.js";
 import { convertElementToEnumSelect } from "../../Globals/UtilityFunctions/ConvertElementToEnumSelect.js";
 import FlashcardGenerationFields from "./Components/FlashcardGenerationFields.js";
 import GeneralGenerationFields from "./Components/GeneralGenerationFields.js";
@@ -20,6 +24,12 @@ class AutomaticGenerationPage extends HTMLElement
     #parentDeck = null;
     #suppressTemplatedFieldGuard = false;
     #activeTemplateRevertClosure = null;
+    #autoFillInFlight = false;
+
+    // Enum key sets used to validate and shape the LLM's Auto Fill recommendations
+    // before they are written into the flavor-field settings.
+    static #QUESTION_TYPE_KEYS = Object.keys(questionTypes);
+    static #DIFFICULTY_KEYS = Object.keys(difficultyLevels);
 
     /**
      * Called by PageNavigator before connectedCallback.
@@ -122,6 +132,7 @@ class AutomaticGenerationPage extends HTMLElement
         this.#handleTemplateApplication();
         this.#handleTemplatedFieldGuard();
         this.#handleActionButtonEvents();
+        this.#handleAutoFillGenerationOptions();
     }
 
     /**
@@ -321,6 +332,490 @@ class AutomaticGenerationPage extends HTMLElement
         generalFields?.resetTemplatePickerLabel?.();
     }
 
+    /**
+     * The "Auto Fill Other Options" helper. GeneralGenerationFields raises a
+     * bubbling "auto-fill-generation-options-requested" event; we validate, warn,
+     * call the credit-metered /Generate/AutoFillOptions agent task, and apply the
+     * returned recommendations to the flavor-field settings.
+     */
+    #handleAutoFillGenerationOptions()
+    {
+        this.addEventListener("auto-fill-generation-options-requested", async () =>
+        {
+            // Re-entry guard: a second click while the confirm dialog is open or a
+            // request is in flight must not stack a second dialog / POST / charge.
+            // Set BEFORE the first await so the pre-confirm window is covered, and
+            // cleared in finally on every exit path.
+            if (this.#autoFillInFlight)
+            {
+                return;
+            }
+            this.#autoFillInFlight = true;
+
+            const generalFields = this.querySelector("general-generation-fields");
+            const autoFillButton = generalFields?.querySelector(".auto-fill-options-button");
+            const originalLabel = autoFillButton ? autoFillButton.textContent : "";
+
+            try
+            {
+                const generalSettings = generalFields?.getSettings();
+                const subjectName = (generalSettings?.getSubjectName() || "").trim();
+
+                // The model needs at least a subject to tailor anything sensible.
+                if (subjectName.length === 0)
+                {
+                    await DialogBox.alert("Subject required", "Please enter a Subject Name first so we can tailor the options to it.");
+                    return;
+                }
+
+                const switchesToAdvanced = this.#currentModeKey() === "SIMPLE";
+                const confirmed = await DialogBox.confirm(
+                    "Auto Fill Other Options",
+                    "This uses AI and will consume a few credits. It overwrites your flashcard, study material and mock test options with AI-recommended values"
+                    + (switchesToAdvanced ? " and switches to Advanced mode" : "")
+                    + ". Continue?"
+                );
+                if (!confirmed)
+                {
+                    return;
+                }
+
+                if (autoFillButton)
+                {
+                    autoFillButton.disabled = true;
+                    autoFillButton.textContent = "Thinking…";
+                }
+
+                const requestBody =
+                {
+                    subjectName: subjectName,
+                    examName: generalSettings.getExamName() || "",
+                    description: generalSettings.getDescription() || "",
+                    additionalInstructions: generalSettings.getAdditionalInstructions() || "",
+                    mode: this.#currentModeKey(),
+                    enabledArtifacts: this.#collectEnabledArtifacts(),
+                };
+
+                const response = await fetch("/Generate/AutoFillOptions",
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(requestBody),
+                });
+
+                if (await MaintenanceNotice.handleIfMaintenance(response))
+                {
+                    return;
+                }
+
+                if (response.status === 402)
+                {
+                    const insufficientDetail = await response.json().catch(() => ({}));
+                    await CreditNotice.showInsufficientCredits(insufficientDetail);
+                    return;
+                }
+
+                if (!response.ok)
+                {
+                    await DialogBox.alert("Couldn't auto fill", "We couldn't generate recommendations right now. Please try again.");
+                    return;
+                }
+
+                const responsePayload = await response.json().catch(() => null);
+                if (!responsePayload)
+                {
+                    await DialogBox.alert("Couldn't auto fill", "We couldn't generate recommendations right now. Please try again.");
+                    return;
+                }
+
+                this.#applyAutoFilledOptions(responsePayload.options || {});
+            }
+            catch (autoFillError)
+            {
+                console.error("[AutomaticGenerationPage] Auto fill failed:", autoFillError);
+                await DialogBox.alert("Couldn't auto fill", "We couldn't reach the server. Please check your connection.");
+            }
+            finally
+            {
+                this.#autoFillInFlight = false;
+                if (autoFillButton)
+                {
+                    autoFillButton.disabled = false;
+                    autoFillButton.textContent = originalLabel;
+                }
+            }
+        });
+    }
+
+    /**
+     * The current generation mode key ("SIMPLE" | "ADVANCED" | "TEMPLATE") read
+     * from the mode dropdown — the single source of truth the page already uses.
+     */
+    #currentModeKey()
+    {
+        const generationModeSelect = this.querySelector(".generation-mode-select");
+        return generationModeSelect ? generationModeSelect.value : "ADVANCED";
+    }
+
+    /**
+     * Which artifacts are enabled, from each container's enabled checkbox. In
+     * SIMPLE the containers are hidden but their checkboxes stay checked, so this
+     * correctly reports "produce all three" unless the user unchecked one in
+     * Advanced first.
+     */
+    #collectEnabledArtifacts()
+    {
+        const isArtifactEnabled = (containerClass) =>
+        {
+            const container = this.querySelector(containerClass);
+            const checkbox = container?.querySelector(".generation-enabled-checkbox");
+            return Boolean(checkbox?.checked);
+        };
+
+        return {
+            flashcards: isArtifactEnabled(".flashcard-generation-container"),
+            studyMaterials: isArtifactEnabled(".study-material-generation-container"),
+            mockTests: isArtifactEnabled(".mock-test-generation-container"),
+        };
+    }
+
+    /**
+     * Writes the LLM recommendations onto the flavor-field settings, switching
+     * SIMPLE → ADVANCED first, then repaints every field from settings. Mirrors
+     * #handleTemplateApplication's suppress-guard + rebuild bracket so a TEMPLATE
+     * rebuild isn't mistaken for a manual edit and bounced to ADVANCED.
+     */
+    #applyAutoFilledOptions(options)
+    {
+        const generalFields = this.querySelector("general-generation-fields");
+        const flashcardFields = this.querySelector("flashcard-generation-fields");
+        const studyMaterialFields = this.querySelector("study-material-generation-fields");
+        const mockTestFields = this.querySelector("mock-test-generation-fields");
+
+        // SIMPLE → ADVANCED: flip the select AND fire a synthetic change so both
+        // the component listener (sets generationMode + template-select visibility)
+        // and the page's applyMode (reveals the flavor containers) run.
+        if (this.#currentModeKey() === "SIMPLE")
+        {
+            const generationModeSelect = this.querySelector(".generation-mode-select");
+            if (generationModeSelect)
+            {
+                generationModeSelect.value = "ADVANCED";
+                generationModeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+        }
+
+        const isTemplate = this.#currentModeKey() === "TEMPLATE";
+        const enabledArtifacts = this.#collectEnabledArtifacts();
+
+        // General additional instructions: never overwrite a non-empty user value,
+        // and in TEMPLATE mode leave the template's instructions untouched.
+        if (!isTemplate && typeof options.general_additional_instructions === "string")
+        {
+            const generalSettings = generalFields.getSettings();
+            const existingGeneral = (generalSettings.getAdditionalInstructions() || "").trim();
+            const suggestedGeneral = options.general_additional_instructions.trim();
+            if (existingGeneral.length === 0 && suggestedGeneral.length > 0)
+            {
+                generalSettings.setAdditionalInstructions(suggestedGeneral);
+            }
+        }
+
+        if (enabledArtifacts.flashcards && options.flashcards)
+        {
+            this.#applyFlashcardOptions(flashcardFields.getSettings(), options.flashcards, isTemplate);
+        }
+        if (enabledArtifacts.studyMaterials && options.study_materials)
+        {
+            this.#applyStudyMaterialOptions(studyMaterialFields.getSettings(), options.study_materials, isTemplate);
+        }
+        if (enabledArtifacts.mockTests && options.mock_tests)
+        {
+            this.#applyMockTestOptions(mockTestFields.getSettings(), options.mock_tests, isTemplate);
+        }
+
+        this.#suppressTemplatedFieldGuard = true;
+        try
+        {
+            this.#dispatchRebuildFromSettings();
+        }
+        finally
+        {
+            setTimeout(() =>
+            {
+                this.#suppressTemplatedFieldGuard = false;
+            }, 0);
+        }
+    }
+
+    /**
+     * Flashcard recommendations. Difficulty is tuned in every mode (TEMPLATE
+     * included); the rest only outside TEMPLATE. A value is only written when the
+     * model supplied a usable one, and the matching method is flipped to MANUAL
+     * only then so an empty recommendation never blanks an existing setting.
+     */
+    #applyFlashcardOptions(settings, flashcardOptions, isTemplate)
+    {
+        const difficultyMap = this.#buildWeightsMap(flashcardOptions.difficulty_weights, AutomaticGenerationPage.#DIFFICULTY_KEYS);
+        if (difficultyMap !== null)
+        {
+            settings.setQuestionDifficultyWithWeights(difficultyMap);
+            settings.setDifficultyMethod(automationLevels.MANUAL);
+        }
+
+        if (isTemplate)
+        {
+            return;
+        }
+
+        if (typeof flashcardOptions.number_of_cards === "number")
+        {
+            settings.setNumQuestionsToGenerate(this.#clampInteger(flashcardOptions.number_of_cards, 6, 500));
+            settings.setNumCardsMethod(automationLevels.MANUAL);
+        }
+
+        const typeMap = this.#buildWeightsMap(flashcardOptions.question_type_weights, AutomaticGenerationPage.#QUESTION_TYPE_KEYS);
+        if (typeMap !== null)
+        {
+            settings.setQuestionTypesWithWeights(typeMap);
+            settings.setQuestionTypesMethod(automationLevels.MANUAL);
+        }
+
+        this.#applyArtifactAdditionalInstructions(settings, flashcardOptions.additional_instructions);
+    }
+
+    /**
+     * Mock-test recommendations. Difficulty weights and number of tests are tuned
+     * in every mode (TEMPLATE included); the rest only outside TEMPLATE.
+     */
+    #applyMockTestOptions(settings, mockTestOptions, isTemplate)
+    {
+        const difficultyMap = this.#buildWeightsMap(mockTestOptions.difficulty_weights, AutomaticGenerationPage.#DIFFICULTY_KEYS);
+        if (difficultyMap !== null)
+        {
+            // MockTestGenerationSettings stores difficulty as five individual floats.
+            settings.setVeryEasyQuestions(difficultyMap.VERY_EASY);
+            settings.setEasyQuestions(difficultyMap.EASY);
+            settings.setMediumQuestions(difficultyMap.MEDIUM);
+            settings.setHardQuestions(difficultyMap.HARD);
+            settings.setVeryHardQuestions(difficultyMap.VERY_HARD);
+            settings.setDifficultyMethod(automationLevels.MANUAL);
+        }
+
+        if (typeof mockTestOptions.number_of_tests === "number")
+        {
+            settings.setNumberOfTests(this.#clampInteger(mockTestOptions.number_of_tests, 1, 20));
+            settings.setNumTestsMethod(automationLevels.MANUAL);
+        }
+
+        if (isTemplate)
+        {
+            return;
+        }
+
+        if (typeof mockTestOptions.questions_per_test === "number")
+        {
+            settings.setNumQuestionsPerTest(this.#clampInteger(mockTestOptions.questions_per_test, 6, 250));
+            settings.setNumQuestionsMethod(automationLevels.MANUAL);
+        }
+
+        const typeMap = this.#buildWeightsMap(mockTestOptions.question_type_weights, AutomaticGenerationPage.#QUESTION_TYPE_KEYS);
+        if (typeMap !== null)
+        {
+            settings.setQuestionTypesWithWeights(typeMap);
+            settings.setQuestionTypesMethod(automationLevels.MANUAL);
+        }
+
+        if (typeof mockTestOptions.duration_minutes === "number")
+        {
+            settings.setDurationMinutes(this.#clampInteger(mockTestOptions.duration_minutes, 0, 600));
+        }
+        if (typeof mockTestOptions.correct_marks === "number")
+        {
+            settings.setCorrectMarks(mockTestOptions.correct_marks);
+        }
+        if (typeof mockTestOptions.wrong_marks === "number")
+        {
+            settings.setWrongMarks(mockTestOptions.wrong_marks);
+        }
+        if (typeof mockTestOptions.unattempted_marks === "number")
+        {
+            settings.setUnattemptedMarks(mockTestOptions.unattempted_marks);
+        }
+        if (typeof mockTestOptions.partial_marks === "number")
+        {
+            settings.setPartialMarks(mockTestOptions.partial_marks);
+        }
+
+        const sections = this.#buildSections(mockTestOptions.sections);
+        if (sections !== null)
+        {
+            settings.setSectionStructure(sections);
+        }
+
+        this.#applyArtifactAdditionalInstructions(settings, mockTestOptions.additional_instructions);
+    }
+
+    /**
+     * Study-material recommendations. Detail levels are the only structural field
+     * (tuned in every mode); instructions only outside TEMPLATE.
+     */
+    #applyStudyMaterialOptions(settings, studyMaterialOptions, isTemplate)
+    {
+        const detailLevelValues = this.#buildDetailLevelValues(studyMaterialOptions.detail_levels);
+        if (detailLevelValues.length > 0)
+        {
+            settings.setDetailLevels(detailLevelValues);
+        }
+
+        if (isTemplate)
+        {
+            return;
+        }
+
+        this.#applyArtifactAdditionalInstructions(settings, studyMaterialOptions.additional_instructions);
+    }
+
+    /**
+     * Sets an artifact's additional instructions only when the model supplied a
+     * non-empty value AND the field is currently empty — a value the user (or a
+     * template) already entered is never overwritten.
+     */
+    #applyArtifactAdditionalInstructions(settings, instructionText)
+    {
+        if (typeof instructionText !== "string")
+        {
+            return;
+        }
+        const suggested = instructionText.trim();
+        if (suggested.length === 0)
+        {
+            return;
+        }
+        const existing = (settings.getAdditionalInstructions() || "").trim();
+        if (existing.length === 0)
+        {
+            settings.setAdditionalInstructions(suggested);
+        }
+    }
+
+    /**
+     * Turns a recommendation weight object (named snake_case fields) into a
+     * complete enum-keyed weights map (0 for any excluded key, mirroring the
+     * template-seed convention so the field components render unticked rows).
+     * Returns null when no key carries a positive weight, so the caller skips
+     * the setting and leaves the existing one intact.
+     */
+    #buildWeightsMap(namedWeights, allowedKeys)
+    {
+        if (!namedWeights || typeof namedWeights !== "object")
+        {
+            return null;
+        }
+
+        const positiveByKey = {};
+        let hasPositive = false;
+        for (const fieldName of Object.keys(namedWeights))
+        {
+            const enumKey = fieldName.toUpperCase();
+            const weightValue = namedWeights[fieldName];
+            if (allowedKeys.includes(enumKey) && typeof weightValue === "number" && Number.isFinite(weightValue) && weightValue > 0)
+            {
+                positiveByKey[enumKey] = weightValue;
+                hasPositive = true;
+            }
+        }
+
+        if (!hasPositive)
+        {
+            return null;
+        }
+
+        const completeMap = {};
+        for (const enumKey of allowedKeys)
+        {
+            completeMap[enumKey] = positiveByKey[enumKey] ?? 0;
+        }
+        return completeMap;
+    }
+
+    /**
+     * Maps the detail-level selection booleans to the integer enum values the
+     * study-material settings store, preserving enum order.
+     */
+    #buildDetailLevelValues(detailLevelSelection)
+    {
+        if (!detailLevelSelection || typeof detailLevelSelection !== "object")
+        {
+            return [];
+        }
+
+        const detailLevelValues = [];
+        for (const levelKey of Object.keys(studyMaterialDetailLevels))
+        {
+            if (detailLevelSelection[levelKey.toLowerCase()] === true)
+            {
+                detailLevelValues.push(studyMaterialDetailLevels[levelKey]);
+            }
+        }
+        return detailLevelValues;
+    }
+
+    /**
+     * Sanitises the recommended section list into the shape the section editor
+     * reads: { name, questionTypes:[valid keys], questionCount, totalMarks }.
+     * Sections with no valid question type are dropped; returns null when none
+     * survive so the caller leaves the existing structure intact.
+     */
+    #buildSections(rawSections)
+    {
+        if (!Array.isArray(rawSections))
+        {
+            return null;
+        }
+
+        const sections = [];
+        for (const rawSection of rawSections)
+        {
+            if (!rawSection || typeof rawSection !== "object")
+            {
+                continue;
+            }
+
+            const sectionQuestionTypes = Array.isArray(rawSection.question_types)
+                ? rawSection.question_types
+                    .map(typeName => String(typeName).toUpperCase())
+                    .filter(typeKey => AutomaticGenerationPage.#QUESTION_TYPE_KEYS.includes(typeKey))
+                : [];
+            if (sectionQuestionTypes.length === 0)
+            {
+                continue;
+            }
+
+            const sectionName = typeof rawSection.name === "string" && rawSection.name.trim().length > 0 ? rawSection.name.trim() : "Section";
+            const totalMarks = typeof rawSection.total_marks === "number" && Number.isFinite(rawSection.total_marks) ? rawSection.total_marks : 0;
+
+            sections.push({
+                name: sectionName,
+                questionTypes: sectionQuestionTypes,
+                questionCount: this.#clampInteger(rawSection.question_count, 0, 250),
+                totalMarks: totalMarks,
+            });
+        }
+
+        return sections.length > 0 ? sections : null;
+    }
+
+    #clampInteger(value, minimum, maximum)
+    {
+        let numericValue = parseInt(value, 10);
+        if (isNaN(numericValue))
+        {
+            numericValue = minimum;
+        }
+        return Math.min(Math.max(numericValue, minimum), maximum);
+    }
+
     #handleActionButtonEvents()
     {
         const deckLibraryLink = this.querySelector(".automatic-generation-deck-library-link");
@@ -352,6 +847,22 @@ class AutomaticGenerationPage extends HTMLElement
             if (!this.#validate())
             {
                 await DialogBox.alert("Error", "Please fill out all the fields and make sure the values are valid.");
+                return;
+            }
+
+            // Block while any uploaded document is still uploading or being OCR'd.
+            // Such a source has no resolved server record yet, so getSources()
+            // silently omits it — starting now would generate from fewer sources
+            // than the user chose (the "only 4 of my 5 sources were used" bug).
+            // Surface it instead of quietly dropping the in-flight uploads.
+            const hasPendingUploads = Array.from(this.querySelectorAll("information-source-selector"))
+                .some(selector => typeof selector.hasPendingUploads === "function" && selector.hasPendingUploads());
+            if (hasPendingUploads)
+            {
+                await DialogBox.alert(
+                    "Uploads still in progress",
+                    "Some of your uploaded documents are still uploading or being processed. Please wait until every source shows a green tick before starting generation."
+                );
                 return;
             }
 

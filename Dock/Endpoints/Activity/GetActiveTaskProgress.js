@@ -2,6 +2,7 @@ const TaskManager = require("../../Globals/Classes/Task/TaskManager");
 const TaskHistoryQueryEngine = require("../../Globals/Classes/Database/TaskHistoryQueryEngine");
 const { taskStatus } = require("../../Globals/Enumerations/TaskStatus");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const { appendPostPipelineProgress } = require("../Helpers/AppendPostPipelineProgress");
 
 
 /**
@@ -60,6 +61,13 @@ class GetActiveTaskProgressEndpoint
             }
 
             const tree = await GetActiveTaskProgressEndpoint.#buildTaskTree(taskId);
+
+            // Append post-pipeline progress (image/beautify subtrees + the
+            // synthetic GENERATION_FINALIZATION node) exactly as /Generate/Progress
+            // does, so reopening a live generation from Activity shows the same
+            // finalization row instead of an abruptly-truncated tree.
+            await appendPostPipelineProgress(tree, taskId, (postPipelineTaskId) => GetActiveTaskProgressEndpoint.#buildTaskTree(postPipelineTaskId));
+
             // Flag a mid-pipeline out-of-credits stop so the client can offer
             // the top-up / resume flow instead of a generic failure.
             tree.outOfCredits = GetActiveTaskProgressEndpoint.#treeHasInsufficientCredits(tree);

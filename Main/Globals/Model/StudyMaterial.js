@@ -7,6 +7,7 @@ import PaidDeckFieldCipher from "../Classes/Crypto/PaidDeckFieldCipher.js";
 import { entityTypes } from "../Enumerations/EntityTypes.js";
 import { studyMaterialDetailLevels } from "../Enumerations/StudyMaterialDetailLevels.js";
 import CuratedStudyMaterialFields from "../Classes/Analysis/CuratedStudyMaterialFields.js";
+import ChatStudyMaterialFields from "../Classes/Analysis/ChatStudyMaterialFields.js";
 
 class StudyMaterial
 {
@@ -214,6 +215,16 @@ class StudyMaterial
     isCurated()
     {
         return this.getAdditionalData()[CuratedStudyMaterialFields.B_CURATED] === true;
+    }
+
+    /**
+     * Convenience flag for chat-derived materials saved from a deck Chat
+     * session ("Save as study material"). Mirrors isCurated(); regular and
+     * curated materials lack the `bChat` flag, so this returns false for them.
+     */
+    isChat()
+    {
+        return this.getAdditionalData()[ChatStudyMaterialFields.B_CHAT] === true;
     }
 
     /**

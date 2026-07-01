@@ -271,9 +271,12 @@ class SyncBlockingDialog
         {
             return;
         }
-        this.#statusLabel.textContent = errorMessage
-            ? `Sync failed: ${errorMessage}. You can close this dialog and retry.`
-            : "Sync failed. You can close this dialog and retry.";
+        if (errorMessage)
+        {
+            // The raw detail is useful for debugging but not for the user.
+            console.error(`[SyncBlockingDialog] Sync failed: ${errorMessage}`);
+        }
+        this.#statusLabel.textContent = "Sync failed. You can close this dialog and retry.";
         this.#statusLabel.classList.add("sync-blocking-status-error");
         if (this.#closeButton)
         {

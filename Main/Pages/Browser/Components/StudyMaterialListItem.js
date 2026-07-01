@@ -57,10 +57,13 @@ class StudyMaterialListItem extends HTMLElement
     connectedCallback()
     {
         const preview = htmlToSearchableText(this.#material.getContent()).substring(0, 140);
+        const chatBadge = this.#material.isChat()
+            ? `<span style="display:inline-block;font-size:11px;font-weight:700;padding:1px 6px;margin-right:6px;border-radius:6px;background:linear-gradient(45deg,#0098C4,#B55BD0);color:#fff;vertical-align:middle;">Chat</span>`
+            : "";
 
         this.innerHTML =
         `
-            <div class="entity-text-container">${preview || "(empty)"}</div>
+            <div class="entity-text-container">${chatBadge}${preview || "(empty)"}</div>
             <button class="entity-options-button">...</button>
         `;
 

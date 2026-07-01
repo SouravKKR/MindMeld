@@ -47,6 +47,12 @@ class CreditConfiguration
         ASK_AI_PRO_PLUS: 1,
     };
 
+    // Default flat per-request cost for the "Auto Fill Other Options" generation
+    // helper. Like the AskAi tiers it bypasses the task queue (a one-shot Gemini
+    // flash-lite call), so CreditPreflight would read an ABSENT rule as free —
+    // the store backfills this on load. Cheap single call; admin-tunable later.
+    static AUTO_FILL_GENERATION_OPTIONS_DEFAULT_FLAT_COST = 0.3;
+
     constructor({ taskRules = {}, storageRules = {}, rewardMilestones = [], creditPricing = [], creditPacks = [], minimumPurchaseCredits = CreditConfiguration.DEFAULT_MINIMUM_PURCHASE_CREDITS, defaultEnforcementMode = creditEnforcementModes.ALLOW_NEGATIVE, signupGrant = CreditConfiguration.DEFAULT_SIGNUP_GRANT, promoGrantAmount = CreditConfiguration.DEFAULT_PROMO_GRANT_AMOUNT, version = 1, updatedAt = null, updatedBy = '' } = {})
     {
         this.setTaskRules(taskRules);
@@ -333,6 +339,37 @@ class CreditConfiguration
             bAddedAnyRule = true;
         }
         return bAddedAnyRule;
+    }
+
+    /**
+     * Ensures the Auto Fill Other Options helper has a configured spend rule,
+     * adding the default flat-cost rule when missing. An existing rule (including
+     * an admin-disabled one) is never overwritten. Mirrors ensureAskAiTaskRules:
+     * the helper bypasses the task queue, so without a rule CreditPreflight would
+     * treat it as unmetered and the post-call charge would never be required.
+     * @returns {boolean} true when the rule was added
+     */
+    ensureAutoFillGenerationOptionsTaskRule()
+    {
+        const taskTypeName = "AUTO_FILL_GENERATION_OPTIONS";
+        if (this.#taskRules[taskTypeName])
+        {
+            return false;
+        }
+
+        // minimumBalanceToRun matches the flat cost so a user who could not
+        // afford the ON_SUCCESS charge is refused at preflight rather than
+        // receiving a free result the post-call charge then floor-rejects.
+        const flatCost = CreditConfiguration.AUTO_FILL_GENERATION_OPTIONS_DEFAULT_FLAT_COST;
+        this.#taskRules[taskTypeName] = new CreditSpendRule
+        ({
+            enabled: true,
+            deductionTiming: creditDeductionTimings.ON_SUCCESS,
+            minimumBalanceToRun: flatCost,
+            minimumBalanceFloor: 0,
+            terms: [new CreditSpendTerm({ credits: flatCost, divisors: {} })],
+        });
+        return true;
     }
 
     /**

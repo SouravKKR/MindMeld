@@ -48,7 +48,11 @@ class CreditConfigurationStore
         // into both fresh and pre-existing configuration documents.
         const bAddedAskAiRules = configuration.ensureAskAiTaskRules();
 
-        if (!document || bAddedAskAiRules)
+        // Same reasoning for the Auto Fill Other Options helper — it also
+        // bypasses the task queue and must carry a configured flat-cost rule.
+        const bAddedAutoFillRule = configuration.ensureAutoFillGenerationOptionsTaskRule();
+
+        if (!document || bAddedAskAiRules || bAddedAutoFillRule)
         {
             await collection.updateOne
             (

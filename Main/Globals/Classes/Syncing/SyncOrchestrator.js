@@ -395,12 +395,19 @@ class SyncOrchestrator
         // every local entity. After a successful push, `lastSync`
         // advances past `joinDate` and the condition stops firing —
         // no loop-prevention flag needed.
+        // Same drain-safety rule as the stale-state check below: never reset
+        // mid-drain. A chunked-drain continuation's cursor is the MIN overflow
+        // watermark and can legitimately sit below joinDate while old data is
+        // still draining; resetting it here would restart the drain from epoch
+        // every continuation. Only judge the cursor on a fresh (non-drain)
+        // cycle, where it genuinely represents the last successful sync.
         const currentLastSync = SyncTransport.getLastSyncTimestamp();
         const sessionUser     = window["user"];
         const userJoinDate    = sessionUser && typeof sessionUser.getJoinDate === "function"
             ? sessionUser.getJoinDate()
             : null;
-        if (currentLastSync > 0
+        if (!SyncOrchestrator.#bInChunkedDrain
+            && currentLastSync > 0
             && userJoinDate instanceof Date
             && !Number.isNaN(userJoinDate.getTime())
             && currentLastSync < userJoinDate.getTime())
@@ -743,9 +750,22 @@ class SyncOrchestrator
             window.dispatchEvent(new CustomEvent(SyncEvents.STARTED));
         }
 
-        // Stale-state detection — reset to full sync if last sync is ancient
+        // Stale-state detection — reset to full sync if last sync is ancient.
+        //
+        // CRITICAL: never during a chunked-drain continuation. Mid-drain the
+        // cursor is the MIN overflow watermark — the server returns the
+        // oldest-pending collection first (serverTime = min(overflowWatermarks)
+        // in Sync.js), so while a backlog is draining the cursor legitimately
+        // points at data far older than the 30-day threshold. Without the
+        // `!bResumingDrain` guard the check fires on every continuation,
+        // resets the cursor to 0, and the drain restarts from epoch forever —
+        // the "Restoring sync state" infinite loop hit by any account whose
+        // oldest unsynced entity/deletion is older than the stale threshold.
+        // The transient drain cursor is NOT a "last successful sync" time;
+        // only a FRESH cycle's cursor is, so only a fresh cycle may judge it
+        // stale.
         const lastSyncTimestamp = SyncTransport.getLastSyncTimestamp();
-        if (lastSyncTimestamp > 0)
+        if (!bResumingDrain && lastSyncTimestamp > 0)
         {
             const timeSinceLastSync = Date.now() - lastSyncTimestamp;
             if (timeSinceLastSync > SyncOrchestrator.#STALE_THRESHOLD_MILLISECONDS)

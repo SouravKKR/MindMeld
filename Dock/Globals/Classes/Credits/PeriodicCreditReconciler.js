@@ -178,10 +178,13 @@ class PeriodicCreditReconciler
             return 0;
         }
 
+        // On-join applies to BOTH scopes. For an org it fires when a new member
+        // joins; for a people-set it grants an immediate bonus the first time
+        // each listed person is reconciled. The grant is keyed `:onjoin` (no
+        // period/membership component) so it lands exactly once per email ever.
         const onJoinMode = assignment.getOnJoinMode();
-        const isOrganizationScope = assignment.getScopeType() === periodicScopeTypes.ORGANIZATION;
-        const grantsOnJoin = isOrganizationScope
-            && (onJoinMode === periodicOnJoinModes.ON_JOIN_PLUS_PERIODIC || onJoinMode === periodicOnJoinModes.ON_JOIN_PLUS_PERIODIC_SKIP_FIRST);
+        const grantsOnJoin = onJoinMode === periodicOnJoinModes.ON_JOIN_PLUS_PERIODIC
+            || onJoinMode === periodicOnJoinModes.ON_JOIN_PLUS_PERIODIC_SKIP_FIRST;
 
         const perUserAmount = PeriodicCreditReconciler.#perUserAmount(assignment);
 

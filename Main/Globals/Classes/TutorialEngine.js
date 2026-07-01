@@ -285,6 +285,47 @@ class TutorialEngine
         }
     }
 
+    /**
+     * Boot-time orphan sweep.
+     *
+     * Cleanup of tutorial-created entities normally runs from the
+     * overlay's Skip / Finish / Start-over buttons (#requestExit /
+     * #requestStartOver). None of those fire when the page is torn down
+     * mid-tutorial — a reload, a closed tab, a crash, or any other
+     * unexpected exit. In those cases the deck / card / study-material /
+     * mock-test the user created during the tour keeps its
+     * CREATED_DURING_TUTORIAL_KEY flag on disk and is never deleted.
+     *
+     * Because every clean exit deletes all flagged entities, any flagged
+     * entity still present at boot is by definition an orphan from a
+     * previously-abandoned tutorial. Delete them.
+     *
+     * Must be awaited BEFORE maybeAutoPlay so a freshly-started tutorial's
+     * own (legitimately flagged) entities aren't swept out from under it.
+     * No-ops while a tutorial is running, as a guard against being called
+     * out of order.
+     */
+    static async sweepOrphanedTutorialEntities()
+    {
+        if (TutorialEngine.isRunning())
+        {
+            return;
+        }
+
+        const summary = await TutorialEntityCleanup.clearTutorialCreatedItems(TutorialEngine.CREATED_DURING_TUTORIAL_KEY);
+
+        const bSweptAnything =
+            summary.decks > 0 ||
+            summary.cards > 0 ||
+            summary.studyMaterials > 0 ||
+            summary.mockTests > 0;
+
+        if (bSweptAnything)
+        {
+            console.log("[TutorialEngine] Swept orphaned items from an abandoned tutorial:", summary);
+        }
+    }
+
     // ── Internals ─────────────────────────────────────────────────────
 
     static #renderCurrentStep()
@@ -495,6 +536,25 @@ class TutorialEngine
         {
             PageNavigator.back();
             popsRemaining--;
+        }
+
+        // A tutorial that walked a real flow ending in clearAndOpen has no Home
+        // left in the stack to pop back to — the mock-test walkthrough, for
+        // instance, lands on the answer key via a wiped stack, so the loop
+        // above pops nothing and we'd otherwise strand the user there.
+        // Guarantee we end on Home regardless of how the stack was left.
+        const currentPage = PageNavigator.getCurrentPage ? PageNavigator.getCurrentPage() : null;
+        const currentTagName = currentPage ? currentPage.tagName.toLowerCase() : "";
+        if (currentTagName !== "home-page")
+        {
+            if (typeof PageNavigator.clearAndOpen === "function")
+            {
+                PageNavigator.clearAndOpen("home-page");
+            }
+            else
+            {
+                PageNavigator.open("home-page");
+            }
         }
     }
 

@@ -2,6 +2,7 @@ import CardPreviewSession from "./Classes/CardPreviewSession.js";
 import ContentStudySession from "./Classes/ContentStudySession.js";
 import CuratedStudySession from "./Classes/CuratedStudySession.js";
 import MockTestSession from "./Classes/MockTestSession.js";
+import ChatSession from "./Classes/ChatSession.js";
 import ReviseSession from "./Classes/ReviseSession.js";
 import SpacedRepetitonSession from "./Classes/SpacedRepetitionSession.js";
 import StudySession from "./Classes/StudySession.js";
@@ -242,6 +243,24 @@ class StudyPage extends HTMLElement
             return;
         }
 
+        // ── Deck Chat: separate ChatGPT-style surface owned by the session ─────
+        if (this.#session instanceof ChatSession)
+        {
+            const chatDeck    = this.#session._deck;
+            const headerTitle = (chatDeck && !chatDeck.isRoot()) ? `Chat: ${chatDeck.getShortName()}` : "Chat";
+
+            this.innerHTML =
+            `
+                <header-component title="${headerTitle}"></header-component>
+                <div class="chat-page-wrapper">
+                    <div class="chat-container"></div>
+                </div>
+            `;
+
+            this.#session.start();
+            return;
+        }
+
         // ── Standard card / content study layout ───────────────────────────────
         const studyingDeck = this.#session._deck;
         const headerTitle  = studyingDeck.isRoot()
@@ -358,6 +377,14 @@ class StudyPage extends HTMLElement
         if (this.#session instanceof MockTestSession && typeof this.#session.stop === "function")
         {
             this.#session.stop();
+        }
+
+        // Generic per-session leave hook — ChatSession uses it to abort an
+        // in-flight chat stream so the user isn't charged for an answer they
+        // navigated away from (PageNavigator.back hides, doesn't unload).
+        if (typeof this.#session.onPageLeft === "function")
+        {
+            this.#session.onPageLeft();
         }
     }
 

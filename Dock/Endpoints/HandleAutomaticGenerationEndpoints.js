@@ -2,6 +2,7 @@ const authenticationProviders = require("../Globals/Enumerations/AuthenticationP
 const { Packetron, PacketronHandlerFlags, PacketronRequestMethod } = require("@gamiumgamers/packetron");
 const { handleGenerate } = require("./AutomaticGeneration/Generate");
 const { handleEstimateCost } = require("./AutomaticGeneration/EstimateCost");
+const { handleAutoFillOptions } = require("./AutomaticGeneration/AutoFillOptions");
 const { handleInformationSourceUpload } = require("./AutomaticGeneration/InformationSourceUpload");
 const { handleListInformationSourcesForUser } = require("./AutomaticGeneration/ListInformationSourcesForUser");
 const { handleInformationSourceDownload } = require("./AutomaticGeneration/InformationSourceDownload");
@@ -39,6 +40,18 @@ function handleAutomaticGenerationEndpoints(server)
     ({
         routePath: `/Generate/EstimateCost`,
         handler: handleEstimateCost,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ ensureLogin ]
+    });
+
+    // "Auto Fill Other Options" helper — recommends generation option values from
+    // the entered subject/exam/instructions. Credit-metered like the AskAi tiers
+    // (it bypasses the task queue; the runner does the preflight + charge).
+    server.handle
+    ({
+        routePath: `/Generate/AutoFillOptions`,
+        handler: handleAutoFillOptions,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ ensureLogin ]

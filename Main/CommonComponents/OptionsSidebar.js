@@ -99,14 +99,16 @@ class OptionsSidebar extends HTMLElement
                     const response = await fetch("/ReleaseNotes/List");
                     if (!response.ok)
                     {
-                        await DialogBox.alert("Release Notes", `Could not load release notes (HTTP ${response.status}).`);
+                        console.error(`[OptionsSidebar] Release notes list failed (HTTP ${response.status}).`);
+                        await DialogBox.alert("Release Notes", "Could not load release notes right now. Please try again in a moment.");
                         return;
                     }
                     initialPayload = await response.json();
                 }
                 catch (fetchError)
                 {
-                    await DialogBox.alert("Release Notes", `Could not load release notes: ${fetchError.message}`);
+                    console.error("[OptionsSidebar] Release notes list failed:", fetchError);
+                    await DialogBox.alert("Release Notes", "Could not load release notes right now. Please try again in a moment.");
                     return;
                 }
 

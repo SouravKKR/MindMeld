@@ -284,20 +284,65 @@ class SyncQueryEngine
     }
 
     /**
-     * Retrieves all deletion records since the given timestamp for a user.
+     * Retrieves deletion records since the given timestamp for a user, sorted
+     * by deletedAt ascending. When `limit` is given, at most that many are
+     * fetched (the caller passes MAX + buffer + 1 to detect overflow and round
+     * the chunk cut up to a whole same-timestamp group).
      * @param {string} userId - The id of the user.
      * @param {number} lastSyncTimestamp - Epoch milliseconds.
+     * @param {number} [limit=0] - Max records to fetch; 0 = unbounded.
      * @returns {Promise<object[]>} Array of deletion records with entityId, entityType, and deletedAt.
      */
-    static async getDeletionsSince(userId, lastSyncTimestamp)
+    static async getDeletionsSince(userId, lastSyncTimestamp, limit = 0)
     {
         const collection   = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.DELETIONS_COLLECTION);
         const lastSyncDate = new Date(lastSyncTimestamp);
 
-        const documents = await collection.find(
+        // Sort by deletedAt so the caller can chunk deterministically, and cap
+        // the fetch when a limit is given so a user with tens of thousands of
+        // tombstones doesn't materialise the whole collection into memory on
+        // every pull cycle of a drain.
+        let query = collection.find(
         {
             userId: userId,
             deletedAt: { $gt: lastSyncDate }
+        }).sort({ deletedAt: 1 });
+
+        if (limit > 0)
+        {
+            query = query.limit(limit);
+        }
+
+        const documents = await query.toArray();
+
+        return documents.map((document) =>
+        ({
+            entityId:   document.entityId,
+            entityType: document.entityType,
+            deletedAt:  document.deletedAt
+        }));
+    }
+
+    /**
+     * Returns every deletion record for a user at an EXACT deletedAt timestamp.
+     * Used by the pull's deletion chunking to fetch the remainder of a
+     * same-timestamp group that overran the fetch buffer, so the chunk
+     * watermark can advance past the whole group without splitting it. A split
+     * would let the next pull's `deletedAt > lastSync` cutoff skip the unsent
+     * tail (silent data loss) or stall the cursor when a single deletedAt
+     * cluster exceeds the chunk cap.
+     * @param {string} userId
+     * @param {number} timestampMillis - Epoch milliseconds of the exact deletedAt.
+     * @returns {Promise<object[]>}
+     */
+    static async getDeletionsAtTimestamp(userId, timestampMillis)
+    {
+        const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.DELETIONS_COLLECTION);
+
+        const documents = await collection.find(
+        {
+            userId:    userId,
+            deletedAt: new Date(timestampMillis)
         }).toArray();
 
         return documents.map((document) =>

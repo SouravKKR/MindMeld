@@ -71,8 +71,9 @@ grading, deck analysis) with an HTTP `503` and a "check back at \<time\>" messag
 
 # Section 1 — Initial deployment
 
-Do these in order. Steps 1.1–1.2 are on your dev workstation; 1.3 onward are on
-Linode.
+Do these in order. Step 1.1 is on your dev workstation; 1.3 onward are on Linode.
+**The worker Docker image is built on a Debian 12 Linode bake box, not on Windows** —
+§1.2 explains why and §1.10 is where the build actually runs.
 
 ## 1.1 Dev workstation — prepare and (optionally) test locally
 
@@ -87,14 +88,34 @@ Linode.
      and confirm it blocks new work but not running work. Then revert
      `DOCK_USE_TASK_QUEUE`/`BURST_DRY_RUN` for normal dev.
 
-## 1.2 Dev workstation — build the worker Docker image
+## 1.2 The worker Docker image — built on the bake box, not on Windows
 
-Burst VMs run the Agent as a Docker container. Build it from the `Agent/` directory
-(Docker Desktop on Windows produces the Linux image fine):
+Burst VMs run the Agent as a Docker container, built from the `Agent/` directory with:
 
 ```bash
 docker build -t mindmeld-agent -f Dockerfile .
 ```
+
+> **Build this on the Debian 12 Linode bake box (§1.10), not on your Windows dev box.**
+> Docker Desktop on Windows *can* produce the Linux image, but in practice it's the
+> worst place to build this one:
+> - **It's slow and fragile.** The build pulls ~2 GB of wheels (CPU `torch`, `opencv`,
+>   `PyMuPDF`, `scipy`, …) plus a large apt layer. On a home connection that's 20–40 min
+>   of downloads through the Docker Desktop Linux VM, and the daemon/WSL backend wedges
+>   often enough to be a recurring time sink.
+> - **You'd then have to ship a ~3 GB image *up* your home uplink.** The documented
+>   alternative was `docker save` → `scp` the tar to the bake box → `docker load` — and
+>   that multi-GB upload over a residential connection is the single most painful step in
+>   the whole deploy, often slower than the build itself.
+>
+> Building **on the bake box** eliminates both: a Linode in the datacenter pulls the same
+> wheels at tens of MB/s (build drops to a few minutes), and the image lands **already on
+> the machine where you bake it** — no `save`/`scp`/`load` of a 3 GB tar at all. You build
+> where you bake. See §1.10 for the exact commands (clone the repo on the box → `docker
+> build` → trim → capture). The Windows `prepare-for-deployment` skill remains available
+> for a local sanity build, but is no longer the deployment path.
+
+The image properties below are location-independent — they hold wherever you build it:
 
 - The image is **Debian/glibc, multi-stage** — deliberately not Alpine, because the
   worker pulls `torch`, `opencv`, `scipy`, `PyMuPDF`, etc., which ship prebuilt
@@ -118,7 +139,7 @@ docker build -t mindmeld-agent -f Dockerfile .
   > After a re-freeze, **re-add** the `--extra-index-url https://download.pytorch.org/whl/cpu`
   > line and the `+cpu` suffixes on `torch`/`torchvision` (freeze drops them).
 
-You'll move this image onto the bake box in step 1.8.
+There's no image to move — you build it on the bake box in §1.10 and capture it there.
 
 ## 1.3 Linode — create the VPC and base node
 
@@ -180,7 +201,19 @@ You'll move this image onto the bake box in step 1.8.
 > `sudo bash Common/Scripts/setup-base-node.sh`. The manual steps below document what
 > it does (and the Cloudflare Tunnel in §1.8 + the burst firewall stay manual).
 
-1. Clone/copy the repo, e.g. to `/opt/mindmeld/MindMeld`.
+1. Clone/copy the repo to a directory of your choice — call it `<repo-dir>`. The paths
+   in this guide use `/opt/mindmeld/MindMeld` as the example, but anywhere works (e.g.
+   `/root/mindmeld` if you deploy as root). **Whatever you pick, the same absolute path
+   must be used consistently in three places** or the local workers won't start:
+   - the **Agent venv** lives at `<repo-dir>/Agent/.venv` (created in step 3 below),
+   - **`AGENT_SERVICE_PATH`** in `Dock/.production.env` is set to `<repo-dir>/Agent` (§1.5),
+   - the **systemd unit**'s `WorkingDirectory` is `<repo-dir>/Dock` (§1.9).
+
+   > Pick the layout up front. If you deploy under `/root/...`, run everything as `root`
+   > and **drop the `User=mindmeld` line** from the systemd unit (§1.9) — a non-root
+   > `mindmeld` user can't traverse `/root`. If you want a dedicated `mindmeld` user,
+   > deploy under `/opt/mindmeld` (or another world-traversable path) instead. Don't mix
+   > the two.
 2. **Install Python 3.12** (no apt package on Debian — use a standalone build via `uv`,
    which needs no compiling):
    ```bash
@@ -189,7 +222,7 @@ You'll move this image onto the bake box in step 1.8.
    ```
 3. **Create the Agent venv and install dependencies** (CPU torch + ML stack, ~10–15 min):
    ```bash
-   cd /opt/mindmeld/MindMeld/Agent          # wherever you cloned the repo
+   cd <repo-dir>/Agent                      # the Agent dir inside wherever you cloned
    uv venv --python 3.12 .venv
    uv pip install --python .venv/bin/python --index-strategy unsafe-best-match -r requirements.txt
    ```
@@ -205,6 +238,8 @@ You'll move this image onto the bake box in step 1.8.
    > If `pip`/`uv` is OOM-killed installing `torch`/`scipy` on a small base node, add
    > temporary swap and re-run:
    > `sudo fallocate -l 4G /swap && sudo mkswap /swap && sudo swapon /swap`
+   > Once the install finishes, remove it (it was only needed for the build):
+   > `sudo swapoff /swap && sudo rm /swap`
 
 ## 1.5 Base node — configure `Dock/.env`
 
@@ -254,7 +289,10 @@ Dock reads `Dock/.env` at boot (via dotenv, relative to its working directory). 
   Agent env file must exist next to `Dock/` on the base node, and you edit the LLM
   keys in **one place** (the Agent env file), never in Dock's.
 - `AGENT_SERVICE_PATH` — absolute path to the Agent service so Dock can launch local
-  workers reliably. Set it to `/opt/mindmeld/MindMeld/Agent`.
+  workers reliably. Set it to `<repo-dir>/Agent` (e.g. `/opt/mindmeld/MindMeld/Agent`,
+  or `/root/mindmeld/Agent` for a root deploy). It **must** match where the venv was
+  created in §1.4 — Dock spawns `<AGENT_SERVICE_PATH>/.venv/bin/python3`, so a mismatch
+  gives `spawn …/.venv/bin/python3 ENOENT` and nothing drains the queue locally.
 
 **Payments (set the providers you use)**
 
@@ -320,7 +358,8 @@ Tunnel**, which terminates TLS at Cloudflare's edge and forwards to Dock on
 `127.0.0.1:3000` over an encrypted outbound tunnel — so the base node exposes **no
 inbound ports** (no public `3000`, no nginx/certs to manage). The tunnel is named
 `mindmeld` and serves `mindmeld.cogniumlabs.io`
-(see `Common/Config/CloudflareTunnelConfig.yml`, used by `run.ps1 --online` on dev).
+(see `Common/Config/CloudflareTunnelConfig.yml`, the dev template you can run by hand
+with `cloudflared tunnel --config Common/Config/CloudflareTunnelConfig.yml run mindmeld`).
 
 Set up the same tunnel as a service on the base node:
 
@@ -388,6 +427,13 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
+> Set `WorkingDirectory` to **`<repo-dir>/Dock`** — it must match the layout you chose
+> in §1.4 (e.g. `/root/mindmeld/Dock` for a root deploy). If you deployed under `/root`,
+> **delete the `User=mindmeld` line** (it runs as `root` by default); a non-root user
+> can't traverse `/root`, so leaving it there gives a `status=200/CHDIR` start failure.
+> Keep `User=mindmeld` only when the repo lives somewhere that user can read/execute
+> (e.g. under `/opt/mindmeld`) and you've created that user.
+
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now mindmeld-dock.service
@@ -405,32 +451,68 @@ before any burst VMs exist. The remaining steps add cloud bursting.
 Burst VMs boot from a pre-baked Linode custom Image so they start fast and run the
 worker automatically.
 
+> ⚡ **Automated path (recommended).** The whole bake → capture → roll-out → cleanup
+> flow is automated by **[`Common/Deployment/deploy.sh`](../Deployment/deploy.sh)** —
+> run `bash Common/Deployment/deploy.sh` from your dev box (Git Bash). It creates the
+> bakebox, builds + trims the image, shrinks the disk and captures
+> `MindMeldBurstVmImage<version>` (auto-incremented), then rolls it out to the base
+> node and deletes the bakebox + older images. Configure it via `deployment.env` at the
+> repo root (gitignored). See [Section 2.0](#20-automated-roll-out-recommended) and
+> [Common/Deployment/README.md](../Deployment/README.md). The manual steps below
+> document exactly what it does.
+
 > **Do not image your live base node.** That would bake Dock + Redis + Mongo + your
 > secrets into the worker image, and every burst VM would start its own Dock +
 > autoscaler (recursive provisioning). Use a clean throwaway Linode.
 
-1. Create a **temporary** Debian Linode in the target region, attached to the VPC.
-2. Install Docker, then get the `mindmeld-agent` image (built in step 1.2) onto it.
-   No registry needed — export it to a tar on your workstation, copy it over with
-   `scp`, and load it on the box.
+1. Create a **temporary Debian 12 Linode** in the target region, attached to the VPC.
+   This is also where you **build** the `mindmeld-agent` image (§1.2) — building in the
+   datacenter is far faster than Windows Docker Desktop and means there's no multi-GB tar
+   to upload from your dev box.
+2. Install Docker, then **`scp` only the build context** onto the box and build it there:
 
-   **On your dev workstation** — make the tar and copy it (replace `<bake-box-ip>`):
    ```bash
-   docker save -o mindmeld-agent.tar mindmeld-agent:latest
-   scp mindmeld-agent.tar root@<bake-box-ip>:/root/
+   # Install Docker (Debian 12 / bookworm):
+   curl -fsSL https://get.docker.com | sh
    ```
 
-   **On the bake box** — load it:
+   The build context is just the `Agent/` directory **minus** the venv, caches, logs
+   and env files — the same set `Agent/.dockerignore` keeps out of the image. `scp` does
+   **not** honour `.dockerignore`, so mirror the excludes with `tar` and copy the (~1 MB)
+   archive rather than `scp -r Agent` (which would drag the multi-GB `.venv` and, worse,
+   your secrets):
+
+   **On your Windows dev box** (from the repo root; replace `<bake-box-ip>`):
    ```bash
-   docker load -i /root/mindmeld-agent.tar && rm /root/mindmeld-agent.tar
+   tar --exclude='.venv' --exclude='venv' --exclude='__pycache__' --exclude='*.pyc' \
+       --exclude='.env' --exclude='*.env' --exclude='Tasks' \
+       --exclude='.pytest_cache' --exclude='.mypy_cache' --exclude='*.log' \
+       -czf agent-context.tar.gz Agent
+   scp agent-context.tar.gz root@<bake-box-ip>:/root/
+   rm agent-context.tar.gz       # remove the local build-context archive once uploaded
+   ```
+
+   **On the bake box** — unpack and build:
+   ```bash
+   mkdir -p /root/MindMeld
+   tar -xzf /root/agent-context.tar.gz -C /root/MindMeld && rm /root/agent-context.tar.gz
+   cd /root/MindMeld/Agent
+   docker build -t mindmeld-agent -f Dockerfile .
    docker images               # confirm mindmeld-agent:latest is present
    ```
 
-   > Registry alternative: push to a registry and `docker pull` on the box instead.
-   > The tar copy keeps everything private and offline, with no registry auth.
+   > Excluding `*.env` is **not optional** — those files hold the Gemini / OpenAI /
+   > Mongo secrets and must never leave your dev box or enter the build context. (A
+   > `git clone` of the repo on the box is a fine alternative when it can reach your
+   > remote — the committed tree already omits the venv and env files.)
+   >
+   > Build the **committed** `Agent/requirements.txt` as-is. If a pinned version was
+   > yanked from PyPI the build fails with `No matching distribution found` — fix it per
+   > the Troubleshooting note (bump to the nearest patch, re-freeze), commit it, then
+   > rebuild here so the box and the repo stay in lock-step.
    >
    > ⚠️ Never run `docker image prune -a` here — with no container running the image,
-   > `-a` treats it as "unused" and **deletes the image you just loaded**. To drop a
+   > `-a` treats it as "unused" and **deletes the image you just built**. To drop a
    > replaced/old image use `docker image prune -f` (dangling only) or `docker rmi <id>`.
 3. Install the worker systemd unit so the container auto-starts on boot and reads the
    env file that cloud-init writes at provision time:
@@ -625,8 +707,8 @@ read, scaling math, hard cap) and logs every decision, but makes **no API calls 
 spends nothing**. Watch for `[BURST_DRY_RUN] Would create instance …`.
 
 **Gotcha first:** the autoscaler is **disabled whenever Dock runs with `--debug`**
-(`BurstAutoscaler.shouldRun()`). Test with the normal start (`./run.ps1 --web`, no
-`--debug`) and read `Logger.log` output. It also needs `DOCK_USE_TASK_QUEUE=1`, and —
+(`BurstAutoscaler.shouldRun()`). Test with the normal start (`node index.js`
+from `Dock/`, no `--debug`) and read `Logger.log` output. It also needs `DOCK_USE_TASK_QUEUE=1`, and —
 outside dry-run — the provider fully configured (token + region + image + type +
 **`BURST_FIREWALL_ID`**), or it stays disabled.
 
@@ -713,6 +795,84 @@ sudo systemctl restart mindmeld-dock
 How to push changes to production. Pick the case that matches what you changed. In
 all cases, restarting Dock cleanly cycles the fleet (teardown → rebuild).
 
+## 2.0 Automated roll-out (recommended)
+
+For the common case — **you changed Agent code or dependencies and want it live** —
+**[`Common/Deployment/deploy.sh`](../Deployment/deploy.sh)** does the entire roll-out
+in one command from your dev box (Git Bash on Windows):
+
+```bash
+bash Common/Deployment/deploy.sh
+```
+
+It performs every step of §1.10 + §2.2 automatically:
+
+1. Creates a throwaway Debian 12 **bakebox** Linode (tagged `mindmeld-bakebox`).
+2. Uploads the `Agent/` build context (the venv, caches and `*.env` secrets are
+   excluded — they never leave your dev box).
+3. Builds `mindmeld-agent`, installs the worker systemd unit, wipes the containerd
+   cache and trims the OS (asserts `< 5.4 GB` used before continuing).
+4. Powers off, **shrinks the disk to 6144 MB**, and captures
+   **`MindMeldBurstVmImage<version>`** — version = highest existing + 1.
+5. Builds the **production frontend** (codegen + bundle + mangle + obfuscate, the
+   `setup.bat --aggressive` equivalent), then SSHes into the base node, refreshes the
+   Agent code + venv **and the Dock code** (a brute-force copy of `Dock/` *including*
+   `node_modules` + the freshly-built obfuscated `Static/` —
+   no `npm install` on the server; only the env secrets are excluded so the live
+   `Dock/.production.env` is never clobbered), writes the new image id into
+   `Dock/.production.env` (`BURST_IMAGE_ID`), ensures Dock + cloudflared run as
+   services (idempotent), and **restarts Dock** so the live fleet boots the new image.
+6. Deletes the bakebox and any **older** `MindMeldBurstVmImage<version>` images.
+7. Prints a summary and (if `NOTIFY_WEBHOOK_URL` is set in `deployment.env`) POSTs it.
+
+> **After a successful run, mirror the new `BURST_IMAGE_ID` into your local
+> `Dock/.production.env`.** `deploy.sh` writes the captured image id
+> (`private/NNNNNNNN`, printed in the final summary) into `Dock/.production.env`
+> **on the base node only** — it does **not** touch your dev box's copy, so the
+> local file drifts to a stale image id across deploys. Copy the new id from the
+> summary into your local `Dock/.production.env` (`BURST_IMAGE_ID=private/NNNNNNNN`)
+> so the dev reference stays in sync with production (it's the value a manual
+> rollback in §2.5 or a `--skip-base-update` bake would otherwise read stale).
+
+On any failure before the cleanup step the bakebox is **left running** for inspection,
+with its IP and a `--cleanup-bakeboxes` one-liner printed to the console.
+
+**Configuration** lives in `deployment.env` at the repo root (gitignored) — Linode API
+token, SSH key paths, base-node host/user/repo-dir, and the optional webhook. Every
+field is documented inline in that file.
+
+| Flag | Effect |
+|------|--------|
+| *(none)* | Full bake → roll-out → cleanup. |
+| `--skip-base-update` | Bake + capture only; don't touch the base node or delete old images. |
+| `--cleanup-bakeboxes` | Delete stray `mindmeld-bakebox` Linodes from a failed run, then exit. |
+
+> **The Dock systemd service is created automatically.** On every base-node update
+> `deploy.sh` writes/refreshes `/etc/systemd/system/mindmeld-dock.service` (correct
+> `node` path — it finds the nvm build, not `/usr/bin/node` — `WorkingDirectory` =
+> `<repo-dir>/Dock`, `Restart=always`, enabled so it survives reboots), then
+> `systemctl restart`s it. You never hand-write the unit, and on subsequent runs it's
+> just a plain `systemctl restart mindmeld-dock`. See
+> [`Remote/BaseNodeUpdate.sh`](../Deployment/Remote/BaseNodeUpdate.sh).
+
+> **Scope.** `deploy.sh` rolls out **Agent** changes (the burst image + base-node
+> venv + image pointer) **and Dock code** (brute-force copy incl. `node_modules`). It
+> **builds the production frontend itself** before shipping Dock (the
+> `setup.bat --aggressive` equivalent — codegen + bundle + mangle + obfuscate — run as
+> the cross-platform Node scripts from §1.7), so `Dock/Static/` is always current and
+> obfuscated; pass `--skip-frontend-build` to skip it if you already built. It assumes
+> the base node was already initialised
+> (§1.3–§1.9); it ensures the Dock + cloudflared *services* but not Mongo/Redis/
+> firewalls. The brute-force `node_modules` copy is safe only while Dock has **no
+> native (`.node`) modules** — all current deps are pure JS; re-check with
+> `find Dock/node_modules -name '*.node'` if you add one, else run `npm install` on the
+> node instead. For a **rollback**, set `BURST_IMAGE_ID` back by hand per §2.5 (the
+> automation deletes older images once a new one is proven, so keep one if you need a
+> fast rollback target).
+
+The remaining subsections document the manual equivalents and the cases `deploy.sh`
+does not cover (frontend-only, config-only, schema, rollback).
+
 ## 2.1 Dock / frontend / backend code changed (base node only)
 
 Most changes (endpoints, frontend, Dock classes) only need a redeploy of the base
@@ -732,6 +892,7 @@ node. The frontend has to be **bundled + obfuscated** into `Dock/Static/` first.
 >    ```powershell
 >    tar --exclude=Dock/node_modules --exclude=Dock/.env --exclude=Dock/.production.env -czf dock-update.tar.gz Dock
 >    scp dock-update.tar.gz root@<base-node-ip>:<repo-dir>/
+>    Remove-Item dock-update.tar.gz   # remove the local update archive once uploaded
 >    ```
 >    ```bash
 >    cd <repo-dir> && tar -xzf dock-update.tar.gz && rm dock-update.tar.gz
@@ -774,7 +935,10 @@ needs a fresh Image:
    `./.venv/bin/pip install -r requirements.txt`.
 2. If dependencies changed, regenerate `requirements.txt`:
    `python -m pip freeze | grep -v -i '^asyncio==' > requirements.txt`.
-3. Rebuild the image: `docker build -t mindmeld-agent -f Dockerfile .` (from `Agent/`).
+3. Rebuild the image **on a Debian 12 bake box** (not Windows — see §1.2): spin up a
+   throwaway Linode, get the `Agent/` build context onto it (the `tar` + `scp` method in
+   §1.10, or `git clone`), and run `docker build -t mindmeld-agent -f Dockerfile .`
+   from `Agent/`.
 4. Re-bake the Linode Image (step 1.10) and set the new `BURST_IMAGE_ID` in
    `Dock/.env`.
 5. Restart Dock: `sudo systemctl restart mindmeld-dock.service`. The startup teardown

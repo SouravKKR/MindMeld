@@ -326,6 +326,18 @@ class TutorialOverlay extends HTMLElement
         }
 
         this.#targetElement = target;
+
+        // Bring the target fully into view before spotlighting it. The dim
+        // mask is position:fixed with pointer-events:auto, so it swallows
+        // wheel / touch scroll — a user can't scroll the page to reach a
+        // target that sits below the fold. Without this, the spotlight lands
+        // off-screen (or clamped to a viewport edge) and the highlighted
+        // element is effectively invisible and unclickable. Scrolling it to
+        // centre fixes both highlight steps (the user can see what's pointed
+        // at) and WAIT_FOR_CLICK / WAIT_FOR_EVENT steps (the user can reach
+        // the element through the spotlight hole).
+        this.#scrollTargetIntoView(target);
+
         this.#layoutSpotlightFor(target);
 
         // Keep the spotlight glued to the target as it moves or is re-rendered
@@ -384,6 +396,45 @@ class TutorialOverlay extends HTMLElement
         {
             cancelAnimationFrame(this.#trackingFrameId);
             this.#trackingFrameId = null;
+        }
+    }
+
+    /**
+     * Scrolls a spotlight target to the centre of the viewport when it is not
+     * already fully visible. Uses instant (not smooth) scrolling so the
+     * spotlight snaps onto the target in one frame rather than chasing a moving
+     * element — the rAF tracking loop then keeps it glued for any residual
+     * layout shift. No-ops when the target is already fully on screen so steps
+     * whose target is in view never jump the page.
+     */
+    #scrollTargetIntoView(target)
+    {
+        if (!target || typeof target.scrollIntoView !== "function")
+        {
+            return;
+        }
+
+        const rect = target.getBoundingClientRect();
+        const bFullyVisible =
+            rect.top >= 0 &&
+            rect.left >= 0 &&
+            rect.bottom <= window.innerHeight &&
+            rect.right <= window.innerWidth;
+
+        if (bFullyVisible)
+        {
+            return;
+        }
+
+        try
+        {
+            target.scrollIntoView({ block: "center", inline: "center", behavior: "auto" });
+        }
+        catch (scrollError)
+        {
+            // Older engines reject the options object — fall back to the
+            // boolean form.
+            target.scrollIntoView(true);
         }
     }
 

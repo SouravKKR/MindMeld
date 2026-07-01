@@ -4,6 +4,7 @@ import AnalysisTaskRunner from "../../../Globals/Classes/Analysis/AnalysisTaskRu
 import CreditNotice from "../../../Globals/Classes/Credits/CreditNotice.js";
 import Deck from "../../../Globals/Model/Deck.js";
 import AutoAnalysisDeckFields from "../../../Globals/Classes/Analysis/AutoAnalysisDeckFields.js";
+import TutorialEngine from "../../../Globals/Classes/TutorialEngine.js";
 import { taskStatus } from "../../../Globals/Enumerations/TaskStatus.js";
 import { topicStrength } from "../../../Globals/Enumerations/TopicStrength.js";
 
@@ -107,6 +108,19 @@ class TopicInsights extends HTMLElement
                 return;
             }
 
+            // During a tutorial, never touch the server. Replay a fabricated
+            // progress run and re-show the seeded demo topics — zero requests,
+            // zero credits. This mirrors the rest of tutorial demo mode (a
+            // client-side TutorialEngine.isRunning() short-circuit, never a
+            // server-trusted "isTutorial" flag), and deliberately runs before
+            // the Ai-feature gate and the destructive confirm so the demo can't
+            // queue a real analysis or wipe the seeded topics.
+            if (TutorialEngine.isRunning())
+            {
+                await this.#runTutorialDemoReanalysis(runButton);
+                return;
+            }
+
             if (!await AiFeatureGate.ensureAllowedOrShowAlert())
             {
                 return;
@@ -204,6 +218,55 @@ class TopicInsights extends HTMLElement
                 this.#bRunInFlight = false;
             }
         });
+    }
+
+    /**
+     * Tutorial-only demo of the Clear & Re-analyse flow. Replays the real
+     * status-message sequence with fabricated progress so the user sees
+     * exactly what a re-analysis looks like — but queues no task, sends no
+     * request and spends no credits. The seeded demo topics in
+     * additionalData are intentionally left untouched, so when the fake run
+     * "completes" the panels re-populate with the same results.
+     */
+    async #runTutorialDemoReanalysis(runButton)
+    {
+        this.#bRunInFlight = true;
+        if (runButton)
+        {
+            runButton.disabled = true;
+        }
+
+        const demoPhases =
+        [
+            { message: "Analysis queued on the server…",          delayMilliseconds: 600 },
+            { message: "Analysis running — 15%",                  delayMilliseconds: 450 },
+            { message: "Analysis running — 45%",                  delayMilliseconds: 450 },
+            { message: "Analysis running — 80%",                  delayMilliseconds: 450 },
+            { message: "Analysis running — 100%",                 delayMilliseconds: 450 },
+            { message: "Analysis done — syncing results…",        delayMilliseconds: 500 },
+            { message: "Sync complete — loading updated topics.", delayMilliseconds: 500 }
+        ];
+
+        for (const phase of demoPhases)
+        {
+            // The tutorial may have been exited mid-demo (Skip / Finish), which
+            // re-renders or unmounts this component — stop fabricating progress.
+            if (!TutorialEngine.isRunning() || !this.isConnected)
+            {
+                this.#bRunInFlight = false;
+                return;
+            }
+            this.#setStatusMessage(phase.message);
+            await new Promise(resolve => setTimeout(resolve, phase.delayMilliseconds));
+        }
+
+        // Re-render from the still-present seeded analysis block, then restore
+        // the status line + button binding the fresh render replaced.
+        this.#render();
+        this.#bindRunButton();
+        this.#setStatusMessage("Analysis complete — this was a tutorial demo, so no real analysis ran and no credits were spent.");
+
+        this.#bRunInFlight = false;
     }
 
     /**

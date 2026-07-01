@@ -1,4 +1,5 @@
 {
     "CARD": 0,
-    "STUDY_MATERIAL": 1
+    "STUDY_MATERIAL": 1,
+    "DECK": 2
 }

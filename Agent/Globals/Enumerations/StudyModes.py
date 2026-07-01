@@ -6,3 +6,4 @@ class StudyModes(IntEnum):
     CONTENT_STUDY = 2
     CURATED_STUDY = 3
     CONTENT_SUMMARY = 4
+    CHAT = 5

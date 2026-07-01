@@ -3,6 +3,7 @@ import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import { mockTestItemTypes } from "../../../Globals/Enumerations/MockTestItemTypes.js";
 import MockTestSession from "../Classes/MockTestSession.js";
 import PaidDeckStudyGate from "../../../Globals/Classes/PaidDeckStudyGate.js";
+import TutorialEngine from "../../../Globals/Classes/TutorialEngine.js";
 
 // Requires: Pages/Study/Styles/MockTestStartDialog.css
 
@@ -83,15 +84,20 @@ class MockTestStartDialog
             // Fullscreen MUST be requested inside this click handler — the
             // user-activation token is consumed before navigation completes.
             // Failure is non-fatal; the runner will show a re-enter
-            // affordance if fullscreenElement is null.
-            try
+            // affordance if fullscreenElement is null. Skipped during a
+            // tutorial: forcing fullscreen mid-walkthrough would yank the
+            // user out of the guided overlay context for a throwaway demo run.
+            if (!TutorialEngine.isRunning())
             {
-                await document.documentElement.requestFullscreen();
-            }
-            catch (fullscreenError)
-            {
-                // Browser denied (likely insecure context or user gesture lost);
-                // continue without fullscreen.
+                try
+                {
+                    await document.documentElement.requestFullscreen();
+                }
+                catch (fullscreenError)
+                {
+                    // Browser denied (likely insecure context or user gesture lost);
+                    // continue without fullscreen.
+                }
             }
 
             if (parentPickerDialog && typeof parentPickerDialog.close === "function")

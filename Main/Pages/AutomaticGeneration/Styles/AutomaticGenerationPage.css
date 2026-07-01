@@ -104,7 +104,8 @@ automatic-generation-page[page]
 }
 
 .field-container > input,
-.field-container > select
+.field-container > select,
+.field-container > textarea
 {
     flex: 1 1 160px;
     min-width: 0;
@@ -140,7 +141,8 @@ automatic-generation-page[page]
     }
 
     .field-container > input,
-    .field-container > select
+    .field-container > select,
+    .field-container > textarea
     {
         flex: 1 0 100%;
         width: 100%;

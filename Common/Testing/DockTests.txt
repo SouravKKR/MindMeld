@@ -142,7 +142,7 @@ Folder "Protected (must reject anonymous = 401/403, never 200/5xx)":
     /Admin/Lists/{Metadata,Query}, /Admin/Streak/SetUserStreak,
     /Admin/Credits/{Config,Config/Save,Grant/Preview,Grant/Apply},
     /Admin/Credits/Deals/{Create,VerifyPayment,UploadInvoice,Invoice,List},
-    /Admin/Credits/Periodic/{Create,List,Terminate,Report},
+    /Admin/Credits/Periodic/{Create,List,Terminate,Delete,Report},
     /Admin/Credits/Promo/{Create,CreateBulk,SetEnabled,Delete}
 
 Folder "Static-only isolation guarantee":

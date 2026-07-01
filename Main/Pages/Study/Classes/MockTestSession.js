@@ -239,10 +239,17 @@ class MockTestSession extends StudySession
                 try { await document.exitFullscreen(); } catch (exitError) { /* ignore */ }
             }
 
-            await DialogBox.alert(
-                "Submitted",
-                `Your attempt was graded offline. Score: ${attempt.getScore()} / ${attempt.getMaxScore()}.`
-            );
+            // During a tutorial, skip the blocking "Submitted" alert and go
+            // straight to the answer key — the guided walkthrough's next step
+            // highlights the graded result, and an interposed alert would stall
+            // it. The score is shown prominently on the answer key page anyway.
+            if (!bTutorialDemo)
+            {
+                await DialogBox.alert(
+                    "Submitted",
+                    `Your attempt was graded offline. Score: ${attempt.getScore()} / ${attempt.getMaxScore()}.`
+                );
+            }
             PageNavigator.clearAndOpen("mock-test-answer-key-page", this.#mockTest, attempt);
             return;
         }
@@ -338,8 +345,8 @@ class MockTestSession extends StudySession
             }
 
             await DialogBox.alert(
-                "Evaluation failed to start",
-                `The evaluation server returned an error: ${requestError?.message || "unknown"}. Your attempt is saved; you can re-evaluate it later from the answer key page.`
+                "Couldn't start grading",
+                "We couldn't reach the grading service just now. Your attempt is saved — you can grade it later from the answer key page."
             );
             PageNavigator.clearAndOpen("mock-test-answer-key-page", this.#mockTest, attempt);
             return;

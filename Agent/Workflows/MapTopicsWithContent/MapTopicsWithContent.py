@@ -29,7 +29,7 @@ from Workflows.MapTopicsWithContent.ChunkUtils import (
     merge_consecutive_groups,
     CHUNK_SIZE,
 )
-from Workflows.MapTopicsWithContent.MatchChunksToTopic import match_chunks_to_topics
+from Workflows.MapTopicsWithContent.MatchChunksToTopic import match_chunks_to_topics, encode_texts_to_cpu
 
 
 class MapTopicsWithContent(Workflow):
@@ -221,26 +221,58 @@ class MapTopicsWithContent(Workflow):
         topic_buckets: dict = {topic_index: [] for topic_index in range(len(leaves))}
 
         if full_text.strip():
-            print(f"\nLoading bi-encoder ({ModelPool.MAP_TOPICS_BIENCODER_MODEL}) ...")
-            bi_encoder = SentenceTransformer(ModelPool.MAP_TOPICS_BIENCODER_MODEL, trust_remote_code=True)
+            # The entire ML matching stage (model loads + embedding + scoring) is
+            # required for the downstream generation tasks — with no mapped topics
+            # there is nothing to generate from — so a failure here must still fail
+            # the run. But it is wrapped so payload.error carries a concise,
+            # user-readable message instead of a raw torch traceback (which is the
+            # difference between "Failed 40%" with no explanation and an actionable
+            # error the user can see on the progress page).
+            try:
+                event_loop = asyncio.get_running_loop()
 
-            print("Encoding topics ...")
-            topic_embeddings = bi_encoder.encode(
-                [f"search_query: {topic}" for topic in topic_strings],
-                convert_to_tensor=True,
-                show_progress_bar=True,
-            )
-            await self.__update_progress(0.40)
+                print(f"\nLoading bi-encoder ({ModelPool.MAP_TOPICS_BIENCODER_MODEL}) ...")
+                bi_encoder = SentenceTransformer(ModelPool.MAP_TOPICS_BIENCODER_MODEL, trust_remote_code=True)
 
-            print(f"\nLoading cross-encoder ({ModelPool.MAP_TOPICS_CROSSENCODER_MODEL}) ...")
-            cross_encoder = CrossEncoder(ModelPool.MAP_TOPICS_CROSSENCODER_MODEL)
+                print("Encoding topics ...")
+                topic_embeddings = encode_texts_to_cpu(
+                    bi_encoder,
+                    [f"search_query: {topic}" for topic in topic_strings],
+                )
+                await self.__update_progress(0.40)
 
-            print("\n--- Semantic chunk matching ---")
-            topic_buckets = match_chunks_to_topics(
-                full_text, leaves, topic_strings, topic_embeddings,
-                bi_encoder, cross_encoder, CHUNK_SIZE,
-                page_spans = global_page_spans,
-            )
+                # The cross-encoder load + chunk embedding + semantic matching is a
+                # CPU-bound pass that, for a multi-document corpus, runs for minutes.
+                # Run it in a worker thread so the event loop stays free to creep the
+                # progress bar — otherwise the bar sits frozen at 40% for the whole
+                # pass and the user (correctly) reads it as hung.
+                def load_and_match():
+                    print(f"\nLoading cross-encoder ({ModelPool.MAP_TOPICS_CROSSENCODER_MODEL}) ...")
+                    cross_encoder = CrossEncoder(ModelPool.MAP_TOPICS_CROSSENCODER_MODEL)
+                    print("\n--- Semantic chunk matching ---")
+                    return match_chunks_to_topics(
+                        full_text, leaves, topic_strings, topic_embeddings,
+                        bi_encoder, cross_encoder, CHUNK_SIZE,
+                        page_spans = global_page_spans,
+                    )
+
+                match_future = event_loop.run_in_executor(None, load_and_match)
+
+                # Asymptotic creep toward (never reaching) 0.64 while the thread runs;
+                # the real jump to 0.65 lands when matching returns. Capped so the bar
+                # advances visibly without overtaking the true completion.
+                creep_completion = 0.40
+                while not match_future.done():
+                    await asyncio.sleep(3)
+                    creep_completion = min(0.63, creep_completion + 0.015)
+                    await self.__update_progress(creep_completion)
+
+                topic_buckets = await match_future
+            except Exception as matching_error:
+                raise RuntimeError(
+                    f"Topic-content matching failed while embedding the source text "
+                    f"({len(full_text)} characters from {len(document_sources)} document source(s)): {matching_error}"
+                ) from matching_error
 
         await self.__update_progress(0.65)
 

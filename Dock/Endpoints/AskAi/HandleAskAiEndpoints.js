@@ -3,6 +3,7 @@ const { ensureLogin } = require("../Plugins/EnsureLogin");
 const { handleQueryBasic } = require("./QueryBasic");
 const { handleQueryPro } = require("./QueryPro");
 const { handleQueryProPlus } = require("./QueryProPlus");
+const { handleChatStrategy } = require("./ChatStrategy");
 
 
 /**
@@ -51,6 +52,17 @@ function handleAskAiEndpoints(server)
     ({
         routePath: `/AskAi/Query/ProPlus`,
         handler: handleQueryProPlus,
+        method: PacketronRequestMethod.POST,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        plugins: [ensureLogin],
+    });
+
+    // Deck-chat planning call (unmetered): returns retrieval N/M + alternate
+    // phrasings; the metered answer is the /AskAi/Query/* stream above.
+    server.handle
+    ({
+        routePath: `/AskAi/Chat/Strategy`,
+        handler: handleChatStrategy,
         method: PacketronRequestMethod.POST,
         flags: PacketronHandlerFlags.JSON_BODY,
         plugins: [ensureLogin],

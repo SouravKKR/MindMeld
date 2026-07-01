@@ -43,6 +43,95 @@ class TutorialBootstrap
         }, { once: true });
     }
 
+    // ── End-to-end test seam (opt-in) ─────────────────────────────────
+    // When the app is loaded with ?tutorialE2E=1, expose a tiny control
+    // surface on window.__tutorialE2E that the Puppeteer tutorial UI suite
+    // (Common/Testing/Main/run_tutorial_ui_tests.js) uses to drive each
+    // tutorial deterministically: list the tutorials, return to a clean
+    // Home, start one, and read the current page tag. It exposes ONLY
+    // public UI-orchestration methods — no secrets — and additionally marks
+    // every tutorial completed so first-launch autoplay never races the
+    // suite for the blocking-overlay slot. Gated behind the query flag so
+    // it is inert for real users and never present in a normal session.
+    static
+    {
+        try
+        {
+            const searchParameters = new URLSearchParams(window.location.search);
+            if (searchParameters.has("tutorialE2E"))
+            {
+                TutorialBootstrap.#installEndToEndTestSeam();
+            }
+        }
+        catch (seamError)
+        {
+            console.warn("[TutorialBootstrap] E2E test seam install failed:", seamError);
+        }
+    }
+
+    static async #installEndToEndTestSeam()
+    {
+        // Lazy-import the rest so the seam pulls these modules in only when
+        // the flag is set, and to mirror the codebase's import-cycle-avoidance
+        // pattern (PageNavigator transitively references the tutorial engine).
+        const [registryModule, pageNavigatorModule, completionTrackerModule] = await Promise.all([
+            import("../Constants/TutorialRegistry.js"),
+            import("./PageNavigator.js"),
+            import("./TutorialCompletionTracker.js")
+        ]);
+
+        const TutorialRegistry          = registryModule.default;
+        const PageNavigator             = pageNavigatorModule.default;
+        const TutorialCompletionTracker = completionTrackerModule.default;
+
+        // Suppress first-launch autoplay so the suite — not the login
+        // sequence — decides which tutorial runs and when.
+        for (const tutorial of TutorialRegistry.getAll())
+        {
+            try
+            {
+                await TutorialCompletionTracker.markCompleted(tutorial.id, false);
+            }
+            catch (ignoredError)
+            {
+                // Best-effort; a failed mark just means autoplay might run,
+                // which the suite tolerates.
+            }
+        }
+
+        window.__tutorialE2E =
+        {
+            listTutorials: () => TutorialRegistry.getAll().map(tutorial =>
+                ({ id: tutorial.id, title: tutorial.title, stepCount: tutorial.steps.length })),
+
+            isRunning: () => TutorialEngine.isRunning(),
+
+            play: (tutorialId) => TutorialEngine.play(tutorialId),
+
+            goHome: () =>
+            {
+                if (typeof PageNavigator.clearAndOpen === "function")
+                {
+                    PageNavigator.clearAndOpen("home-page");
+                }
+                else
+                {
+                    PageNavigator.open("home-page");
+                }
+            },
+
+            currentPageTag: () =>
+            {
+                const currentPage = typeof PageNavigator.getCurrentPage === "function"
+                    ? PageNavigator.getCurrentPage()
+                    : null;
+                return currentPage ? currentPage.tagName.toLowerCase() : "";
+            }
+        };
+
+        console.log("[TutorialBootstrap] E2E tutorial test seam installed (window.__tutorialE2E).");
+    }
+
     /**
      * Public entry point invoked by LoginPopupSequence. Resolves only
      * after the auto-played tutorial has exited (Finish or Skip), or
@@ -51,6 +140,16 @@ class TutorialBootstrap
     static async runForLogin()
     {
         await TutorialBootstrap.#waitForHomePageRender();
+
+        // Before anything auto-plays, delete any entities left flagged by
+        // a tutorial that was abandoned without a clean exit (reload, tab
+        // close, crash). The deck tree is in memory by now — the render
+        // wait above resolves off DeckEvents.EXPAND — so the sweep can see
+        // every flagged deck / card / study material / mock test. Must run
+        // before maybeAutoPlay so a tutorial that starts on THIS launch
+        // doesn't have its own freshly-created entities swept.
+        await TutorialEngine.sweepOrphanedTutorialEntities();
+
         await TutorialEngine.maybeAutoPlay();
     }
 

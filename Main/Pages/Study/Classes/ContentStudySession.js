@@ -6,6 +6,7 @@ import StudyMaterialEditorPage from "../../StudyMaterialEditor/StudyMaterialEdit
 import ActiveEntityTracker from "../../../Globals/Classes/ActiveEntityTracker.js";
 import { entityTypes } from "../../../Globals/Enumerations/EntityTypes.js";
 import StudySessionEvents from "../Events/StudySessionEvents.js";
+import ChatStudyMaterialFields from "../../../Globals/Classes/Analysis/ChatStudyMaterialFields.js";
 
 class ContentStudySession extends StudySession
 {
@@ -37,8 +38,15 @@ class ContentStudySession extends StudySession
         if (Array.isArray(selectedDetailLevels) && selectedDetailLevels.length > 0)
         {
             const selectedSet = new Set(selectedDetailLevels);
+            const bIncludeChat = selectedSet.has(ChatStudyMaterialFields.STUDY_PICKER_LEVEL);
             this.#materials = allMaterials.filter((material) =>
             {
+                // Chat materials are their own "Chats" category — included only when
+                // that category was picked, and never under a real detail level.
+                if (typeof material.isChat === "function" && material.isChat())
+                {
+                    return bIncludeChat;
+                }
                 const detailLevel = material.getDetailLevel?.();
                 return typeof detailLevel === "number" ? selectedSet.has(detailLevel) : true;
             });

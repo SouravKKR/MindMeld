@@ -177,6 +177,7 @@ const PROTECTED_ROUTES = [
     { method: "POST", path: "/Admin/Credits/Periodic/Create" },
     { method: "GET", path: "/Admin/Credits/Periodic/List" },
     { method: "POST", path: "/Admin/Credits/Periodic/Terminate" },
+    { method: "POST", path: "/Admin/Credits/Periodic/Delete" },
     { method: "GET", path: "/Admin/Credits/Periodic/Report" },
     // Admin: promo-code management (ensureAdmin).
     { method: "POST", path: "/Admin/Credits/Promo/Create" },

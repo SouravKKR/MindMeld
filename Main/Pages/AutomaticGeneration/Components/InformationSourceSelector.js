@@ -78,6 +78,21 @@ class InformationSourceSelector extends HTMLElement
     }
 
     /**
+     * Returns true while any uploaded document is still uploading or being
+     * OCR'd — its card is in the "uploading" state and has no resolved
+     * _serverInformationSource yet, so getSources() silently omits it. The
+     * AutomaticGenerationPage checks this before starting so an in-flight upload
+     * is never quietly dropped from the run (the "only 4 of my 5 sources" bug).
+     * Errored cards (state-error, e.g. a duplicate) are NOT pending — they were
+     * genuinely not added and must not block forever.
+     * @returns {boolean}
+     */
+    hasPendingUploads()
+    {
+        return this.#informationSourcesList.querySelector("information-source-card.state-uploading") !== null;
+    }
+
+    /**
      * Replaces the current source list with the given ExtractableInformationSource[]
      * Used by the "Inherit Syllabus Sources From Information Sources" mirroring logic.
      *
@@ -92,7 +107,7 @@ class InformationSourceSelector extends HTMLElement
      */
     setSources(extractableSources)
     {
-        const PRESERVABLE_SOURCE_TYPES = new Set(["PROVIDED_DOCUMENTS", "CURRICULUM_OR_SYLLABUS"]);
+        const PRESERVABLE_SOURCE_TYPES = new Set(["PROVIDED_DOCUMENTS", "CURRICULUM_OR_SYLLABUS", "QUESTION_PAPER"]);
         const pendingUploadItems = Array.from(this.#informationSourcesList.children).filter(item =>
         {
             return (item._serverInformationSource == null)
@@ -130,7 +145,7 @@ class InformationSourceSelector extends HTMLElement
     {
         const selectedKey = informationSourceItem.dataset.sourceType;
 
-        if (selectedKey === "PROVIDED_DOCUMENTS" || selectedKey === "CURRICULUM_OR_SYLLABUS")
+        if (selectedKey === "PROVIDED_DOCUMENTS" || selectedKey === "CURRICULUM_OR_SYLLABUS" || selectedKey === "QUESTION_PAPER")
         {
             if (!(informationSourceItem._serverInformationSource instanceof InformationSource))
             {
@@ -205,7 +220,7 @@ class InformationSourceSelector extends HTMLElement
         let pendingPageRangeEditor = null;
         let pendingPageRangesToApply = null;
 
-        if (selectedKey === "PROVIDED_DOCUMENTS" || selectedKey === "CURRICULUM_OR_SYLLABUS")
+        if (selectedKey === "PROVIDED_DOCUMENTS" || selectedKey === "CURRICULUM_OR_SYLLABUS" || selectedKey === "QUESTION_PAPER")
         {
             informationSourceItem._serverInformationSource = informationSource;
 
@@ -310,7 +325,7 @@ class InformationSourceSelector extends HTMLElement
 
         const informationSourceItem = this.#buildSourceItemSkeleton(selectedKey);
 
-        if (selectedKey === "PROVIDED_DOCUMENTS" || selectedKey === "CURRICULUM_OR_SYLLABUS")
+        if (selectedKey === "PROVIDED_DOCUMENTS" || selectedKey === "CURRICULUM_OR_SYLLABUS" || selectedKey === "QUESTION_PAPER")
         {
             const informationSourceUploader = document.createElement("information-source-uploader");
             informationSourceUploader.setAttribute("source-type-key", selectedKey);

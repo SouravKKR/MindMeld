@@ -6,4 +6,5 @@ export const informationSourceTypes =
   AI_GENERATED: 3,
   REPUTED_EXTERNAL_SOURCES: 4,
   CURRICULUM_OR_SYLLABUS: 5,
+  QUESTION_PAPER: 6,
 }

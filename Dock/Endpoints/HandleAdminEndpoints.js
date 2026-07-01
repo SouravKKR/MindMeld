@@ -45,6 +45,7 @@ const { applyCreditGrant } = require("./Admin/ApplyCreditGrant");
 const { createPeriodicAssignment } = require("./Admin/Periodic/CreatePeriodicAssignment");
 const { listPeriodicAssignments } = require("./Admin/Periodic/ListPeriodicAssignments");
 const { terminatePeriodicAssignment } = require("./Admin/Periodic/TerminatePeriodicAssignment");
+const { deletePeriodicAssignment } = require("./Admin/Periodic/DeletePeriodicAssignment");
 const { getPeriodicAssignmentReport } = require("./Admin/Periodic/GetPeriodicAssignmentReport");
 const { createDealPayment } = require("./Admin/Deals/CreateDealPayment");
 const { verifyDealPayment } = require("./Admin/Deals/VerifyDealPayment");
@@ -485,6 +486,15 @@ function handleAdminEndpoints(server)
     ({
         routePath: `/Admin/Credits/Periodic/Terminate`,
         handler: terminatePeriodicAssignment,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Periodic/Delete`,
+        handler: deletePeriodicAssignment,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureAdmin]

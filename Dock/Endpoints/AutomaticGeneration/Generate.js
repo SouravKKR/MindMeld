@@ -32,6 +32,23 @@ const VIRTUAL_WEB_SOURCE_TYPES = [
 ];
 
 
+// Main task ids of generations THIS Dock process is actively orchestrating (its
+// background pipeline below is alive). A resumable snapshot is saved at the start
+// of every run so a restart-orphaned run can be recovered — but while the run is
+// still being driven here it must NOT be presented to the user as "interrupted".
+// The /TaskState endpoint consults this so the home PausedTaskBanner suppresses
+// the interrupted prompt for a live run (the user watches it from Activity
+// instead). After a restart this set is empty, so a genuinely orphaned run does
+// surface the resume prompt. In-process only — correct because the orchestration
+// it tracks is also in-process.
+const activeGenerationMainTaskIds = new Set();
+
+function isGenerationRunning(mainTaskId)
+{
+    return typeof mainTaskId === "string" && activeGenerationMainTaskIds.has(mainTaskId);
+}
+
+
 function buildVirtualWebSource(sourceTypeValue)
 {
     return new ExtractableInformationSource({
@@ -279,6 +296,30 @@ async function handleGenerate(request, response)
     await TaskManager.setTask(mainTaskDescriptor);
     await TaskManager.trackForUser(userId, mainTaskDescriptor.getId());
 
+    // Save a resumable snapshot at the START so a run orphaned by a Dock
+    // restart/crash (the in-process pipeline below dies with the server, so its
+    // completion handler — which writes taskHistory and clears this state — never
+    // runs) stays both visible and resumable from the home PausedTaskBanner.
+    // Carries resumeMainTaskId so a resume reuses the same GCS namespace and
+    // skips already-finished stages. Cleared on every outcome the handler below
+    // actually reaches (success, partial, or handled failure); only a true
+    // interruption leaves it behind. The credit/pause handlers overwrite it with
+    // their own precise reason (single-slot per user), so this never hides those.
+    try
+    {
+        await TaskStateManager.save({
+            userId: userId,
+            taskType: taskTypes.PREPARE_FOR_GENERATION,
+            route: "/Generate",
+            payload: { ...body, resumeMainTaskId: mainTaskDescriptor.getId() },
+            pausedReason: TaskManager.INTERRUPTED_REASON,
+        });
+    }
+    catch (startStateError)
+    {
+        console.warn(`[Generate] Failed to save start resumable state for ${mainTaskDescriptor.getId()}: ${startStateError.message}`);
+    }
+
     let flashcardGenerationTask = null;
     let studyMaterialGenerationTask = null;
     let mockTestGenerationTask = null;
@@ -490,6 +531,10 @@ async function handleGenerate(request, response)
     }
 
     response.sendJson({taskId: mainTaskId});
+
+    // Mark this run as actively driven by this process so its start-saved
+    // resumable snapshot isn't shown as "interrupted" while it's still running.
+    activeGenerationMainTaskIds.add(mainTaskId);
 
     TaskManager.execute(mainTaskDescriptor)
     .then(async (pipelineSucceeded) =>
@@ -775,6 +820,26 @@ async function handleGenerate(request, response)
             // Re-fetch so the archived record reflects any FAILED/partial status
             // just written above rather than the stale completedTask snapshot.
             const taskForHistory = await TaskManager.getTask(mainTaskId);
+
+            // Settle a deep (spine) failure that the no-op root would otherwise
+            // hide. A MapTopics failure makes execute() resolve false but leaves
+            // every output SCOPE merely NOT_STARTED — so the failed-scope branch
+            // above doesn't fire and the root stays COMPLETED, archiving a broken
+            // run as "Completed" with no decks. Only flip to FAILED when a node
+            // actually failed AND nothing usable was kept (no partialCompletion),
+            // so a genuine success or a kept-partial run is never clobbered.
+            if (taskForHistory && taskForHistory.getStatus() !== taskStatus.FAILED)
+            {
+                const settleRootPayload = (taskForHistory.getPayload && taskForHistory.getPayload()) || {};
+                const bTreeHasFailure = (await TaskManager.computeActiveTreeStatus(mainTaskId)) === taskStatus.FAILED;
+                if (bTreeHasFailure && !settleRootPayload.partialCompletion)
+                {
+                    taskForHistory.setStatus(taskStatus.FAILED);
+                    taskForHistory.setPayload({ ...settleRootPayload, error: settleRootPayload.error || "Generation failed before any content could be created." });
+                    await TaskManager.updateTask(taskForHistory);
+                }
+            }
+
             await TaskHistoryQueryEngine.recordCompletion(taskForHistory);
         }
         catch (historyError)
@@ -782,6 +847,11 @@ async function handleGenerate(request, response)
             console.error(`[Generate] Failed to record taskHistory for ${mainTaskId}: ${historyError.message}`);
         }
         await TaskManager.untrackForUser(userId, mainTaskId);
+        // The completion handler finished, so this run is NOT orphaned — clear the
+        // start-saved resumable snapshot. (Credit/pause stops returned earlier and
+        // keep their own saved state.)
+        try { await TaskStateManager.delete(userId); }
+        catch (clearError) { console.warn(`[Generate] Failed to clear resumable state for ${mainTaskId}: ${clearError.message}`); }
     })
     .catch(async (error) =>
     {
@@ -796,9 +866,17 @@ async function handleGenerate(request, response)
             console.error(`[Generate] Failed to record taskHistory (failure path) for ${mainTaskId}: ${historyError.message}`);
         }
         await TaskManager.untrackForUser(userId, mainTaskId);
+        // Handled failure (not an orphaned interruption) — clear the start-saved
+        // resumable snapshot so a failed run doesn't leave a stale resume banner.
+        try { await TaskStateManager.delete(userId); }
+        catch (clearError) { console.warn(`[Generate] Failed to clear resumable state (failure path) for ${mainTaskId}: ${clearError.message}`); }
     })
     .finally(async () =>
     {
+        // This process is no longer driving the run (it reached a terminal
+        // handler). Drop it from the live set so /TaskState reflects reality.
+        activeGenerationMainTaskIds.delete(mainTaskId);
+
         // Always clear the post-pipeline marker — both success and
         // failure paths reach here. If we leak this marker the
         // frontend's progress poll would hang forever on a synthetic
@@ -815,4 +893,4 @@ async function handleGenerate(request, response)
 }
 
 
-module.exports = {handleGenerate};
+module.exports = {handleGenerate, isGenerationRunning};

@@ -391,7 +391,7 @@ class ActivityPage extends HTMLElement
 
                 if (!response.ok)
                 {
-                    listElement.innerHTML = `<div class="activity-page-error">Search failed (${response.status}).</div>`;
+                    listElement.innerHTML = `<div class="activity-page-error">Search failed. Please try again.</div>`;
                     resultCountElement.textContent = "";
                     paginationElement.innerHTML = "";
                     return;
@@ -408,7 +408,8 @@ class ActivityPage extends HTMLElement
             {
                 return;
             }
-            listElement.innerHTML = `<div class="activity-page-error">${searchError.message}</div>`;
+            console.error("[ActivityPage] Search failed:", searchError);
+            listElement.innerHTML = `<div class="activity-page-error">Search failed. Please try again.</div>`;
             resultCountElement.textContent = "";
             paginationElement.innerHTML = "";
         }

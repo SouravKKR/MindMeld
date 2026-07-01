@@ -184,20 +184,23 @@ class DeckEditorPage extends HTMLElement
 
             if (!startResponse.ok)
             {
-                let serverMessage = "";
+                // Keep the technical detail in the console for debugging, but show
+                // the user a plain, non-technical message.
+                let serverDetail = "";
                 try
                 {
                     const errorBody = await startResponse.json();
-                    serverMessage = (errorBody && (errorBody.message || errorBody.error)) || "";
+                    serverDetail = (errorBody && (errorBody.message || errorBody.error)) || "";
                 }
                 catch
                 {
-                    serverMessage = await startResponse.text().catch(() => "");
+                    serverDetail = await startResponse.text().catch(() => "");
                 }
+                console.error(`[DeckEditorPage] Beautify start failed (${startResponse.status}): ${serverDetail}`);
 
                 await DialogBox.alert(
-                    "Beautification failed",
-                    serverMessage || `The server returned ${startResponse.status}.`
+                    "Couldn't beautify the names",
+                    "We couldn't reach the AI service just now. Please check your connection and try again in a moment."
                 );
                 return;
             }
@@ -207,7 +210,7 @@ class DeckEditorPage extends HTMLElement
 
             if (!taskId)
             {
-                await DialogBox.alert("Beautification failed", "The server did not return a task to track.");
+                await DialogBox.alert("Couldn't beautify the names", "Something went wrong starting the AI. Please try again in a moment.");
                 return;
             }
 
@@ -219,7 +222,7 @@ class DeckEditorPage extends HTMLElement
             }
             catch (pollError)
             {
-                await DialogBox.alert("Beautification failed", "Timed out waiting for the AI service. Please try again.");
+                await DialogBox.alert("Couldn't beautify the names", "The AI is taking longer than expected. Please try again in a moment.");
                 return;
             }
 
@@ -240,8 +243,8 @@ class DeckEditorPage extends HTMLElement
                 }
 
                 await DialogBox.alert(
-                    "Beautification failed",
-                    "The AI service did not finish. The model may be temporarily overloaded — please try again."
+                    "Couldn't beautify the names",
+                    "The AI service is busy right now. Please try again in a moment."
                 );
                 return;
             }
@@ -254,20 +257,21 @@ class DeckEditorPage extends HTMLElement
 
             if (!resultResponse.ok)
             {
-                let serverMessage = "";
+                let serverDetail = "";
                 try
                 {
                     const errorBody = await resultResponse.json();
-                    serverMessage = (errorBody && (errorBody.message || errorBody.error)) || "";
+                    serverDetail = (errorBody && (errorBody.message || errorBody.error)) || "";
                 }
                 catch
                 {
-                    serverMessage = await resultResponse.text().catch(() => "");
+                    serverDetail = await resultResponse.text().catch(() => "");
                 }
+                console.error(`[DeckEditorPage] Beautify result fetch failed (${resultResponse.status}): ${serverDetail}`);
 
                 await DialogBox.alert(
-                    "Beautification failed",
-                    serverMessage || `The server returned ${resultResponse.status}.`
+                    "Couldn't beautify the names",
+                    "We couldn't load the updated names just now. Please try again in a moment."
                 );
                 return;
             }
@@ -323,12 +327,12 @@ class DeckEditorPage extends HTMLElement
 
             window.dispatchEvent(new CustomEvent(DeckEvents.UPDATE, { detail: { deck: this.#deck } }));
 
-            await DialogBox.alert("Beautification complete", `${appliedCount} deck short name(s) updated.`);
+            await DialogBox.alert("Names beautified", `Updated ${appliedCount} deck name(s).`);
         }
         catch (beautifyError)
         {
             console.error("[DeckEditorPage] Beautify short names failed:", beautifyError);
-            await DialogBox.alert("Beautification failed", beautifyError.message || String(beautifyError));
+            await DialogBox.alert("Couldn't beautify the names", "Something went wrong. Please try again in a moment.");
         }
         finally
         {

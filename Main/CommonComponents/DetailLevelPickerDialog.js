@@ -1,6 +1,7 @@
 import DialogBox from "./DialogBox.js";
 import { studyMaterialDetailLevels } from "../Globals/Enumerations/StudyMaterialDetailLevels.js";
 import { enumerationToTitleCase } from "../Globals/UtilityFunctions/EnumerationToTitleCase.js";
+import ChatStudyMaterialFields from "../Globals/Classes/Analysis/ChatStudyMaterialFields.js";
 
 
 /**
@@ -38,9 +39,10 @@ class DetailLevelPickerDialog
 
             const checkboxesHtml = availableLevels.map((levelValue) =>
             {
-                const levelKey = DetailLevelPickerDialog.#getLevelKey(levelValue);
-                const levelTitle = levelKey ? enumerationToTitleCase(levelKey) : `Level ${levelValue}`;
-                const levelDescription = DetailLevelPickerDialog.#LEVEL_DESCRIPTIONS[levelKey] ?? "";
+                const bChatLevel = levelValue === ChatStudyMaterialFields.STUDY_PICKER_LEVEL;
+                const levelKey = bChatLevel ? null : DetailLevelPickerDialog.#getLevelKey(levelValue);
+                const levelTitle = bChatLevel ? "Chats" : (levelKey ? enumerationToTitleCase(levelKey) : `Level ${levelValue}`);
+                const levelDescription = bChatLevel ? "Your saved chat answers" : (DetailLevelPickerDialog.#LEVEL_DESCRIPTIONS[levelKey] ?? "");
                 const descriptionHtml = levelDescription ? ` <span class="detail-level-description">(${levelDescription})</span>` : "";
                 const checkedAttribute = initiallySelected.includes(levelValue) ? "checked" : "";
 

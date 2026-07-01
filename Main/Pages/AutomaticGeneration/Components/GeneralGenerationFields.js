@@ -62,8 +62,25 @@ class GeneralGenerationFields extends GenerationFields
 
         this.#initializeFromSettings();
         this.#bindSettings();
+        this.#bindAutoFillButton();
         this.#applyCaptureImagesVisibility();
         this.#applyTemplateSelectVisibility();
+    }
+
+    /**
+     * The "Auto Fill Other Options" helper only raises a bubbling request — the
+     * page owns the cross-settings work (mode switch, applying the recommended
+     * values to every flavor-field settings instance, and rebuilding the DOM),
+     * so this component stays unaware of the other settings. Deliberately does
+     * NOT flag a templated-field change: the page handles the mode transition.
+     */
+    #bindAutoFillButton()
+    {
+        const autoFillButton = this.querySelector(".auto-fill-options-button");
+        autoFillButton.addEventListener("click", () =>
+        {
+            this.dispatchEvent(new CustomEvent("auto-fill-generation-options-requested", { bubbles: true }));
+        });
     }
 
     /**
@@ -588,6 +605,10 @@ class GeneralGenerationFields extends GenerationFields
             <div class="additional-instructions-container field-container">
                 <label>Additional Instructions (Optional): </label>
                 <input type="text" placeholder="Enter Additional Instructions..." class="additional-instructions-input">
+            </div>
+            <div class="auto-fill-options-container field-container">
+                <button type="button" class="auto-fill-options-button">Auto Fill Other Options</button>
+                <span class="credit-warning-note">⚠ Uses AI and a few credits to configure the other options for you</span>
             </div>
         `;
 

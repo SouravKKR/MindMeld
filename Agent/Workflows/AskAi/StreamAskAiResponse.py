@@ -196,6 +196,13 @@ async def run() -> int:
     prompt_mode  = AskAiPromptModes[prompt_mode_string]  if prompt_mode_string  in AskAiPromptModes.__members__ else AskAiPromptModes.EXPLAIN
     context_kind = AskAiContextKinds[context_kind_string] if context_kind_string in AskAiContextKinds.__members__ else AskAiContextKinds.CARD
 
+    # Deck Chat must answer ONLY from the deck excerpts the client retrieved, so
+    # web-search grounding is forced off for it regardless of tier — otherwise
+    # Pro / Pro Plus would keep the google_search tool live and contradict the
+    # deck-only grounding the prompt promises.
+    if int(context_kind) == int(AskAiContextKinds.DECK):
+        b_enable_google_search = False
+
     retrieved_chunks: list[dict] = []
     if b_use_information_sources and information_sources:
         try:
@@ -211,7 +218,7 @@ async def run() -> int:
     # as a thumbnail strip. Emitted immediately so the strip appears even
     # if the model embeds none. A failed search degrades to no images.
     image_candidates: list[dict] = []
-    if b_enable_google_search:
+    if b_enable_google_search and int(context_kind) != int(AskAiContextKinds.DECK):
         try:
             image_candidates = await _search_web_images(selected_text, user_query)
         except Exception as image_error:

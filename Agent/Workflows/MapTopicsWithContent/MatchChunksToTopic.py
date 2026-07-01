@@ -10,6 +10,40 @@ UPPER_THRESHOLD      = 0.45   # bi-encoder: auto-accept above this
 LOWER_THRESHOLD      = 0.28   # bi-encoder: drop below this (unless continuity prior fires)
 CROSS_ENCODER_CUTOFF = 0.0    # cross-encoder logit: accept if >= this
 
+# Encoder batch size. Caps the per-step working set so peak memory does NOT scale
+# with the total number of chunks — every chunk is still encoded, just in groups.
+# Without this, encoding a corpus of several full-length books in one call
+# (convert_to_tensor keeps the whole embedding matrix resident on-device)
+# exhausts memory and the worker is OOM-killed mid-stage.
+ENCODE_BATCH_SIZE = 64
+
+
+def encode_texts_to_cpu(biEncoder, texts, batchSize=ENCODE_BATCH_SIZE):
+    """
+    Encodes every entry in `texts` with the bi-encoder one batch at a time,
+    moving each batch's embeddings to CPU before accumulating, then returns a
+    single concatenated CPU tensor covering ALL inputs. This bounds peak device
+    memory to roughly one batch instead of the entire corpus — no text is
+    dropped. `util.cos_sim` operates on the returned CPU tensor unchanged.
+    """
+    import torch
+
+    if not texts:
+        return torch.empty((0, 0))
+
+    batchTensors = []
+    for batchStart in range(0, len(texts), batchSize):
+        batchTexts = texts[batchStart: batchStart + batchSize]
+        batchEmbeddings = biEncoder.encode(
+            batchTexts,
+            convert_to_tensor=True,
+            batch_size=batchSize,
+            show_progress_bar=False,
+        )
+        batchTensors.append(batchEmbeddings.cpu())
+
+    return torch.cat(batchTensors, dim=0)
+
 
 def _pages_for_span(page_spans: list, span_start: int, span_end: int) -> list:
     """
@@ -86,12 +120,8 @@ def match_chunks_to_topics(
         print("  [WARN] No chunks remain after filtering.")
         return {i: [] for i in range(len(leaves))}
 
-    print(f"  Encoding {len(chunks)} chunks ...")
-    chunkEmbeddings = biEncoder.encode(
-        [f"search_document: {c}" for c in chunks],
-        convert_to_tensor=True,
-        show_progress_bar=True,
-    )
+    print(f"  Encoding {len(chunks)} chunks (batch size {ENCODE_BATCH_SIZE}) ...")
+    chunkEmbeddings = encode_texts_to_cpu(biEncoder, [f"search_document: {c}" for c in chunks])
 
     simMatrix = util.cos_sim(chunkEmbeddings, topicEmbeddings)
 
@@ -129,7 +159,7 @@ def match_chunks_to_topics(
     if greyZone:
         ceInputs = [(topicStrings[tIdx], content) for _, tIdx, content in greyZone]
         print(f"  Running cross-encoder on {len(ceInputs)} chunks ...")
-        ceScores = crossEncoder.predict(ceInputs, show_progress_bar=True)
+        ceScores = crossEncoder.predict(ceInputs, batch_size=ENCODE_BATCH_SIZE, show_progress_bar=False)
         accepted = 0
         for (cIdx, tIdx, content), score in zip(greyZone, ceScores):
             if float(score) >= CROSS_ENCODER_CUTOFF:
