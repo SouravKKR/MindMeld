@@ -113,7 +113,17 @@ class LoginPopupSequence
         // modal should land as soon as humanly possible.
         try
         {
-            await TermsAndConditionsManager.runForLogin(user);
+            const acceptedAnyDocument = await TermsAndConditionsManager.runForLogin(user);
+
+            // The login streak is withheld server-side until the user has
+            // accepted the terms, then advanced the moment the final document
+            // is accepted. If the user just agreed, refresh from the server so
+            // that now-advanced streak — and any badge it earned — surfaces in
+            // this session instead of only on the next launch.
+            if (acceptedAnyDocument)
+            {
+                await AuthenticationEvents.refreshUserFromServer();
+            }
         }
         catch (termsError)
         {

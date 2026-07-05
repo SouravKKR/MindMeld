@@ -12,6 +12,8 @@ const adminPanelTabs =
   CREDITS: 9,
   MAINTENANCE: 10,
   STREAKS: 11,
+  ALLOWED_EMAILS: 12,
+  LOGS: 13,
 }
 
 module.exports = { adminPanelTabs };

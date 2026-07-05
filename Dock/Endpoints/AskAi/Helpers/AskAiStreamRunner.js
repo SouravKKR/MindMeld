@@ -3,6 +3,8 @@ const { spawn } = require("child_process");
 const readline = require("readline");
 const path = require("path");
 const Logger = require("../../../Globals/Classes/Logger");
+const LogTitles = require("../../../Globals/Classes/Logging/LogTitles");
+const { logCategory } = require("../../../Globals/Enumerations/LogCategory");
 const { getPythonExecutablePathFromVenv } = require("../../../Globals/UtilityFunctions.js/GetPythonExecutablePathFromVenv");
 const {httpStatus} = require("../../../Globals/Enumerations/HttpStatus");
 const { creditTransactionTypes } = require("../../../Globals/Enumerations/CreditTransactionTypes");
@@ -264,6 +266,11 @@ class AskAiStreamRunner
             // an error event so the client's stream reader doesn't hang.
             if (!bDoneEmitted)
             {
+                Logger.warning(logCategory.AI_REQUEST, LogTitles.AI_ASK, `AskAI worker terminated unexpectedly (exit ${exitCode})`,
+                {
+                    accountId: userId,
+                    additionalData: { taskType: taskType, referenceKey: chargeReferenceKey, outcome: "FAILED" }
+                });
                 response.write(JSON.stringify({ type: "error", message: `Worker terminated unexpectedly (exit ${exitCode}).` }) + "\n");
                 response.write('{"type":"done"}\n');
             }
@@ -458,6 +465,12 @@ class AskAiStreamRunner
             // log the floor breach for the admin instead of failing silently.
             Logger.log(`[AskAi] charge of ${chargeAmount} rejected by balance floor for user ${userId} (${referenceKey}).`, "DOCK");
         }
+
+        Logger.info(logCategory.AI_REQUEST, LogTitles.AI_ASK, "AskAI request completed",
+        {
+            accountId: userId,
+            additionalData: { taskType: taskType, credits: chargeAmount, referenceKey: referenceKey, rejected: !!chargeResult.rejected }
+        });
     }
 }
 

@@ -2,6 +2,7 @@ const { authenticationProviders } = require("../../Globals/Enumerations/Authenti
 const UserSession = require("../../Globals/Model/UserSession");
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
 const OtpManager = require("../../Globals/Classes/Authentication/OtpManager");
+const AccessGate = require("../../Globals/Classes/Authentication/AccessGate");
 const UserRoleReconciliator = require("../../Globals/Classes/Authentication/UserRoleReconciliator");
 const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
 const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/OrganizationAutoAssigner");
@@ -28,6 +29,16 @@ async function handleVerifyOtp(request, response)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: ErrorCodes.INVALID_CODE });
+        return;
+    }
+
+    // Per-environment login allowlist. When enabled (dev / test only), refuse
+    // to verify a disallowed email even if it somehow holds a valid code.
+    // Disabled in production, so this short-circuits to allowed.
+    if (!await AccessGate.isEmailAllowed(submittedEmail))
+    {
+        response.statusCode = httpStatus.FORBIDDEN;
+        response.sendJson({ success: false, error: ErrorCodes.ACCESS_NOT_ALLOWED });
         return;
     }
 

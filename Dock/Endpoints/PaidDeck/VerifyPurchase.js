@@ -14,6 +14,9 @@ const ZohoInvoiceService = require("../../Globals/Classes/Invoicing/ZohoInvoiceS
 const GrantSources = require("../../Globals/Constants/GrantSources");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
+const Logger = require("../../Globals/Classes/Logger");
+const LogTitles = require("../../Globals/Classes/Logging/LogTitles");
+const { logCategory } = require("../../Globals/Enumerations/LogCategory");
 
 const MILLISECONDS_PER_DAY = 86_400_000;
 
@@ -161,6 +164,20 @@ async function verifyPurchase(request, response)
                 { $set: purchase.toJson() },
                 { upsert: true }
             );
+
+        Logger.info(logCategory.PURCHASE, LogTitles.PURCHASE_DECK, "Paid deck purchased",
+        {
+            accountId: session.getUserId(),
+            additionalData:
+            {
+                deckId: deckId,
+                amountMinor: recordedAmountMinor,
+                currency: serverPricing.currency || pendingOrder.currency || "INR",
+                paymentProvider: provider.getProviderEnumValue(),
+                providerOrderId: providerOrderId,
+                providerPaymentId: providerPaymentId
+            }
+        });
 
         // License expiry: finite for org-perk grants (now + durationDays),
         // FOREVER sentinel for everything else.

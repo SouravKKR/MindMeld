@@ -2,6 +2,7 @@ const { getUser } = require("../Helpers/GetUser");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const PeriodicCreditReconciler = require("../../Globals/Classes/Credits/PeriodicCreditReconciler");
 const StreakManager = require("../../Globals/Classes/Streak/StreakManager");
+const LegalAcceptanceService = require("../../Globals/Classes/Authentication/LegalAcceptanceService");
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
 
 async function handleGetUser(request, response)
@@ -40,15 +41,26 @@ async function handleGetUser(request, response)
     // is the "user is active today" trigger. Idempotent per UTC day. Guarded so
     // a streak failure can never block the response; re-fetch when it changed
     // so the response carries the fresh streak + any newly earned badges.
+    //
+    // Skip while the user still owes legal acceptance: GetUser is deliberately
+    // allowlisted through the EnsureLegalAcceptance gate (so login/terms keep
+    // working), so advancing the streak here would award it — and possibly a
+    // badge — before the user has agreed to the terms. AcceptLegalDocument
+    // advances the streak the moment the last document is accepted, so today
+    // still counts.
     try
     {
-        const streakResult = await StreakManager.recordDailyActivity(user.getId());
-        if (streakResult.changed)
+        const owesLegalAcceptance = await LegalAcceptanceService.hasOutstandingAcceptance(user);
+        if (!owesLegalAcceptance)
         {
-            const refreshed = await AuthenticationQueryEngine.getUserById(user.getId());
-            if (refreshed)
+            const streakResult = await StreakManager.recordDailyActivity(user.getId());
+            if (streakResult.changed)
             {
-                user = refreshed;
+                const refreshed = await AuthenticationQueryEngine.getUserById(user.getId());
+                if (refreshed)
+                {
+                    user = refreshed;
+                }
             }
         }
     }

@@ -94,8 +94,14 @@ idempotently** with the `manage-environment` skill (which drives the orchestrato
 | Environment | Domain | Base node | Mongo | How it's built |
 |---|---|---|---|---|
 | **local** | `127.0.0.1:3000` | your dev box | local | `npm run web` (no Linode) |
-| **development** | `development.mindmeld.cogniumlabs.io` | own Linode | **colocated** on the base node | `provision-environment.sh development` |
-| **testing** | `testing.mindmeld.cogniumlabs.io` | own Linode | **separate Mongo VM** (prod-like) | `provision-environment.sh testing` |
+| **development** | `development-mindmeld.cogniumlabs.io` | own Linode | **colocated** on the base node | `provision-environment.sh development` |
+| **testing** | `testing-mindmeld.cogniumlabs.io` | own Linode | **separate Mongo VM** (prod-like) | `provision-environment.sh testing` |
+
+> **Domains are first-level subdomains on purpose.** Cloudflare's free Universal SSL only
+> covers the apex + one wildcard level (`*.cogniumlabs.io`), so a nested name like
+> `testing.mindmeld.cogniumlabs.io` (two levels) gets no edge cert
+> (`ERR_SSL_VERSION_OR_CIPHER_MISMATCH`). Dev/test therefore use `<env>-mindmeld.cogniumlabs.io`.
+> To use a nested scheme instead, enable Cloudflare Advanced Certificate Manager / Total TLS.
 | **production** | `mindmeld.cogniumlabs.io` | own Linode | separate Mongo VM | already live (built by hand) |
 
 Each cloud environment has its **own** VPC, subnet CIDR, three firewalls, base node, Mongo,

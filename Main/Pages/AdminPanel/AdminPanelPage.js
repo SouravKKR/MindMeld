@@ -10,6 +10,7 @@ import AddMembersDialog from "./Components/AddMembersDialog.js";
 import AlertNotifier from "./Components/AlertNotifier.js";
 import AdminCreditsTabs from "./Components/AdminCreditsTabs.js";
 import SetUserStreakPanel from "./Components/SetUserStreakPanel.js";
+import AdminLogsPanel from "./Components/AdminLogsPanel.js";
 import { userRoles } from "../../Globals/Enumerations/UserRoles.js";
 import { adminPanelTabs } from "../../Globals/Enumerations/AdminPanelTabs.js";
 import { adminListTypes } from "../../Globals/Enumerations/AdminListTypes.js";
@@ -83,6 +84,7 @@ class AdminPanelPage extends HTMLElement
             { tab: adminPanelTabs.DECKS, label: "Decks" },
             { tab: adminPanelTabs.STATS, label: "Stats" },
             { tab: adminPanelTabs.ADMINS, label: "Admins" },
+            { tab: adminPanelTabs.ALLOWED_EMAILS, label: "Access" },
             { tab: adminPanelTabs.RELEASE_NOTES, label: "Release Notes" },
             { tab: adminPanelTabs.ORGANIZATIONS, label: "Organizations" },
             { tab: adminPanelTabs.ALERTS, label: "Alerts" },
@@ -90,7 +92,8 @@ class AdminPanelPage extends HTMLElement
             { tab: adminPanelTabs.AUDIT_LOG, label: "Audit Log" },
             { tab: adminPanelTabs.CREDITS, label: "Credits" },
             { tab: adminPanelTabs.MAINTENANCE, label: "Maintenance" },
-            { tab: adminPanelTabs.STREAKS, label: "Streaks" }
+            { tab: adminPanelTabs.STREAKS, label: "Streaks" },
+            { tab: adminPanelTabs.LOGS, label: "Logs" }
         ];
         const organizationAdminTabs =
         [
@@ -130,7 +133,7 @@ class AdminPanelPage extends HTMLElement
         const currentUser = window["user"];
         const isSuperAdmin = currentUser && currentUser.getRole() === userRoles.ADMIN;
         const allowedTabs = isSuperAdmin
-            ? new Set([adminPanelTabs.DECKS, adminPanelTabs.STATS, adminPanelTabs.ADMINS, adminPanelTabs.RELEASE_NOTES, adminPanelTabs.ORGANIZATIONS, adminPanelTabs.ALERTS, adminPanelTabs.RATE_LIMITS, adminPanelTabs.AUDIT_LOG, adminPanelTabs.CREDITS, adminPanelTabs.MAINTENANCE, adminPanelTabs.STREAKS])
+            ? new Set([adminPanelTabs.DECKS, adminPanelTabs.STATS, adminPanelTabs.ADMINS, adminPanelTabs.ALLOWED_EMAILS, adminPanelTabs.RELEASE_NOTES, adminPanelTabs.ORGANIZATIONS, adminPanelTabs.ALERTS, adminPanelTabs.RATE_LIMITS, adminPanelTabs.AUDIT_LOG, adminPanelTabs.CREDITS, adminPanelTabs.MAINTENANCE, adminPanelTabs.STREAKS, adminPanelTabs.LOGS])
             : new Set([adminPanelTabs.ORGANIZATION_MEMBERS]);
 
         if (!allowedTabs.has(this.#activeTab))
@@ -158,6 +161,9 @@ class AdminPanelPage extends HTMLElement
             case adminPanelTabs.ADMINS:
                 await this.#renderAdminsTab(content);
                 break;
+            case adminPanelTabs.ALLOWED_EMAILS:
+                await this.#renderAllowedEmailsTab(content);
+                break;
             case adminPanelTabs.RELEASE_NOTES:
                 await this.#renderReleaseNotesTab(content);
                 break;
@@ -182,6 +188,9 @@ class AdminPanelPage extends HTMLElement
             case adminPanelTabs.STREAKS:
                 this.#renderStreaksTab(content);
                 break;
+            case adminPanelTabs.LOGS:
+                this.#renderLogsTab(content);
+                break;
             case adminPanelTabs.ORGANIZATION_MEMBERS:
                 await this.#renderOrganizationMembersTab(content);
                 break;
@@ -193,6 +202,15 @@ class AdminPanelPage extends HTMLElement
         // Admin testing tool to set / reset any user's login streak.
         content.innerHTML = "";
         content.appendChild(document.createElement("set-user-streak-panel"));
+    }
+
+    #renderLogsTab(content)
+    {
+        // Colour-coded log console with history, live tail, download (.log/.html,
+        // optional split) and the settable archival interval. AdminLogsPanel owns
+        // its own data fetching against /Admin/Lists/Query and /Admin/Logs/*.
+        content.innerHTML = "";
+        content.appendChild(document.createElement("admin-logs-panel"));
     }
 
     #renderCreditsTab(content)
@@ -831,6 +849,149 @@ class AdminPanelPage extends HTMLElement
         }
 
         const response = await fetch("/Admin/AdminEmails/Remove",
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: targetEmail })
+        });
+
+        if (!response.ok)
+        {
+            const responseJson = await response.json().catch(() => ({}));
+            await DialogBox.alert("Could not remove", responseJson.error || `HTTP ${response.status}`);
+            return;
+        }
+
+        this.#refreshCurrentList();
+    }
+
+    #renderAllowedEmailsTab(content)
+    {
+        content.innerHTML = `
+            <div class="admin-panel-toolbar">
+                <button class="admin-panel-upload" data-role="add-allowed-email">Add allowed email</button>
+            </div>
+            <div data-role="list-host"></div>
+            <p class="admin-panel-pricing-note">
+                When the per-environment login allowlist is enabled (dev / test only),
+                only emails on this list — plus the env allowlist and every admin email —
+                may sign in. In production the allowlist is disabled and everyone can log
+                in as normal. Being on this list only permits login; it never grants the
+                ADMIN role. Emptying the list is safe — it just leaves the env / admin
+                emails allowed.
+            </p>
+        `;
+
+        this.querySelector('[data-role="add-allowed-email"]').addEventListener("click", async () =>
+        {
+            const added = await this.#openAddAllowedEmailDialog();
+            if (added)
+            {
+                this.#refreshCurrentList();
+            }
+        });
+
+        const listView = this.#createListView
+        ({
+            listKey: adminListTypes.ALLOWED_LOGIN_EMAILS,
+            rowActions: [ { actionKey: "remove", label: "Remove" } ],
+            onRowAction: (actionKey, rowId) =>
+            {
+                if (actionKey === "remove")
+                {
+                    this.#handleRemoveAllowedEmail(rowId);
+                }
+            }
+        });
+
+        this.querySelector('[data-role="list-host"]').appendChild(listView);
+    }
+
+    async #openAddAllowedEmailDialog()
+    {
+        return new Promise((resolve) =>
+        {
+            const dialog = DialogBox.modal
+            (`
+                <div class="admin-panel-add-dialog">
+                    <h2 class="admin-panel-add-title">Add allowed email</h2>
+                    <p class="admin-panel-add-subtitle">
+                        This email will be permitted to log in when the environment
+                        allowlist is enabled. It does not grant admin access.
+                    </p>
+                    <label class="admin-panel-add-field">
+                        <span>Email</span>
+                        <input type="email" class="admin-panel-add-email" placeholder="name@example.com" autocomplete="off">
+                    </label>
+                    <label class="admin-panel-add-field">
+                        <span>Notes (optional)</span>
+                        <textarea class="admin-panel-add-notes" rows="3" placeholder="Why this person needs access"></textarea>
+                    </label>
+                    <div class="admin-panel-add-error" data-role="error" hidden></div>
+                    <div class="admin-panel-add-actions">
+                        <button type="button" class="admin-panel-add-cancel">Cancel</button>
+                        <button type="button" class="admin-panel-add-submit">Add allowed email</button>
+                    </div>
+                </div>
+            `);
+
+            const emailInput = dialog.querySelector(".admin-panel-add-email");
+            const notesInput = dialog.querySelector(".admin-panel-add-notes");
+            const errorElement = dialog.querySelector('[data-role="error"]');
+
+            dialog.querySelector(".admin-panel-add-cancel").addEventListener("click", () =>
+            {
+                dialog.close();
+                resolve(false);
+            });
+
+            dialog.querySelector(".admin-panel-add-submit").addEventListener("click", async () =>
+            {
+                const rawEmail = emailInput.value.trim();
+                if (rawEmail.length === 0 || rawEmail.indexOf("@") < 0)
+                {
+                    errorElement.textContent = "Enter a valid email address.";
+                    errorElement.hidden = false;
+                    return;
+                }
+
+                errorElement.hidden = true;
+                const response = await fetch("/Admin/AllowedEmails/Add",
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ email: rawEmail, notes: notesInput.value })
+                });
+
+                if (!response.ok)
+                {
+                    const responseJson = await response.json().catch(() => ({}));
+                    errorElement.textContent = responseJson.error || `HTTP ${response.status}`;
+                    errorElement.hidden = false;
+                    return;
+                }
+
+                dialog.close();
+                resolve(true);
+            });
+
+            emailInput.focus();
+        });
+    }
+
+    async #handleRemoveAllowedEmail(targetEmail)
+    {
+        if (!targetEmail)
+        {
+            return;
+        }
+        const confirmed = await DialogBox.confirm("Remove allowed email", `Remove ${targetEmail} from the login allowlist?`);
+        if (!confirmed)
+        {
+            return;
+        }
+
+        const response = await fetch("/Admin/AllowedEmails/Remove",
         {
             method: "POST",
             headers: { "Content-Type": "application/json" },

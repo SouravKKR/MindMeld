@@ -13,8 +13,11 @@ import time
 
 from Globals.Enumerations.CreditDeductionTimings import CreditDeductionTimings
 from Globals.Enumerations.CreditTransactionTypes import CreditTransactionTypes
+from Globals.Enumerations.LogCategory import LogCategory
 from Globals.Classes.Credits.CreditLedger import CreditLedger
 from Globals.Classes.Credits.CreditMeter import CreditMeter
+from Globals.Classes.Logging.Logger import Logger
+from Globals.Classes.Logging.LogTitles import LogTitles
 
 
 class TaskCreditCharger:
@@ -202,3 +205,25 @@ class TaskCreditCharger:
         elif timing == CreditDeductionTimings.ON_ANY_COMPLETION:
             await self.__charge_full("complete")
         # ON_START was already settled before the workflow ran.
+
+        # Record this generation as a single AI request in the central log, with
+        # the account, model usage and credits spent (requirement: every AI request
+        # is logged with its metadata, credits spent and account id).
+        try:
+            raw_usage = CreditMeter.raw_snapshot()
+            request_additional_data = {
+                "taskId": self.__task_id,
+                "taskType": self.__task_type,
+                "mainTaskId": os.getenv("MAIN_TASK_ID") or "",
+                "inputTokens": int(raw_usage.get("INPUT_TOKENS", 0)),
+                "outputTokens": int(raw_usage.get("OUTPUT_TOKENS", 0)),
+                "durationSeconds": round(max(0.0, time.time() - self.__start_time), 2),
+                "credits": round(float(self.__charged_amount), 4),
+                "failed": bool(b_failed),
+            }
+            if b_failed:
+                await Logger.warning(LogCategory.AI_REQUEST, LogTitles.AI_GENERATION, "AI generation task failed", account_id=self.__user_id, additional_data=request_additional_data)
+            else:
+                await Logger.info(LogCategory.AI_REQUEST, LogTitles.AI_GENERATION, "AI generation task completed", account_id=self.__user_id, additional_data=request_additional_data)
+        except Exception as log_error:
+            print(f"[Credits] failed to log AI request: {log_error}")

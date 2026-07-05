@@ -31,6 +31,7 @@ class DatabaseConstants
     static SCREENSHOT_EVENTS_COLLECTION = 'screenshotEvents';
     static TASK_HISTORY_COLLECTION = 'taskHistory';
     static ADMIN_EMAILS_COLLECTION = 'adminEmails';
+    static ALLOWED_LOGIN_EMAILS_COLLECTION = 'allowedLoginEmails';
     static OTP_REQUESTS_COLLECTION = 'otpRequests';
     static RELEASE_NOTES_COLLECTION = 'releaseNotes';
     static ORGANIZATIONS_COLLECTION = 'organizations';
@@ -54,6 +55,11 @@ class DatabaseConstants
     static CREDIT_DEAL_PAYMENTS_COLLECTION = 'creditDealPayments';
     static PROMO_CODES_COLLECTION = 'promoCodes';
     static PROMO_CODE_REDEMPTIONS_COLLECTION = 'promoCodeRedemptions';
+    static LOG_EVENTS_COLLECTION = 'logEvents';
+    static LOG_ARCHIVES_COLLECTION = 'logArchives';
+    static LOG_CONFIGURATION_COLLECTION = 'logConfiguration';
+    static LOG_DEFAULT_ARCHIVAL_INTERVAL_DAYS = 7;
+    static LOG_ARCHIVE_STORAGE_PREFIX = 'Logs';
 }
 
 module.exports = DatabaseConstants;

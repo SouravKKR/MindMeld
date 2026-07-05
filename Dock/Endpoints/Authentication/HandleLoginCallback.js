@@ -5,11 +5,14 @@ const User = require("../../Globals/Model/User");
 const UserSession = require("../../Globals/Model/UserSession");
 const App = require("../../Globals/Classes/App");
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
+const AccessGate = require("../../Globals/Classes/Authentication/AccessGate");
 const SyncQueryEngine = require("../../Globals/Classes/Database/SyncQueryEngine");
 const UserRoleReconciliator = require("../../Globals/Classes/Authentication/UserRoleReconciliator");
 const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
 const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/OrganizationAutoAssigner");
 const Logger = require("../../Globals/Classes/Logger");
+const LogTitles = require("../../Globals/Classes/Logging/LogTitles");
+const { logCategory } = require("../../Globals/Enumerations/LogCategory");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function handleLoginCallback(request, response)
@@ -101,6 +104,22 @@ async function handleLoginCallback(request, response)
 
         }
 
+    }
+
+    // Per-environment login allowlist. When enabled (dev / test only), refuse
+    // to look up / create the user or mint a session for a disallowed email.
+    // Redirect back to the origin with an authError flag the login page can
+    // read, mirroring the login-state-mismatch redirect above. Disabled in
+    // production, so this short-circuits to allowed for every account.
+    const gatedEmail = (user?.getAdditionalData()?.email || "");
+    if (!await AccessGate.isEmailAllowed(gatedEmail))
+    {
+        console.warn("[HandleLoginCallback] Rejected callback: email not on the access allowlist.");
+        response.clearCookie("loginState");
+        response.clearCookie("provider");
+        response.setHeader("Location", App.getOrigin() + "?authError=ACCESS_NOT_ALLOWED");
+        response.sendStatusCode(httpStatus.FOUND);
+        return;
     }
 
     // Look up by Google sub first; if absent, fall back to email match so
@@ -209,6 +228,20 @@ async function handleLoginCallback(request, response)
     }
 
     const session = await AuthenticationQueryEngine.createSession(user.getId(), authenticationProviders[provider]);
+
+    try
+    {
+        const loginAdditionalData = typeof user.getAdditionalData === "function" ? (user.getAdditionalData() || {}) : {};
+        Logger.info(logCategory.AUTHENTICATION, LogTitles.LOGIN, "User logged in",
+        {
+            accountId: user.getId(),
+            additionalData: { provider: provider, email: loginAdditionalData.email || "", isNewUser: !existingUser }
+        });
+    }
+    catch (loginLogError)
+    {
+        // Logging must never break the login flow.
+    }
 
     // Without an explicit Max-Age the browser treats the cookie as
     // session-only and wipes it the next time the webview / browser

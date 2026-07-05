@@ -1,4 +1,5 @@
 const OtpManager = require("../../Globals/Classes/Authentication/OtpManager");
+const AccessGate = require("../../Globals/Classes/Authentication/AccessGate");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
@@ -13,6 +14,16 @@ async function handleRequestOtp(request, response)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ success: false, error: ErrorCodes.INVALID_EMAIL });
+        return;
+    }
+
+    // Per-environment login allowlist. When enabled (dev / test only), refuse
+    // to even send a code to a disallowed email. Disabled in production, so
+    // this short-circuits to allowed and every email proceeds as before.
+    if (!await AccessGate.isEmailAllowed(submittedEmail))
+    {
+        response.statusCode = httpStatus.FORBIDDEN;
+        response.sendJson({ success: false, error: ErrorCodes.ACCESS_NOT_ALLOWED });
         return;
     }
 

@@ -3,6 +3,9 @@ const PendingCreditOrderQueryEngine = require("../Database/PendingCreditOrderQue
 const AuthenticationQueryEngine = require("../Database/AuthenticationQueryEngine");
 const ZohoInvoiceService = require("../Invoicing/ZohoInvoiceService");
 const { creditTransactionTypes } = require("../../Enumerations/CreditTransactionTypes");
+const Logger = require("../Logger");
+const LogTitles = require("../Logging/LogTitles");
+const { logCategory } = require("../../Enumerations/LogCategory");
 
 /**
  * CreditPurchaseCompletionService
@@ -82,6 +85,20 @@ class CreditPurchaseCompletionService
         if (grantResult.applied === true && grantResult.alreadyApplied !== true)
         {
             await CreditPurchaseCompletionService.#generateInvoice(pendingCreditOrder, providerPaymentId);
+
+            Logger.info(logCategory.PURCHASE, LogTitles.PURCHASE_CREDITS, "Credits purchased",
+            {
+                accountId: pendingCreditOrder.userId,
+                additionalData:
+                {
+                    credits: pendingCreditOrder.credits,
+                    amountMinor: pendingCreditOrder.amountMinor,
+                    currency: pendingCreditOrder.currency,
+                    providerOrderId: pendingCreditOrder.providerOrderId,
+                    providerPaymentId: providerPaymentId || "",
+                    source: source || ""
+                }
+            });
         }
 
         const balanceAfter = grantResult.balanceAfter !== undefined && grantResult.balanceAfter !== null

@@ -13,6 +13,12 @@ const { organizationPaymentStatuses } = require("../../Enumerations/Organization
 const { purchaseStatuses } = require("../../Enumerations/PurchaseStatuses");
 const OrganizationDeckPerkQueryEngine = require("../Organization/OrganizationDeckPerkQueryEngine");
 const OrganizationPaymentQueryEngine = require("../Organization/OrganizationPaymentQueryEngine");
+const { logLevel } = require("../../Enumerations/LogLevel");
+const { logCategory } = require("../../Enumerations/LogCategory");
+const { logServiceOrigin } = require("../../Enumerations/LogServiceOrigin");
+
+const LOG_CATEGORY_NAME_BY_VALUE = Object.fromEntries(Object.entries(logCategory).map(([categoryName, categoryValue]) => [categoryValue, categoryName]));
+const LOG_SERVICE_NAME_BY_VALUE = Object.fromEntries(Object.entries(logServiceOrigin).map(([serviceName, serviceValue]) => [serviceValue, serviceName]));
 
 /**
  * AdminListRegistry
@@ -120,6 +126,36 @@ class AdminListRegistry
         ({
             listKey: adminListTypes.ADMIN_EMAILS,
             collectionName: DatabaseConstants.ADMIN_EMAILS_COLLECTION,
+            searchableFields: ["email", "addedBy", "notes"],
+            searchPlaceholder: "Search email or notes…",
+            filters:
+            [
+                new DateRangeFilter({ key: "addedAt", label: "Added date", field: "addedAt" })
+            ],
+            columns:
+            [
+                { key: "email", label: "Email" },
+                { key: "addedBy", label: "Added by" },
+                { key: "addedAt", label: "Added at", format: "date" },
+                { key: "notes", label: "Notes" }
+            ],
+            rowMapper: (document) =>
+            ({
+                email: document.email,
+                addedBy: document.addedBy || "",
+                addedAt: document.addedAt || null,
+                notes: document.notes || ""
+            }),
+            defaultSort: { field: "addedAt", direction: 1 },
+            sortableFields: ["addedAt", "email"],
+            rowIdField: "email"
+        }));
+
+        // ── Allowed login emails (per-environment login allowlist) ─────────
+        AdminListRegistry.register(new AdminListDefinition
+        ({
+            listKey: adminListTypes.ALLOWED_LOGIN_EMAILS,
+            collectionName: DatabaseConstants.ALLOWED_LOGIN_EMAILS_COLLECTION,
             searchableFields: ["email", "addedBy", "notes"],
             searchPlaceholder: "Search email or notes…",
             filters:
@@ -667,6 +703,87 @@ class AdminListRegistry
 
                 return { items: items, totalCount: totalCount };
             }
+        }));
+
+        // ── Logs (central application log) ──────────────────────────────────
+        // Backed directly by the logEvents collection. Requirement 5's "filter
+        // one or more log levels" is a MultiSelectFilter (→ level $in); the date
+        // range and category are the other two filters. timestamp is a BSON Date
+        // so DateRangeFilter compares natively.
+        AdminListRegistry.register(new AdminListDefinition
+        ({
+            listKey: adminListTypes.LOGS,
+            collectionName: DatabaseConstants.LOG_EVENTS_COLLECTION,
+            searchableFields: ["title", "message", "accountId", "errorCode"],
+            searchPlaceholder: "Search title, message, account or error code…",
+            filters:
+            [
+                new MultiSelectFilter
+                ({
+                    key: "level",
+                    label: "Level",
+                    field: "level",
+                    options:
+                    [
+                        { value: logLevel.DEBUG, label: "Debug" },
+                        { value: logLevel.INFO, label: "Info" },
+                        { value: logLevel.WARNING, label: "Warning" },
+                        { value: logLevel.ERROR, label: "Error" }
+                    ]
+                }),
+                new EnumFilter
+                ({
+                    key: "category",
+                    label: "Category",
+                    field: "category",
+                    options:
+                    [
+                        { value: logCategory.SYSTEM, label: "System" },
+                        { value: logCategory.AUTHENTICATION, label: "Authentication" },
+                        { value: logCategory.AI_REQUEST, label: "AI request" },
+                        { value: logCategory.PURCHASE, label: "Purchase" },
+                        { value: logCategory.EVENT, label: "Event" },
+                        { value: logCategory.ERROR, label: "Error" }
+                    ]
+                }),
+                new DateRangeFilter({ key: "timestamp", label: "When", field: "timestamp" })
+            ],
+            columns:
+            [
+                { key: "timestamp", label: "When", format: "dateTime" },
+                { key: "level", label: "Level", badge:
+                    {
+                        [logLevel.DEBUG]: { label: "DEBUG", variant: "neutral" },
+                        [logLevel.INFO]: { label: "INFO", variant: "info" },
+                        [logLevel.WARNING]: { label: "WARNING", variant: "warning" },
+                        [logLevel.ERROR]: { label: "ERROR", variant: "danger" }
+                    }
+                },
+                { key: "category", label: "Category" },
+                { key: "service", label: "Service" },
+                { key: "title", label: "Title" },
+                { key: "accountId", label: "Account" },
+                { key: "message", label: "Message" },
+                { key: "errorCode", label: "Error" }
+            ],
+            rowMapper: (document) =>
+            {
+                const rawMessage = typeof document.message === "string" ? document.message : "";
+                return {
+                    id: document.id,
+                    timestamp: document.timestamp || null,
+                    level: document.level,
+                    category: LOG_CATEGORY_NAME_BY_VALUE[document.category] || "",
+                    service: LOG_SERVICE_NAME_BY_VALUE[document.service] || "",
+                    title: document.title || "",
+                    accountId: document.accountId || "",
+                    message: rawMessage.length > 200 ? `${rawMessage.slice(0, 200)}…` : rawMessage,
+                    errorCode: document.errorCode || ""
+                };
+            },
+            defaultSort: { field: "timestamp", direction: -1 },
+            sortableFields: ["timestamp", "level"],
+            rowIdField: "id"
         }));
     }
 }

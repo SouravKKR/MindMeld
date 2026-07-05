@@ -1,6 +1,8 @@
 const { PacketronRequest, PacketronResponse } = require("@gamiumgamers/packetron");
 const { getUser } = require("../Helpers/GetUser");
 const LegalAcceptanceService = require("../../Globals/Classes/Authentication/LegalAcceptanceService");
+const StreakManager = require("../../Globals/Classes/Streak/StreakManager");
+const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
@@ -72,7 +74,36 @@ async function handleAcceptLegalDocument(request, response)
         return;
     }
 
-    response.sendJson({ additionalData: result.additionalData });
+    let additionalData = result.additionalData;
+
+    // The streak is a reward for actively using the app, which legally requires
+    // accepting the terms — so HandleGetUser withholds it while acceptance is
+    // pending. This is where that debt is cleared: once the user has accepted
+    // every current document, advance today's login streak so the comeback day
+    // still counts (instead of waiting for the next bootstrap). Idempotent per
+    // UTC day and fully guarded so a streak failure never fails the acceptance.
+    try
+    {
+        const refreshedUser = await AuthenticationQueryEngine.getUserById(user.getId());
+        if (refreshedUser && !(await LegalAcceptanceService.hasOutstandingAcceptance(refreshedUser)))
+        {
+            const streakResult = await StreakManager.recordDailyActivity(user.getId());
+            if (streakResult.changed)
+            {
+                const withStreak = await AuthenticationQueryEngine.getUserById(user.getId());
+                if (withStreak)
+                {
+                    additionalData = withStreak.getAdditionalData();
+                }
+            }
+        }
+    }
+    catch (streakError)
+    {
+        console.warn(`[AcceptLegalDocument] Streak update failed for ${user.getId()}: ${streakError?.message || streakError}`);
+    }
+
+    response.sendJson({ additionalData });
 }
 
 module.exports = { handleAcceptLegalDocument };

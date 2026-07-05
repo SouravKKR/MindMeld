@@ -5,7 +5,7 @@
     },
     "development": {
         "provisioning": "linode",
-        "domain": "development.mindmeld.cogniumlabs.io",
+        "domain": "development-mindmeld.cogniumlabs.io",
         "region": "in-maa",
         "vpcCidr": "10.10.0.0/24",
         "subnetCidr": "10.10.0.0/24",
@@ -20,7 +20,7 @@
     },
     "testing": {
         "provisioning": "linode",
-        "domain": "testing.mindmeld.cogniumlabs.io",
+        "domain": "testing-mindmeld.cogniumlabs.io",
         "region": "in-maa",
         "vpcCidr": "10.20.0.0/24",
         "subnetCidr": "10.20.0.0/24",

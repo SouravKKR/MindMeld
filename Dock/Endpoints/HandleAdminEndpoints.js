@@ -15,6 +15,9 @@ const { generatePaidDeckField } = require("./Admin/GeneratePaidDeckField");
 const { listAdminEmails } = require("./Admin/AdminEmails/ListAdminEmails");
 const { addAdminEmail } = require("./Admin/AdminEmails/AddAdminEmail");
 const { removeAdminEmail } = require("./Admin/AdminEmails/RemoveAdminEmail");
+const { listAllowedEmails } = require("./Admin/AllowedEmails/ListAllowedEmails");
+const { addAllowedEmail } = require("./Admin/AllowedEmails/AddAllowedEmail");
+const { removeAllowedEmail } = require("./Admin/AllowedEmails/RemoveAllowedEmail");
 const { createReleaseNote } = require("./Admin/ReleaseNotes/CreateReleaseNote");
 const { updateReleaseNote } = require("./Admin/ReleaseNotes/UpdateReleaseNote");
 const { deleteReleaseNote } = require("./Admin/ReleaseNotes/DeleteReleaseNote");
@@ -23,6 +26,10 @@ const { listMaintenanceWindows } = require("./Admin/Maintenance/ListMaintenanceW
 const { addMaintenanceWindow } = require("./Admin/Maintenance/AddMaintenanceWindow");
 const { updateMaintenanceWindow } = require("./Admin/Maintenance/UpdateMaintenanceWindow");
 const { removeMaintenanceWindow } = require("./Admin/Maintenance/RemoveMaintenanceWindow");
+const { downloadLogs } = require("./Admin/Logs/DownloadLogs");
+const { streamLogs } = require("./Admin/Logs/StreamLogs");
+const { getLogConfiguration } = require("./Admin/Logs/GetLogConfiguration");
+const { setLogConfiguration } = require("./Admin/Logs/SetLogConfiguration");
 const { sendAdminVerificationOtp } = require("./Organization/SendAdminVerificationOtp");
 const { verifyAdminVerificationOtp } = require("./Organization/VerifyAdminVerificationOtp");
 const { createOrganization } = require("./Organization/CreateOrganization");
@@ -199,6 +206,33 @@ function handleAdminEndpoints(server)
     ({
         routePath: `/Admin/AdminEmails/Remove`,
         handler: removeAdminEmail,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Allowed login emails (per-environment login allowlist) ─────────────
+    server.handle
+    ({
+        routePath: `/Admin/AllowedEmails`,
+        handler: listAllowedEmails,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/AllowedEmails/Add`,
+        handler: addAllowedEmail,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/AllowedEmails/Remove`,
+        handler: removeAllowedEmail,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureAdmin]
@@ -440,6 +474,44 @@ function handleAdminEndpoints(server)
     ({
         routePath: `/Admin/Credits/Config/Save`,
         handler: setCreditConfig,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Logs (central application log) ─────────────────────────────────────
+    // The filterable table view is served by the generic admin-list framework
+    // (listKey LOGS). These endpoints add the date-range download (.log / .html,
+    // optional split), the live Server-Sent-Events tail, and the settable
+    // archival-interval configuration.
+    server.handle
+    ({
+        routePath: `/Admin/Logs/Download`,
+        handler: downloadLogs,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Logs/Stream`,
+        handler: streamLogs,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Logs/Configuration`,
+        handler: getLogConfiguration,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Logs/Configuration/Save`,
+        handler: setLogConfiguration,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureAdmin]

@@ -30,6 +30,7 @@ class DatabaseConstants:
     SCREENSHOT_EVENTS_COLLECTION = 'screenshotEvents'
     TASK_HISTORY_COLLECTION = 'taskHistory'
     ADMIN_EMAILS_COLLECTION = 'adminEmails'
+    ALLOWED_LOGIN_EMAILS_COLLECTION = 'allowedLoginEmails'
     OTP_REQUESTS_COLLECTION = 'otpRequests'
     RELEASE_NOTES_COLLECTION = 'releaseNotes'
     ORGANIZATIONS_COLLECTION = 'organizations'
@@ -53,3 +54,8 @@ class DatabaseConstants:
     CREDIT_DEAL_PAYMENTS_COLLECTION = 'creditDealPayments'
     PROMO_CODES_COLLECTION = 'promoCodes'
     PROMO_CODE_REDEMPTIONS_COLLECTION = 'promoCodeRedemptions'
+    LOG_EVENTS_COLLECTION = 'logEvents'
+    LOG_ARCHIVES_COLLECTION = 'logArchives'
+    LOG_CONFIGURATION_COLLECTION = 'logConfiguration'
+    LOG_DEFAULT_ARCHIVAL_INTERVAL_DAYS = 7
+    LOG_ARCHIVE_STORAGE_PREFIX = 'Logs'

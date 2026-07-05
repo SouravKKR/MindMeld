@@ -86,12 +86,16 @@ const { handleMaintenanceEndpoints } = require("./Endpoints/HandleMaintenanceEnd
 const { handleStreakEndpoints } = require("./Endpoints/HandleStreakEndpoints");
 const { handleMetricsEndpoints } = require("./Endpoints/HandleMetricsEndpoints");
 const { handleDesktopUpdateEndpoints } = require("./Endpoints/DesktopUpdates/HandleDesktopUpdateEndpoints");
+const { handleLogIngestEndpoints } = require("./Endpoints/Logs/HandleLogIngestEndpoints");
 const Logger = require("./Globals/Classes/Logger");
+const LogIngester = require("./Globals/Classes/Logging/LogIngester");
+const LogArchivalScheduler = require("./Globals/Classes/Logging/LogArchivalScheduler");
 const KeyManagementService = require("./Globals/Classes/Security/KeyManagementService");
 const KeyRotationScheduler = require("./Globals/Classes/Security/KeyRotationScheduler");
 const AuthenticationQueryEngine = require("./Globals/Classes/Database/AuthenticationQueryEngine");
 const { getSession } = require("./Endpoints/Helpers/GetSession");
 const { rateLimitPlugin } = require("./Endpoints/Plugins/EnsureRateLimit");
+const { requestLoggingPlugin } = require("./Endpoints/Plugins/RequestLogging");
 const { legalAcceptancePlugin } = require("./Endpoints/Plugins/EnsureLegalAcceptance");
 const { securityHeadersPlugin } = require("./Endpoints/Plugins/SecurityHeaders");
 const RateLimiter = require("./Globals/Classes/Security/RateLimiter");
@@ -104,6 +108,10 @@ const BurstAutoscaler = require("./Globals/Classes/Burst/BurstAutoscaler");
 
 
 Logger.initialize();
+LogIngester.start().catch((logIngesterStartError) =>
+{
+    console.error("[LogIngester] Startup failed; logs will buffer in memory until the database is reachable:", logIngesterStartError);
+});
 TaskManager.initialize();
 KeyManagementService.initialize();
 KeyRotationScheduler.start();
@@ -145,6 +153,14 @@ ForeignExchangeRatesCache.initialize()
         console.error("[ForeignExchangeRates] Cache initialization failed; currency conversion will degrade gracefully:", foreignExchangeInitializationError);
     });
 
+// Log archival: move logs older than the settable interval to cloud storage.
+// Runs on the always-on base node; skipped under local --debug so a developer's
+// logs stay hot in MongoDB for inspection rather than being shipped to the bucket.
+if (!process.argv.includes("--debug"))
+{
+    LogArchivalScheduler.start();
+}
+
 if (process.argv.includes("--logout"))
 {
     AuthenticationQueryEngine.deleteAllSessions()
@@ -182,6 +198,14 @@ server.insertGlobalPlugin(securityHeadersPlugin);
 //     inject a default cap on every endpoint that doesn't set its own. Static
 //     serve()/serveFile() routes are deliberately left untouched (excluded).
 server.insertGlobalPlugin(rateLimitPlugin);
+
+// ── Request/error logging ──────────────────────────────────────────────────
+// A global plugin (runs before routing, after the rate limiter so it can reuse
+// the identity the limiter resolved) that records every response with status
+// >= 400 — with the error code and reason the handler returned — into the
+// central log. This is the server-wide capture behind "all error codes are
+// recorded with reason when they occur".
+server.insertGlobalPlugin(requestLoggingPlugin);
 
 // ── Legal-acceptance gate ──────────────────────────────────────────────────
 // A global plugin (runs before routing, just below the rate limiter) that
@@ -266,3 +290,4 @@ handleMaintenanceEndpoints(server);
 handleStreakEndpoints(server);
 handleMetricsEndpoints(server);
 handleDesktopUpdateEndpoints(server);
+handleLogIngestEndpoints(server);

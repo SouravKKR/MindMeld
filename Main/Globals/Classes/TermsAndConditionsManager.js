@@ -69,18 +69,20 @@ class TermsAndConditionsManager
      * after every required legal modal has been agreed to (or the
      * decline path's logout-and-reload has been kicked off). Returns
      * immediately for anonymous identities — they have no per-account
-     * additionalData to write the agreement into.
+     * additionalData to write the agreement into. Resolves to true when at
+     * least one document was accepted (so the caller can refresh the user and
+     * surface the now-advanced streak / badge), false otherwise.
      */
     static async runForLogin(user)
     {
-        await TermsAndConditionsManager.#handleUserLoggedIn(user);
+        return await TermsAndConditionsManager.#handleUserLoggedIn(user);
     }
 
     static async #handleUserLoggedIn(user)
     {
         try
         {
-            await TermsAndConditionsManager.#runLegalAcceptanceFlow(user);
+            return await TermsAndConditionsManager.#runLegalAcceptanceFlow(user);
         }
         finally
         {
@@ -95,11 +97,18 @@ class TermsAndConditionsManager
         }
     }
 
+    /**
+     * Runs the sequential legal-acceptance flow. Returns true when the user
+     * actually accepted at least one document (so the caller can refresh the
+     * user — the server advances the login streak the moment the final
+     * document is accepted, and the fresh payload carries that streak plus any
+     * newly-earned badge). Returns false when there was nothing to accept.
+     */
     static async #runLegalAcceptanceFlow(user)
     {
         if (!user)
         {
-            return;
+            return false;
         }
 
         // Legal flow is logged-in-only. If the identity is still
@@ -107,7 +116,7 @@ class TermsAndConditionsManager
         // there's no server-backed additionalData to write to.
         if (UserIdentityManager.isAnonymous())
         {
-            return;
+            return false;
         }
 
         let legalDocuments;
@@ -118,15 +127,16 @@ class TermsAndConditionsManager
         catch (fetchError)
         {
             console.error("[TermsAndConditionsManager] Failed to fetch /LegalDocuments:", fetchError);
-            return;
+            return false;
         }
 
         if (!Array.isArray(legalDocuments) || legalDocuments.length === 0)
         {
-            return;
+            return false;
         }
 
         const additionalData = user.getAdditionalData() || {};
+        let acceptedAnyDocument = false;
 
         // Chain documents one after the other so two modals never stack.
         // Each iteration awaits the modal's resolution (or skip) before
@@ -145,12 +155,15 @@ class TermsAndConditionsManager
             // logout/reload path takes over and the loop is moot.
             // eslint-disable-next-line no-await-in-loop
             await TermsAndConditionsManager.#showDocument(user, legalDocument);
+            acceptedAnyDocument = true;
 
             // After Agree, mirror the persisted change back onto the
             // local snapshot so the next iteration's check sees it.
             const refreshedAdditionalData = user.getAdditionalData() || {};
             additionalData[agreedVersionKey] = refreshedAdditionalData[agreedVersionKey];
         }
+
+        return acceptedAnyDocument;
     }
 
     /**

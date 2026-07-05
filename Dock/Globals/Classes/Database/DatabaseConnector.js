@@ -504,6 +504,18 @@ class DatabaseConnector
         const AdminEmailSeeder = require('./AdminEmailSeeder');
         await AdminEmailSeeder.seedFromJsonFile();
 
+        // ── Allowed login emails (per-environment login allowlist) ──────────────
+        // Drives the login-time AccessGate check when the environment
+        // allowlist is enabled (dev / test only). Lookups are point queries
+        // on email; the unique index also blocks duplicate-with-different-case
+        // rows because the QueryEngine lowercases on every write. Being on
+        // this list only permits login — it never grants the admin role.
+        const allowedLoginEmailsCollection = database.collection(DatabaseConstants.ALLOWED_LOGIN_EMAILS_COLLECTION);
+        await allowedLoginEmailsCollection.createIndex({ email: 1 }, { unique: true });
+
+        const AllowedLoginEmailSeeder = require('./AllowedLoginEmailSeeder');
+        await AllowedLoginEmailSeeder.seedFromJsonFile();
+
         // ── OTP requests ───────────────────────────────────────────────────────
         // One active OTP per email; the absolute-expiry TTL mirrors the
         // sessions collection so the cleanup pattern is consistent.
@@ -672,6 +684,31 @@ class DatabaseConnector
         await promoCodeRedemptionsCollection.createIndex({ promoCodeId: 1, userId: 1 }, { unique: true });
         await promoCodeRedemptionsCollection.createIndex({ promoCodeId: 1, redeemedAt: -1 });
         await promoCodeRedemptionsCollection.createIndex({ userId: 1, redeemedAt: -1 });
+
+        // ── Log events ─────────────────────────────────────────────────────────
+        // The central, live application log written by every service (Dock, Agent,
+        // burst workers, Web). It DELIBERATELY has NO TTL index: unlike the other
+        // event logs above, these entries are MOVED to cloud storage by
+        // LogArchivalScheduler (write → verify → delete), which is the SOLE deleter.
+        // A TTL here would silently delete entries before they were archived and
+        // break the "no logs lost" guarantee. `timestamp` is a BSON Date so the
+        // admin DateRangeFilter and the range/archival queries compare natively.
+        const logEventsCollection = database.collection(DatabaseConstants.LOG_EVENTS_COLLECTION);
+        await logEventsCollection.createIndex({ id: 1 }, { unique: true });
+        await logEventsCollection.createIndex({ timestamp: -1 });
+        await logEventsCollection.createIndex({ level: 1, timestamp: -1 });
+        await logEventsCollection.createIndex({ category: 1, timestamp: -1 });
+        await logEventsCollection.createIndex({ accountId: 1, timestamp: -1 });
+
+        // ── Log archives (manifest) ─────────────────────────────────────────────
+        // One row per cloud-storage archive object written by LogArchivalScheduler,
+        // recording the time range it covers so a download spanning cold data can
+        // find and merge the overlapping archives. The bucket object is the durable
+        // record; this manifest is the queryable index into it.
+        const logArchivesCollection = database.collection(DatabaseConstants.LOG_ARCHIVES_COLLECTION);
+        await logArchivesCollection.createIndex({ id: 1 }, { unique: true });
+        await logArchivesCollection.createIndex({ coveredFrom: 1, coveredTo: 1 });
+        await logArchivesCollection.createIndex({ createdAt: -1 });
     }
 }
 

@@ -25,6 +25,8 @@ const CATALOGUED = [
     "MaintenanceWindow.toJson", "MaintenanceWindow.fromJson",
     "CreditDealPayment.roundTrip", "CreditDealPayment.coercion",
     "PeriodicCreditAssignment.roundTrip", "PeriodicCreditAssignment.coercion",
+    "LogFormatter.formatLine", "LogFormatter.severityName", "LogFormatter.renderHtmlLine",
+    "DownloadLogs.splitEntries",
 ];
 
 // The Dock modules resolve their own dependencies against Dock/node_modules, so
@@ -41,6 +43,9 @@ let deckLicenseStatuses;
 let entityTypes;
 let creditDealPaymentStatuses;
 let periodicAssignmentStatuses;
+let LogFormatter;
+let splitEntries;
+let logLevel;
 try
 {
     KeyManagementService = require(path.join(DOCK_ROOT, "Globals/Classes/Security/KeyManagementService"));
@@ -55,6 +60,9 @@ try
     ({ entityTypes } = require(path.join(DOCK_ROOT, "Globals/Enumerations/EntityTypes")));
     ({ creditDealPaymentStatuses } = require(path.join(DOCK_ROOT, "Globals/Enumerations/CreditDealPaymentStatuses")));
     ({ periodicAssignmentStatuses } = require(path.join(DOCK_ROOT, "Globals/Enumerations/PeriodicAssignmentStatuses")));
+    LogFormatter = require(path.join(DOCK_ROOT, "Globals/Classes/Logging/LogFormatter"));
+    ({ splitEntries } = require(path.join(DOCK_ROOT, "Endpoints/Admin/Logs/DownloadLogs")));
+    ({ logLevel } = require(path.join(DOCK_ROOT, "Globals/Enumerations/LogLevel")));
 }
 catch (error)
 {
@@ -430,6 +438,66 @@ harness.test("PeriodicCreditAssignment: dayOfWeek clamps to [0,6], dayOfMonth to
     assertEqual(new PeriodicCreditAssignment({ intervalDays: -10 }).getIntervalDays(), 0, "intervalDays clamped to >= 0");
     const coercedStatus = new PeriodicCreditAssignment({ status: 9999 }).getStatus();
     assertEqual(coercedStatus, Object.values(periodicAssignmentStatuses)[0], "invalid status coerces to the first enum member");
+});
+
+// -- LogFormatter (central log line format + HTML escaping) -------------------
+
+harness.test("LogFormatter.formatLine: exact <SEVERITY>:[iso]:<Title>: <message> format with extras", "LogFormatter.formatLine", () =>
+{
+    const line = LogFormatter.formatLine({ level: logLevel.ERROR, title: "AI_ASK", message: "hello", timestampIsoString: "2026-07-05T14:32:10.123456Z", accountId: "u1", errorCode: "X" });
+    assertEqual(line, 'ERROR:[2026-07-05T14:32:10.123456Z]:AI_ASK: hello {"accountId":"u1","errorCode":"X"}');
+});
+
+harness.test("LogFormatter.formatLine: no trailing extras object when none present", "LogFormatter.formatLine", () =>
+{
+    const line = LogFormatter.formatLine({ level: logLevel.INFO, title: "LOGIN", message: "ok", timestampIsoString: "2026-07-05T00:00:00.000Z" });
+    assertEqual(line, "INFO:[2026-07-05T00:00:00.000Z]:LOGIN: ok");
+});
+
+harness.test("LogFormatter.severityName: maps every level; unknown -> INFO", "LogFormatter.severityName", () =>
+{
+    assertEqual(LogFormatter.severityName(logLevel.DEBUG), "DEBUG");
+    assertEqual(LogFormatter.severityName(logLevel.WARNING), "WARNING");
+    assertEqual(LogFormatter.severityName(9999), "INFO");
+});
+
+harness.test("LogFormatter.renderHtmlLine: escapes markup so log content cannot break the document", "LogFormatter.renderHtmlLine", () =>
+{
+    const html = LogFormatter.renderHtmlLine({ level: logLevel.ERROR, title: "T", message: "<script>alert(1)</script>", timestampIsoString: "2026-07-05T00:00:00.000Z" });
+    assert(html.includes("log-level-error"), "carries the severity class for colouring");
+    assert(!html.includes("<script>"), "raw markup must be escaped");
+    assert(html.includes("&lt;script&gt;"), "escaped form present");
+});
+
+// -- DownloadLogs.splitEntries (download splitting boundaries) -----------------
+
+function logEntryAt(isoString)
+{
+    return { level: logLevel.INFO, title: "T", message: "m", timestamp: isoString, timestampIsoString: isoString, sequence: 0 };
+}
+
+harness.test("splitEntries: 'none' returns a single segment with all entries", "DownloadLogs.splitEntries", () =>
+{
+    const segments = splitEntries([logEntryAt("2026-07-05T00:00:00.000Z"), logEntryAt("2026-07-05T05:00:00.000Z")], "none");
+    assertEqual(segments.length, 1);
+    assertEqual(segments[0].entries.length, 2);
+});
+
+harness.test("splitEntries: 'lines:1' produces one segment per entry", "DownloadLogs.splitEntries", () =>
+{
+    const segments = splitEntries([logEntryAt("2026-07-05T00:00:00.000Z"), logEntryAt("2026-07-05T01:00:00.000Z"), logEntryAt("2026-07-05T02:00:00.000Z")], "lines:1");
+    assertEqual(segments.length, 3);
+    assert(segments.every(segment => segment.entries.length === 1), "each split holds one line");
+    assert(segments[0].name.startsWith("logs_part_1_"), "split name keeps the part number");
+    assert(segments[0].name.includes("_to_"), "split name carries the covered date range");
+});
+
+harness.test("splitEntries: 'hours:1' buckets entries by hour window", "DownloadLogs.splitEntries", () =>
+{
+    const segments = splitEntries([logEntryAt("2026-07-05T00:10:00.000Z"), logEntryAt("2026-07-05T00:50:00.000Z"), logEntryAt("2026-07-05T02:05:00.000Z")], "hours:1");
+    assertEqual(segments.length, 2, "two distinct hour buckets (00:00 and 02:00)");
+    assertEqual(segments[0].entries.length, 2, "both 00:xx entries land in the first bucket");
+    assertEqual(segments[1].entries.length, 1);
 });
 
 harness.runAndWrite(RESULT_FILE);

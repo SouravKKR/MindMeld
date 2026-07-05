@@ -123,6 +123,32 @@ class App
         return process.env.RAZORPAY_WEBHOOK_SECRET || "";
     }
 
+    /**
+     * Whether the per-environment login allowlist is active. When OFF
+     * (production — the default), everyone may log in exactly as before.
+     * When ON (dev / test only), only allowed emails may sign in. Read as
+     * a trimmed, lowercased truthy flag ("1" / "true" / "yes").
+     */
+    static isAccessAllowlistEnabled()
+    {
+        const rawValue = (process.env.ACCESS_ALLOWLIST_ENABLED || "").trim().toLowerCase();
+        return rawValue === "1" || rawValue === "true" || rawValue === "yes";
+    }
+
+    /**
+     * The env-configured root login allowlist: ACCESS_ALLOWLIST_EMAILS is a
+     * comma-separated list. Each entry is trimmed and lowercased, empties are
+     * dropped, and the resulting array is returned.
+     */
+    static getAccessAllowlistEmails()
+    {
+        const rawValue = process.env.ACCESS_ALLOWLIST_EMAILS || "";
+        return rawValue
+            .split(",")
+            .map(entry => entry.trim().toLowerCase())
+            .filter(entry => entry.length > 0);
+    }
+
 }
 
 module.exports = App;

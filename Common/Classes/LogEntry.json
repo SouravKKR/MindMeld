@@ -1,0 +1,78 @@
+{
+    "name": "LogEntry",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "level":
+        {
+            "datatype": "enum:LogLevel",
+            "defaultValue": 1
+        },
+        "category":
+        {
+            "datatype": "enum:LogCategory",
+            "defaultValue": 0
+        },
+        "title":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "message":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "service":
+        {
+            "datatype": "enum:LogServiceOrigin",
+            "defaultValue": 0
+        },
+        "accountId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "errorCode":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "errorReason":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "additionalData":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        },
+        "timestamp":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "timestampIsoString":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "sequence":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "environment":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        }
+    }
+}

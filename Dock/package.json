@@ -12,6 +12,7 @@
   "dependencies": {
     "@gamiumgamers/packetron": "^1.0.18",
     "@google-cloud/storage": "^7.19.0",
+    "archiver": "^7.0.1",
     "bson": "^7.2.0",
     "dotenv": "^17.2.4",
     "mime-types": "^3.0.2",

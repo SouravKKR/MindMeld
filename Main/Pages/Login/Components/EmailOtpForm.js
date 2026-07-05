@@ -520,6 +520,8 @@ class EmailOtpForm extends HTMLElement
                     : "Please wait a moment before requesting another code.";
             case "EMAIL_DELIVERY_FAILED":
                 return "We couldn't send the email. Please try again in a moment.";
+            case "ACCESS_NOT_ALLOWED":
+                return "This environment is invite-only. Your email isn't on the access list.";
             default:
                 return "Couldn't send the code. Please try again.";
         }
@@ -541,6 +543,8 @@ class EmailOtpForm extends HTMLElement
                 return "Please enter your name to create your account.";
             case "INVALID_EMAIL":
                 return "That email address looks invalid.";
+            case "ACCESS_NOT_ALLOWED":
+                return "This environment is invite-only. Your email isn't on the access list.";
             default:
                 return "Couldn't verify the code. Please try again.";
         }

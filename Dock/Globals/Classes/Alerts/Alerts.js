@@ -1,5 +1,7 @@
 const AlertQueryEngine = require("../Database/AlertQueryEngine");
 const { alertSeverity } = require("../../Enumerations/AlertSeverity");
+const Logger = require("../Logger");
+const { logCategory } = require("../../Enumerations/LogCategory");
 
 /**
  * Alerts
@@ -19,6 +21,18 @@ class Alerts
 
     static async raise({ severity, source, title, message, metadata } = {})
     {
+        // Bridge every operational alert into the central log so the admin Logs
+        // view and downloads capture it alongside everything else. Never let the
+        // mirror break alerting.
+        try
+        {
+            Alerts.#mirrorToLog(severity, source, title, message, metadata);
+        }
+        catch (logMirrorError)
+        {
+            console.error("[Alerts] Failed to mirror alert to the log:", logMirrorError);
+        }
+
         try
         {
             return await AlertQueryEngine.raise({ severity, source, title, message, metadata });
@@ -27,6 +41,26 @@ class Alerts
         {
             console.error("[Alerts] Failed to record alert:", alertError);
             return null;
+        }
+    }
+
+    static #mirrorToLog(severity, source, title, message, metadata)
+    {
+        const options = { additionalData: (metadata && typeof metadata === "object") ? metadata : {} };
+        const logTitle = title || source || "ALERT";
+        const logMessage = message || "";
+
+        if (severity === alertSeverity.ERROR)
+        {
+            Logger.error(logCategory.EVENT, logTitle, logMessage, options);
+        }
+        else if (severity === alertSeverity.WARNING)
+        {
+            Logger.warning(logCategory.EVENT, logTitle, logMessage, options);
+        }
+        else
+        {
+            Logger.info(logCategory.EVENT, logTitle, logMessage, options);
         }
     }
 

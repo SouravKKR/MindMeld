@@ -12,6 +12,8 @@ const adminListTypes =
   ORGANIZATION_MEMBERS: 9,
   PROMO_CODES: 10,
   PROMO_CODE_REDEEMERS: 11,
+  ALLOWED_LOGIN_EMAILS: 12,
+  LOGS: 13,
 }
 
 module.exports = { adminListTypes };
