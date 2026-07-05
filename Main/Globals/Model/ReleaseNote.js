@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 class ReleaseNote
 {
     #id;
@@ -246,4 +248,4 @@ class ReleaseNote
     }
 }
 
-export default ReleaseNote;
+module.exports = ReleaseNote;

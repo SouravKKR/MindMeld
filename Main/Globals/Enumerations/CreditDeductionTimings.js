@@ -1,4 +1,4 @@
-export const creditDeductionTimings =
+const creditDeductionTimings =
 {
   UNKNOWN: 0,
   ON_START: 1,
@@ -6,3 +6,5 @@ export const creditDeductionTimings =
   ON_SUCCESS: 3,
   ON_ANY_COMPLETION: 4,
 }
+
+module.exports = { creditDeductionTimings };

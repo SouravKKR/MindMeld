@@ -5,14 +5,28 @@ Linode — the Dock web server, the Agent task processor, the burst worker fleet
 scheduled maintenance. It is organized **by machine, in the exact order you should
 do things**.
 
-There are two sections:
+There are four sections:
 
-- **[Section 1 — Initial deployment](#section-1--initial-deployment)** — everything
-  needed to go from nothing to a running server (Dock + Agent + fleet).
+- **[Section 0 — Environments](#section-0--environments-read-this-first)** — the four
+  isolated environments (local / development / testing / production) and how to spin any
+  of them up or tear it down on demand, idempotently, with the `manage-environment` skill.
+- **[Section 1 — Initial deployment](#section-1--initial-deployment)** — the per-machine
+  mechanics to go from nothing to a running server (what the automation runs under the hood).
 - **[Section 2 — Update deployment](#section-2--update-deployment)** — how to push
-  changes to production afterwards.
+  changes to an environment afterwards.
+- **[Section 3 — Desktop & mobile app distribution](#section-3--desktop--mobile-app-distribution)** —
+  building, signing and serving the installable desktop/mobile apps.
 
-Read [Concepts](#concepts) first — it defines the machines and terms used throughout.
+Read [Concepts](#concepts) first — it defines the machines and terms used throughout — then
+**[Section 0](#section-0--environments-read-this-first)** for the multi-environment model.
+
+> **Local build/run commands.** On your dev box the repo root is an npm package:
+> `npm run setup` runs the full aggressive frontend build, `npm run web` builds then
+> starts Dock with `--debug`, and `npm run production` builds then starts Dock **without**
+> `--debug` (the local equivalent of the base-node systemd command). The production
+> deploy paths below — `Common/Deployment/deploy.sh`, the base-node build steps, and the
+> systemd unit — invoke the individual `Common/Scripts/*` node scripts **directly** and
+> are **unchanged** by the npm launcher; they never depended on the old `setup.bat`.
 
 ---
 
@@ -22,7 +36,7 @@ Read [Concepts](#concepts) first — it defines the machines and terms used thro
 
 | Machine | Role |
 |---------|------|
-| **Dev workstation** (your Windows PC) | Where you write code, run `setup.bat`, and build the worker Docker image. |
+| **Dev workstation** (your Windows PC) | Where you write code, run `npm run setup`, and build the worker Docker image. |
 | **Base node** (a strong Linode) | Always-on. Runs the Dock web server, MongoDB, Redis, and a warm baseline of Agent workers. Provisioned by hand. |
 | **Burst VMs** (cheap Linodes) | Created/destroyed automatically by the autoscaler under load. Run only the Agent worker container. |
 | **Image-bake box** (a throwaway Linode) | Used once to produce the burst VM's custom Image. Deleted afterwards. |
@@ -69,7 +83,115 @@ grading, deck analysis) with an HTTP `503` and a "check back at \<time\>" messag
 
 ---
 
+# Section 0 — Environments (read this first)
+
+MindMeld runs in **four fully-isolated environments**. Everything in Sections 1–2 below
+describes the per-machine mechanics for **one** environment; this section explains how the
+four are kept separate and how to stand any of them up or tear it down **on demand and
+idempotently** with the `manage-environment` skill (which drives the orchestrators under
+`Common/Deployment/`).
+
+| Environment | Domain | Base node | Mongo | How it's built |
+|---|---|---|---|---|
+| **local** | `127.0.0.1:3000` | your dev box | local | `npm run web` (no Linode) |
+| **development** | `development.mindmeld.cogniumlabs.io` | own Linode | **colocated** on the base node | `provision-environment.sh development` |
+| **testing** | `testing.mindmeld.cogniumlabs.io` | own Linode | **separate Mongo VM** (prod-like) | `provision-environment.sh testing` |
+| **production** | `mindmeld.cogniumlabs.io` | own Linode | separate Mongo VM | already live (built by hand) |
+
+Each cloud environment has its **own** VPC, subnet CIDR, three firewalls, base node, Mongo,
+burst-worker image and credentials. The **only** shared thing is the single Linode API
+token — isolation comes from separate resources, not separate accounts.
+
+## 0.1 Naming convention
+
+Every resource is labelled **`MindMeld-<Env>-<Role>`** and tagged **`mindmeld-<env>`**
+(the tag is how the tooling finds and tears down an environment). The non-secret desired
+shape of each environment lives in
+[Common/Deployment/Environments.json](../Deployment/Environments.json).
+
+| Role | Label | Dev CIDR | Test CIDR | Prod CIDR |
+|---|---|---|---|---|
+| VPC / Subnet | `MindMeld-<Env>-VPC` / `-Subnet` | `10.10.0.0/24` | `10.20.0.0/24` | `10.0.0.0/24` |
+| Base node | `MindMeld-<Env>-Server` | | | |
+| Mongo VM | `MindMeld-<Env>-MongoDB` | (colocated) | separate | separate |
+| Firewalls | `MindMeld-<Env>-{Server,Database,Burst}FW` (32-char cap) | | | |
+| Burst image | `MindMeld-<Env>-BurstImage<version>` | | | |
+
+The original production resources were built before this convention and are migrated to it
+(metadata only, no downtime) by `bash Common/Deployment/rename-production-entities.sh`.
+
+## 0.2 Env-file scheme
+
+Each service selects its env file **by environment name**, resolved in this order:
+`--environment=<name>` flag → `MINDMELD_ENVIRONMENT` variable (exported by the base node's
+systemd unit) → legacy `--debug` → `production`. Each name maps to `Dock/.<name>.env` and
+`Agent/.<name>.env` (`local` also falls back to the historic `.env`). The resolver is in
+[Dock/index.js](../../Dock/index.js) and mirrored in
+[Agent/Globals/Utility/EnvironmentLoader.py](../../Agent/Globals/Utility/EnvironmentLoader.py),
+so Dock and the Agent subprocesses it spawns always agree on the environment.
+
+Real env files are gitignored and are **created by the provisioner itself** (no per-env
+templates); `Dock/.env.example` remains the committed reference for the full Dock variable
+set. All deploy secrets live in a **single `deployment.env`**: shared values (Linode token,
+SSH keys) are unsuffixed, and per-environment values are keyed by an uppercase suffix
+(`CLOUDFLARE_TUNNEL_TOKEN_DEVELOPMENT`, `BASE_NODE_SSH_HOST_TESTING`, …).
+
+## 0.3 Credentials — generated vs. supplied
+
+Provisioning **auto-generates** `PAID_DECK_MASTER_KEY_BASE64` (per env; production's is
+fixed forever), the Mongo password, and every `MONGODB_URL` / `REDIS_URL` / `BURST_*` / VPC
+/ firewall value. It **stops before creating any paid resource** if a secret only you can
+supply is missing, namely, per environment:
+
+- `deployment.env` → **`CLOUDFLARE_TUNNEL_TOKEN_<ENV>`** — a remotely-managed (token-based)
+  tunnel whose hostname `<env-domain>` routes to `http://127.0.0.1:3000`, created in the
+  Cloudflare Zero Trust dashboard.
+- `Agent/.<env>.env`: **`GEMINI_API_KEY`** (+ optional `OPENAI_API_KEY`), created in that
+  environment's own billing account so usage tracks separately.
+- `Dock/.<env>.env`: **`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`**, with redirect URI
+  `https://<env-domain>/Login/Callback` added to the OAuth client.
+
+## 0.4 Linode token scopes
+
+One Personal Access Token with **Read/Write** on **Linodes, Images, VPCs, Firewalls**
+(Cloud Manager → Profile → API Tokens) drives everything. A rejected write surfaces as
+`401/403` mid-run; add the scope and re-run (idempotent).
+
+## 0.5 The commands (idempotent; production guarded)
+
+```bash
+# Full provision-from-zero (VPC, firewalls, node(s), Mongo, tunnel, image, services).
+bash Common/Deployment/provision-environment.sh <env> [--dry-run] [--skip-deploy]
+# Code + burst-image roll-out to an already-provisioned env (no infra changes).
+bash Common/Deployment/deploy-environment.sh <env> [flags]
+# Read-only status of the env's resources + services.
+bash Common/Deployment/status-environment.sh <env>
+# Idempotent teardown (prints the plan; deletes only with --yes; prod needs --force-production).
+bash Common/Deployment/teardown-environment.sh <env> [--yes] [--force-production]
+# Migrate the legacy production labels to the convention (safe, no downtime).
+bash Common/Deployment/rename-production-entities.sh [--dry-run]
+```
+
+`provision` runs the exact steps of Sections 1–2 for you (VPC + firewalls + node install +
+frontend build + burst-image bake + tunnel + systemd), just parameterised by environment;
+`deploy` is the old `deploy.sh` (now a thin wrapper for `deploy-environment.sh production`).
+
+## 0.6 Burst-fleet isolation (important)
+
+The autoscaler **deletes every instance carrying its `BURST_MANAGEMENT_TAG` on startup**.
+Each environment therefore gets a distinct tag/prefix — `mindmeld-<env>-worker` — written
+into its `Dock/.<env>.env`, so one environment's Dock restart can **never** delete another
+environment's burst VMs. Combined with separate VPCs, firewalls and burst images, the
+fleets are fully isolated.
+
+---
+
 # Section 1 — Initial deployment
+
+> Sections 1–2 document the per-machine mechanics for a **single** environment. For
+> development/testing you normally never run these by hand — `provision-environment.sh
+> <env>` (Section 0) performs every step below, per environment. They remain the reference
+> for what the automation does and for hand-operating the production base node.
 
 Do these in order. Step 1.1 is on your dev workstation; 1.3 onward are on Linode.
 **The worker Docker image is built on a Debian 12 Linode bake box, not on Windows** —
@@ -324,8 +446,9 @@ as their working directory). It needs:
 ## 1.7 Base node — build the frontend & generated files
 
 The Node server serves the SPA from `Dock/Static/`, which is produced by the build.
-On Windows you'd run `setup.bat --aggressive`; on the Debian base node run the same
-steps directly (they are plain Node scripts). What each does:
+On your dev box you'd run `npm run setup` (which runs exactly the steps below — the
+aggressive build is always applied); on the Debian base node run the same steps
+directly (they are the plain Node scripts `npm run setup` invokes). What each does:
 
 ```bash
 cd /opt/mindmeld/MindMeld
@@ -334,22 +457,22 @@ node ./Common/Scripts/GenerateEnumerations.js      # Common/Enumerations → eac
 node ./Common/Scripts/GenerateConstants.js         # Common/Constants    → each service
 node ./Common/Scripts/GenerateClasses.js           # Common/Classes      → each service
 node ./Common/Scripts/CopyStaticFiles.js           # Main/ → Dock/Static/ (what the server serves)
-# --aggressive bundling + obfuscation for production (the part `setup.bat --aggressive` adds):
+# bundling + obfuscation for production (the aggressive part `npm run setup` always runs):
 node ./Common/Scripts/BundleStaticFiles.js
 node ./Common/Scripts/ManglePrivateMembersInBundle.js
 node ./Common/Scripts/MinifyAndObfuscateStaticFiles.js --aggressive
 ```
 
-- The first five steps are the **mandatory** codegen + static sync (equivalent to a
-  plain `setup.bat`). Without `CopyStaticFiles.js`, `Dock/Static/` is empty and the
-  app won't load.
-- The last three are the production hardening (`--aggressive`): they bundle, mangle
-  private members, and minify/obfuscate the served frontend. Run them for any
-  internet-facing deploy.
+- The first five steps are the **mandatory** codegen + static sync. Without
+  `CopyStaticFiles.js`, `Dock/Static/` is empty and the app won't load.
+- The last three are the production hardening: they bundle, mangle private members,
+  and minify/obfuscate the served frontend. `npm run setup` always runs them (there
+  is no non-aggressive build), so a dev build and a deploy build are identical.
 
-> If you prefer, build on Windows with `setup.bat --aggressive` and deploy the whole
-> repo (including the built `Dock/Static/`). Either way the artifacts are identical —
-> these are cross-platform Node scripts; only the `.bat` wrapper is Windows-specific.
+> If you prefer, build on your dev box with `npm run setup` and deploy the whole repo
+> (including the built `Dock/Static/`). Either way the artifacts are identical — these
+> are cross-platform Node scripts, driven by the root `package.json`. To run the server
+> the way the base node does (no `--debug`), use `npm run production` locally.
 
 ## 1.8 Base node — expose it on your domain via Cloudflare Tunnel
 
@@ -815,7 +938,7 @@ It performs every step of §1.10 + §2.2 automatically:
 4. Powers off, **shrinks the disk to 6144 MB**, and captures
    **`MindMeldBurstVmImage<version>`** — version = highest existing + 1.
 5. Builds the **production frontend** (codegen + bundle + mangle + obfuscate, the
-   `setup.bat --aggressive` equivalent), then SSHes into the base node, refreshes the
+   `npm run setup` equivalent), then SSHes into the base node, refreshes the
    Agent code + venv **and the Dock code** (a brute-force copy of `Dock/` *including*
    `node_modules` + the freshly-built obfuscated `Static/` —
    no `npm install` on the server; only the env secrets are excluded so the live
@@ -858,7 +981,7 @@ field is documented inline in that file.
 > **Scope.** `deploy.sh` rolls out **Agent** changes (the burst image + base-node
 > venv + image pointer) **and Dock code** (brute-force copy incl. `node_modules`). It
 > **builds the production frontend itself** before shipping Dock (the
-> `setup.bat --aggressive` equivalent — codegen + bundle + mangle + obfuscate — run as
+> `npm run setup` equivalent — codegen + bundle + mangle + obfuscate — run as
 > the cross-platform Node scripts from §1.7), so `Dock/Static/` is always current and
 > obfuscated; pass `--skip-frontend-build` to skip it if you already built. It assumes
 > the base node was already initialised
@@ -883,9 +1006,10 @@ node. The frontend has to be **bundled + obfuscated** into `Dock/Static/` first.
 > does NOT have the frontend build/obfuscation toolchain. So build locally and copy the
 > result, rather than building on the base node:
 >
-> 1. On Windows, from the repo root: **`setup.bat --aggressive`** (does codegen — a
+> 1. On your dev box, from the repo root: **`npm run setup`** (does codegen — a
 >    no-op if you didn't touch `Common/` — then `CopyStaticFiles` + bundle + mangle +
->    obfuscate, leaving a production-ready `Dock/Static/`).
+>    obfuscate, leaving a production-ready `Dock/Static/`; the aggressive build is
+>    always applied).
 > 2. Ship `Dock/` (its changed backend files **and** the rebuilt `Dock/Static/`) to the
 >    base node, **excluding** `Dock/node_modules` and the live `Dock/.env` /
 >    `Dock/.production.env` so you don't clobber them:
@@ -907,7 +1031,7 @@ scripts there), you can instead build in place:
 ```bash
 cd /opt/mindmeld/MindMeld
 git pull                                   # or your deploy mechanism
-# rebuild generated files + frontend (the setup.bat --aggressive equivalent):
+# rebuild generated files + frontend (the `npm run setup` equivalent):
 node ./Common/Scripts/GenerateServiceManifest.js
 node ./Common/Scripts/GenerateEnumerations.js
 node ./Common/Scripts/GenerateConstants.js
@@ -969,6 +1093,120 @@ Agent, also re-bake (2.2).
 
 ---
 
+# Section 3 — Desktop & mobile app distribution
+
+The desktop (Windows/macOS/Linux) and mobile (Android/iOS) apps are a **Tauri shell that
+loads the production site directly** (`https://mindmeld.cogniumlabs.io`). Because the
+webview origin *is* the production origin, every relative API call, cookie and
+`window.__TAURI__` integration works exactly as on the web — there is **no** separate API
+layer, and **the web deployment (Sections 1–2) is completely unaffected** by anything here.
+
+Two things are added on top of "load the site":
+
+- **Offline.** A service worker (`Main/service-worker.js`) caches the pages + static assets
+  the app loads, so a later launch/reload works with no network. It is registered **only**
+  inside the native shell (`Main/Globals/Classes/OfflineCacheManager.js`, gated on
+  `Platform.get() === APP`), so browsers never install it. It ships as an ordinary static
+  file (survives the bundler's source sweep via `BundleStaticFiles.PRESERVED_ROOT_FILE_NAMES`).
+- **Binary auto-update.** The desktop binary self-updates with `tauri-plugin-updater`, which
+  polls Dock's `/DesktopUpdates/latest.json` for a newer **signed** installer. Mobile updates
+  ship as a new APK / store build (the updater plugin is desktop-only).
+
+## 3.0 Build / run commands (dev box)
+
+| Command | Effect |
+|---|---|
+| `npm run desktop` | Aggressive build → configure the Tauri app from env → `tauri build` → install the produced OS installer → launch. |
+| `npm run android` | Aggressive build → configure → `tauri android dev` onto a USB-connected device (auto-runs `tauri android init` on first use). |
+| `npm run ios` | macOS + Xcode only; on other platforms it prints a message and exits. |
+
+`Common/Scripts/ConfigureTauriApp.js` runs before every Tauri build and injects, **from env**
+(with production defaults):
+
+- `MINDMELD_APP_URL` (default `https://mindmeld.cogniumlabs.io`) — the site the window loads;
+  also written into the remote-IPC capability (`Build/Template/src-tauri/capabilities/remote.json`)
+  so `window.__TAURI__` (Persistence fs, notifications, updater) is permitted on the remote page.
+- `MINDMELD_UPDATE_ENDPOINT` (default `<app-url>/DesktopUpdates/latest.json`) — the updater feed.
+- `MINDMELD_UPDATER_PUBKEY` — the updater public key. **If unset, the updater is disabled** and
+  `tauri build` still produces a plain installer (no auto-update). Set it to enable signed OTA
+  binary updates.
+
+## 3.1 One-time native-shell setup
+
+The Tauri project lives under `Build/` (git-ignored — it is local scaffolding). If you scaffold
+it fresh, ensure these (already applied on the current dev box):
+
+- `Build/Template/src-tauri/Cargo.toml` includes `tauri-plugin-updater` under a
+  `[target.'cfg(desktop)'.dependencies]` section.
+- `Build/Template/src-tauri/src/lib.rs` registers the updater plugin under `#[cfg(desktop)]`.
+- `Build/Template/src-tauri/capabilities/remote.json` exists (remote-IPC allowlist).
+- `Build/Template/src-tauri/tauri.conf.json` window has a remote `url` and `bundle`/`plugins`
+  fields that `ConfigureTauriApp.js` fills in.
+
+## 3.2 Generate the updater signing keypair (once)
+
+```bash
+npx tauri signer generate -w mindmeld-updater.key
+```
+
+This prints/creates a **private** key (`mindmeld-updater.key` + a password) and a **public**
+key. Then:
+
+- Keep the **private** key out of the repo. Provide it to the build via the standard Tauri env
+  vars at build time: `TAURI_SIGNING_PRIVATE_KEY` (the key content or a path) and
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+- Provide the **public** key as `MINDMELD_UPDATER_PUBKEY` when building, so
+  `ConfigureTauriApp.js` writes it into `plugins.updater.pubkey` and enables
+  `createUpdaterArtifacts`.
+
+> Like `PAID_DECK_MASTER_KEY_BASE64`, **keep the updater keypair stable** — every installed app
+> only trusts installers signed by the matching key, so rotating it strands existing installs on
+> their current version until they reinstall.
+
+## 3.3 Build, then publish a release
+
+```bash
+# From the repo root, with the signing env vars + public key set:
+export TAURI_SIGNING_PRIVATE_KEY=...            # or a path to the key file
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=...
+export MINDMELD_UPDATER_PUBKEY=...              # the public key from 3.2
+npm run desktop                                 # builds + signs the installer(s)
+```
+
+`tauri build` writes the installers and their `.sig` signatures under
+`Build/Template/src-tauri/target/release/bundle/` (e.g. `nsis/*-setup.exe`, `msi/*.msi`).
+
+To publish, upload to the base node's `Dock/DesktopUpdates/` directory (served at
+`/DesktopUpdates/…`, git-ignored, outside `Dock/Static/` so a frontend rebuild never wipes it):
+
+1. The installer artifact(s) for each platform you ship.
+2. A `latest.json` update manifest describing the newest version, e.g.:
+
+   ```json
+   {
+     "version": "1.0.1",
+     "notes": "What changed",
+     "pub_date": "2026-07-02T00:00:00Z",
+     "platforms": {
+       "windows-x86_64": {
+         "signature": "<contents of the .sig file>",
+         "url": "https://mindmeld.cogniumlabs.io/DesktopUpdates/mind-meld_1.0.1_x64-setup.exe"
+       }
+     }
+   }
+   ```
+
+On next launch an installed app fetches `latest.json`, and if `version` is newer and the
+signature verifies against its baked-in public key, it downloads and installs the update.
+
+## 3.4 What is NOT affected
+
+- The **web app** (Sections 1–2): the service worker is never registered in a browser, and the
+  `/DesktopUpdates` route is independent of the SPA. No frontend fetch/auth code changed.
+- `Common/Deployment/deploy.sh`, the base-node build, and the systemd unit — all unchanged.
+
+---
+
 ## Troubleshooting
 
 - **`docker build` fails with `npipe:////./pipe/docker_engine ... cannot find the file`.**
@@ -1013,6 +1251,22 @@ Agent, also re-bake (2.2).
   build (runs fine on CPU but bloats the image). Install the CPU build instead:
   `pip install torch==<ver>+cpu --index-url https://download.pytorch.org/whl/cpu`,
   then rebuild and re-bake.
+- **Desktop app: window is blank / `window.__TAURI__` is undefined.** The remote-IPC
+  capability (`Build/Template/src-tauri/capabilities/remote.json` → `remote.urls`) must
+  list the exact `MINDMELD_APP_URL` the window loads. `ConfigureTauriApp.js` keeps them in
+  sync, so rebuild via `npm run desktop` (not a bare `tauri build`) after changing the URL.
+- **Desktop app: `tauri build` fails complaining about the updater public key.** Either set
+  `MINDMELD_UPDATER_PUBKEY` (+ `TAURI_SIGNING_PRIVATE_KEY`/`…_PASSWORD`) to enable signed
+  updates, or leave `MINDMELD_UPDATER_PUBKEY` unset — `ConfigureTauriApp.js` then disables
+  `createUpdaterArtifacts` so the build produces a plain, unsigned installer.
+- **Desktop app doesn't update.** Confirm `Dock/DesktopUpdates/latest.json` is reachable at
+  `https://<domain>/DesktopUpdates/latest.json`, its `version` is newer than the installed
+  app, and each platform `signature` matches the uploaded `.sig`. The app only trusts
+  installers signed by the key whose public half is baked in (`MINDMELD_UPDATER_PUBKEY`).
+- **Desktop/mobile app has no offline cache.** The service worker registers only inside the
+  native shell and only over HTTPS. On iOS/macOS (WKWebView) it additionally requires the
+  production domain to be declared as a `WKAppBoundDomains` entry in the iOS project's
+  Info.plist; Windows (WebView2) and Android need nothing extra.
 
 ---
 
@@ -1033,4 +1287,7 @@ Agent, also re-bake (2.2).
 | Fleet settings (env) | `Dock/Globals/Classes/Burst/BurstFleetSettings.js` |
 | Maintenance | `Dock/Globals/Classes/Maintenance/`, `Dock/Globals/Model/MaintenanceWindow.js` |
 | Worker Docker image | `Agent/Dockerfile`, `Agent/requirements.txt` |
-| Frontend build scripts | `Common/Scripts/` (`setup.bat` runs these in order) |
+| Frontend build scripts | `Common/Scripts/` (`npm run setup` runs these in order) |
+| Root launcher scripts | `Common/Scripts/{Setup,RunWeb,RunProduction,RunDesktop,RunAndroid,RunIos}.js`, `BuildPipeline.js`, `CommandRunner.js` |
+| Desktop/mobile app config | `Common/Scripts/ConfigureTauriApp.js`, `Build/Template/src-tauri/` |
+| Desktop update route | `Dock/Endpoints/DesktopUpdates/HandleDesktopUpdateEndpoints.js` |

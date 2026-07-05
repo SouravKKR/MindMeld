@@ -13,4 +13,4 @@ class LicenseConstants
     static MAX_PAID_DECK_ENTITIES_PER_USER = 200000;
 }
 
-export default LicenseConstants;
+module.exports = LicenseConstants;

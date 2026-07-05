@@ -1,0 +1,60 @@
+{
+    "local": {
+        "provisioning": "none",
+        "domain": "127.0.0.1:3000"
+    },
+    "development": {
+        "provisioning": "linode",
+        "domain": "development.mindmeld.cogniumlabs.io",
+        "region": "in-maa",
+        "vpcCidr": "10.10.0.0/24",
+        "subnetCidr": "10.10.0.0/24",
+        "baseNodePrivateIp": "10.10.0.10",
+        "mongoTopology": "colocated",
+        "serverType": "g6-standard-1",
+        "mongoType": null,
+        "burstInstanceType": "g6-standard-2",
+        "labelPrefix": "MindMeld-Development",
+        "tag": "mindmeld-development",
+        "agentLocalWorkerCount": 1
+    },
+    "testing": {
+        "provisioning": "linode",
+        "domain": "testing.mindmeld.cogniumlabs.io",
+        "region": "in-maa",
+        "vpcCidr": "10.20.0.0/24",
+        "subnetCidr": "10.20.0.0/24",
+        "baseNodePrivateIp": "10.20.0.10",
+        "mongoPrivateIp": "10.20.0.20",
+        "mongoTopology": "separate",
+        "serverType": "g6-standard-2",
+        "mongoType": "g6-nanode-1",
+        "burstInstanceType": "g6-standard-2",
+        "labelPrefix": "MindMeld-Testing",
+        "tag": "mindmeld-testing",
+        "agentLocalWorkerCount": 1
+    },
+    "production": {
+        "provisioning": "linode",
+        "domain": "mindmeld.cogniumlabs.io",
+        "region": "in-maa",
+        "vpcCidr": "10.0.0.0/24",
+        "subnetCidr": "10.0.0.0/24",
+        "baseNodePrivateIp": "10.0.0.2",
+        "mongoPrivateIp": "10.0.0.3",
+        "mongoTopology": "separate",
+        "serverType": "g6-standard-2",
+        "mongoType": "g6-nanode-1",
+        "burstInstanceType": "g6-standard-2",
+        "labelPrefix": "MindMeld-Production",
+        "tag": "mindmeld-production",
+        "agentLocalWorkerCount": 2,
+        "existingResourceIds": {
+            "vpc": 517962,
+            "subnet": 746538,
+            "baseNode": 97060850,
+            "mongo": 97692514,
+            "image": "private/39701816"
+        }
+    }
+}

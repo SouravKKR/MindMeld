@@ -1,4 +1,4 @@
-export const askAiLanguages =
+const askAiLanguages =
 {
   ENGLISH: 0,
   HINDI: 1,
@@ -9,3 +9,5 @@ export const askAiLanguages =
   KOREAN: 6,
   CHINESE: 7,
 }
+
+module.exports = { askAiLanguages };

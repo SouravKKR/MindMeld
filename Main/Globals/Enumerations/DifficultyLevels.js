@@ -1,4 +1,4 @@
-export const difficultyLevels =
+const difficultyLevels =
 {
   VERY_EASY: 0,
   EASY: 1,
@@ -6,3 +6,5 @@ export const difficultyLevels =
   HARD: 3,
   VERY_HARD: 4,
 }
+
+module.exports = { difficultyLevels };

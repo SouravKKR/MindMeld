@@ -3,7 +3,7 @@
 Export the static word->vector table the deck Chat mode loads in the browser.
 
 This is a ONE-TIME, OFFLINE tool (needs internet + Python; NOT run by the app or
-by setup.bat). It distills a small static embedding model over a word list,
+by `npm run setup`). It distills a small static embedding model over a word list,
 reduces it to a compact dimension, quantizes to int8, and writes the three files
 Main/ThirdParty/StaticEmbeddings/ expects:
     manifest.json   {"dimensions", "scale", "vocabSize", "version"}
@@ -132,7 +132,7 @@ def main():
 
     size_megabytes = quantized.nbytes / (1024 * 1024)
     print(f"Wrote {len(words)} words x {arguments.dimensions} dims ({size_megabytes:.1f} MB) to {OUTPUT_DIRECTORY}")
-    print("Run setup.bat --aggressive to copy the table into Dock/Static/.")
+    print("Run npm run setup to copy the table into Dock/Static/.")
 
 
 if __name__ == "__main__":

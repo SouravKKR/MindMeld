@@ -1,4 +1,4 @@
-export const entityTypes =
+const entityTypes =
 {
   DECK: 0,
   CARD: 1,
@@ -6,3 +6,5 @@ export const entityTypes =
   MOCK_TEST: 3,
   ASK_AI_POPUP_LINK: 4,
 }
+
+module.exports = { entityTypes };

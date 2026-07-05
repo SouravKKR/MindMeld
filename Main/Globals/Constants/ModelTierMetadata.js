@@ -7,4 +7,4 @@ class ModelTierMetadata
     static PRO_PLUS = {"label":"Pro Plus","tagline":"Mathematics + advanced reasoning","description":"Server-side cloud model with the strongest reasoning available. Use for math, multi-step proofs, and questions that require deep analysis.","apiPath":"/AskAi/Query/ProPlus","modelId":"gemini-3.1-pro-preview","supportsImageInput":true,"enableGoogleSearchGrounding":true,"supportsAdvancedReasoning":true};
 }
 
-export default ModelTierMetadata;
+module.exports = ModelTierMetadata;

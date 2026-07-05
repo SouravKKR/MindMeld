@@ -4,4 +4,4 @@ class SettingFlags
     static CALL_TO_ACTION = 2;
 }
 
-export default SettingFlags;
+module.exports = SettingFlags;

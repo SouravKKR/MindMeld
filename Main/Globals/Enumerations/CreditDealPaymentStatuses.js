@@ -1,4 +1,4 @@
-export const creditDealPaymentStatuses =
+const creditDealPaymentStatuses =
 {
   NONE: 0,
   PENDING: 1,
@@ -6,3 +6,5 @@ export const creditDealPaymentStatuses =
   RECORDED: 3,
   FAILED: 4,
 }
+
+module.exports = { creditDealPaymentStatuses };

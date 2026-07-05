@@ -1,4 +1,4 @@
-export const creditTransactionTypes =
+const creditTransactionTypes =
 {
   UNKNOWN: 0,
   TASK_CHARGE: 1,
@@ -10,3 +10,5 @@ export const creditTransactionTypes =
   PURCHASE_GRANT: 7,
   PROMO_GRANT: 8,
 }
+
+module.exports = { creditTransactionTypes };

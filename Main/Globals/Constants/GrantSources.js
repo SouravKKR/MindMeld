@@ -6,4 +6,4 @@ class GrantSources
     static ORG_AUTO_ASSIGN = 'ORG_AUTO_ASSIGN';
 }
 
-export default GrantSources;
+module.exports = GrantSources;

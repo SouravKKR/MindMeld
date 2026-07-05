@@ -1,4 +1,4 @@
-export const adminPanelTabs =
+const adminPanelTabs =
 {
   DECKS: 0,
   STATS: 1,
@@ -13,3 +13,5 @@ export const adminPanelTabs =
   MAINTENANCE: 10,
   STREAKS: 11,
 }
+
+module.exports = { adminPanelTabs };

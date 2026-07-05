@@ -2,6 +2,8 @@
 logs
 *.log
 Agent/logs/
+# Deployment/provision run logs (redirected here by the orchestrators' callers).
+Common/Logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -406,10 +408,23 @@ Common/Testing/Experimental/**/Output/
 Common/Testing/Experimental/_iter/
 .production.env
 
+# Per-environment secret env files for Dock + Agent (real secrets). The committed
+# templates are Dock/.environment.env.example / Agent/.environment.env.example and
+# the .<env>.env.example files, which do NOT match these patterns.
+.local.env
+.development.env
+.testing.env
+
 # Deployment automation config (secrets: Linode token, SSH keys, base-node host).
-# Read by Common/Deployment/deploy.sh. Never commit.
+# Read by the Common/Deployment orchestrators. Never commit. The shared file plus
+# every per-environment file; the .example templates stay committed.
 deployment.env
+deployment.*.env
 
 # Local-only portable Graphviz binaries used for dev/testing of the SVG enhancer
 # (production gets `dot` from the Docker image's apt graphviz package instead).
 Agent/.tools/
+
+# Desktop/mobile release artifacts served by Dock's /DesktopUpdates route (signed installers +
+# latest.json). Uploaded per release, machine-generated — never committed.
+Dock/DesktopUpdates/

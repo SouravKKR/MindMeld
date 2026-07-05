@@ -71,4 +71,4 @@ class PageRange
     }
 }
 
-export default PageRange;
+module.exports = PageRange;

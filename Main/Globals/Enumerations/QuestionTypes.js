@@ -1,4 +1,4 @@
-export const questionTypes =
+const questionTypes =
 {
   MULTIPLE_CHOICE: 0,
   MULTIPLE_CORRECT: 1,
@@ -8,3 +8,5 @@ export const questionTypes =
   LONG_SUBJECTIVE: 5,
   VERY_LONG_SUBJECTIVE: 6,
 }
+
+module.exports = { questionTypes };

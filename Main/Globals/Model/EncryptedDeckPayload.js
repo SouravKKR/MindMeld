@@ -99,4 +99,4 @@ class EncryptedDeckPayload
     }
 }
 
-export default EncryptedDeckPayload;
+module.exports = EncryptedDeckPayload;

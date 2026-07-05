@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 class OrganizationMember
 {
     #id;
@@ -142,4 +144,4 @@ class OrganizationMember
     }
 }
 
-export default OrganizationMember;
+module.exports = OrganizationMember;

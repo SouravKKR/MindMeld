@@ -148,4 +148,4 @@ class ErrorCodes
     static WRONG_PASSWORD = 'WRONG_PASSWORD';
 }
 
-export default ErrorCodes;
+module.exports = ErrorCodes;

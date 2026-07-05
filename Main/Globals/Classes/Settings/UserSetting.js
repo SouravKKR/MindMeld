@@ -101,4 +101,4 @@ class UserSetting
     }
 }
 
-export default UserSetting;
+module.exports = UserSetting;

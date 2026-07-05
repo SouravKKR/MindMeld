@@ -1,4 +1,4 @@
-export const paymentProviders =
+const paymentProviders =
 {
   RAZORPAY: 0,
   STRIPE: 1,
@@ -6,3 +6,5 @@ export const paymentProviders =
   ORG_AUTO_ASSIGN: 3,
   ZOHO: 4,
 }
+
+module.exports = { paymentProviders };

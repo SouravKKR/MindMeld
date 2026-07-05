@@ -1,6 +1,6 @@
-import AutoGenerationSettings from './AutoGenerationSettings.js';
-import { automaticGenerationModes } from '../../../Enumerations/AutomaticGenerationModes.js';
-import ExtractableInformationSource from '../../Decorators/ExtractableInformationSource.js';
+const AutoGenerationSettings = require('./AutoGenerationSettings');
+const { automaticGenerationModes } = require('../../../Enumerations/AutomaticGenerationModes');
+const ExtractableInformationSource = require('../../Decorators/ExtractableInformationSource');
 
 class GeneralGenerationSettings extends AutoGenerationSettings
 {
@@ -110,4 +110,4 @@ class GeneralGenerationSettings extends AutoGenerationSettings
     }
 }
 
-export default GeneralGenerationSettings;
+module.exports = GeneralGenerationSettings;

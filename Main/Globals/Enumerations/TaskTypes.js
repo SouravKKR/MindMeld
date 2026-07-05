@@ -1,4 +1,4 @@
-export const taskTypes =
+const taskTypes =
 {
   UNKNOWN: 0,
   EXTRACT_FIGURES: 1,
@@ -36,3 +36,5 @@ export const taskTypes =
   ASK_AI_PRO_PLUS: 33,
   AUTO_FILL_GENERATION_OPTIONS: 34,
 }
+
+module.exports = { taskTypes };

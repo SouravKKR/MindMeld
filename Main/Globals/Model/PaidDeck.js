@@ -1,5 +1,7 @@
-import { deckPurchaseGranularity } from '../Enumerations/DeckPurchaseGranularity.js';
-import { paidDeckFeatureBadges } from '../Enumerations/PaidDeckFeatureBadges.js';
+const crypto = require('crypto');
+
+const { deckPurchaseGranularity } = require('../Enumerations/DeckPurchaseGranularity');
+const { paidDeckFeatureBadges } = require('../Enumerations/PaidDeckFeatureBadges');
 
 class PaidDeck
 {
@@ -440,4 +442,4 @@ class PaidDeck
     }
 }
 
-export default PaidDeck;
+module.exports = PaidDeck;

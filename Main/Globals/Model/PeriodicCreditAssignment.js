@@ -1,8 +1,10 @@
-import { periodicScopeTypes } from '../Enumerations/PeriodicScopeTypes.js';
-import { creditGrantAmountModes } from '../Enumerations/CreditGrantAmountModes.js';
-import { periodicScheduleTypes } from '../Enumerations/PeriodicScheduleTypes.js';
-import { periodicOnJoinModes } from '../Enumerations/PeriodicOnJoinModes.js';
-import { periodicAssignmentStatuses } from '../Enumerations/PeriodicAssignmentStatuses.js';
+const crypto = require('crypto');
+
+const { periodicScopeTypes } = require('../Enumerations/PeriodicScopeTypes');
+const { creditGrantAmountModes } = require('../Enumerations/CreditGrantAmountModes');
+const { periodicScheduleTypes } = require('../Enumerations/PeriodicScheduleTypes');
+const { periodicOnJoinModes } = require('../Enumerations/PeriodicOnJoinModes');
+const { periodicAssignmentStatuses } = require('../Enumerations/PeriodicAssignmentStatuses');
 
 class PeriodicCreditAssignment
 {
@@ -475,4 +477,4 @@ class PeriodicCreditAssignment
     }
 }
 
-export default PeriodicCreditAssignment;
+module.exports = PeriodicCreditAssignment;

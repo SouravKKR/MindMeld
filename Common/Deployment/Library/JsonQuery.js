@@ -11,6 +11,11 @@
 //   highestImageId <labelPrefix>        — id of the highest-version managed image (blank if none)
 //   olderImageIds <labelPrefix> <keep>  — image ids whose version < keep, one per line
 //   ext4DiskId                          — id of the single ext4 root disk in a disks listing
+//   idByLabel <label>                   — id of the data[] entry whose label === label (blank if none)
+//   idsByLabelPrefix <prefix>           — ids of every data[] entry whose label starts with prefix, one per line
+//   rowsByLabelPrefix <prefix>          — "id|label" of every data[] entry whose label starts with prefix, one per line
+//   subnetIdForVpcLabel <label>         — id of the first subnet of the VPC whose label === label (blank if none)
+//   firewallLinodeDeviceId <linodeId>   — device id in a firewall /devices listing bound to that linode (blank if none)
 
 function readStandardInput()
 {
@@ -131,6 +136,56 @@ async function main()
         const disks = Array.isArray(document.data) ? document.data : [];
         const rootDisk = disks.find(disk => disk.filesystem === "ext4");
         process.stdout.write(rootDisk ? String(rootDisk.id) : "");
+        return;
+    }
+
+    if (subcommand === "idByLabel")
+    {
+        const wantedLabel = process.argv[3] || "";
+        const entries = Array.isArray(document.data) ? document.data : [];
+        const match = entries.find(entry => entry.label === wantedLabel);
+        process.stdout.write(match ? String(match.id) : "");
+        return;
+    }
+
+    if (subcommand === "idsByLabelPrefix")
+    {
+        const labelPrefix = process.argv[3] || "";
+        const entries = Array.isArray(document.data) ? document.data : [];
+        const matchingIds = entries
+            .filter(entry => typeof entry.label === "string" && entry.label.startsWith(labelPrefix))
+            .map(entry => String(entry.id));
+        process.stdout.write(matchingIds.join("\n"));
+        return;
+    }
+
+    if (subcommand === "rowsByLabelPrefix")
+    {
+        const labelPrefix = process.argv[3] || "";
+        const entries = Array.isArray(document.data) ? document.data : [];
+        const rows = entries
+            .filter(entry => typeof entry.label === "string" && entry.label.startsWith(labelPrefix))
+            .map(entry => `${entry.id}|${entry.label}`);
+        process.stdout.write(rows.join("\n"));
+        return;
+    }
+
+    if (subcommand === "subnetIdForVpcLabel")
+    {
+        const wantedLabel = process.argv[3] || "";
+        const vpcs = Array.isArray(document.data) ? document.data : [];
+        const match = vpcs.find(vpc => vpc.label === wantedLabel);
+        const firstSubnet = match && Array.isArray(match.subnets) ? match.subnets[0] : undefined;
+        process.stdout.write(firstSubnet ? String(firstSubnet.id) : "");
+        return;
+    }
+
+    if (subcommand === "firewallLinodeDeviceId")
+    {
+        const linodeId = Number(process.argv[3] || "0");
+        const devices = Array.isArray(document.data) ? document.data : [];
+        const match = devices.find(device => device.entity && device.entity.type === "linode" && Number(device.entity.id) === linodeId);
+        process.stdout.write(match ? String(match.id) : "");
         return;
     }
 

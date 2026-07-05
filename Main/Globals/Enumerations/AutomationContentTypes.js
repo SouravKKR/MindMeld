@@ -1,4 +1,4 @@
-export const automationContentTypes =
+const automationContentTypes =
 {
   TEXT: 0,
   IMAGE: 1,
@@ -8,3 +8,5 @@ export const automationContentTypes =
   DOCUMENT: 5,
   TASK_DESCRIPTOR: 6,
 }
+
+module.exports = { automationContentTypes };

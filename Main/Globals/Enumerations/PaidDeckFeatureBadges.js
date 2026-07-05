@@ -1,4 +1,4 @@
-export const paidDeckFeatureBadges =
+const paidDeckFeatureBadges =
 {
   VERIFIED_BY_SUBJECT_EXPERT: 0,
   CURATED_BY_TEACHERS: 1,
@@ -27,3 +27,5 @@ export const paidDeckFeatureBadges =
   REGULARLY_UPDATED: 24,
   BILINGUAL: 25,
 }
+
+module.exports = { paidDeckFeatureBadges };

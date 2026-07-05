@@ -11,4 +11,4 @@ class MockTestEvaluationConstants
     static GRADED_ATTEMPT_OUTPUT_FILENAME = 'GradedAttempt.json';
 }
 
-export default MockTestEvaluationConstants;
+module.exports = MockTestEvaluationConstants;

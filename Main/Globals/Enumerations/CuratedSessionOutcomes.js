@@ -1,4 +1,4 @@
-export const curatedSessionOutcomes =
+const curatedSessionOutcomes =
 {
   IN_PROGRESS: 0,
   COMPLETED_ALL_EASY: 1,
@@ -6,3 +6,5 @@ export const curatedSessionOutcomes =
   REPLACED_BY_REGEN: 3,
   AUTO_REPLACED: 4,
 }
+
+module.exports = { curatedSessionOutcomes };

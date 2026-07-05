@@ -1,4 +1,4 @@
-// Supported CLI flags (forward args from run.ps1 / launch directly via `node Dock/index.js`):
+// Supported CLI flags (via `npm run web` / `npm run production`, or launch directly via `node Dock/index.js`):
 //   --debug     Verbose Logger output
 //   --logout    Wipe the sessions collection on boot, forcing every user
 //               to re-authenticate. Without this flag, existing sessions
@@ -14,13 +14,53 @@ const path = require("path");
 // database-backed route into a 500. Anchoring to __dirname makes the launch
 // directory irrelevant.
 //
-// Which file we load depends on the run mode: with --debug we use the local
-// .env (development database); without it we use .production.env (the live
-// database). This guarantees a debug launch never talks to the production
-// database and a production launch never talks to the development one. The
-// Agent service makes the same choice via Globals/Utility/EnvironmentLoader.py.
-const environmentFileName = process.argv.includes("--debug") ? ".env" : ".production.env";
-require("dotenv").config({ path: path.join(__dirname, environmentFileName) });
+// Which env file we load is selected by environment name, in priority order:
+//   1. an explicit --environment=<name> flag
+//   2. the MINDMELD_ENVIRONMENT variable (set by the systemd unit on each base
+//      node, so Dock AND the Agent subprocesses it spawns agree on the environment)
+//   3. legacy --debug  -> local
+//   4. otherwise       -> production
+// Each name maps to Dock/.<name>.env; "local" also falls back to the historical
+// Dock/.env so existing local setups keep working. The Agent service mirrors this
+// exact resolution in Globals/Utility/EnvironmentLoader.py, so a launch can never
+// load one service against the development database and the other against production.
+const fileSystem = require("fs");
+
+function resolveEnvironmentName()
+{
+    const explicitEnvironmentFlag = process.argv.find(argument => argument.startsWith("--environment="));
+    if (explicitEnvironmentFlag)
+    {
+        return explicitEnvironmentFlag.slice("--environment=".length);
+    }
+    if (process.env.MINDMELD_ENVIRONMENT)
+    {
+        return process.env.MINDMELD_ENVIRONMENT;
+    }
+    if (process.argv.includes("--debug"))
+    {
+        return "local";
+    }
+    return "production";
+}
+
+const environmentName = resolveEnvironmentName();
+const candidateEnvironmentFileNames = environmentName === "local"
+    ? [".local.env", ".env"]
+    : [`.${environmentName}.env`];
+
+let selectedEnvironmentFilePath = path.join(__dirname, candidateEnvironmentFileNames[0]);
+for (const candidateEnvironmentFileName of candidateEnvironmentFileNames)
+{
+    const candidateEnvironmentFilePath = path.join(__dirname, candidateEnvironmentFileName);
+    if (fileSystem.existsSync(candidateEnvironmentFilePath))
+    {
+        selectedEnvironmentFilePath = candidateEnvironmentFilePath;
+        break;
+    }
+}
+
+require("dotenv").config({ path: selectedEnvironmentFilePath });
 
 const { Packetron, PacketronServerFlags } = require("@gamiumgamers/packetron");
 const { handleAuthenticationEndpoints } = require("./Endpoints/HandleAuthenticationEndpoints");
@@ -45,6 +85,7 @@ const { handleCreditEndpoints } = require("./Endpoints/HandleCreditEndpoints");
 const { handleMaintenanceEndpoints } = require("./Endpoints/HandleMaintenanceEndpoints");
 const { handleStreakEndpoints } = require("./Endpoints/HandleStreakEndpoints");
 const { handleMetricsEndpoints } = require("./Endpoints/HandleMetricsEndpoints");
+const { handleDesktopUpdateEndpoints } = require("./Endpoints/DesktopUpdates/HandleDesktopUpdateEndpoints");
 const Logger = require("./Globals/Classes/Logger");
 const KeyManagementService = require("./Globals/Classes/Security/KeyManagementService");
 const KeyRotationScheduler = require("./Globals/Classes/Security/KeyRotationScheduler");
@@ -224,3 +265,4 @@ handleCreditEndpoints(server);
 handleMaintenanceEndpoints(server);
 handleStreakEndpoints(server);
 handleMetricsEndpoints(server);
+handleDesktopUpdateEndpoints(server);

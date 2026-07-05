@@ -1,4 +1,4 @@
-export const devicePlatforms =
+const devicePlatforms =
 {
   UNKNOWN: 0,
   WEB: 1,
@@ -8,3 +8,5 @@ export const devicePlatforms =
   ANDROID: 5,
   IOS: 6,
 }
+
+module.exports = { devicePlatforms };

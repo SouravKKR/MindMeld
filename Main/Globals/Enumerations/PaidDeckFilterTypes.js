@@ -1,4 +1,4 @@
-export const paidDeckFilterTypes =
+const paidDeckFilterTypes =
 {
   TEXT_SEARCH: 0,
   NUMBER_RANGE: 1,
@@ -8,3 +8,5 @@ export const paidDeckFilterTypes =
   BOOLEAN: 5,
   INSTITUTE_SELECT: 6,
 }
+
+module.exports = { paidDeckFilterTypes };

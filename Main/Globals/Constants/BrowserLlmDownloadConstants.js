@@ -10,4 +10,4 @@ class BrowserLlmDownloadConstants
     static DECK_PREFERENCES_FIELD_KEY = 'askAiPreferences';
 }
 
-export default BrowserLlmDownloadConstants;
+module.exports = BrowserLlmDownloadConstants;

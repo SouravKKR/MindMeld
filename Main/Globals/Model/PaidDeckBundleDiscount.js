@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 class PaidDeckBundleDiscount
 {
     #id;
@@ -98,4 +100,4 @@ class PaidDeckBundleDiscount
     }
 }
 
-export default PaidDeckBundleDiscount;
+module.exports = PaidDeckBundleDiscount;

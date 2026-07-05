@@ -1,4 +1,6 @@
-import { devicePlatforms } from '../Enumerations/DevicePlatforms.js';
+const crypto = require('crypto');
+
+const { devicePlatforms } = require('../Enumerations/DevicePlatforms');
 
 class Device
 {
@@ -258,4 +260,4 @@ class Device
     }
 }
 
-export default Device;
+module.exports = Device;

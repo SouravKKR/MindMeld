@@ -1,5 +1,5 @@
-import TaskSettings from '../TaskSettings.js';
-import ExtractableInformationSource from '../../Decorators/ExtractableInformationSource.js';
+const TaskSettings = require('../TaskSettings');
+const ExtractableInformationSource = require('../../Decorators/ExtractableInformationSource');
 
 class AutoGenerationSettings extends TaskSettings
 {
@@ -158,4 +158,4 @@ class AutoGenerationSettings extends TaskSettings
     }
 }
 
-export default AutoGenerationSettings;
+module.exports = AutoGenerationSettings;

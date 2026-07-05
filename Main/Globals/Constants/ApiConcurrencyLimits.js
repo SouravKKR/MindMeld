@@ -6,4 +6,4 @@ class ApiConcurrencyLimits
     static ACQUIRE_POLL_INTERVAL_SECONDS = 1;
 }
 
-export default ApiConcurrencyLimits;
+module.exports = ApiConcurrencyLimits;

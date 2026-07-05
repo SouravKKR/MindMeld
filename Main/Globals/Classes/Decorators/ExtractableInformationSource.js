@@ -1,5 +1,5 @@
-import InformationSource from '../../Model/InformationSource.js';
-import PageRange from './PageRange.js';
+const InformationSource = require('../../Model/InformationSource');
+const PageRange = require('./PageRange');
 
 class ExtractableInformationSource
 {
@@ -57,4 +57,4 @@ class ExtractableInformationSource
     }
 }
 
-export default ExtractableInformationSource;
+module.exports = ExtractableInformationSource;

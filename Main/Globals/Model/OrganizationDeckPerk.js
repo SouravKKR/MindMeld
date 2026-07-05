@@ -1,4 +1,6 @@
-import { organizationDeckPerkTypes } from '../Enumerations/OrganizationDeckPerkTypes.js';
+const crypto = require('crypto');
+
+const { organizationDeckPerkTypes } = require('../Enumerations/OrganizationDeckPerkTypes');
 
 class OrganizationDeckPerk
 {
@@ -174,4 +176,4 @@ class OrganizationDeckPerk
     }
 }
 
-export default OrganizationDeckPerk;
+module.exports = OrganizationDeckPerk;

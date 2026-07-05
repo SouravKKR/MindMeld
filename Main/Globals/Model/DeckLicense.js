@@ -1,4 +1,6 @@
-import { deckLicenseStatuses } from '../Enumerations/DeckLicenseStatuses.js';
+const crypto = require('crypto');
+
+const { deckLicenseStatuses } = require('../Enumerations/DeckLicenseStatuses');
 
 class DeckLicense
 {
@@ -420,4 +422,4 @@ class DeckLicense
     }
 }
 
-export default DeckLicense;
+module.exports = DeckLicense;

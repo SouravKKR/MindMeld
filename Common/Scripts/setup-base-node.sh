@@ -21,10 +21,16 @@ REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 DOCK_DIR="$REPO_DIR/Dock"
 AGENT_DIR="$REPO_DIR/Agent"
 NODE_MAJOR="${NODE_MAJOR:-22}"
+# Which environment this base node serves. Defaults to production (back-compat).
+# The env files are Dock/.<env>.env + Agent/.<env>.env and the systemd unit exports
+# MINDMELD_ENVIRONMENT so Dock + its Agent subprocesses load the right one. For a
+# full from-scratch provision use Common/Deployment/provision-environment.sh instead.
+MINDMELD_ENVIRONMENT="${MINDMELD_ENVIRONMENT:-production}"
+ENVIRONMENT_FILE_NAME=".${MINDMELD_ENVIRONMENT}.env"
 
-echo "==> Repo root: $REPO_DIR"
-[ -f "$DOCK_DIR/.production.env" ]  || { echo "ERROR: missing $DOCK_DIR/.production.env";  exit 1; }
-[ -f "$AGENT_DIR/.production.env" ] || { echo "ERROR: missing $AGENT_DIR/.production.env"; exit 1; }
+echo "==> Repo root: $REPO_DIR  (environment: $MINDMELD_ENVIRONMENT)"
+[ -f "$DOCK_DIR/$ENVIRONMENT_FILE_NAME" ]  || { echo "ERROR: missing $DOCK_DIR/$ENVIRONMENT_FILE_NAME";  exit 1; }
+[ -f "$AGENT_DIR/$ENVIRONMENT_FILE_NAME" ] || { echo "ERROR: missing $AGENT_DIR/$ENVIRONMENT_FILE_NAME"; exit 1; }
 
 echo "==> System packages (Redis, OCR stack, build tools)..."
 export DEBIAN_FRONTEND=noninteractive
@@ -78,7 +84,7 @@ echo "==> Dock systemd service..."
 NODE_BIN="$(command -v node)"
 cat >/etc/systemd/system/mindmeld-dock.service <<EOF
 [Unit]
-Description=MindMeld Dock
+Description=MindMeld Dock ($MINDMELD_ENVIRONMENT)
 After=network-online.target redis-server.service
 Wants=network-online.target
 
@@ -86,6 +92,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$DOCK_DIR
+Environment=MINDMELD_ENVIRONMENT=$MINDMELD_ENVIRONMENT
 ExecStart=$NODE_BIN index.js
 Restart=always
 RestartSec=5

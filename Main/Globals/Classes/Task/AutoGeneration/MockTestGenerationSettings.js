@@ -1,6 +1,6 @@
-import AutoGenerationSettings from './AutoGenerationSettings.js';
-import { automationLevels } from '../../../Enumerations/AutomationLevels.js';
-import ExtractableInformationSource from '../../Decorators/ExtractableInformationSource.js';
+const AutoGenerationSettings = require('./AutoGenerationSettings');
+const { automationLevels } = require('../../../Enumerations/AutomationLevels');
+const ExtractableInformationSource = require('../../Decorators/ExtractableInformationSource');
 
 class MockTestGenerationSettings extends AutoGenerationSettings
 {
@@ -507,4 +507,4 @@ class MockTestGenerationSettings extends AutoGenerationSettings
     }
 }
 
-export default MockTestGenerationSettings;
+module.exports = MockTestGenerationSettings;

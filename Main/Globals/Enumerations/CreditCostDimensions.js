@@ -1,4 +1,4 @@
-export const creditCostDimensions =
+const creditCostDimensions =
 {
   FLAT: 0,
   INPUT_TOKENS: 1,
@@ -6,3 +6,5 @@ export const creditCostDimensions =
   DURATION_SECONDS: 3,
   STORAGE_MEGABYTES: 4,
 }
+
+module.exports = { creditCostDimensions };

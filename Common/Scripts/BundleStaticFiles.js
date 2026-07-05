@@ -9,6 +9,11 @@ class StaticBundler
     static SKIPPED_TOP_LEVEL_DIRECTORIES = new Set(['ThirdParty']);
     static DELETABLE_EXTENSIONS = new Set(['.js', '.css']);
 
+    // Root-level standalone scripts that are NOT part of any HTML bundle graph and must survive
+    // the post-bundle source sweep. service-worker.js is registered by URL at the site root
+    // (see OfflineCacheManager) and is intentionally left un-bundled so it keeps its own scope.
+    static PRESERVED_ROOT_FILE_NAMES = new Set(['service-worker.js']);
+
     // Upper bound on how many code-split parts we emit per HTML entry. The
     // downstream MinifyAndObfuscateStaticFiles.js worker pool processes the
     // parts in parallel, so more parts = better parallelism — capped here
@@ -277,6 +282,10 @@ class StaticBundler
             entryNames: `${bundleBaseName}.part-[hash]`,
             chunkNames: `${bundleBaseName}.chunk-[hash]`,
             metafile: true,
+            // Frontend model classes authored as CommonJS use `require('crypto').randomUUID()`.
+            // "crypto" is a Node builtin with no browser resolution, so map it to the Web Crypto
+            // global (see BrowserCryptoShimForBundle.js) rather than failing the bundle.
+            alias: { crypto: path.join(__dirname, 'BrowserCryptoShimForBundle.js') },
         });
 
         return Object.keys(buildResult.metafile.outputs)
@@ -461,6 +470,10 @@ class StaticBundler
                         continue;
                     }
                     if (this.preservedBundlePaths.has(entryPath))
+                    {
+                        continue;
+                    }
+                    if (currentDirectory === this.staticDirectory && StaticBundler.PRESERVED_ROOT_FILE_NAMES.has(entry.name))
                     {
                         continue;
                     }

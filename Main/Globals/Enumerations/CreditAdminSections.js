@@ -1,4 +1,4 @@
-export const creditAdminSections =
+const creditAdminSections =
 {
   PRICING_AND_PACKS: 0,
   GRANTS: 1,
@@ -7,3 +7,5 @@ export const creditAdminSections =
   MILESTONES_AND_GLOBAL: 4,
   PROMO_CODES: 5,
 }
+
+module.exports = { creditAdminSections };

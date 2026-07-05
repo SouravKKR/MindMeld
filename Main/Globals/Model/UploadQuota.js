@@ -115,4 +115,4 @@ class UploadQuota
     }
 }
 
-export default UploadQuota;
+module.exports = UploadQuota;

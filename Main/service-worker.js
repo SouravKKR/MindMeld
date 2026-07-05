@@ -1,0 +1,141 @@
+// MindMeld offline cache — used ONLY by the native desktop/mobile shell.
+//
+// The Tauri app loads the production site directly (https://mindmeld.cogniumlabs.io); this service
+// worker stores the pages + static assets it loads so that a later launch/reload works with no
+// network. It is registered ONLY from inside the native shell (see OfflineCacheManager, gated on
+// Platform.get() === APP), so ordinary web browsers never install it and the web version is
+// completely unaffected.
+//
+// Strategy:
+//   - Navigations (the HTML shell) and static assets (js/css/fonts/images/wasm/json/…): NETWORK
+//     FIRST — when online the freshest copy is served and the cache is refreshed; when offline the
+//     last cached copy is served. This is what makes "load online, keep working offline" true.
+//   - Everything else (API / dynamic / auth endpoints, non-GET, cross-origin): passthrough, never
+//     cached. Offline data behaviour is handled by the app itself (Persistence), not here.
+
+const OFFLINE_CACHE_NAME = "mindmeld-offline-v1";
+
+const STATIC_ASSET_EXTENSIONS = new Set([
+    "html", "js", "mjs", "css", "json", "wasm", "bin",
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "ico",
+    "woff", "woff2", "ttf", "otf", "map",
+]);
+
+self.addEventListener("install", (installEvent) =>
+{
+    // Take over as soon as installed so offline support is active on the next navigation.
+    self.skipWaiting();
+});
+
+self.addEventListener("activate", (activateEvent) =>
+{
+    activateEvent.waitUntil((async () =>
+    {
+        const cacheNames = await caches.keys();
+
+        await Promise.all(cacheNames.map((cacheName) =>
+        {
+            if (cacheName !== OFFLINE_CACHE_NAME)
+            {
+                return caches.delete(cacheName);
+            }
+
+            return Promise.resolve();
+        }));
+
+        await self.clients.claim();
+    })());
+});
+
+function isCacheableRequest(request)
+{
+    if (request.method !== "GET")
+    {
+        return false;
+    }
+
+    let requestUrl;
+
+    try
+    {
+        requestUrl = new URL(request.url);
+    }
+    catch (parseError)
+    {
+        return false;
+    }
+
+    // Only ever cache assets from our own origin — never third-party scripts or API hosts.
+    if (requestUrl.origin !== self.location.origin)
+    {
+        return false;
+    }
+
+    // The HTML shell arrives as a navigation request (no useful extension on the path).
+    if (request.mode === "navigate")
+    {
+        return true;
+    }
+
+    const lastPathSegment = requestUrl.pathname.split("/").pop() || "";
+    const extensionSeparatorIndex = lastPathSegment.lastIndexOf(".");
+
+    if (extensionSeparatorIndex < 0)
+    {
+        // No extension → treat as a dynamic/API endpoint and leave it to the network.
+        return false;
+    }
+
+    const extension = lastPathSegment.slice(extensionSeparatorIndex + 1).toLowerCase();
+    return STATIC_ASSET_EXTENSIONS.has(extension);
+}
+
+async function networkFirstThenCache(request)
+{
+    const cache = await caches.open(OFFLINE_CACHE_NAME);
+
+    try
+    {
+        const networkResponse = await fetch(request);
+
+        // Only store complete, same-origin success responses.
+        if (networkResponse && networkResponse.status === 200 && networkResponse.type === "basic")
+        {
+            cache.put(request, networkResponse.clone());
+        }
+
+        return networkResponse;
+    }
+    catch (networkError)
+    {
+        const cachedResponse = await cache.match(request);
+
+        if (cachedResponse)
+        {
+            return cachedResponse;
+        }
+
+        // For a navigation with nothing cached yet, fall back to any cached shell entry.
+        if (request.mode === "navigate")
+        {
+            const cachedShell = await cache.match("/index.html") || await cache.match("/");
+
+            if (cachedShell)
+            {
+                return cachedShell;
+            }
+        }
+
+        throw networkError;
+    }
+}
+
+self.addEventListener("fetch", (fetchEvent) =>
+{
+    if (isCacheableRequest(fetchEvent.request) === false)
+    {
+        return;
+    }
+
+    fetchEvent.respondWith(networkFirstThenCache(fetchEvent.request));
+});

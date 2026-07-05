@@ -56,4 +56,4 @@ class DatabaseConstants
     static PROMO_CODE_REDEMPTIONS_COLLECTION = 'promoCodeRedemptions';
 }
 
-export default DatabaseConstants;
+module.exports = DatabaseConstants;

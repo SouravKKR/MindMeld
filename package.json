@@ -1,0 +1,14 @@
+{
+  "name": "mindmeld",
+  "version": "1.0.0",
+  "description": "MindMeld — AI-powered spaced-repetition learning platform. Root launcher: always-aggressive build + run for web, desktop and mobile.",
+  "private": true,
+  "scripts": {
+    "setup": "node Common/Scripts/Setup.js",
+    "web": "node Common/Scripts/RunWeb.js",
+    "production": "node Common/Scripts/RunProduction.js",
+    "desktop": "node Common/Scripts/RunDesktop.js",
+    "android": "node Common/Scripts/RunAndroid.js",
+    "ios": "node Common/Scripts/RunIos.js"
+  }
+}

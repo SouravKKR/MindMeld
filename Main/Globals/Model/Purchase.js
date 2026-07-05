@@ -1,5 +1,7 @@
-import { paymentProviders } from '../Enumerations/PaymentProviders.js';
-import { purchaseStatuses } from '../Enumerations/PurchaseStatuses.js';
+const crypto = require('crypto');
+
+const { paymentProviders } = require('../Enumerations/PaymentProviders');
+const { purchaseStatuses } = require('../Enumerations/PurchaseStatuses');
 
 class Purchase
 {
@@ -291,4 +293,4 @@ class Purchase
     }
 }
 
-export default Purchase;
+module.exports = Purchase;

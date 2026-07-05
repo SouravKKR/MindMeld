@@ -1,4 +1,6 @@
-import { organizationStatus } from '../Enumerations/OrganizationStatus.js';
+const crypto = require('crypto');
+
+const { organizationStatus } = require('../Enumerations/OrganizationStatus');
 
 class Organization
 {
@@ -296,4 +298,4 @@ class Organization
     }
 }
 
-export default Organization;
+module.exports = Organization;

@@ -1,6 +1,8 @@
-import { organizationPaymentKinds } from '../Enumerations/OrganizationPaymentKinds.js';
-import { organizationPaymentStatuses } from '../Enumerations/OrganizationPaymentStatuses.js';
-import { paymentProviders } from '../Enumerations/PaymentProviders.js';
+const crypto = require('crypto');
+
+const { organizationPaymentKinds } = require('../Enumerations/OrganizationPaymentKinds');
+const { organizationPaymentStatuses } = require('../Enumerations/OrganizationPaymentStatuses');
+const { paymentProviders } = require('../Enumerations/PaymentProviders');
 
 class OrganizationPayment
 {
@@ -300,4 +302,4 @@ class OrganizationPayment
     }
 }
 
-export default OrganizationPayment;
+module.exports = OrganizationPayment;

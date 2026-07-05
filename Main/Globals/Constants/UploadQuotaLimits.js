@@ -5,4 +5,4 @@ class UploadQuotaLimits
     static WINDOW_TYPE = 'daily';
 }
 
-export default UploadQuotaLimits;
+module.exports = UploadQuotaLimits;

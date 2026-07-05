@@ -1,4 +1,4 @@
-export const browserLlmDownloadStates =
+const browserLlmDownloadStates =
 {
   UNSUPPORTED: 0,
   NOT_STARTED: 1,
@@ -7,3 +7,5 @@ export const browserLlmDownloadStates =
   DECLINED: 4,
   FAILED: 5,
 }
+
+module.exports = { browserLlmDownloadStates };

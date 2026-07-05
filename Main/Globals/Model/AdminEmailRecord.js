@@ -111,4 +111,4 @@ class AdminEmailRecord
     }
 }
 
-export default AdminEmailRecord;
+module.exports = AdminEmailRecord;

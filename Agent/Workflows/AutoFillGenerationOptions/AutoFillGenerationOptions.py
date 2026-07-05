@@ -68,8 +68,11 @@ def _build_prompts(request_body: dict) -> tuple[str, str]:
 
     system_prompt = (
         "You recommend settings for an automatic study-content generator. "
-        "Flashcards are for learning and recall, not a copy of the exam: pick a question-type mix "
-        "and difficulty that build understanding of the subject. "
+        "Flashcards are for active recall and understanding, not a copy of the exam. "
+        "Keep a genuine mix across most question types rather than only one or two: weight the longer, "
+        "open-ended formats highest the more conceptual or reasoning-heavy the subject is, but still "
+        "include the shorter and multiple-choice formats at a low weight so they are present without "
+        "dominating. Only drop a format entirely when it truly does not suit the subject. "
         "Mock tests should reflect the named exam's usual pattern — its typical difficulty mix, "
         "question types, number of tests, questions per test, sections and marking. "
         "Study-material detail levels should suit how much depth the subject needs. "

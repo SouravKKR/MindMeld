@@ -1,4 +1,4 @@
-export const regions =
+const regions =
 {
   INDIA: 0,
   EUROPE: 1,
@@ -13,3 +13,5 @@ export const regions =
   MIDDLE_EAST: 10,
   AFRICA: 11,
 }
+
+module.exports = { regions };

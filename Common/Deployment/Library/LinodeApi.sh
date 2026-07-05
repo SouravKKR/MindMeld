@@ -255,3 +255,252 @@ linode_delete_image()
     local image_id="$1"
     linode_request DELETE "/images/${image_id}" >/dev/null
 }
+
+linode_delete_firewall()
+{
+    local firewall_id="$1"
+    linode_request DELETE "/networking/firewalls/${firewall_id}" >/dev/null
+}
+
+linode_delete_vpc()
+{
+    local vpc_id="$1"
+    linode_request DELETE "/vpcs/${vpc_id}" >/dev/null
+}
+
+# ── Multi-environment provisioning helpers ────────────────────────────────────
+# Every mutating helper below honours LINODE_DRY_RUN=1 (set by the orchestrator):
+# it logs what it WOULD do, makes no API write, and prints a "DRYRUN-…" sentinel
+# so callers keep flowing without a real id. Look-ups (GET) always run for real —
+# they are read-only and let a dry run report exactly which resources exist.
+LINODE_DRY_RUN="${LINODE_DRY_RUN:-0}"
+
+linode_is_dry_run()
+{
+    [ "$LINODE_DRY_RUN" = "1" ]
+}
+
+# ── Look-ups (read-only) ──────────────────────────────────────────────────────
+linode_find_instance_id_by_label()
+{
+    linode_request GET "/linode/instances?page_size=500" | json_query idByLabel "$1"
+}
+
+linode_find_instance_rows_by_prefix()
+{
+    linode_request GET "/linode/instances?page_size=500" | json_query rowsByLabelPrefix "$1"
+}
+
+linode_find_instance_ids_by_prefix()
+{
+    linode_request GET "/linode/instances?page_size=500" | json_query idsByLabelPrefix "$1"
+}
+
+linode_find_vpc_id_by_label()
+{
+    linode_request GET "/vpcs?page_size=500" | json_query idByLabel "$1"
+}
+
+linode_find_vpc_subnet_id()
+{
+    linode_request GET "/vpcs?page_size=500" | json_query subnetIdForVpcLabel "$1"
+}
+
+linode_find_firewall_id_by_label()
+{
+    linode_request GET "/networking/firewalls?page_size=500" | json_query idByLabel "$1"
+}
+
+linode_find_firewall_ids_by_prefix()
+{
+    linode_request GET "/networking/firewalls?page_size=500" | json_query idsByLabelPrefix "$1"
+}
+
+linode_find_image_id_by_label()
+{
+    linode_request GET "/images?page_size=500" | json_query idByLabel "$1"
+}
+
+linode_find_image_ids_by_prefix()
+{
+    linode_request GET "/images?page_size=500" | json_query idsByLabelPrefix "$1"
+}
+
+# ── Ensure (create-if-absent, idempotent) ─────────────────────────────────────
+# Ensure a VPC + its single subnet exist. Prints "<vpcId> <subnetId>".
+linode_ensure_vpc()
+{
+    local vpc_label="$1"
+    local region="$2"
+    local subnet_label="$3"
+    local subnet_cidr="$4"
+
+    local existing_vpc_id
+    existing_vpc_id="$(linode_find_vpc_id_by_label "$vpc_label")"
+    if [ -n "$existing_vpc_id" ]
+    then
+        local existing_subnet_id
+        existing_subnet_id="$(linode_find_vpc_subnet_id "$vpc_label")"
+        log_info "VPC '$vpc_label' already exists (id=$existing_vpc_id, subnet=$existing_subnet_id)." >&2
+        printf '%s %s' "$existing_vpc_id" "$existing_subnet_id"
+        return 0
+    fi
+
+    if linode_is_dry_run
+    then
+        log_info "[dry-run] Would create VPC '$vpc_label' in $region with subnet $subnet_cidr." >&2
+        printf 'DRYRUN-VPC DRYRUN-SUBNET'
+        return 0
+    fi
+
+    local request_body
+    request_body="$(node -e '
+        const [label, region, subnetLabel, subnetCidr] = process.argv.slice(1);
+        process.stdout.write(JSON.stringify({ label, region, subnets: [{ label: subnetLabel, ipv4: subnetCidr }] }));
+    ' "$vpc_label" "$region" "$subnet_label" "$subnet_cidr")"
+
+    local response
+    response="$(linode_request POST "/vpcs" "$request_body")"
+    printf '%s %s' "$(printf '%s' "$response" | json_query field id)" "$(printf '%s' "$response" | json_query field subnets.0.id)"
+}
+
+# Ensure a firewall exists with the given rules. On an existing firewall the rules
+# are re-applied (reconciles drift). Prints the firewall id (or a sentinel in dry-run).
+linode_ensure_firewall()
+{
+    local firewall_label="$1"
+    local rules_json="$2"
+    local management_tag="$3"
+
+    local existing_firewall_id
+    existing_firewall_id="$(linode_find_firewall_id_by_label "$firewall_label")"
+    if [ -n "$existing_firewall_id" ]
+    then
+        if linode_is_dry_run
+        then
+            log_info "[dry-run] Firewall '$firewall_label' exists (id=$existing_firewall_id); would re-apply rules." >&2
+        else
+            linode_request PUT "/networking/firewalls/${existing_firewall_id}/rules" "$rules_json" >/dev/null
+            log_info "Firewall '$firewall_label' exists (id=$existing_firewall_id); rules re-applied." >&2
+        fi
+        printf '%s' "$existing_firewall_id"
+        return 0
+    fi
+
+    if linode_is_dry_run
+    then
+        log_info "[dry-run] Would create firewall '$firewall_label'." >&2
+        printf 'DRYRUN-FW'
+        return 0
+    fi
+
+    local request_body
+    request_body="$(node -e '
+        const [label, tag, rules] = process.argv.slice(1);
+        process.stdout.write(JSON.stringify({ label, tags: [tag], rules: JSON.parse(rules) }));
+    ' "$firewall_label" "$management_tag" "$rules_json")"
+
+    linode_request POST "/networking/firewalls" "$request_body" | json_query field id
+}
+
+# Idempotently attach a Linode to a firewall (no-op if already attached).
+linode_ensure_firewall_device()
+{
+    local firewall_id="$1"
+    local instance_id="$2"
+
+    case "$firewall_id$instance_id" in
+        *DRYRUN*) return 0 ;;
+    esac
+    if linode_is_dry_run
+    then
+        log_info "[dry-run] Would attach instance $instance_id to firewall $firewall_id." >&2
+        return 0
+    fi
+
+    local existing_device_id
+    existing_device_id="$(linode_request GET "/networking/firewalls/${firewall_id}/devices" | json_query firewallLinodeDeviceId "$instance_id")"
+    if [ -n "$existing_device_id" ]
+    then
+        return 0
+    fi
+    linode_request POST "/networking/firewalls/${firewall_id}/devices" "{\"id\": ${instance_id}, \"type\": \"linode\"}" >/dev/null
+}
+
+# Ensure an instance with the given label exists. bodyJson is the full create body
+# (built by the orchestrator via node) minus the label, which is injected here.
+# Prints the instance id (existing or newly created, or a sentinel in dry-run).
+linode_ensure_instance()
+{
+    local instance_label="$1"
+    local body_json="$2"
+
+    local existing_instance_id
+    existing_instance_id="$(linode_find_instance_id_by_label "$instance_label")"
+    if [ -n "$existing_instance_id" ]
+    then
+        log_info "Instance '$instance_label' already exists (id=$existing_instance_id)." >&2
+        printf '%s' "$existing_instance_id"
+        return 0
+    fi
+
+    if linode_is_dry_run
+    then
+        log_info "[dry-run] Would create instance '$instance_label'." >&2
+        printf 'DRYRUN-INSTANCE'
+        return 0
+    fi
+
+    local request_body
+    request_body="$(node -e '
+        const [label, body] = process.argv.slice(1);
+        process.stdout.write(JSON.stringify({ ...JSON.parse(body), label }));
+    ' "$instance_label" "$body_json")"
+
+    linode_request POST "/linode/instances" "$request_body" | json_query field id
+}
+
+# ── Rename + tag (metadata only; used to migrate legacy production labels) ─────
+# collection is the API path segment: "linode/instances", "vpcs",
+# "networking/firewalls" or "images".
+linode_rename_entity()
+{
+    local collection="$1"
+    local entity_id="$2"
+    local new_label="$3"
+
+    if linode_is_dry_run
+    then
+        log_info "[dry-run] Would rename ${collection}/${entity_id} -> '$new_label'." >&2
+        return 0
+    fi
+    linode_request PUT "/${collection}/${entity_id}" "{\"label\": \"${new_label}\"}" >/dev/null
+}
+
+# Merge a tag into an instance's existing tag set (instances, firewalls and images
+# support tags; VPCs are matched by label instead).
+linode_add_tag()
+{
+    local collection="$1"
+    local entity_id="$2"
+    local tag="$3"
+
+    if linode_is_dry_run
+    then
+        log_info "[dry-run] Would add tag '$tag' to ${collection}/${entity_id}." >&2
+        return 0
+    fi
+
+    local current_tags_json merged_body
+    current_tags_json="$(linode_request GET "/${collection}/${entity_id}" | node -e '
+        let input = ""; process.stdin.on("data", chunk => input += chunk);
+        process.stdin.on("end", () => { const tags = (JSON.parse(input).tags) || []; process.stdout.write(JSON.stringify(tags)); });
+    ')"
+    merged_body="$(node -e '
+        const [tagsJson, tag] = process.argv.slice(1);
+        const tags = JSON.parse(tagsJson);
+        if (!tags.includes(tag)) { tags.push(tag); }
+        process.stdout.write(JSON.stringify({ tags }));
+    ' "$current_tags_json" "$tag")"
+    linode_request PUT "/${collection}/${entity_id}" "$merged_body" >/dev/null
+}

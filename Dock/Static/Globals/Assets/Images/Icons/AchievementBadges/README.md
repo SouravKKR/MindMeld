@@ -12,7 +12,7 @@ glyph, so a missing/failed image degrades gracefully.
    the same name, e.g. `FirstLogin.webp`. The encode used was:
    `Image.open(src).convert("RGBA").resize((1024,1024)).save(dst, "WEBP", quality=95, method=6)`.
 2. To change a badge's name, threshold, or image filename, edit
-   `Common/Constants/StreakBadges.json` and re-run `setup.bat` (the badge list is mirrored
+   `Common/Constants/StreakBadges.json` and re-run `npm run setup` (the badge list is mirrored
    into every service by codegen, and `Main/` is copied to `Dock/Static/`).
 
 ## Notes for this batch

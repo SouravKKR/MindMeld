@@ -85,4 +85,4 @@ class InvoiceLineItem
     }
 }
 
-export default InvoiceLineItem;
+module.exports = InvoiceLineItem;

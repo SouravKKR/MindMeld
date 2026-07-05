@@ -1,7 +1,9 @@
-import { creditDealTargetTypes } from '../Enumerations/CreditDealTargetTypes.js';
-import { creditDealPaymentModes } from '../Enumerations/CreditDealPaymentModes.js';
-import { creditDealPaymentStatuses } from '../Enumerations/CreditDealPaymentStatuses.js';
-import { paymentProviders } from '../Enumerations/PaymentProviders.js';
+const crypto = require('crypto');
+
+const { creditDealTargetTypes } = require('../Enumerations/CreditDealTargetTypes');
+const { creditDealPaymentModes } = require('../Enumerations/CreditDealPaymentModes');
+const { creditDealPaymentStatuses } = require('../Enumerations/CreditDealPaymentStatuses');
+const { paymentProviders } = require('../Enumerations/PaymentProviders');
 
 class CreditDealPayment
 {
@@ -443,4 +445,4 @@ class CreditDealPayment
     }
 }
 
-export default CreditDealPayment;
+module.exports = CreditDealPayment;

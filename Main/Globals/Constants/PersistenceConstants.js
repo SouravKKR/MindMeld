@@ -14,4 +14,4 @@ class PersistenceConstants
     static VALIDATED_FIGURES_FILE_NAME = 'ValidatedFigures.json';
 }
 
-export default PersistenceConstants;
+module.exports = PersistenceConstants;

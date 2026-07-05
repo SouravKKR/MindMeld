@@ -1,4 +1,4 @@
-export const askAiPromptModes =
+const askAiPromptModes =
 {
   EXPLAIN: 0,
   ASK: 1,
@@ -8,3 +8,5 @@ export const askAiPromptModes =
   GIVE_EXAMPLES: 5,
   GLOSSARY: 6,
 }
+
+module.exports = { askAiPromptModes };

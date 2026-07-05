@@ -1,6 +1,8 @@
-import { informationSourceTypes } from '../Enumerations/InformationSourceTypes.js';
-import { ocrModes } from '../Enumerations/OcrModes.js';
-import { contentRetentionModes } from '../Enumerations/ContentRetentionModes.js';
+const crypto = require('crypto');
+
+const { informationSourceTypes } = require('../Enumerations/InformationSourceTypes');
+const { ocrModes } = require('../Enumerations/OcrModes');
+const { contentRetentionModes } = require('../Enumerations/ContentRetentionModes');
 
 class InformationSource
 {
@@ -259,4 +261,4 @@ class InformationSource
     }
 }
 
-export default InformationSource;
+module.exports = InformationSource;

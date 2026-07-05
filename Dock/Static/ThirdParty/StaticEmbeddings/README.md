@@ -31,7 +31,7 @@ Run [`Common/Scripts/ExportStaticEmbeddingTable.py`](../../../Common/Scripts/Exp
 on a machine with internet + Python. It distills a small static model
 (Model2Vec, MIT-licensed) over a word list, reduces it to a compact dimension,
 quantizes to int8, and writes the three files above here. See the script header
-for the exact command and dependencies. After it runs, `setup.bat --aggressive`
+for the exact command and dependencies. After it runs, `npm run setup`
 copies the files into `Dock/Static/` like any other asset, and `StaticEmbedder`
 auto-detects and loads them (no code change).
 

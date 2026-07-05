@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 class OrgAdminVerification
 {
     #id;
@@ -176,4 +178,4 @@ class OrgAdminVerification
     }
 }
 
-export default OrgAdminVerification;
+module.exports = OrgAdminVerification;

@@ -1,0 +1,155 @@
+const childProcess = require('child_process');
+const fileSystem = require('fs');
+const path = require('path');
+
+const CommandRunner = require('./CommandRunner');
+const TauriProjectPreparer = require('./TauriProjectPreparer');
+
+// "npm run desktop" — build the native desktop app, install it via its OS installer, then launch
+// it. `tauri build` recompiles incrementally, so only changed code is rebuilt ("install if any
+// changes, then run"). The app itself loads the production site and caches pages for offline use.
+class DesktopRunner
+{
+    static PRODUCT_BINARY_BASENAME = 'mind-meld';
+
+    constructor()
+    {
+        this.repositoryRootDirectory = path.join(__dirname, '..', '..');
+        this.buildTemplateDirectory = path.join(this.repositoryRootDirectory, 'Build', 'Template');
+        this.releaseDirectory = path.join(this.buildTemplateDirectory, 'src-tauri', 'target', 'release');
+        this.bundleDirectory = path.join(this.releaseDirectory, 'bundle');
+    }
+
+    run()
+    {
+        new TauriProjectPreparer().prepare();
+
+        console.log('Building the desktop app (tauri build) ...');
+        CommandRunner.runCommand('npm', ['run', 'tauri', '--', 'build'], this.buildTemplateDirectory);
+
+        this.installAndLaunch();
+    }
+
+    installAndLaunch()
+    {
+        if (process.platform === 'win32')
+        {
+            this.installAndLaunchWindows();
+        }
+        else if (process.platform === 'darwin')
+        {
+            this.installAndLaunchMac();
+        }
+        else
+        {
+            this.installAndLaunchLinux();
+        }
+    }
+
+    findFirstFile(directory, matchesPredicate)
+    {
+        if (fileSystem.existsSync(directory) === false)
+        {
+            return null;
+        }
+
+        for (const entryName of fileSystem.readdirSync(directory))
+        {
+            if (matchesPredicate(entryName))
+            {
+                return path.join(directory, entryName);
+            }
+        }
+
+        return null;
+    }
+
+    launchDetached(executablePath, argumentList)
+    {
+        const child = childProcess.spawn(executablePath, argumentList === undefined ? [] : argumentList, {
+            detached: true,
+            stdio: 'ignore',
+        });
+        child.unref();
+    }
+
+    installAndLaunchWindows()
+    {
+        const nsisSetupPath = this.findFirstFile(path.join(this.bundleDirectory, 'nsis'), (name) => name.toLowerCase().endsWith('.exe'));
+        const msiInstallerPath = this.findFirstFile(path.join(this.bundleDirectory, 'msi'), (name) => name.toLowerCase().endsWith('.msi'));
+
+        if (nsisSetupPath !== null)
+        {
+            console.log(`Installing ${path.basename(nsisSetupPath)} silently ...`);
+            CommandRunner.runCommand(`"${nsisSetupPath}"`, ['/S'], this.bundleDirectory);
+        }
+        else if (msiInstallerPath !== null)
+        {
+            console.log(`Installing ${path.basename(msiInstallerPath)} silently ...`);
+            CommandRunner.runCommand('msiexec', ['/i', `"${msiInstallerPath}"`, '/qn'], this.bundleDirectory);
+        }
+        else
+        {
+            console.warn('No NSIS/MSI installer was found under the bundle directory; launching the built binary directly.');
+        }
+
+        const executablePath = path.join(this.releaseDirectory, `${DesktopRunner.PRODUCT_BINARY_BASENAME}.exe`);
+
+        if (fileSystem.existsSync(executablePath) === false)
+        {
+            console.error(`Built executable not found at ${executablePath}.`);
+            process.exit(1);
+        }
+
+        console.log('Launching MindMeld ...');
+        this.launchDetached(executablePath);
+    }
+
+    installAndLaunchMac()
+    {
+        // The .app bundle is the installable unit on macOS; "open" launches it directly.
+        const applicationBundlePath = this.findFirstFile(path.join(this.bundleDirectory, 'macos'), (name) => name.toLowerCase().endsWith('.app'));
+
+        if (applicationBundlePath === null)
+        {
+            console.error('No .app bundle was found under the bundle directory.');
+            process.exit(1);
+        }
+
+        console.log(`Launching ${path.basename(applicationBundlePath)} ...`);
+        CommandRunner.runCommand('open', [`"${applicationBundlePath}"`], this.bundleDirectory);
+    }
+
+    installAndLaunchLinux()
+    {
+        const appImagePath = this.findFirstFile(path.join(this.bundleDirectory, 'appimage'), (name) => name.toLowerCase().endsWith('.appimage'));
+
+        if (appImagePath !== null)
+        {
+            console.log(`Launching ${path.basename(appImagePath)} ...`);
+            try
+            {
+                fileSystem.chmodSync(appImagePath, 0o755);
+            }
+            catch (chmodError)
+            {
+                void chmodError;
+            }
+            this.launchDetached(appImagePath);
+            return;
+        }
+
+        const executablePath = path.join(this.releaseDirectory, DesktopRunner.PRODUCT_BINARY_BASENAME);
+
+        if (fileSystem.existsSync(executablePath) === false)
+        {
+            console.error('No AppImage or built binary was found to launch.');
+            process.exit(1);
+        }
+
+        console.log('Launching MindMeld ...');
+        this.launchDetached(executablePath);
+    }
+}
+
+new DesktopRunner().run();

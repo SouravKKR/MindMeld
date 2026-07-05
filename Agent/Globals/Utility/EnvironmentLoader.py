@@ -6,23 +6,39 @@ from dotenv import load_dotenv
 
 class EnvironmentLoader:
     """
-    Loads the Agent service's environment file, choosing between the local and
-    production configurations the same way the rest of the service distinguishes
-    run modes — by the presence of `--debug` in the command-line arguments.
+    Loads the Agent service's environment file, choosing the environment the same
+    way Dock does (Dock/index.js) so the two services can never load one against the
+    development database and the other against production.
 
-    With `--debug` the local `.env` (development database) is loaded; without it
-    `.production.env` (the live database) is loaded instead. This mirrors the
-    identical switch in Dock/index.js so a debug launch can never accidentally
-    talk to the production database, and a production launch can never talk to
-    the development one.
+    The environment name is resolved in priority order:
+        1. an explicit --environment=<name> command-line flag
+        2. the MINDMELD_ENVIRONMENT variable (set by the base node's systemd unit,
+           and inherited by every Agent subprocess Dock spawns)
+        3. legacy --debug  -> local
+        4. otherwise       -> production
 
-    The chosen file is anchored to the Agent root directory rather than the
-    current working directory, so the loader behaves identically no matter where
-    the process is launched from.
+    Each name maps to Agent/.<name>.env; "local" also falls back to the historical
+    Agent/.env so existing local setups keep working. The chosen file is anchored to
+    the Agent root directory, so the loader behaves identically no matter where the
+    process is launched from.
     """
 
-    DEBUG_ENVIRONMENT_FILE_NAME = ".env"
-    PRODUCTION_ENVIRONMENT_FILE_NAME = ".production.env"
+    LEGACY_LOCAL_ENVIRONMENT_FILE_NAME = ".env"
+    PRODUCTION_ENVIRONMENT_NAME = "production"
+
+    @staticmethod
+    def resolve_environment_name():
+        for argument in sys.argv:
+            if argument.startswith("--environment="):
+                return argument.split("=", 1)[1]
+
+        if os.getenv("MINDMELD_ENVIRONMENT"):
+            return os.getenv("MINDMELD_ENVIRONMENT")
+
+        if "--debug" in sys.argv:
+            return "local"
+
+        return EnvironmentLoader.PRODUCTION_ENVIRONMENT_NAME
 
     @staticmethod
     def load():
@@ -30,11 +46,18 @@ class EnvironmentLoader:
             os.path.join(os.path.dirname(__file__), "..", "..")
         )
 
-        is_debug = "--debug" in sys.argv
-        environment_file_name = (
-            EnvironmentLoader.DEBUG_ENVIRONMENT_FILE_NAME
-            if is_debug
-            else EnvironmentLoader.PRODUCTION_ENVIRONMENT_FILE_NAME
-        )
+        environment_name = EnvironmentLoader.resolve_environment_name()
 
-        load_dotenv(os.path.join(agent_root_directory, environment_file_name))
+        if environment_name == "local":
+            candidate_file_names = [".local.env", EnvironmentLoader.LEGACY_LOCAL_ENVIRONMENT_FILE_NAME]
+        else:
+            candidate_file_names = [f".{environment_name}.env"]
+
+        selected_file_path = os.path.join(agent_root_directory, candidate_file_names[0])
+        for candidate_file_name in candidate_file_names:
+            candidate_file_path = os.path.join(agent_root_directory, candidate_file_name)
+            if os.path.exists(candidate_file_path):
+                selected_file_path = candidate_file_path
+                break
+
+        load_dotenv(selected_file_path)

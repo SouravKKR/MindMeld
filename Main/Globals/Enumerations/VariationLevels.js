@@ -1,4 +1,4 @@
-export const variationLevels =
+const variationLevels =
 {
   NONE: 0,
   VERY_LOW: 1,
@@ -7,3 +7,5 @@ export const variationLevels =
   HIGH: 4,
   VERY_HIGH: 5,
 }
+
+module.exports = { variationLevels };

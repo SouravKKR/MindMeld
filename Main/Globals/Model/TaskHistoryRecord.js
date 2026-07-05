@@ -1,5 +1,7 @@
-import { taskTypes } from '../Enumerations/TaskTypes.js';
-import { taskStatus } from '../Enumerations/TaskStatus.js';
+const crypto = require('crypto');
+
+const { taskTypes } = require('../Enumerations/TaskTypes');
+const { taskStatus } = require('../Enumerations/TaskStatus');
 
 class TaskHistoryRecord
 {
@@ -255,4 +257,4 @@ class TaskHistoryRecord
     }
 }
 
-export default TaskHistoryRecord;
+module.exports = TaskHistoryRecord;

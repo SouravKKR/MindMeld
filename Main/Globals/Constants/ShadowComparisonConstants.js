@@ -7,4 +7,4 @@ class ShadowComparisonConstants
     static MAX_PAIRS_SCANNED = 50000;
 }
 
-export default ShadowComparisonConstants;
+module.exports = ShadowComparisonConstants;

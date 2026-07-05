@@ -1,4 +1,4 @@
-export const taskStatus =
+const taskStatus =
 {
   UNKNOWN: 0,
   NOT_STARTED: 1,
@@ -6,3 +6,5 @@ export const taskStatus =
   COMPLETED: 3,
   FAILED: 4,
 }
+
+module.exports = { taskStatus };

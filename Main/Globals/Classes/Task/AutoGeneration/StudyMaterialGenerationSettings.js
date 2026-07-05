@@ -1,6 +1,6 @@
-import AutoGenerationSettings from './AutoGenerationSettings.js';
-import { studyMaterialDetailLevels } from '../../../Enumerations/StudyMaterialDetailLevels.js';
-import ExtractableInformationSource from '../../Decorators/ExtractableInformationSource.js';
+const AutoGenerationSettings = require('./AutoGenerationSettings');
+const { studyMaterialDetailLevels } = require('../../../Enumerations/StudyMaterialDetailLevels');
+const ExtractableInformationSource = require('../../Decorators/ExtractableInformationSource');
 
 class StudyMaterialGenerationSettings extends AutoGenerationSettings
 {
@@ -55,4 +55,4 @@ class StudyMaterialGenerationSettings extends AutoGenerationSettings
     }
 }
 
-export default StudyMaterialGenerationSettings;
+module.exports = StudyMaterialGenerationSettings;

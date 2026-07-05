@@ -1,4 +1,4 @@
-export const httpStatus =
+const httpStatus =
 {
   CONTINUE: 100,
   OK: 200,
@@ -32,3 +32,5 @@ export const httpStatus =
   SERVICE_UNAVAILABLE: 503,
   GATEWAY_TIMEOUT: 504,
 }
+
+module.exports = { httpStatus };

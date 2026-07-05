@@ -1,4 +1,6 @@
-import { taskTypes } from '../../Enumerations/TaskTypes.js';
+const crypto = require('crypto');
+
+const { taskTypes } = require('../../Enumerations/TaskTypes');
 
 class TaskSettings
 {
@@ -60,4 +62,4 @@ class TaskSettings
     }
 }
 
-export default TaskSettings;
+module.exports = TaskSettings;

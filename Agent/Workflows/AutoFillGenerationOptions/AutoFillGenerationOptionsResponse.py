@@ -62,7 +62,12 @@ class FlashcardOptions(BaseModel):
     )
     question_type_weights: Optional[QuestionTypeWeights] = Field(
         default = None,
-        description = "Question-type mix for flashcards, chosen to build understanding rather than to copy an exam."
+        description = (
+            "Question-type mix for flashcards, chosen to build understanding rather than to copy an exam. "
+            "Favour formats where the learner writes and explains the answer, weighting longer open-ended "
+            "formats higher for conceptual subjects, but keep a genuine mix: include the shorter and "
+            "multiple-choice formats too at a low weight rather than excluding them."
+        )
     )
     difficulty_weights: Optional[DifficultyWeights] = Field(
         default = None,

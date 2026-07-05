@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 class PaidDeckPricing
 {
     #id;
@@ -216,4 +218,4 @@ class PaidDeckPricing
     }
 }
 
-export default PaidDeckPricing;
+module.exports = PaidDeckPricing;

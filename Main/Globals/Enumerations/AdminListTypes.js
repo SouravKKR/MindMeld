@@ -1,4 +1,4 @@
-export const adminListTypes =
+const adminListTypes =
 {
   PAID_DECKS: 0,
   REVENUE_BY_DECK: 1,
@@ -13,3 +13,5 @@ export const adminListTypes =
   PROMO_CODES: 10,
   PROMO_CODE_REDEEMERS: 11,
 }
+
+module.exports = { adminListTypes };

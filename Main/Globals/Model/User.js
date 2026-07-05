@@ -1,5 +1,5 @@
-import { authenticationProviders } from '../Enumerations/AuthenticationProviders.js';
-import { userRoles } from '../Enumerations/UserRoles.js';
+const { authenticationProviders } = require('../Enumerations/AuthenticationProviders');
+const { userRoles } = require('../Enumerations/UserRoles');
 
 class User
 {
@@ -186,4 +186,4 @@ class User
     }
 }
 
-export default User;
+module.exports = User;

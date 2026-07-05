@@ -1,4 +1,4 @@
-export const studyModes =
+const studyModes =
 {
   SPACED_REPETITION: 0,
   REVIEW_QUESTIONS: 1,
@@ -7,3 +7,5 @@ export const studyModes =
   CONTENT_SUMMARY: 4,
   CHAT: 5,
 }
+
+module.exports = { studyModes };

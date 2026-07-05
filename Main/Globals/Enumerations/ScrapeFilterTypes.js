@@ -1,4 +1,4 @@
-export const scrapeFilterTypes =
+const scrapeFilterTypes =
 {
   EXTENSION: 0,
   SITE: 1,
@@ -8,3 +8,5 @@ export const scrapeFilterTypes =
   URL_MATCH: 5,
   RESULT_COUNT: 6,
 }
+
+module.exports = { scrapeFilterTypes };

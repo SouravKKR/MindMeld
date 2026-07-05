@@ -1,6 +1,8 @@
-import { taskTypes } from '../../Enumerations/TaskTypes.js';
-import { taskStatus } from '../../Enumerations/TaskStatus.js';
-import { taskExecutionTargets } from '../../Enumerations/TaskExecutionTargets.js';
+const crypto = require('crypto');
+
+const { taskTypes } = require('../../Enumerations/TaskTypes');
+const { taskStatus } = require('../../Enumerations/TaskStatus');
+const { taskExecutionTargets } = require('../../Enumerations/TaskExecutionTargets');
 
 class TaskDescriptor
 {
@@ -251,4 +253,4 @@ class TaskDescriptor
     }
 }
 
-export default TaskDescriptor;
+module.exports = TaskDescriptor;

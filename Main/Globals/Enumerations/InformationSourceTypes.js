@@ -1,4 +1,4 @@
-export const informationSourceTypes =
+const informationSourceTypes =
 {
   PROVIDED_DOCUMENTS: 0,
   ANYWHERE_ON_THE_INTERNET: 1,
@@ -8,3 +8,5 @@ export const informationSourceTypes =
   CURRICULUM_OR_SYLLABUS: 5,
   QUESTION_PAPER: 6,
 }
+
+module.exports = { informationSourceTypes };
