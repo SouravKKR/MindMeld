@@ -1,6 +1,6 @@
 # Process-global token accumulator. Each Agent subprocess runs exactly one
 # task, so a module-level counter cleanly captures that task's total LLM
-# token usage with no plumbing through the workflow call tree. GeminiProvider
+# token usage with no plumbing through the workflow call tree. GoogleEnterpriseAiProvider
 # and BatchSubmitter record into it after every call; TaskCreditCharger reads
 # the snapshot when it computes token-based costs.
 #

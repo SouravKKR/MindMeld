@@ -20,7 +20,7 @@ from Globals.Classes.Automation.AutomationRequest import AutomationRequest
 from Globals.Classes.Automation.BatchSubmitter import BatchSubmitter
 from Globals.Classes.Automation.Pools.ModelPool import ModelPool
 from Globals.Classes.Automation.Pools.PromptPool import PromptPool
-from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
+from Globals.Classes.Automation.Providers.GoogleEnterpriseAiProvider import GoogleEnterpriseAiProvider
 from Globals.Classes.Generic.Persistence import Persistence
 from Globals.Classes.Generic.TokenSafeContent import TokenSafeContent
 from Globals.Classes.Task.AutoGeneration.FlashcardGenerationSettings import FlashcardGenerationSettings
@@ -367,7 +367,7 @@ class FlashcardGenerationWorker(Workflow):
                     request_entry["expected_count"],
                 )
 
-        live_fallback_caller = AutomationCaller(GeminiProvider())
+        live_fallback_caller = AutomationCaller(GoogleEnterpriseAiProvider())
 
         responses_by_key = {}
         for submitter in batch_submitters_by_model.values():

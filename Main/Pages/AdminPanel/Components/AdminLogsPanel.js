@@ -36,7 +36,13 @@ class AdminLogsPanel extends HTMLElement
         { value: logCategory.ERROR, label: "Error" }
     ];
 
-    static #HISTORY_LIMIT = 300;
+    // The console loads only the most recent N messages so the DOM never grows
+    // unbounded. The default is the last 100 but the operator can edit it up to
+    // the server-side ceiling (AdminListDefinition.MAX_LIMIT). Anything older than
+    // this window is retrieved through the Download button, which merges the hot
+    // MongoDB entries with the cold cloud-storage archives.
+    static #DEFAULT_HISTORY_LIMIT = 100;
+    static #MAXIMUM_HISTORY_LIMIT = 200;
 
     #eventSource = null;
     #consoleElement = null;
@@ -137,6 +143,17 @@ class AdminLogsPanel extends HTMLElement
                     <span>Search</span>
                     <input type="text" data-role="search" placeholder="title, message, account…">
                 </div>
+                <div class="logs-field">
+                    <span>Limit</span>
+                    <input type="number" min="1" max="${AdminLogsPanel.#MAXIMUM_HISTORY_LIMIT}" value="${AdminLogsPanel.#DEFAULT_HISTORY_LIMIT}" data-role="limit" style="width: 90px;">
+                </div>
+                <div class="logs-field">
+                    <span>Order</span>
+                    <select data-role="order">
+                        <option value="ascending">Oldest first</option>
+                        <option value="descending">Newest first</option>
+                    </select>
+                </div>
                 <div class="logs-buttons">
                     <button class="logs-button" data-role="refresh">Refresh</button>
                     <button class="logs-button secondary" data-role="live">Go Live</button>
@@ -182,6 +199,8 @@ class AdminLogsPanel extends HTMLElement
         this.#consoleElement = this.querySelector('[data-role="console"]');
 
         this.querySelector('[data-role="refresh"]').addEventListener("click", () => this.#loadHistory());
+        this.querySelector('[data-role="order"]').addEventListener("change", () => this.#loadHistory());
+        this.querySelector('[data-role="limit"]').addEventListener("change", () => this.#loadHistory());
         this.querySelector('[data-role="live"]').addEventListener("click", (clickEvent) => this.#toggleLive(clickEvent.currentTarget));
         this.querySelector('[data-role="clear"]').addEventListener("click", () => this.#clearScreen());
         this.querySelector('[data-role="download"]').addEventListener("click", () => this.#download());
@@ -214,9 +233,17 @@ class AdminLogsPanel extends HTMLElement
         };
     }
 
+    #resolveLimit()
+    {
+        const requestedLimit = Number(this.querySelector('[data-role="limit"]').value) || AdminLogsPanel.#DEFAULT_HISTORY_LIMIT;
+        return Math.min(Math.max(Math.floor(requestedLimit), 1), AdminLogsPanel.#MAXIMUM_HISTORY_LIMIT);
+    }
+
     async #loadHistory()
     {
         const filters = this.#collectFilters();
+        const limit = this.#resolveLimit();
+        const order = this.querySelector('[data-role="order"]').value;
         const requestFilters = {};
         if (filters.levels.length > 0)
         {
@@ -252,14 +279,19 @@ class AdminLogsPanel extends HTMLElement
                     listKey: adminListTypes.LOGS,
                     search: filters.search,
                     filters: requestFilters,
+                    // Always fetch the newest N (descending) so the window is the
+                    // last N messages regardless of how they are then displayed.
                     sort: { field: "timestamp", direction: -1 },
-                    limit: AdminLogsPanel.#HISTORY_LIMIT,
+                    limit: limit,
                     offset: 0,
                     context: {}
                 })
             });
             const payload = await response.json();
-            const items = Array.isArray(payload.items) ? payload.items.slice().reverse() : [];
+            const newestFirstItems = Array.isArray(payload.items) ? payload.items : [];
+            // Descending shows newest at the top; ascending reverses so the newest
+            // sit at the bottom (the console-tail reading order).
+            const items = order === "descending" ? newestFirstItems : newestFirstItems.slice().reverse();
 
             this.#consoleElement.innerHTML = "";
             if (items.length === 0)
@@ -271,7 +303,14 @@ class AdminLogsPanel extends HTMLElement
             {
                 this.#consoleElement.appendChild(this.#renderLine(item));
             }
-            this.#scrollToBottom();
+            if (order === "descending")
+            {
+                this.#consoleElement.scrollTop = 0;
+            }
+            else
+            {
+                this.#scrollToBottom();
+            }
         }
         catch (loadError)
         {

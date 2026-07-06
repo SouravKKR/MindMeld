@@ -11,7 +11,7 @@ from Globals.Classes.Automation.AutomationRequest import AutomationRequest
 from Globals.Classes.Automation.BatchSubmitter import BatchSubmitter
 from Globals.Classes.Automation.Pools.ModelPool import ModelPool
 from Globals.Classes.Automation.Pools.PromptPool import PromptPool
-from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
+from Globals.Classes.Automation.Providers.GoogleEnterpriseAiProvider import GoogleEnterpriseAiProvider
 from Globals.Classes.Generic.Persistence import Persistence
 from Globals.Classes.Generic.TokenSafeContent import TokenSafeContent
 from Globals.Classes.Task.TaskManager import TaskManager
@@ -312,7 +312,7 @@ class EvaluateMockTestAttempt(Workflow):
             # AutomationCaller.call() uses on the fallback path) and fire
             # every cell concurrently via asyncio.gather, capped by a
             # semaphore so we don't burst past the provider's rate limit.
-            live_caller = AutomationCaller(GeminiProvider())
+            live_caller = AutomationCaller(GoogleEnterpriseAiProvider())
             concurrency_limit = max(1, min(len(cells), 8))
             concurrency_gate = asyncio.Semaphore(concurrency_limit)
 

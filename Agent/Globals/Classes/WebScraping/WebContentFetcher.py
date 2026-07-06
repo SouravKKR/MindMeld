@@ -539,7 +539,7 @@ class WebContentFetcher:
     async def fetch_text_only(url: str) -> str:
         """
         Convenience wrapper that returns just the cleaned readable text or empty string.
-        Used by callers (e.g., GeminiProvider) that don't need image extraction.
+        Used by callers (e.g., GoogleEnterpriseAiProvider) that don't need image extraction.
         """
         page = await WebContentFetcher.fetch(url, main_task_id=None)
         return page.get_text() if page is not None else ""

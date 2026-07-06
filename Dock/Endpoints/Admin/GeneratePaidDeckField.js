@@ -86,7 +86,7 @@ class GeneratePaidDeckField
 
         // Forward our own run mode so the worker's EnvironmentLoader loads
         // the matching environment file (.env on --debug, .production.env
-        // without it) and therefore finds GEMINI_API_KEY.
+        // without it) and therefore finds the Vertex AI auth (GOOGLE_ENTERPRISE_AGENT_*).
         const runModeArguments = process.argv.includes("--debug") ? ["--debug"] : [];
 
         return new Promise((resolve, reject) =>

@@ -118,7 +118,7 @@ async def run() -> int:
     from Globals.Classes.Automation.AutomationCaller import AutomationCaller
     from Globals.Classes.Automation.AutomationContent import AutomationContent
     from Globals.Classes.Automation.AutomationRequest import AutomationRequest
-    from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
+    from Globals.Classes.Automation.Providers.GoogleEnterpriseAiProvider import GoogleEnterpriseAiProvider
     from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
     from Workflows.AutoFillGenerationOptions.AutoFillGenerationOptionsResponse import AutoFillGenerationOptionsResponse
 
@@ -137,7 +137,7 @@ async def run() -> int:
         ],
     )
 
-    caller = AutomationCaller(GeminiProvider())
+    caller = AutomationCaller(GoogleEnterpriseAiProvider())
 
     try:
         response = await caller.call(request, None, retries = 2)

@@ -33,7 +33,7 @@ class AskAiPromptBuilder:
     phrase makes no sense), so it ignores selected_text entirely.
 
     Returns (system_prompt, user_prompt) ready to hand to
-    GeminiProvider.stream_text. The structural-HTML style block and the
+    GoogleEnterpriseAiProvider.stream_text. The structural-HTML style block and the
     optional information-source-grounding block are built in Python (their
     content depends on runtime data) and substituted via the template's
     {html_style_block} / {information_source_block} placeholders.

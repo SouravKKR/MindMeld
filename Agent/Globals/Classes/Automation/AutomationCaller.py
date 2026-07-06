@@ -1,3 +1,5 @@
+import asyncio
+
 from typing import Callable
 
 from Globals.Classes.Automation.AutomationRequest import AutomationRequest
@@ -8,6 +10,12 @@ from Globals.Classes.Automation.ShadowModelEvaluator import ShadowModelEvaluator
 
 
 class AutomationCaller:
+
+    # Upper bound on how many entries of a collected group run live at once.
+    # The provider's RedisSemaphore still enforces the real per-model API
+    # concurrency ceiling across the cluster; this only bounds the number of
+    # in-flight coroutines a single call_batch fan-out creates.
+    MAX_LIVE_BATCH_CONCURRENCY = 8
 
     def __init__(self, provider: AutomationProvider):
         self.__provider = provider
@@ -50,60 +58,37 @@ class AutomationCaller:
         validators: dict = None,
     ) -> dict:
         """
-        Runs a pre-populated BatchSubmitter, falling back to live API on validator failure
-        or batch failure so coverage is preserved.
+        Executes every entry collected in `submitter` live and bounded-
+        concurrently.
+
+        The batch API was removed (see BatchSubmitter, now a thin request
+        collector): the Agent's enterprise API key cannot reach the backend's
+        GCS/BigQuery batch jobs. Each collected (key, request) pair is run
+        through the live provider via `call()`, which already handles response
+        caching, validator-driven retries and shadow sampling — so cache hits,
+        stores and validation are preserved without a separate pre-pass here.
+        Per-model API concurrency is still capped inside the provider's
+        RedisSemaphore; the local semaphore only bounds the in-flight fan-out.
 
         Returns: dict[key, AutomationResponse | None] aligned with submitter.get_entries().
         """
         entries    = submitter.get_entries()
         validators = validators or {}
-        results    = {}
 
-        cache_hits = []
-        for entry in entries:
-            cache_key       = ResponseCache.compute_key(entry["request"])
-            entry["cache_key"] = cache_key
-            cached_response = await ResponseCache.lookup(cache_key) if cache_key is not None else None
+        if not entries:
+            return {}
 
-            if cached_response is None:
-                continue
+        fallback_caller   = live_fallback_caller if live_fallback_caller is not None else self
+        concurrency_limit = max(1, min(len(entries), AutomationCaller.MAX_LIVE_BATCH_CONCURRENCY))
+        concurrency_gate  = asyncio.Semaphore(concurrency_limit)
 
-            validator = validators.get(entry["key"])
-            if validator is None or validator(cached_response):
-                results[entry["key"]] = cached_response
-                cache_hits.append(entry["key"])
-
-        if cache_hits:
-            print(f"[AutomationCaller] call_batch: {len(cache_hits)}/{len(entries)} served from cache")
-
-        pending_entries = [entry for entry in entries if entry["key"] not in results]
-
-        if not pending_entries:
-            return results
-
-        await submitter.submit()
-        succeeded = await submitter.wait_for_completion()
-
-        batch_responses = {}
-        if succeeded:
-            batch_responses = await submitter.collect_results()
-
-        fallback_caller = live_fallback_caller if live_fallback_caller is not None else self
-
-        for entry in pending_entries:
+        async def run_entry(entry):
             key       = entry["key"]
             validator = validators.get(key)
-            response  = batch_responses.get(key) if succeeded else None
+            async with concurrency_gate:
+                response = await fallback_caller.call(entry["request"], validator)
+            return key, response
 
-            if response is not None and (validator is None or validator(response)):
-                results[key] = response
-                if entry.get("cache_key") is not None:
-                    await ResponseCache.store(entry["cache_key"], response)
-                ShadowModelEvaluator.maybe_sample_and_shadow(entry["request"], response, key)
-                continue
+        completed = await asyncio.gather(*[run_entry(entry) for entry in entries])
 
-            print(f"[AutomationCaller] call_batch: falling back to live API for key '{key}'")
-            live_response = await fallback_caller.call(entry["request"], validator)
-            results[key]  = live_response
-
-        return results
+        return { key: response for key, response in completed }

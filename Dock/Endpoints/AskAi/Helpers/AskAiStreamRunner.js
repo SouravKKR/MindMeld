@@ -50,6 +50,16 @@ class AskAiStreamRunner
 
     static async run({ taskType, userId, modelId, bEnableGoogleSearch, request, response })
     {
+        // [ASKAI_TIMING] Instrumentation: mark the moment the request enters the
+        // runner and stamp a short correlation tag onto both Dock's own log
+        // lines and the worker's (injected via stdin). Reconstructing the tagged
+        // lines from the server log shows exactly where AskAi latency goes:
+        // Dock preflight -> worker spawn -> imports/env -> grounding -> web image
+        // search -> prompt build -> Gemini time-to-first-token.
+        const askAiRequestReceivedAt = Date.now();
+        const askAiRequestTag = crypto.randomUUID().slice(0, 8);
+        Logger.log(`[ASKAI_TIMING tag=${askAiRequestTag}] request received (task ${taskType}, user ${userId})`, "DOCK");
+
         // The handlers resolve the user before calling us; a missing id here
         // means a wiring bug, not a client mistake — refuse rather than run
         // an unattributable (and therefore unchargeable) Gemini call.
@@ -108,6 +118,8 @@ class AskAiStreamRunner
 
         // The worker reads PYTHONPATH-relative imports (Globals.*, Workflows.*) — it MUST
         // be spawned with cwd at the Agent root so its sys.path picks them up.
+        const askAiSpawnIssuedAt = Date.now();
+        Logger.log(`[ASKAI_TIMING tag=${askAiRequestTag}] spawning worker (+${askAiSpawnIssuedAt - askAiRequestReceivedAt}ms: maintenance + credit preflight + body read/validate)`, "DOCK");
         const childProcess = spawn(
             pythonInterpreterPath,
             [workerScriptPath, ...runModeArguments],
@@ -129,6 +141,8 @@ class AskAiStreamRunner
             modelId: modelId,
             bEnableGoogleSearch: bEnableGoogleSearch,
             userId: userId,
+            requestTag: askAiRequestTag,
+            dockSpawnIssuedAtMs: askAiSpawnIssuedAt,
         };
 
         childProcess.stdin.write(JSON.stringify(stdinPayload));
@@ -149,6 +163,7 @@ class AskAiStreamRunner
         let bDoneEmitted = false;
         let bErrorEmitted = false;
         let bResponseClosed = false;
+        let bFirstWorkerOutputLogged = false;
 
         const stdoutLineReader = readline.createInterface({ input: childProcess.stdout });
         stdoutLineReader.on("line", (workerOutputLine) =>
@@ -160,6 +175,11 @@ class AskAiStreamRunner
             if (workerOutputLine.length === 0)
             {
                 return;
+            }
+            if (!bFirstWorkerOutputLogged)
+            {
+                bFirstWorkerOutputLogged = true;
+                Logger.log(`[ASKAI_TIMING tag=${askAiRequestTag}] first worker stdout event (+${Date.now() - askAiSpawnIssuedAt}ms since spawn, +${Date.now() - askAiRequestReceivedAt}ms since received)`, "DOCK");
             }
             // Track the terminal "done" event so we can distinguish a
             // clean stream end from a crash on the close-event path, and
@@ -226,6 +246,7 @@ class AskAiStreamRunner
         {
             stdoutLineReader.close();
             stderrLineReader.close();
+            Logger.log(`[ASKAI_TIMING tag=${askAiRequestTag}] worker closed (exit ${exitCode}, +${Date.now() - askAiRequestReceivedAt}ms total since received)`, "DOCK");
 
             // Charge only a successful stream — the worker emitted its
             // "done" sentinel without any preceding "error" event. This

@@ -1,5 +1,7 @@
 import os
 import re
+import sys
+import json
 import asyncio
 import base64
 
@@ -8,19 +10,46 @@ from Globals.Classes.Automation.AutomationProvider import AutomationProvider
 from Globals.Classes.Automation.AutomationResponse import AutomationResponse
 from Globals.Classes.Automation.AutomationRequest import AutomationRequest
 from Globals.Classes.Automation.AutomationContent import AutomationContent
+from Globals.Classes.Automation.ProviderHealthSignal import ProviderHealthSignal
 from Globals.Classes.Generic.RedisSemaphore import RedisSemaphore
 from Globals.Classes.WebScraping.WebContentFetcher import WebContentFetcher
 from Globals.Classes.Credits.CreditMeter import CreditMeter
-from Globals.Classes.Automation.ProviderHealthSignal import ProviderHealthSignal
 from Globals.Constants.ApiConcurrencyLimits import ApiConcurrencyLimits
 
 import httpx
 from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
+from google.oauth2 import service_account
 
 
-class GeminiProvider(AutomationProvider):
+class GoogleEnterpriseAiProvider(AutomationProvider):
+    """
+    Google enterprise agent API provider.
+
+    All live LLM traffic in the Agent service routes through this provider.
+    It talks to Google's enterprise (Vertex) backend of the unified
+    google-genai SDK, authenticating with a service account (preferred) or an
+    API key (slow fallback). Every model tuple in ModelPool reads
+    (model_string, ProviderClass), so a model routes here simply by naming
+    this class.
+
+    Two things differ from a Gemini-Developer-API provider and are the only
+    semantic differences worth calling out:
+
+      1. Client construction. The enterprise backend is selected with
+         vertexai=True and authenticated with a project + service-account
+         credentials (GOOGLE_ENTERPRISE_AGENT_PROJECT /
+         GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64), falling back to an API
+         key only when no project is set. See __build_client.
+
+      2. Video inputs. The Files API (client.files.upload) is a
+         Gemini-Developer-API-only feature; it is NOT available on the
+         enterprise backend, which accepts media either inline (bytes) or
+         as a gs:// GCS URI. We therefore read the local video into bytes
+         and attach it inline. See __build_video_part.
+    """
+
     GROUNDING_CONTENT_CHAR_BUDGET = 8000
 
     # Two classes of failure are treated as transient and retried with the
@@ -30,7 +59,7 @@ class GeminiProvider(AutomationProvider):
     #    response carries a RetryInfo block with `retryDelay` (e.g.
     #    '3.957548552s') which we honour when present, otherwise we fall
     #    back to exponential backoff.
-    #  - 5xx (UNAVAILABLE / INTERNAL / etc.): Gemini-side capacity blip.
+    #  - 5xx (UNAVAILABLE / INTERNAL / etc.): server-side capacity blip.
     #    No retry hint is supplied, so we use exponential backoff alone.
     #
     # The user has explicitly asked for "slow is fine, failure is not", so
@@ -42,20 +71,19 @@ class GeminiProvider(AutomationProvider):
     DEFAULT_RETRY_SLEEP_SECONDS = 8.0
     MAX_RETRY_SLEEP_SECONDS = 60.0
 
-    # Connecting to generativelanguage.googleapis.com via plain httpx on
-    # Windows runs into a brutal IPv6 happy-eyeballs miss: the resolver
-    # hands back AAAA records first, the connect to those addresses sits
-    # for ~80s before timing out, and only THEN does httpx fall back to
-    # IPv4. Curl and the browser don't see this because they connect to
-    # the v4/v6 candidates in parallel. We sidestep the whole thing by
-    # binding the outbound socket to 0.0.0.0, which forces the connect
-    # path to IPv4-only. Same trick applied to the async transport so
-    # batch / streaming paths benefit too.
+    # Connecting to the Google endpoints via plain httpx on Windows runs
+    # into a brutal IPv6 happy-eyeballs miss: the resolver hands back AAAA
+    # records first, the connect to those addresses sits for ~80s before
+    # timing out, and only THEN does httpx fall back to IPv4. Curl and the
+    # browser don't see this because they connect to the v4/v6 candidates in
+    # parallel. We sidestep the whole thing by binding the outbound socket
+    # to 0.0.0.0, which forces the connect path to IPv4-only. Same trick
+    # applied to the async transport so batch / streaming paths benefit too.
     __HTTPX_REQUEST_TIMEOUT_SECONDS = 60.0
 
     @staticmethod
     def __build_ipv4_httpx_clients() -> tuple[httpx.Client, httpx.AsyncClient]:
-        timeout_config = httpx.Timeout(GeminiProvider.__HTTPX_REQUEST_TIMEOUT_SECONDS)
+        timeout_config = httpx.Timeout(GoogleEnterpriseAiProvider.__HTTPX_REQUEST_TIMEOUT_SECONDS)
         sync_client    = httpx.Client(
             transport = httpx.HTTPTransport(local_address = "0.0.0.0"),
             timeout   = timeout_config,
@@ -66,37 +94,119 @@ class GeminiProvider(AutomationProvider):
         )
         return sync_client, async_client
 
-    def __init__(self):
-        sync_client, async_client = GeminiProvider.__build_ipv4_httpx_clients()
+    # Scope every Vertex AI call needs; a service-account key carries no scopes
+    # of its own, so the broad cloud-platform scope is attached here.
+    _VERTEX_CREDENTIAL_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
+
+    # Default Vertex region when GOOGLE_ENTERPRISE_AGENT_LOCATION is unset.
+    DEFAULT_VERTEX_LOCATION = "global"
+
+    @staticmethod
+    def __build_client() -> genai.Client:
+        """
+        Builds a google-genai client bound to Google's enterprise (Vertex)
+        backend. Two auth shapes are supported, checked in priority order:
+
+          1. Service account / ADC — STRONGLY preferred. Selected by
+             GOOGLE_ENTERPRISE_AGENT_PROJECT (the GCP project), with
+             GOOGLE_ENTERPRISE_AGENT_LOCATION (region, default "global") and
+             a service-account key in GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64
+             (blank => ambient Application Default Credentials).
+
+          2. API key (Vertex Express mode) — FALLBACK ONLY, used when no
+             project is configured. Vertex's API-key path is ~5-6x slower to
+             first token for streaming (~12s vs ~2s with a service account —
+             confirmed in the AskAi latency investigation and reproduced
+             upstream), so it exists only so an unmigrated environment keeps
+             working, never as the intended path.
+
+        The configuration is passed explicitly (rather than via the SDK's
+        GOOGLE_GENAI_USE_VERTEXAI / GOOGLE_CLOUD_* auto-discovery) so the wiring
+        is readable and a misconfiguration fails loudly here.
+        """
+        sync_client, async_client = GoogleEnterpriseAiProvider.__build_ipv4_httpx_clients()
         http_options = types.HttpOptions(
             httpx_client       = sync_client,
             httpx_async_client = async_client,
         )
-        self.__client = genai.Client(
-            api_key      = os.getenv("GEMINI_API_KEY"),
-            http_options = http_options,
+
+        project = os.getenv("GOOGLE_ENTERPRISE_AGENT_PROJECT")
+        if project:
+            location = os.getenv("GOOGLE_ENTERPRISE_AGENT_LOCATION") or GoogleEnterpriseAiProvider.DEFAULT_VERTEX_LOCATION
+            client_arguments = {
+                "vertexai":     True,
+                "project":      project,
+                "location":     location,
+                "http_options": http_options,
+            }
+            credentials = GoogleEnterpriseAiProvider.__load_service_account_credentials()
+            if credentials is not None:
+                client_arguments["credentials"] = credentials
+            return genai.Client(**client_arguments)
+
+        api_key = os.getenv("GOOGLE_ENTERPRISE_AGENT_API_KEY")
+        if api_key:
+            return genai.Client(
+                vertexai     = True,
+                api_key      = api_key,
+                http_options = http_options,
+            )
+
+        raise RuntimeError(
+            "GoogleEnterpriseAiProvider requires either GOOGLE_ENTERPRISE_AGENT_PROJECT "
+            "(with GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64 or ambient ADC), or the "
+            "slow-fallback GOOGLE_ENTERPRISE_AGENT_API_KEY, to be set."
         )
+
+    @staticmethod
+    def __load_service_account_credentials():
+        """
+        Builds service-account credentials from the base64-encoded JSON key in
+        GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64. Base64 (not a file path) is
+        deliberate: the same value rides cleanly in the line-based env file AND
+        is injected verbatim into each burst worker's env by BurstFleetSettings,
+        so no key file ever has to exist on disk or be baked into an image.
+        Returns None when unset, in which case the SDK falls back to ambient
+        Application Default Credentials.
+        """
+        encoded = os.getenv("GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64")
+        if not encoded:
+            return None
+        service_account_info = json.loads(base64.b64decode(encoded))
+        return service_account.Credentials.from_service_account_info(
+            service_account_info,
+            scopes = list(GoogleEnterpriseAiProvider._VERTEX_CREDENTIAL_SCOPES),
+        )
+
+    def __init__(self):
+        self.__client = GoogleEnterpriseAiProvider.__build_client()
 
     async def __fetch_url_content(self, url: str) -> str:
         try:
             text = await WebContentFetcher.fetch_text_only(url)
             if not text:
                 return f"Source ({url}): Error - Could not retrieve readable content"
-            truncated = text[:GeminiProvider.GROUNDING_CONTENT_CHAR_BUDGET]
+            truncated = text[:GoogleEnterpriseAiProvider.GROUNDING_CONTENT_CHAR_BUDGET]
             return f"--- START SOURCE: {url} ---\n{truncated}\n--- END SOURCE ---"
         except Exception as fetch_error:
             return f"Source ({url}): Failed to fetch due to error: {str(fetch_error)}"
 
-    async def __upload_video(self, video_path: str, mime_type: str) -> types.File:
-        uploaded_file = await asyncio.to_thread(
-            self.__client.files.upload,
-            file=video_path,
-            config=types.UploadFileConfig(mime_type=mime_type)
-        )
-        while uploaded_file.state.name == "PROCESSING":
-            await asyncio.sleep(2)
-            uploaded_file = await asyncio.to_thread(self.__client.files.get, name=uploaded_file.name)
-        return uploaded_file
+    @staticmethod
+    async def __build_video_part(video_path: str, mime_type: str) -> types.Part:
+        """
+        The enterprise backend has no Files API, so we attach the video
+        inline. The file is read off the worker thread to avoid blocking the
+        event loop. Inline media is subject to the per-request payload
+        ceiling; oversized clips should be staged in GCS and referenced via
+        a gs:// URI by the calling workflow instead.
+        """
+        video_bytes = await asyncio.to_thread(GoogleEnterpriseAiProvider.__read_file_bytes, video_path)
+        return types.Part.from_bytes(data = video_bytes, mime_type = mime_type)
+
+    @staticmethod
+    def __read_file_bytes(file_path: str) -> bytes:
+        with open(file_path, "rb") as file_handle:
+            return file_handle.read()
 
     async def execute(self, request: AutomationRequest) -> AutomationResponse:
         inputs = request.get_inputs()
@@ -105,6 +215,8 @@ class GeminiProvider(AutomationProvider):
         user_parts = []
         links_to_fetch = []
         enable_search  = False
+        generate_image = False
+        image_aspect_ratio = None
         thinking_level = None
         response_as_text = False
         response_schema_override = None
@@ -123,6 +235,10 @@ class GeminiProvider(AutomationProvider):
 
             if metadata and metadata.get("enable_search", False):
                 enable_search = True
+            if metadata and metadata.get("generate_image", False):
+                generate_image = True
+            if metadata and metadata.get("image_aspect_ratio"):
+                image_aspect_ratio = metadata.get("image_aspect_ratio")
             if metadata and metadata.get("thinking_level"):
                 thinking_level = metadata.get("thinking_level")
             if metadata and metadata.get("response_as_text", False):
@@ -153,8 +269,7 @@ class GeminiProvider(AutomationProvider):
                 case AutomationContentTypes.VIDEO:
                     if isinstance(data, str):
                         mime_type = metadata.get("mime_type", "video/mp4") if metadata else "video/mp4"
-                        uploaded_file = await self.__upload_video(data, mime_type)
-                        user_parts.append(types.Part.from_uri(file_uri=uploaded_file.uri, mime_type=mime_type))
+                        user_parts.append(await GoogleEnterpriseAiProvider.__build_video_part(data, mime_type))
 
         if links_to_fetch:
             fetched = [await self.__fetch_url_content(link) for link in links_to_fetch]
@@ -168,6 +283,9 @@ class GeminiProvider(AutomationProvider):
 
         if system_prompts:
             config_args["system_instruction"] = "\n".join(system_prompts)
+
+        if generate_image:
+            return await self.__fetch_image_generation(request, user_parts, config_args, thinking_level, image_aspect_ratio)
 
         config_args["response_mime_type"] = "text/plain" if response_as_text else "application/json"
 
@@ -195,11 +313,11 @@ class GeminiProvider(AutomationProvider):
         # system can apply per-token spend rules for this task. The prompt and
         # response text are passed as a chars/4 fallback for the rare case the
         # response carries no usage_metadata.
-        usage_metadata = GeminiProvider.__record_token_usage(
+        usage_metadata = GoogleEnterpriseAiProvider.__record_token_usage(
             response,
             request.get_model(),
             request.get_text_content(),
-            GeminiProvider.__safe_response_text(response),
+            GoogleEnterpriseAiProvider.__safe_response_text(response),
         )
 
         outputs = []
@@ -251,9 +369,10 @@ class GeminiProvider(AutomationProvider):
         b_enable_google_search: bool,
     ):
         """
-        Async generator that streams a Gemini text response chunk-by-chunk.
-        Designed for the AskAi feature on the Study page — the caller forwards
-        each yielded event straight to the browser as one NDJSON line.
+        Async generator that streams an enterprise-backend text response
+        chunk-by-chunk. Designed for the AskAi feature on the Study page —
+        the caller forwards each yielded event straight to the browser as one
+        NDJSON line.
 
         Yielded events (each a JSON-serialisable dict):
             { "type": "text", "value": "..." }                  - 0 or more
@@ -276,7 +395,7 @@ class GeminiProvider(AutomationProvider):
         contents = [user_text_part, *attached_image_parts]
 
         # AskAi is real-time — the user is watching tokens stream in.
-        # Without an explicit thinking_budget, gemini-2.5-flash-lite spends
+        # Without an explicit thinking_budget, the flash-lite tier spends
         # tens of seconds in its thinking phase before emitting any output,
         # which presents as a stuck "Thinking…" dialog on the client.
         # Using thinking_budget=0 disables the thinking phase entirely (the
@@ -304,7 +423,7 @@ class GeminiProvider(AutomationProvider):
             try:
                 async with RedisSemaphore.slot(
                     bucket = model,
-                    max_concurrent = GeminiProvider.__resolve_concurrent_limit(model),
+                    max_concurrent = GoogleEnterpriseAiProvider.__resolve_concurrent_limit(model),
                     hold_timeout_seconds = ApiConcurrencyLimits.SLOT_HOLD_TIMEOUT_SECONDS,
                     poll_interval_seconds = ApiConcurrencyLimits.ACQUIRE_POLL_INTERVAL_SECONDS,
                 ):
@@ -327,14 +446,16 @@ class GeminiProvider(AutomationProvider):
                             b_yielded_any_text = True
                             yield { "type": "text", "value": chunk_text }
 
-                    citation_sources = GeminiProvider.__extract_citation_sources(last_seen_chunk)
+                    GoogleEnterpriseAiProvider.__log_stream_usage(last_seen_chunk, model)
+
+                    citation_sources = GoogleEnterpriseAiProvider.__extract_citation_sources(last_seen_chunk)
                     if citation_sources:
                         yield { "type": "citations", "sources": citation_sources }
 
                     return
 
             except (genai_errors.ClientError, genai_errors.ServerError) as api_error:
-                if not GeminiProvider.__is_transient_error(api_error):
+                if not GoogleEnterpriseAiProvider.__is_transient_error(api_error):
                     yield { "type": "error", "message": str(api_error) }
                     return
 
@@ -345,19 +466,19 @@ class GeminiProvider(AutomationProvider):
                     yield { "type": "error", "message": f"Stream interrupted: {api_error}" }
                     return
 
-                error_label = GeminiProvider.__describe_transient_error(api_error)
-                if attempt_index >= GeminiProvider.MAX_TRANSIENT_RETRIES:
+                error_label = GoogleEnterpriseAiProvider.__describe_transient_error(api_error)
+                if attempt_index >= GoogleEnterpriseAiProvider.MAX_TRANSIENT_RETRIES:
                     print(
-                        f"[GeminiProvider] stream_text {error_label} after "
+                        f"[GoogleEnterpriseAiProvider] stream_text {error_label} after "
                         f"{attempt_index} retries on model {model} — giving up."
                     )
                     yield { "type": "error", "message": str(api_error) }
                     return
 
-                sleep_seconds = GeminiProvider.__resolve_retry_delay_seconds(api_error, attempt_index)
+                sleep_seconds = GoogleEnterpriseAiProvider.__resolve_retry_delay_seconds(api_error, attempt_index)
                 print(
-                    f"[GeminiProvider] stream_text {error_label} on model {model} "
-                    f"(attempt {attempt_index + 1}/{GeminiProvider.MAX_TRANSIENT_RETRIES}). "
+                    f"[GoogleEnterpriseAiProvider] stream_text {error_label} on model {model} "
+                    f"(attempt {attempt_index + 1}/{GoogleEnterpriseAiProvider.MAX_TRANSIENT_RETRIES}). "
                     f"Sleeping {sleep_seconds:.1f}s then retrying."
                 )
                 await ProviderHealthSignal.mark_slowdown(error_label)
@@ -369,6 +490,30 @@ class GeminiProvider(AutomationProvider):
             if sleep_seconds is not None:
                 await asyncio.sleep(sleep_seconds)
             attempt_index += 1
+
+    @staticmethod
+    def __log_stream_usage(final_chunk, model: str) -> None:
+        """
+        Emit the streamed response's token accounting to stderr (Dock tees the
+        AskAi worker's stderr into the server log as AGENT:ASK_AI). The
+        decisive field for AskAi latency is thoughts_token_count: a large value
+        means this reasoning model spent its budget "thinking" before the first
+        token — i.e. the thing to suppress. Deliberately written to stderr, never
+        stdout, so it can never pollute the worker's NDJSON event stream.
+        """
+        usage = getattr(final_chunk, "usage_metadata", None)
+        if usage is None:
+            print(f"[GoogleEnterpriseAiProvider] [TOKEN_USAGE] model={model} usage_metadata=None (no accounting on final chunk)", file=sys.stderr, flush=True)
+            return
+        print(
+            f"[GoogleEnterpriseAiProvider] [TOKEN_USAGE] model={model} "
+            f"prompt={getattr(usage, 'prompt_token_count', None)} "
+            f"candidates={getattr(usage, 'candidates_token_count', None)} "
+            f"thoughts={getattr(usage, 'thoughts_token_count', None)} "
+            f"cached={getattr(usage, 'cached_content_token_count', None)} "
+            f"total={getattr(usage, 'total_token_count', None)}",
+            file=sys.stderr, flush=True,
+        )
 
     @staticmethod
     def __extract_citation_sources(final_chunk) -> list[dict]:
@@ -402,7 +547,7 @@ class GeminiProvider(AutomationProvider):
 
     async def __generate_content_with_retry(self, model: str, contents, config):
         """
-        Calls Gemini generate_content with two layers of protection against
+        Calls generate_content with two layers of protection against
         transient failures (429 RESOURCE_EXHAUSTED and 5xx
         UNAVAILABLE/INTERNAL):
 
@@ -413,7 +558,7 @@ class GeminiProvider(AutomationProvider):
 
         2. Inside the slot we run the actual call. If the API still
            returns a transient error — 429 (quota share / rough TPM
-           estimate exceeded) or 5xx (Gemini-side capacity blip) — we
+           estimate exceeded) or 5xx (server-side capacity blip) — we
            sleep and retry. 429 responses carry a server-supplied
            retryDelay we honour; 5xx have no retry hint so we use
            exponential backoff. After MAX_TRANSIENT_RETRIES the caller
@@ -424,7 +569,7 @@ class GeminiProvider(AutomationProvider):
             sleep_seconds = None
             async with RedisSemaphore.slot(
                 bucket = model,
-                max_concurrent = GeminiProvider.__resolve_concurrent_limit(model),
+                max_concurrent = GoogleEnterpriseAiProvider.__resolve_concurrent_limit(model),
                 hold_timeout_seconds = ApiConcurrencyLimits.SLOT_HOLD_TIMEOUT_SECONDS,
                 poll_interval_seconds = ApiConcurrencyLimits.ACQUIRE_POLL_INTERVAL_SECONDS,
             ):
@@ -436,22 +581,22 @@ class GeminiProvider(AutomationProvider):
                         config = config,
                     )
                 except (genai_errors.ClientError, genai_errors.ServerError) as api_error:
-                    if not GeminiProvider.__is_transient_error(api_error):
+                    if not GoogleEnterpriseAiProvider.__is_transient_error(api_error):
                         raise
 
-                    error_label = GeminiProvider.__describe_transient_error(api_error)
+                    error_label = GoogleEnterpriseAiProvider.__describe_transient_error(api_error)
 
-                    if attempt_index >= GeminiProvider.MAX_TRANSIENT_RETRIES:
+                    if attempt_index >= GoogleEnterpriseAiProvider.MAX_TRANSIENT_RETRIES:
                         print(
-                            f"[GeminiProvider] {error_label} after "
+                            f"[GoogleEnterpriseAiProvider] {error_label} after "
                             f"{attempt_index} retries on model {model} — giving up."
                         )
                         raise
 
-                    sleep_seconds = GeminiProvider.__resolve_retry_delay_seconds(api_error, attempt_index)
+                    sleep_seconds = GoogleEnterpriseAiProvider.__resolve_retry_delay_seconds(api_error, attempt_index)
                     print(
-                        f"[GeminiProvider] {error_label} on model {model} "
-                        f"(attempt {attempt_index + 1}/{GeminiProvider.MAX_TRANSIENT_RETRIES}). "
+                        f"[GoogleEnterpriseAiProvider] {error_label} on model {model} "
+                        f"(attempt {attempt_index + 1}/{GoogleEnterpriseAiProvider.MAX_TRANSIENT_RETRIES}). "
                         f"Sleeping {sleep_seconds:.1f}s then retrying."
                     )
                     await ProviderHealthSignal.mark_slowdown(error_label)
@@ -471,7 +616,7 @@ class GeminiProvider(AutomationProvider):
         )
 
     # Status codes treated as transient. 429 is quota; 5xx are
-    # Gemini-side capacity / internal errors. Both retry on the same
+    # server-side capacity / internal errors. Both retry on the same
     # exponential backoff path. 408 (request timeout) joins them since
     # the SDK occasionally surfaces it for slow streamed responses.
     _TRANSIENT_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
@@ -488,11 +633,11 @@ class GeminiProvider(AutomationProvider):
     @staticmethod
     def __is_transient_error(api_error) -> bool:
         status_code = getattr(api_error, "code", None)
-        if status_code in GeminiProvider._TRANSIENT_STATUS_CODES:
+        if status_code in GoogleEnterpriseAiProvider._TRANSIENT_STATUS_CODES:
             return True
 
         stringified_error = str(api_error)
-        for transient_keyword in GeminiProvider._TRANSIENT_STATUS_KEYWORDS:
+        for transient_keyword in GoogleEnterpriseAiProvider._TRANSIENT_STATUS_KEYWORDS:
             if transient_keyword in stringified_error:
                 return True
 
@@ -517,13 +662,13 @@ class GeminiProvider(AutomationProvider):
 
     @staticmethod
     def __resolve_retry_delay_seconds(client_error, attempt_index: int) -> float:
-        seconds = GeminiProvider.__extract_retry_delay_from_error(client_error)
+        seconds = GoogleEnterpriseAiProvider.__extract_retry_delay_from_error(client_error)
         if seconds is None:
             # Exponential backoff anchored at DEFAULT_RETRY_SLEEP_SECONDS.
             # Doubles each attempt; the per-minute TPM bucket refills in
             # 60s so a few rounds is typically enough.
-            seconds = GeminiProvider.DEFAULT_RETRY_SLEEP_SECONDS * (2 ** attempt_index)
-        return min(max(seconds, 1.0), GeminiProvider.MAX_RETRY_SLEEP_SECONDS)
+            seconds = GoogleEnterpriseAiProvider.DEFAULT_RETRY_SLEEP_SECONDS * (2 ** attempt_index)
+        return min(max(seconds, 1.0), GoogleEnterpriseAiProvider.MAX_RETRY_SLEEP_SECONDS)
 
     @staticmethod
     def __extract_retry_delay_from_error(client_error) -> float | None:
@@ -541,7 +686,7 @@ class GeminiProvider(AutomationProvider):
                 for detail_entry in error_block.get("details", []) or []:
                     if detail_entry.get("@type", "").endswith("RetryInfo"):
                         delay_string = detail_entry.get("retryDelay", "")
-                        parsed = GeminiProvider.__parse_duration_string(delay_string)
+                        parsed = GoogleEnterpriseAiProvider.__parse_duration_string(delay_string)
                         if parsed is not None:
                             return parsed
 
@@ -564,3 +709,120 @@ class GeminiProvider(AutomationProvider):
             return float(match.group(1))
         except ValueError:
             return None
+
+    async def __stream_image_with_retry(self, model: str, contents, config) -> dict[int, bytearray]:
+        """
+        Streams generate_content_stream into image_buffers, retrying the
+        whole stream on transient errors. Buffers are reset between
+        attempts so a partial payload from a failed attempt cannot
+        contaminate the next attempt's data.
+        """
+        attempt_index = 0
+
+        while True:
+            sleep_seconds = None
+            image_buffers: dict[int, bytearray] = {}
+
+            async with RedisSemaphore.slot(
+                bucket = model,
+                max_concurrent = GoogleEnterpriseAiProvider.__resolve_concurrent_limit(model),
+                hold_timeout_seconds = ApiConcurrencyLimits.SLOT_HOLD_TIMEOUT_SECONDS,
+                poll_interval_seconds = ApiConcurrencyLimits.ACQUIRE_POLL_INTERVAL_SECONDS,
+            ):
+                def stream_sync():
+                    last_chunk = None
+                    for chunk in self.__client.models.generate_content_stream(
+                        model = model,
+                        contents = contents,
+                        config = config,
+                    ):
+                        last_chunk = chunk
+                        if chunk.parts is None:
+                            continue
+                        for part in chunk.parts:
+                            if part.inline_data and part.inline_data.data:
+                                buf = image_buffers.setdefault(0, bytearray())
+                                buf.extend(part.inline_data.data)
+                            elif hasattr(part, "text") and part.text:
+                                print(f"[GoogleEnterpriseAiProvider] stream text: {part.text}")
+
+                    # The final stream chunk carries the usage_metadata for the
+                    # whole image generation; record it for per-token billing.
+                    if last_chunk is not None:
+                        CreditMeter.record_from_response(last_chunk, model = model)
+
+                try:
+                    await asyncio.to_thread(stream_sync)
+                    return image_buffers
+                except (genai_errors.ClientError, genai_errors.ServerError) as api_error:
+                    if not GoogleEnterpriseAiProvider.__is_transient_error(api_error):
+                        raise
+
+                    error_label = GoogleEnterpriseAiProvider.__describe_transient_error(api_error)
+
+                    if attempt_index >= GoogleEnterpriseAiProvider.MAX_TRANSIENT_RETRIES:
+                        print(
+                            f"[GoogleEnterpriseAiProvider] {error_label} after "
+                            f"{attempt_index} retries on image stream (model {model}) — giving up."
+                        )
+                        raise
+
+                    sleep_seconds = GoogleEnterpriseAiProvider.__resolve_retry_delay_seconds(api_error, attempt_index)
+                    print(
+                        f"[GoogleEnterpriseAiProvider] {error_label} on image stream (model {model}, "
+                        f"attempt {attempt_index + 1}/{GoogleEnterpriseAiProvider.MAX_TRANSIENT_RETRIES}). "
+                        f"Sleeping {sleep_seconds:.1f}s then retrying."
+                    )
+                    await ProviderHealthSignal.mark_slowdown(error_label)
+
+            if sleep_seconds is not None:
+                await asyncio.sleep(sleep_seconds)
+            attempt_index += 1
+
+    async def __fetch_image_generation(
+        self,
+        request:            AutomationRequest,
+        user_parts:         list,
+        config_args:        dict,
+        thinking_level:     str | None = None,
+        image_aspect_ratio: str | None = None,
+    ) -> AutomationResponse:
+        if "system_instruction" in config_args:
+            config_args["system_instruction"] = [types.Part.from_text(text=config_args.pop("system_instruction"))]
+
+        image_config_arguments = {"image_size": "1K"}
+        if image_aspect_ratio is not None:
+            image_config_arguments["aspect_ratio"] = image_aspect_ratio
+
+        config_args["thinking_config"]     = types.ThinkingConfig(thinking_level=thinking_level or "HIGH")
+        config_args["image_config"]        = types.ImageConfig(**image_config_arguments)
+        config_args["response_modalities"] = ["IMAGE"]
+
+        config   = types.GenerateContentConfig(**config_args)
+        contents = [types.Content(role="user", parts=user_parts)]
+
+        print(f"[GoogleEnterpriseAiProvider] Starting image generation stream (model={request.get_model()})...")
+
+        # The streaming endpoint hits the same transient-error surface as
+        # generate_content (429 / 5xx). Mirror the retry policy of
+        # __generate_content_with_retry so EnhanceImages survives a
+        # server-side capacity blip mid-batch instead of failing the task.
+        image_buffers: dict[int, bytearray] = await self.__stream_image_with_retry(
+            model = request.get_model(),
+            contents = contents,
+            config = config,
+        )
+
+        if not image_buffers:
+            print("[GoogleEnterpriseAiProvider] Image generation stream produced no image data")
+            return AutomationResponse([])
+
+        outputs = [
+            AutomationContent(AutomationContentTypes.IMAGE, bytes(buf))
+            for buf in image_buffers.values()
+        ]
+
+        print(f"[GoogleEnterpriseAiProvider] Image generation complete — {len(outputs)} image(s), "
+              f"{sum(len(b) for b in image_buffers.values()):,} bytes total")
+
+        return AutomationResponse(outputs)

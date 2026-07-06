@@ -11,7 +11,7 @@ from Globals.Classes.Automation.AutomationRequest import AutomationRequest
 from Globals.Classes.Automation.BatchSubmitter import BatchSubmitter
 from Globals.Classes.Automation.Pools.ModelPool import ModelPool
 from Globals.Classes.Automation.Pools.PromptPool import PromptPool
-from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
+from Globals.Classes.Automation.Providers.GoogleEnterpriseAiProvider import GoogleEnterpriseAiProvider
 from Globals.Classes.StudyMaterial.StudyMaterialDetailDirectives import StudyMaterialDetailDirectives
 from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Classes.Task.AutoGeneration.StudyMaterialGenerationSettings import StudyMaterialGenerationSettings

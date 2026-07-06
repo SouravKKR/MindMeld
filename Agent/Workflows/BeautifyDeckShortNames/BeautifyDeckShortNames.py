@@ -7,7 +7,7 @@ from Workflows.BeautifyDeckShortNames.BeautifiedDeckShortNamesResponse import Be
 from Globals.Classes.Automation.AutomationCaller import AutomationCaller
 from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Automation.AutomationRequest import AutomationRequest
-from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
+from Globals.Classes.Automation.Providers.GoogleEnterpriseAiProvider import GoogleEnterpriseAiProvider
 from Globals.Classes.Generic.Persistence import Persistence
 from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Constants.PersistenceConstants import PersistenceConstants
@@ -66,7 +66,7 @@ class BeautifyDeckShortNames(Workflow):
 
         print(f"[BeautifyDeckShortNames] Beautifying {len(unique_deck_entries)} unique deck short name(s).")
 
-        provider = GeminiProvider()
+        provider = GoogleEnterpriseAiProvider()
         caller   = AutomationCaller(provider)
 
         beautified_map = {}

@@ -166,9 +166,13 @@ PAID_DECK_MASTER_KEY_BASE64=
 EOF
 
     create_file_if_absent "$AGENT_ENVIRONMENT_FILE" <<EOF
-# Agent config for $ENVIRONMENT_NAME. Fill GEMINI_API_KEY (and OPENAI_API_KEY if used).
-# provision-environment.sh appends MONGODB_URL / REDIS_URL automatically.
-GEMINI_API_KEY=
+# Agent config for $ENVIRONMENT_NAME. Vertex AI auth: set GOOGLE_ENTERPRISE_AGENT_PROJECT and
+# GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64 (base64 -w0 of a "Vertex AI User" service-account key
+# JSON for that project) — a service account is ~10x faster to first token than an API key. Optional:
+# GOOGLE_ENTERPRISE_AGENT_LOCATION (default "global") and OPENAI_API_KEY. provision appends MONGODB_URL / REDIS_URL.
+GOOGLE_ENTERPRISE_AGENT_PROJECT=
+GOOGLE_ENTERPRISE_AGENT_LOCATION=global
+GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64=
 OPENAI_API_KEY=
 EOF
 
@@ -184,7 +188,11 @@ EOF
     local missing=()
     value_is_missing "$(read_env_value "$DOCK_ENVIRONMENT_FILE" GOOGLE_CLIENT_ID)"     && missing+=("Dock/$(dock_environment_file_name): GOOGLE_CLIENT_ID")
     value_is_missing "$(read_env_value "$DOCK_ENVIRONMENT_FILE" GOOGLE_CLIENT_SECRET)" && missing+=("Dock/$(dock_environment_file_name): GOOGLE_CLIENT_SECRET")
-    value_is_missing "$(read_env_value "$AGENT_ENVIRONMENT_FILE" GEMINI_API_KEY)"      && missing+=("Agent/$(agent_environment_file_name): GEMINI_API_KEY")
+    if value_is_missing "$(read_env_value "$AGENT_ENVIRONMENT_FILE" GOOGLE_ENTERPRISE_AGENT_PROJECT)" \
+       && value_is_missing "$(read_env_value "$AGENT_ENVIRONMENT_FILE" GOOGLE_ENTERPRISE_AGENT_API_KEY)"
+    then
+        missing+=("Agent/$(agent_environment_file_name): GOOGLE_ENTERPRISE_AGENT_PROJECT + _CREDENTIALS_BASE64 (service account, preferred) or _API_KEY (slow fallback)")
+    fi
     value_is_missing "${CLOUDFLARE_TUNNEL_TOKEN:-}"                                    && missing+=("deployment.env: CLOUDFLARE_TUNNEL_TOKEN_${ENVIRONMENT_UPPER}")
 
     if [ "${#missing[@]}" -gt 0 ]

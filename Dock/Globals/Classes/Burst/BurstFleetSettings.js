@@ -214,7 +214,7 @@ class BurstFleetSettings
         {
             const parsedAgentEnvironment = require("dotenv").parse(fs.readFileSync(agentEnvironmentPath));
             const llmKeys = {};
-            for (const key of ["GEMINI_API_KEY", "OPENAI_API_KEY"])
+            for (const key of ["GOOGLE_ENTERPRISE_AGENT_PROJECT", "GOOGLE_ENTERPRISE_AGENT_LOCATION", "GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64", "GOOGLE_ENTERPRISE_AGENT_API_KEY", "OPENAI_API_KEY"])
             {
                 if (parsedAgentEnvironment[key])
                 {
@@ -225,7 +225,7 @@ class BurstFleetSettings
         }
         catch (readError)
         {
-            console.warn(`[BurstFleetSettings] Could not read Agent LLM keys from ${agentEnvironmentPath}; burst workers may lack GEMINI_API_KEY/OPENAI_API_KEY: ${readError.message}`);
+            console.warn(`[BurstFleetSettings] Could not read Agent LLM auth from ${agentEnvironmentPath}; burst workers may lack GOOGLE_ENTERPRISE_AGENT_* / OPENAI_API_KEY: ${readError.message}`);
             return {};
         }
     }

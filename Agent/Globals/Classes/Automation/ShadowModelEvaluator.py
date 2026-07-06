@@ -9,7 +9,7 @@ from Globals.Classes.Automation.AutomationRequest import AutomationRequest
 from Globals.Classes.Automation.AutomationResponse import AutomationResponse
 from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Database.DatabaseConnector import DatabaseConnector
-from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
+from Globals.Classes.Automation.Providers.GoogleEnterpriseAiProvider import GoogleEnterpriseAiProvider
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
 
 
@@ -123,7 +123,7 @@ class ShadowModelEvaluator:
                 request.get_inputs(),
             )
 
-            candidate_provider = GeminiProvider()
+            candidate_provider = GoogleEnterpriseAiProvider()
             candidate_response = await candidate_provider.execute(candidate_request)
 
             await ShadowModelEvaluator.__persist_pair(

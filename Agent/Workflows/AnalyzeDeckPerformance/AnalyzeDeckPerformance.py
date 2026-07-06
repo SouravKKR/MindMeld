@@ -12,7 +12,7 @@ from Globals.Classes.Automation.AutomationRequest import AutomationRequest
 from Globals.Classes.Analysis.AutoAnalysisDeckFields import AutoAnalysisDeckFields
 from Globals.Classes.Analysis.CuratedFlashcardFields import CuratedFlashcardFields
 from Globals.Classes.Analysis.CuratedStudyMaterialFields import CuratedStudyMaterialFields
-from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
+from Globals.Classes.Automation.Providers.GoogleEnterpriseAiProvider import GoogleEnterpriseAiProvider
 from Globals.Classes.Database.DatabaseConnector import DatabaseConnector
 from Globals.Classes.Task.TaskDescriptor import TaskDescriptor
 from Globals.Classes.Task.TaskManager import TaskManager
@@ -648,7 +648,7 @@ class AnalyzeDeckPerformance(Workflow):
             ]
         )
 
-        caller = AutomationCaller(GeminiProvider())
+        caller = AutomationCaller(GoogleEnterpriseAiProvider())
         response = await caller.call(request, None, retries=2)
 
         if response is None:

@@ -7,7 +7,7 @@ from Globals.Classes.Automation.AutomationCaller import AutomationCaller
 from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Automation.AutomationRequest import AutomationRequest
 from Globals.Classes.Automation.Pools.PromptPool import PromptPool
-from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
+from Globals.Classes.Automation.Providers.GoogleEnterpriseAiProvider import GoogleEnterpriseAiProvider
 from Globals.Classes.Credits.CreditMeter import CreditMeter
 from Globals.Constants.ModelPricing import ModelPricing
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
@@ -55,7 +55,7 @@ class DiagramImageEnhancer:
     REFERENCE_OUTPUT_TOKENS_PER_CREDIT = 100000
 
     def __init__(self):
-        self.__gemini_caller = AutomationCaller(GeminiProvider())
+        self.__gemini_caller = AutomationCaller(GoogleEnterpriseAiProvider())
         self.__openai_client: AsyncOpenAI | None = None
 
     async def enhance(self, image_bytes: bytes) -> dict:
@@ -107,7 +107,7 @@ class DiagramImageEnhancer:
                     AutomationContentTypes.TEXT,
                     PromptPool.DIAGRAM_ENHANCER_DESCRIBE_USER,
                     # The description must come back as plain prose. Without this,
-                    # GeminiProvider defaults the response mime type to
+                    # GoogleEnterpriseAiProvider defaults the response mime type to
                     # application/json, which fights the "write prose, not JSON"
                     # instruction in the prompt.
                     metadata={"response_as_text": True},

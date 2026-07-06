@@ -14,7 +14,7 @@ from Globals.Classes.Analysis.CuratedStudyMaterialFields import CuratedStudyMate
 from Globals.Classes.Automation.AutomationCaller import AutomationCaller
 from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Automation.AutomationRequest import AutomationRequest
-from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
+from Globals.Classes.Automation.Providers.GoogleEnterpriseAiProvider import GoogleEnterpriseAiProvider
 from Globals.Classes.Database.DatabaseConnector import DatabaseConnector
 from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Classes.WebScraping.WebScraper import WebScraper
@@ -577,7 +577,7 @@ class GenerateCuratedStudyMaterial(Workflow):
             ]
         )
 
-        caller   = AutomationCaller(GeminiProvider())
+        caller   = AutomationCaller(GoogleEnterpriseAiProvider())
         response = await caller.call(request, None, retries=2)
 
         if response is None:
@@ -672,7 +672,7 @@ class GenerateCuratedStudyMaterial(Workflow):
             ]
         )
 
-        caller   = AutomationCaller(GeminiProvider())
+        caller   = AutomationCaller(GoogleEnterpriseAiProvider())
         response = await caller.call(request, None, retries=2)
 
         if response is None:

@@ -11,7 +11,7 @@ from Globals.Classes.Automation.BatchSubmitter import BatchSubmitter
 from Globals.Classes.Automation.Pools.ModelPool import ModelPool
 from Globals.Classes.Automation.Pools.PromptPool import PromptPool
 from Globals.Classes.MockTest.SolvingStepsDirective import SolvingStepsDirective
-from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
+from Globals.Classes.Automation.Providers.GoogleEnterpriseAiProvider import GoogleEnterpriseAiProvider
 from Globals.Classes.Generic.Persistence import Persistence
 from Globals.Classes.Generic.TokenSafeContent import TokenSafeContent
 from Globals.Classes.Task.AutoGeneration.MockTestGenerationSettings import MockTestGenerationSettings
@@ -607,7 +607,7 @@ class MockTestGenerationWorker(Workflow):
         )
         await flush_wlog()
 
-        live_fallback_caller = AutomationCaller(GeminiProvider())
+        live_fallback_caller = AutomationCaller(GoogleEnterpriseAiProvider())
 
         # Grant the submit-time share of each topic's weight up front so the
         # parent bar advances when batches are dispatched, not only when every

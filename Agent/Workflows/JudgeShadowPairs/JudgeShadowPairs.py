@@ -8,7 +8,7 @@ from Globals.Classes.Database.DatabaseConnector import DatabaseConnector
 from Globals.Classes.Automation.AutomationCaller import AutomationCaller
 from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Automation.AutomationRequest import AutomationRequest
-from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
+from Globals.Classes.Automation.Providers.GoogleEnterpriseAiProvider import GoogleEnterpriseAiProvider
 from Globals.Classes.Automation.Pools.ModelPool import ModelPool
 from Globals.Classes.Automation.ShadowModelEvaluator import ShadowModelEvaluator
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
@@ -53,7 +53,7 @@ class JudgeShadowPairs(Workflow):
 
         print(f"[JudgeShadowPairs] Judging {len(documents)} pair(s).")
 
-        provider = GeminiProvider()
+        provider = GoogleEnterpriseAiProvider()
         caller   = AutomationCaller(provider)
 
         for document in documents:

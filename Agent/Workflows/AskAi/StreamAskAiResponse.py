@@ -24,6 +24,14 @@ Heavy imports (`fitz`, `sentence_transformers`) are deferred to the
 branches that need them, keeping the no-grounding cold start cheap.
 """
 
+import time as _time_module
+# Captured the instant this module starts executing — the earliest point the
+# spawned worker can measure. Compared against the Dock-supplied spawn time to
+# isolate interpreter-launch overhead, and used as the zero-point for every
+# per-phase [ASKAI_TIMING] marker below.
+_PROCESS_START_MONOTONIC = _time_module.monotonic()
+_PROCESS_START_EPOCH_MS = _time_module.time() * 1000
+
 import asyncio
 import base64
 import json
@@ -57,6 +65,25 @@ def _emit(event: dict) -> None:
 
 def _log(message: str) -> None:
     sys.stderr.write(f"[AskAi worker] {message}\n")
+    sys.stderr.flush()
+
+
+# Correlation tag Dock injects into the request body so its own [ASKAI_TIMING]
+# lines and this worker's lines can be tied to one HTTP request. Held in a dict
+# so _timing can read the latest value without a `global` declaration.
+_TIMING_STATE = {"tag": "?"}
+
+
+def _timing(label: str) -> None:
+    """
+    Emit one [ASKAI_TIMING] marker to stderr (Dock tees stderr to the server
+    log). Each line carries the milliseconds elapsed since this worker process
+    started, so the whole request timeline can be reconstructed from the log
+    alone — where the seconds actually go (spawn, imports, grounding, web image
+    search, prompt build, or Gemini time-to-first-token).
+    """
+    elapsed_ms = int((_time_module.monotonic() - _PROCESS_START_MONOTONIC) * 1000)
+    sys.stderr.write(f"[AskAi worker] [ASKAI_TIMING tag={_TIMING_STATE['tag']}] {label} @ +{elapsed_ms}ms\n")
     sys.stderr.flush()
 
 
@@ -160,6 +187,7 @@ async def _search_web_images(selected_text: str, user_query: str | None) -> list
 
 
 async def run() -> int:
+    _timing("run() entered (interpreter + module imports done)")
     EnvironmentLoader.load()
 
     try:
@@ -168,6 +196,13 @@ async def run() -> int:
         _emit({ "type": "error", "message": f"Bad request body: {parse_error}" })
         _emit({ "type": "done" })
         return 0
+
+    _TIMING_STATE["tag"] = str(request_body.get("requestTag") or "?")
+    _dock_spawn_issued_ms = request_body.get("dockSpawnIssuedAtMs")
+    if _dock_spawn_issued_ms:
+        _timing(f"env loaded + body read (interpreter launch was {int(_PROCESS_START_EPOCH_MS - _dock_spawn_issued_ms)}ms after Dock issued spawn)")
+    else:
+        _timing("env loaded + body read")
 
     prompt_mode_string  = request_body.get("promptMode") or "EXPLAIN"
     context_kind_string = request_body.get("contextKind") or "CARD"
@@ -205,6 +240,7 @@ async def run() -> int:
 
     retrieved_chunks: list[dict] = []
     if b_use_information_sources and information_sources:
+        _timing("grounding (embedding-model load + vector search) START")
         try:
             retrieved_chunks = await _retrieve_grounding_chunks(selected_text, user_query, information_sources)
         except Exception as grounding_error:
@@ -212,6 +248,7 @@ async def run() -> int:
             # it and continue without the grounded excerpts.
             _log(f"Grounding retrieval failed, continuing ungrounded: {grounding_error}")
             retrieved_chunks = []
+        _timing(f"grounding DONE ({len(retrieved_chunks)} chunk(s))")
 
     # Pro / Pro Plus only: fetch real, load-tested web images up front so
     # the model can embed them inline AND the result view can render them
@@ -219,11 +256,13 @@ async def run() -> int:
     # if the model embeds none. A failed search degrades to no images.
     image_candidates: list[dict] = []
     if b_enable_google_search and int(context_kind) != int(AskAiContextKinds.DECK):
+        _timing("web image search START")
         try:
             image_candidates = await _search_web_images(selected_text, user_query)
         except Exception as image_error:
             _log(f"Image search failed, continuing without images: {image_error}")
             image_candidates = []
+        _timing(f"web image search DONE ({len(image_candidates)} image(s))")
         if image_candidates:
             _emit({ "type": "images", "items": image_candidates })
 
@@ -244,10 +283,15 @@ async def run() -> int:
 
     attached_image_parts = _build_attached_image_parts(attached_images)
 
-    from Globals.Classes.Automation.Providers.GeminiProvider import GeminiProvider
-    gemini_provider = GeminiProvider()
+    from Globals.Classes.Automation.Providers.GoogleEnterpriseAiProvider import GoogleEnterpriseAiProvider
+    gemini_provider = GoogleEnterpriseAiProvider()
 
+    _timing(f"prompt built + provider ready (system={len(system_prompt)} chars, user={len(user_prompt)} chars, images={len(attached_image_parts)})")
     _log(f"Streaming from {model_id} for user {user_id} (grounding={b_enable_google_search}, images={len(attached_image_parts)}).")
+
+    gemini_call_start_monotonic = _time_module.monotonic()
+    _timing("calling Gemini stream")
+    b_first_token_seen = False
 
     try:
         async for event in gemini_provider.stream_text(
@@ -257,10 +301,15 @@ async def run() -> int:
             attached_image_parts = attached_image_parts,
             b_enable_google_search = b_enable_google_search,
         ):
+            if not b_first_token_seen and event.get("type") == "text":
+                b_first_token_seen = True
+                gemini_ttft_ms = int((_time_module.monotonic() - gemini_call_start_monotonic) * 1000)
+                _timing(f"FIRST Gemini token received (Gemini TTFT = {gemini_ttft_ms}ms)")
             _emit(event)
     except Exception as stream_error:
         _emit({ "type": "error", "message": f"Unexpected stream failure: {stream_error}" })
 
+    _timing("Gemini stream complete")
     _emit({ "type": "done" })
     return 0
 

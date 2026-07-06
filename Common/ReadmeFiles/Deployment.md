@@ -152,8 +152,11 @@ supply is missing, namely, per environment:
 - `deployment.env` → **`CLOUDFLARE_TUNNEL_TOKEN_<ENV>`** — a remotely-managed (token-based)
   tunnel whose hostname `<env-domain>` routes to `http://127.0.0.1:3000`, created in the
   Cloudflare Zero Trust dashboard.
-- `Agent/.<env>.env`: **`GEMINI_API_KEY`** (+ optional `OPENAI_API_KEY`), created in that
-  environment's own billing account so usage tracks separately.
+- `Agent/.<env>.env`: **Vertex AI auth** — `GOOGLE_ENTERPRISE_AGENT_PROJECT` (the GCP project) +
+  `GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64` (a base64-encoded *Vertex AI User* service-account key
+  JSON for that project), plus optional `OPENAI_API_KEY`. A per-environment project keeps usage/billing
+  separate. **Use a service account, not an API key** — Vertex's API-key path is ~10× slower to first
+  token for streaming (see the AI / Agent note in §1.5).
 - `Dock/.<env>.env`: **`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`**, with redirect URI
   `https://<env-domain>/Login/Callback` added to the OAuth client.
 
@@ -406,16 +409,37 @@ Dock reads `Dock/.env` at boot (via dotenv, relative to its working directory). 
 
 **AI / Agent**
 
-- **LLM keys are NOT set in `Dock/.env`.** Dock makes **no** LLM calls — every AI
+- **LLM auth is NOT set in `Dock/.env`.** Dock makes **no** LLM calls — every AI
   request is delegated to the Agent (run locally as a spawned/queued worker, or on a
-  burst VM). `GEMINI_API_KEY` and `OPENAI_API_KEY` therefore live **only** in the
-  **Agent** env file (`Agent/.env` with `--debug`, else `Agent/.production.env`) and
-  are used only by the Agent. Dock reads that **sibling** file (same relative layout:
-  `Agent/` next to `Dock/`) for the **single** purpose of forwarding the keys to burst
-  workers via cloud-init — see `BurstFleetSettings.getWorkerRuntimeEnvironment` →
-  `#readAgentLlmKeys`. Dock never injects them into its own process. Consequence: the
-  Agent env file must exist next to `Dock/` on the base node, and you edit the LLM
-  keys in **one place** (the Agent env file), never in Dock's.
+  burst VM). The Agent talks to Google's enterprise **Vertex AI** backend and
+  authenticates with a **service account** (strongly preferred) or an API key
+  (slow fallback):
+  - `GOOGLE_ENTERPRISE_AGENT_PROJECT` — the GCP project id (e.g. `mindmeld-500509`).
+  - `GOOGLE_ENTERPRISE_AGENT_LOCATION` — Vertex region; defaults to `global`.
+  - `GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64` — `base64 -w0` of a *Vertex AI User*
+    service-account key JSON for that project. Blank ⇒ ambient ADC.
+  - `GOOGLE_ENTERPRISE_AGENT_API_KEY` — **fallback only,** used when no project is set.
+    Vertex's API-key path is ~5–6× slower to first token for streaming (~12 s vs ~1 s
+    with a service account — the model is fine, the auth path isn't), so AskAi and
+    every other call are dramatically faster on the service account. Prefer it.
+
+  These live **only** in the **Agent** env file (`Agent/.env` with `--debug`, else
+  `Agent/.<env>.env`), alongside `OPENAI_API_KEY`. Dock reads that **sibling** file
+  (same relative layout: `Agent/` next to `Dock/`) for the **single** purpose of
+  forwarding these values to burst workers via cloud-init — see
+  `BurstFleetSettings.getWorkerRuntimeEnvironment` → `#readAgentLlmKeys` (project /
+  location / credentials / api-key / OpenAI). Dock never injects them into its own
+  process. Consequence: the Agent env file must exist next to `Dock/` on the base
+  node, and you edit auth in **one place** (the Agent env file), never in Dock's.
+
+  **Creating the service-account key** (once per environment/project): Google Cloud
+  console → IAM & Admin → Service Accounts → create → grant **Vertex AI User**
+  (`roles/aiplatform.user`; the console may display this as "Agent Platform User") →
+  Keys → Add key → JSON → download; ensure the **Vertex AI API** is enabled in the
+  project. Then `base64 -w0 the-key.json` and paste the output as
+  `GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64`. Base64 (not a file path) is used so the
+  same value ships in the line-based env file and is injected verbatim into each burst
+  VM's `worker.env` — no key file on disk, none baked into an image.
 - `AGENT_SERVICE_PATH` — absolute path to the Agent service so Dock can launch local
   workers reliably. Set it to `<repo-dir>/Agent` (e.g. `/opt/mindmeld/MindMeld/Agent`,
   or `/root/mindmeld/Agent` for a root deploy). It **must** match where the venv was
@@ -444,7 +468,10 @@ as their working directory). It needs:
 
 - `REDIS_URL` — the queue (same Redis as Dock).
 - `MONGODB_URL`, `MONGODB_DATABASE_NAME` — the database the workflows read/write.
-- `GEMINI_API_KEY` — Gemini key for the workflows.
+- `GOOGLE_ENTERPRISE_AGENT_PROJECT` + `GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64`
+  (+ optional `GOOGLE_ENTERPRISE_AGENT_LOCATION`, default `global`) — Vertex AI
+  service-account auth for the workflows. `GOOGLE_ENTERPRISE_AGENT_API_KEY` is a slow
+  fallback; prefer the service account (see §1.5).
 - `OPENAI_API_KEY` — only if you use OpenAI-backed workflows.
 - `WEB_SCRAPE_CONTACT_EMAIL` — optional contact email used in the web-scraping
   workflow's User-Agent.
