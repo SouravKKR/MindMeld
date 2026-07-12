@@ -167,7 +167,13 @@ class BurstAutoscaler
             const demandFromBacklog = Math.ceil(pending / tasksPerInstance);
             const desiredCount = Math.max(warmPoolSize, Math.min(Math.max(warmPoolSize, demandFromBacklog), maxInstances));
 
-            Logger.log(`[BurstAutoscaler] pending=${pending} processing=${processing} current=${currentCount} desired=${desiredCount} (cap=${maxInstances}).`);
+            // Only log the reconcile status when something is actually happening —
+            // a scaling decision or queue activity — so an idle fleet does not emit
+            // a status line every reconcile tick (~every 30s).
+            if (desiredCount !== currentCount || (pending + processing) > 0)
+            {
+                Logger.log(`[BurstAutoscaler] pending=${pending} processing=${processing} current=${currentCount} desired=${desiredCount} (cap=${maxInstances}).`);
+            }
 
             if (desiredCount > currentCount)
             {

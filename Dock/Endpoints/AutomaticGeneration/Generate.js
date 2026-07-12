@@ -728,32 +728,116 @@ async function handleGenerate(request, response)
         // collections are unaffected.
         if (prepareImagesTask)
         {
+            // TaskManager.execute resolves to a boolean (false on failure) and
+            // does NOT throw for a task that ends FAILED — it swallows the error
+            // internally and returns false. So the image outcome must be read from
+            // the return value; the try/catch only guards an unexpected throw in
+            // the call setup (which we also treat as "did not complete").
+            let imagePipelineSucceeded = false;
             try
             {
-                await TaskManager.execute(prepareImagesTask, 0, completedTask, mainTaskId);
-                console.log(`[Generate] Image pipeline complete for task ${mainTaskId}.`);
+                // No wall-clock cap here: a figure-heavy deck can legitimately take
+                // a long time to enhance and MUST be allowed to finish (enhancement
+                // is bounded-concurrent and each per-figure API call carries its own
+                // timeout). The only backstops are execute()'s own — the 3h queue
+                // await ceiling and the local-subprocess kill-timeout — both high
+                // enough that they only ever trip a genuinely wedged run, never
+                // legitimate slow work. A true wedge still resolves false and drops
+                // into the resumable image-failure path below.
+                imagePipelineSucceeded = await TaskManager.execute(prepareImagesTask, 0, completedTask, mainTaskId);
             }
             catch (imagePipelineError)
             {
-                console.error(`[Generate] Image pipeline failed for ${mainTaskId} — ABORTING moveToDatabase to keep un-enhanced originals out of the user's library: ${imagePipelineError.message}`);
+                console.error(`[Generate] Image pipeline threw for ${mainTaskId}: ${imagePipelineError.message}`);
+                imagePipelineSucceeded = false;
+            }
+
+            // Hold the whole run for resume ONLY in the reported case: every
+            // requested text scope succeeded and just the images failed. When a
+            // text scope ALSO failed (generationFailureContext set), fall through
+            // to the existing partial-completion path below so the survivors are
+            // still kept and a "retry the rest" is offered — that behaviour is
+            // left unchanged.
+            if (imagePipelineSucceeded === false && generationFailureContext === null)
+            {
+                // Every text stage succeeded but the post-pipeline image step did
+                // not complete — either it failed (e.g. the image service was
+                // disabled) or the user paused mid-image-step (execute's pause gate
+                // also returns false). We must NOT run moveToDatabase: persisting
+                // now would skip the images the user asked for and, when
+                // EnhanceImages is in the pipeline, leak un-enhanced copyrighted
+                // originals into the library. Instead of dead-ending the run, save
+                // a resumable snapshot (the same machinery as the user-pause /
+                // out-of-credits stops) so the user can Resume later — the resumed
+                // run reuses this Tasks/{mainTaskId}/ GCS namespace, skips every
+                // already-finished text stage, and re-runs only the image step.
+                //
+                // Distinguish the two causes so the banner words itself correctly
+                // and a genuine pause clears its own flag. Both are resumable and
+                // re-run identically.
+                const bWasPaused = await TaskManager.isPaused(mainTaskId);
+                const resumableReason = bWasPaused ? TaskManager.USER_PAUSED_REASON : TaskManager.IMAGE_PREPARATION_FAILED_REASON;
+
+                console.error(`[Generate] Image pipeline did not complete for ${mainTaskId} (${bWasPaused ? "paused" : "failed"}) — saving a resumable snapshot so the images can be finished later.`);
+
+                try
+                {
+                    await TaskStateManager.save({
+                        userId: userId,
+                        taskType: taskTypes.PREPARE_FOR_GENERATION,
+                        route: "/Generate",
+                        // Carry the main task id so Resume continues from midway,
+                        // reusing every item already staged under Tasks/{mainTaskId}/.
+                        payload: { ...body, resumeMainTaskId: mainTaskId },
+                        pausedReason: resumableReason,
+                    });
+                }
+                catch (saveError)
+                {
+                    console.warn(`[Generate] Failed to save resumable task state for image-incomplete ${mainTaskId}: ${saveError.message}`);
+                }
 
                 try
                 {
                     const failedMainTask = await TaskManager.getTask(mainTaskId);
-                    failedMainTask.setStatus(taskStatus.FAILED);
-                    const existingPayload = failedMainTask.getPayload() || {};
-                    failedMainTask.setPayload({
-                        ...existingPayload,
-                        error: `Image pipeline failed: ${imagePipelineError.message}`
-                    });
-                    await TaskManager.updateTask(failedMainTask);
+                    if (failedMainTask)
+                    {
+                        failedMainTask.setStatus(taskStatus.FAILED);
+                        const existingPayload = failedMainTask.getPayload() || {};
+                        failedMainTask.setPayload({ ...existingPayload, error: resumableReason });
+                        await TaskManager.updateTask(failedMainTask);
+                        await TaskHistoryQueryEngine.recordCompletion(failedMainTask);
+                    }
                 }
-                catch (statusUpdateError)
+                catch (settleError)
                 {
-                    console.error(`[Generate] Failed to mark mainTask ${mainTaskId} as FAILED: ${statusUpdateError.message}`);
+                    console.error(`[Generate] Failed to settle image-incomplete task ${mainTaskId}: ${settleError.message}`);
                 }
 
-                throw imagePipelineError;
+                if (bWasPaused)
+                {
+                    await TaskManager.clearPaused(mainTaskId);
+                }
+                await TaskManager.untrackForUser(userId, mainTaskId);
+
+                // Return (do NOT fall through): skips moveToDatabase (nothing
+                // persisted — IPR-safe) and skips the success tail that would
+                // delete the resumable snapshot. The .finally still clears the
+                // post-pipeline marker and drops this run from the live-generation
+                // set, so the home PausedTaskBanner surfaces the Resume prompt.
+                return;
+            }
+
+            if (imagePipelineSucceeded)
+            {
+                console.log(`[Generate] Image pipeline complete for task ${mainTaskId}.`);
+            }
+            else
+            {
+                // Images did not complete AND a text scope also failed: fall
+                // through to the partial-completion path below, which persists the
+                // survivors and stamps the "retry the rest" marker (unchanged).
+                console.warn(`[Generate] Image pipeline did not complete for ${mainTaskId}, but a text scope also failed — persisting survivors via the partial-completion path.`);
             }
         }
 

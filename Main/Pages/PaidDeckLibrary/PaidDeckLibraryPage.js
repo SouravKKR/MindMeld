@@ -9,6 +9,7 @@ import { paidDeckSortFields } from "../../Globals/Enumerations/PaidDeckSortField
 import { sortDirections } from "../../Globals/Enumerations/SortDirections.js";
 import TutorialEngine from "../../Globals/Classes/TutorialEngine.js";
 import TutorialDemoResponses from "../../Globals/Constants/TutorialDemoResponses.js";
+import PopupStack from "../../Globals/Classes/PopupStack.js";
 
 class PaidDeckLibraryPage extends HTMLElement
 {
@@ -233,11 +234,31 @@ class PaidDeckLibraryPage extends HTMLElement
         const backdrop = this.querySelector('[data-role="filter-backdrop"]');
         const closeButton = this.querySelector('[data-role="filter-drawer-close"]');
 
+        // Track the drawer on the PopupStack while it is open so a global
+        // Escape closes the drawer instead of navigating off the page. The
+        // page-level keydown listener this replaced ran before the window
+        // handler and cleared the open state too early, so Escape closed the
+        // drawer AND still navigated back.
+        let drawerPopupStackHandle = null;
+
         const setDrawerOpen = (isOpen) =>
         {
             this.classList.toggle("filter-drawer-open", isOpen);
             backdrop.hidden = !isOpen;
             toggleButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
+
+            if (isOpen)
+            {
+                if (drawerPopupStackHandle === null)
+                {
+                    drawerPopupStackHandle = PopupStack.register({ dismiss: () => setDrawerOpen(false) });
+                }
+            }
+            else
+            {
+                PopupStack.unregister(drawerPopupStackHandle);
+                drawerPopupStackHandle = null;
+            }
         };
 
         toggleButton.addEventListener("click", () =>
@@ -246,15 +267,6 @@ class PaidDeckLibraryPage extends HTMLElement
         });
         backdrop.addEventListener("click", () => setDrawerOpen(false));
         closeButton.addEventListener("click", () => setDrawerOpen(false));
-
-        // Dismiss with Escape while the drawer is open.
-        this.addEventListener("keydown", (keyDownEvent) =>
-        {
-            if (keyDownEvent.key === "Escape" && this.classList.contains("filter-drawer-open"))
-            {
-                setDrawerOpen(false);
-            }
-        });
     }
 
     #applyQueryFilter(trimmedQuery)

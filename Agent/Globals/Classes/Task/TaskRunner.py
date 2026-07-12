@@ -184,6 +184,11 @@ class TaskRunner:
                 from Workflows.EvaluateMockTestAttempt.EvaluateMockTestAttempt import EvaluateMockTestAttempt
                 return EvaluateMockTestAttempt(payload)
 
+            case TaskTypes.TRANSCRIBE_MOCK_TEST_ATTEMPT:
+                print("TRANSCRIBE_MOCK_TEST_ATTEMPT")
+                from Workflows.TranscribeMockTestAttempt.TranscribeMockTestAttempt import TranscribeMockTestAttempt
+                return TranscribeMockTestAttempt(payload)
+
             case _:
                 print("Invalid workflow")
                 return None

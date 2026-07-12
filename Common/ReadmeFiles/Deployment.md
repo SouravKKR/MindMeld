@@ -159,6 +159,25 @@ supply is missing, namely, per environment:
   token for streaming (see the AI / Agent note in §1.5).
 - `Dock/.<env>.env`: **`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`**, with redirect URI
   `https://<env-domain>/Login/Callback` added to the OAuth client.
+- `Common/Credentials/mindmeld-storage.<env>.json`: **Google Cloud Storage service-account key** —
+  the JSON key both Dock and the Agent use to read/write the `mindmeld-bucket` GCS bucket (task
+  payloads, mock-test grading payload staging, log archives). It is selected **by environment name**
+  the same way the env files are (`Persistence` in `Dock/Globals/Classes/` and
+  `Agent/Globals/Classes/Generic/`), so each environment maps to its own
+  `mindmeld-storage.<env>.json`. The whole `Common/Credentials/` directory is **gitignored**, so the
+  key rides neither git nor the Dock/Agent code tarballs — `provision-environment.sh` and
+  `deploy-environment.sh` **`scp` it to `<repo>/Common/Credentials/` on the base node** on every run.
+  If it is missing on the host, every Dock→GCS write returns **HTTP 500** (grading shows *"couldn't
+  reach the grading service"* and log archival fails hourly). Provisioning does **not** auto-generate
+  it — you supply one file per environment; for now they may all be copies of a single project key
+  (swap in a distinct per-project key later to isolate each environment's storage).
+  **Burst workers** run the Agent in a container with **no** repo `Common/` directory, so the key is
+  **never** baked into the burst image (see `Agent/.dockerignore`). Instead Dock forwards it to each
+  worker as base64 env — `MINDMELD_STORAGE_CREDENTIALS_BASE64` (alongside `MINDMELD_ENVIRONMENT`) in
+  the cloud-init `worker.env` — and the Agent's `Persistence` prefers that variable, falling back to
+  the on-disk file on the base node. Because the reader lives in the Agent image, changing this
+  behaviour requires **re-baking the burst image** (`deploy-environment.sh <env>` without
+  `--skip-bake`); rotating only the key value does not.
 
 ## 0.4 Linode token scopes
 
@@ -325,7 +344,9 @@ There's no image to move — you build it on the bake box in §1.10 and capture 
 ## 1.4 Base node — deploy the code and Python venv
 
 > ⚡ **Automated path.** Once the repo is cloned and `Dock/.production.env` +
-> `Agent/.production.env` are in place, **[`Common/Scripts/setup-base-node.sh`](../Scripts/setup-base-node.sh)**
+> `Agent/.production.env` + `Common/Credentials/mindmeld-storage.production.json` (the GCS
+> service-account key, §0.3 — gitignored, so copy it in manually) are in place,
+> **[`Common/Scripts/setup-base-node.sh`](../Scripts/setup-base-node.sh)**
 > does all of §1.4–§1.7 in one shot: installs the OCR stack + Redis (bound to the VPC
 > IP) + Node, sets up Python 3.12 via `uv` and the Agent venv, runs `npm install`, and
 > registers + starts the Dock systemd service. Run it with

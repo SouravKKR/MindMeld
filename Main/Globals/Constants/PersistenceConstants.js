@@ -10,6 +10,7 @@ class PersistenceConstants
     static MOCK_TEST_QUESTIONS_DIRECTORY = 'MockTestQuestions';
     static MOCK_TESTS_DIRECTORY = 'MockTests';
     static MOCK_TEST_EVALUATIONS_DIRECTORY = 'MockTestEvaluations';
+    static MOCK_TEST_TRANSCRIPTIONS_DIRECTORY = 'MockTestTranscriptions';
     static IMAGE_SYLLABUS_FILE_NAME = 'ImageSyllabus.json';
     static VALIDATED_FIGURES_FILE_NAME = 'ValidatedFigures.json';
 }

@@ -1,4 +1,5 @@
 import SoundEffects from "../Globals/Classes/SoundEffects.js";
+import PopupStack from "../Globals/Classes/PopupStack.js";
 
 class DialogBox extends HTMLElement
 {
@@ -20,6 +21,15 @@ class DialogBox extends HTMLElement
 
     #backdrop = null;
 
+    // Escape handling. Every dialog registers with the PopupStack while it
+    // is on screen so a global Escape closes it instead of navigating the
+    // page away. #dismissible = false opts a dialog out of being closed by
+    // Escape at all (a blocking dialog such as a forced sync); #dismissHandler
+    // lets a caller define exactly what "cancel" means for that dialog.
+    #popupStackHandle = null;
+    #dismissible = true;
+    #dismissHandler = null;
+
     connectedCallback()
     {
         this.#backdrop = document.createElement("div");
@@ -28,6 +38,15 @@ class DialogBox extends HTMLElement
         document.body.insertBefore(this.#backdrop, this);
 
         this.style.zIndex = String(DialogBox.#nextDialogZIndex++);
+
+        // Read #dismissible live so setDismissible() called after append
+        // (e.g. SyncBlockingDialog marks itself non-dismissible once mounted)
+        // is still honoured at Escape time.
+        this.#popupStackHandle = PopupStack.register(
+        {
+            dismiss: () => this.#performEscapeDismiss(),
+            dismissible: () => this.#dismissible
+        });
 
         // Cue every dialog action button centrally: .ok-button → OK, .cancel- /
         // .close-button → cancel. Capture phase so the cue fires before a button's
@@ -56,6 +75,65 @@ class DialogBox extends HTMLElement
     {
         this.#backdrop?.remove();
         this.#backdrop = null;
+
+        PopupStack.unregister(this.#popupStackHandle);
+        this.#popupStackHandle = null;
+    }
+
+    /**
+     * Opt this dialog in or out of Escape-to-close. Blocking dialogs (a
+     * forced sync the user must not interrupt) call setDismissible(false)
+     * so Escape is swallowed rather than closing them.
+     */
+    setDismissible(bDismissible)
+    {
+        this.#dismissible = bDismissible !== false;
+    }
+
+    /**
+     * Define what "cancel" means for this dialog when the user presses
+     * Escape. When unset, #performEscapeDismiss falls back to clicking the
+     * dialog's own close / cancel / OK affordance so the caller's existing
+     * resolve path runs exactly as if the button had been clicked.
+     */
+    setDismissHandler(dismissHandler)
+    {
+        this.#dismissHandler = typeof dismissHandler === "function" ? dismissHandler : null;
+    }
+
+    #performEscapeDismiss()
+    {
+        if (!this.#dismissible)
+        {
+            return;
+        }
+
+        if (this.#dismissHandler !== null)
+        {
+            this.#dismissHandler();
+            return;
+        }
+
+        // Reuse whatever the dialog already wired: a cancel/close button
+        // carries the caller's "dismissed" resolution, so synthesising a
+        // click on it keeps Escape behaviourally identical to clicking it.
+        // Fall back to the OK button (alerts have only that) and finally to
+        // a bare close() for dialogs with no buttons at all.
+        const cancelButton = this.querySelector(".close-button, .cancel-button");
+        if (cancelButton)
+        {
+            cancelButton.click();
+            return;
+        }
+
+        const okButton = this.querySelector(".ok-button");
+        if (okButton)
+        {
+            okButton.click();
+            return;
+        }
+
+        this.close();
     }
 
     static async alert(title, message)

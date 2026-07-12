@@ -9,6 +9,8 @@ class MockTestEvaluationConstants
     static FALLBACK_GRADING_BATCH_SIZE = 5;
     static ATTEMPT_INPUT_FILENAME = 'Attempt.json';
     static GRADED_ATTEMPT_OUTPUT_FILENAME = 'GradedAttempt.json';
+    static TRANSCRIPTION_REQUEST_FILENAME = 'TranscriptionRequest.json';
+    static TRANSCRIBED_ANSWERS_OUTPUT_FILENAME = 'TranscribedAnswers.json';
 }
 
 module.exports = MockTestEvaluationConstants;

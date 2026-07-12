@@ -92,3 +92,13 @@ class AutomationCaller:
         completed = await asyncio.gather(*[run_entry(entry) for entry in entries])
 
         return { key: response for key, response in completed }
+
+    async def aclose(self):
+        """
+        Releases the underlying provider's HTTP resources, when it exposes an
+        aclose. A short-lived caller (e.g. the one EnhanceImages builds) can then
+        shut its provider's async client down cleanly instead of leaking sockets
+        or stalling interpreter teardown. A provider without aclose is a no-op.
+        """
+        if hasattr(self.__provider, "aclose"):
+            await self.__provider.aclose()

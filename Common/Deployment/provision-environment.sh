@@ -85,14 +85,18 @@ write_env_value()
     touch "$file"
     if grep -qE "^${key}=" "$file"
     then
-        # Use a delimiter unlikely to appear in URLs/keys.
-        node -e '
+        # The value is passed through the environment, never as an argv, so Git Bash's
+        # MSYS layer cannot path-convert a POSIX value (e.g. /root/mindmeld/Agent) into a
+        # Windows path. The file arg stays positional because node on Windows needs the
+        # converted path.
+        WRITE_ENV_VALUE="$value" node -e '
             const fs = require("fs");
-            const [file, key, value] = process.argv.slice(1);
+            const [file, key] = process.argv.slice(1);
+            const value = process.env.WRITE_ENV_VALUE;
             const lines = fs.readFileSync(file, "utf8").split("\n");
             const out = lines.map(line => line.startsWith(key + "=") ? key + "=" + value : line);
             fs.writeFileSync(file, out.join("\n"));
-        ' "$file" "$key" "$value"
+        ' "$file" "$key"
     else
         printf '%s=%s\n' "$key" "$value" >> "$file"
     fi
@@ -420,6 +424,20 @@ provision_nodes()
     log_step "Placing the env files on the base node..."
     scp "${SSH_COMMON_OPTIONS[@]}" "$DOCK_ENVIRONMENT_FILE" "root@${BASE_NODE_PUBLIC_IP}:${BASE_NODE_REPO_DIR}/Dock/$(dock_environment_file_name)"
     scp "${SSH_COMMON_OPTIONS[@]}" "$AGENT_ENVIRONMENT_FILE" "root@${BASE_NODE_PUBLIC_IP}:${BASE_NODE_REPO_DIR}/Agent/$(agent_environment_file_name)"
+
+    # Place this environment's Google Cloud Storage service-account key. It is
+    # gitignored (rides neither git nor the code tarballs); both Dock and the Agent
+    # read Common/Credentials/mindmeld-storage.<env>.json, and without it every
+    # Dock->GCS write (mock-test grading payload staging, log archival) fails.
+    local storage_credential_file="$REPOSITORY_ROOT/Common/Credentials/mindmeld-storage.${ENVIRONMENT_NAME}.json"
+    if [ -f "$storage_credential_file" ]
+    then
+        log_step "Placing the GCS credential (mindmeld-storage.${ENVIRONMENT_NAME}.json) on the base node..."
+        ssh "${SSH_COMMON_OPTIONS[@]}" "root@${BASE_NODE_PUBLIC_IP}" "mkdir -p '${BASE_NODE_REPO_DIR}/Common/Credentials'"
+        scp "${SSH_COMMON_OPTIONS[@]}" "$storage_credential_file" "root@${BASE_NODE_PUBLIC_IP}:${BASE_NODE_REPO_DIR}/Common/Credentials/mindmeld-storage.${ENVIRONMENT_NAME}.json"
+    else
+        log_warning "GCS credential $storage_credential_file not found locally — Dock/Agent GCS writes will fail on the host until it is placed."
+    fi
 }
 
 print_summary()

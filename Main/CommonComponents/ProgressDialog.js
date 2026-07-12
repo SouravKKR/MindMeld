@@ -56,6 +56,9 @@ class ProgressDialog
             closeButton.style.display = "none";
         }
 
+        // Escape must not dismiss a caller-driven progress dialog mid-flow.
+        this.#dialog.setDismissible(false);
+
         this.#barFill = this.#dialog.querySelector(".progress-dialog-bar-fill");
         this.#percentLabel = this.#dialog.querySelector(".progress-dialog-percent");
         this.#statusLabel = this.#dialog.querySelector(".progress-dialog-status");

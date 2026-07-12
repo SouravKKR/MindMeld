@@ -221,6 +221,19 @@ class ProgressPage extends HTMLElement
             return;
         }
 
+        // Post-pipeline image step failed (text succeeded, images did not).
+        // Recoverable: the run is held un-persisted with a resumable snapshot, so
+        // point the user at the home-screen resume banner instead of a dead-end
+        // "failed". Resuming re-runs only the image step and then persists text +
+        // images together.
+        if (payload && payload.imagePreparationFailed === true)
+        {
+            statusBanner.textContent = "Your text is ready, but image preparation didn't finish. Resume within 7 days from the banner on your home screen to finish adding images — it picks up from where it left off.";
+            statusBanner.classList.add("progress-page-status-banner--warning");
+            statusBanner.style.display = "block";
+            return;
+        }
+
         // Derive success from the COMPUTED overall tree status, not the bare
         // root status. The root PREPARE_FOR_GENERATION is a no-op that is marked
         // COMPLETED the instant it exits, so payload.status reads COMPLETED even

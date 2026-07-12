@@ -329,6 +329,20 @@ update_base_node()
     copy_over_scp "$dock_archive" "${base_node_target}:/tmp/mindmeld-dock-context.tar.gz"
     rm -f "$agent_archive" "$dock_archive"
 
+    # Ship this environment's Google Cloud Storage service-account key. It is
+    # gitignored, so it rides neither git nor the Dock/Agent code tarballs; both Dock
+    # and the Agent read Common/Credentials/mindmeld-storage.<env>.json, and without it
+    # every Dock->GCS write (mock-test grading payload staging, log archival) fails.
+    local storage_credential_file="$REPOSITORY_ROOT/Common/Credentials/mindmeld-storage.${ENVIRONMENT_NAME}.json"
+    if [ -f "$storage_credential_file" ]
+    then
+        log_step "Placing the GCS credential (mindmeld-storage.${ENVIRONMENT_NAME}.json) on the base node..."
+        run_ssh "$base_node_target" "mkdir -p '$BASE_NODE_REPO_DIR/Common/Credentials'"
+        copy_over_scp "$storage_credential_file" "${base_node_target}:$BASE_NODE_REPO_DIR/Common/Credentials/mindmeld-storage.${ENVIRONMENT_NAME}.json"
+    else
+        log_warning "GCS credential $storage_credential_file not found locally — Dock/Agent GCS writes will fail on the host."
+    fi
+
     log_step "Refreshing Agent + Dock code, image pointer + restarting Dock for '$ENVIRONMENT_NAME'..."
     run_ssh "$base_node_target" \
         "REPO_DIR='$BASE_NODE_REPO_DIR' \

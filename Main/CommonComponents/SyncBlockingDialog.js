@@ -127,6 +127,12 @@ class SyncBlockingDialog
             }
         }
 
+        // This modal blocks the UI during a bulk apply — the user must not
+        // be able to dismiss it with Escape mid-operation. markError()
+        // re-reveals the close button and flips this back on so a stalled
+        // sync still has an escape hatch.
+        this.#dialog.setDismissible(false);
+
         this.#closeButton = this.#dialog.querySelector(".close-button");
         this.#barFill     = this.#dialog.querySelector(".sync-blocking-bar-fill");
         this.#statusLabel = this.#dialog.querySelector(".sync-blocking-status");
@@ -281,6 +287,12 @@ class SyncBlockingDialog
         if (this.#closeButton)
         {
             this.#closeButton.style.display = "";
+        }
+        // The operation has stopped — let Escape close the dialog again now
+        // that dismissing it can no longer interrupt an in-flight apply.
+        if (this.#dialog !== null)
+        {
+            this.#dialog.setDismissible(true);
         }
         // Surface the Log Out escape hatch on failure too. The force button
         // stays hidden unless this stall was specifically a lock-blocked one

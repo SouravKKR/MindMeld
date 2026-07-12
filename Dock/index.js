@@ -105,6 +105,7 @@ const ForeignExchangeRatesRefreshScheduler = require("./Globals/Classes/Pricing/
 const TaskQueueMode = require("./Globals/Classes/Task/TaskQueueMode");
 const LocalWorkerSupervisor = require("./Globals/Classes/Task/LocalWorkerSupervisor");
 const BurstAutoscaler = require("./Globals/Classes/Burst/BurstAutoscaler");
+const OrphanedGenerationReconciler = require("./Globals/Classes/Task/OrphanedGenerationReconciler");
 
 
 Logger.initialize();
@@ -112,7 +113,18 @@ LogIngester.start().catch((logIngesterStartError) =>
 {
     console.error("[LogIngester] Startup failed; logs will buffer in memory until the database is reachable:", logIngesterStartError);
 });
-TaskManager.initialize();
+// Connect Redis, then sweep any generation whose post-pipeline was orphaned by
+// a previous process's restart/redeploy (marker left "pending" with no driver),
+// settling each into the resumable state so it stops showing a phantom
+// "finalization" node and surfaces Resume on the home banner. Chained off
+// initialize() so the Redis client is connected before the sweep scans; never
+// blocks boot.
+TaskManager.initialize()
+    .then(() => OrphanedGenerationReconciler.reconcileOnBoot())
+    .catch((reconcileError) =>
+    {
+        console.error("[OrphanedGenerationReconciler] Boot reconciliation failed:", reconcileError);
+    });
 KeyManagementService.initialize();
 KeyRotationScheduler.start();
 

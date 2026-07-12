@@ -50,6 +50,11 @@ class PaidDeckPasswordPrompt
 
             cancelButton.addEventListener("click", () => finalize({ confirmed: false }));
 
+            // Escape / the dialog X must resolve the awaited promise (as a
+            // cancel) rather than just removing the dialog and hanging the
+            // caller — its cancel button isn't a generic .cancel-button.
+            dialog.setDismissHandler(() => finalize({ confirmed: false }));
+
             const tryUnlock = async () =>
             {
                 errorElement.hidden = true;
@@ -129,6 +134,11 @@ class PaidDeckPasswordPrompt
             };
 
             cancelButton.addEventListener("click", () => finalize({ confirmed: false }));
+
+            // Escape / the dialog X resolve as a skip so the setup caller
+            // isn't left awaiting a promise that never settles.
+            dialog.setDismissHandler(() => finalize({ confirmed: false }));
+
             submitButton.addEventListener("click", () =>
             {
                 errorElement.hidden = true;

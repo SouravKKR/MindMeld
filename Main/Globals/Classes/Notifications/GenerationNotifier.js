@@ -433,6 +433,17 @@ class GenerationNotifier
             return generationOutcomes.OUT_OF_CREDITS;
         }
 
+        // A recoverable, resumable stop (user-initiated pause, or a post-pipeline
+        // image-step failure) is NOT a true failure — the run is held with a
+        // resumable snapshot and surfaced by the home PausedTaskBanner. Returning
+        // null suppresses a misleading "generation failed" notification; the task
+        // ages out (or its live blob TTLs) with no notification, and the eventual
+        // resumed run notifies under its own id.
+        if (payload.paused === true || payload.imagePreparationFailed === true)
+        {
+            return null;
+        }
+
         // Archived record (live descriptor expired) — terminal by definition.
         if (payload.historical === true)
         {

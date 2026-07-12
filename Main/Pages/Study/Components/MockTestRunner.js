@@ -1,9 +1,7 @@
 import { mockTestItemTypes } from "../../../Globals/Enumerations/MockTestItemTypes.js";
 import { questionTypes } from "../../../Globals/Enumerations/QuestionTypes.js";
-import { dataFormats } from "../../../Globals/Enumerations/DataFormats.js";
 import { getRandomUuid } from "../../../Globals/UtilityFunctions/GetRandomUuid.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
-import Persistence from "../../../Globals/Classes/Persistence.js";
 import HtmlSanitizer from "../../../Globals/Classes/HtmlSanitizer.js";
 import MockTestItemFactory from "../../../Globals/Model/MockTestEntities/MockTestItemFactory.js";
 import RichTextEditor from "../../CardEditor/Components/RichTextEditor.js";
@@ -51,6 +49,7 @@ class MockTestRunner extends HTMLElement
     #mockTest = null;
     #sessionOptions = null;
     #onSubmitCallback = null;
+    #onOfflineSubmitCallback = null;
     // questionId → () => string
     #answerExtractors = new Map();
     #timerIntervalHandle = null;
@@ -66,12 +65,18 @@ class MockTestRunner extends HTMLElement
      * @param {MockTest} mockTest
      * @param {{mode: string, durationMinutes: number}} sessionOptions
      * @param {(clonedItems: Array, additionalData: Object|null) => void} onSubmitCallback
+     *     Online path: hands back the cloned items stamped with on-screen answers.
+     * @param {(scanFiles: File[], attemptId: string) => void} onOfflineSubmitCallback
+     *     Offline path: hands back the raw scanned answer-sheet files so the
+     *     session can upload them for transcription — the answers themselves
+     *     live on paper, not in the DOM.
      */
-    initialize(mockTest, sessionOptions, onSubmitCallback)
+    initialize(mockTest, sessionOptions, onSubmitCallback, onOfflineSubmitCallback = null)
     {
         this.#mockTest = mockTest;
         this.#sessionOptions = sessionOptions;
         this.#onSubmitCallback = onSubmitCallback;
+        this.#onOfflineSubmitCallback = onOfflineSubmitCallback;
         this.#attemptId = getRandomUuid();
     }
 
@@ -113,7 +118,7 @@ class MockTestRunner extends HTMLElement
         const modeLabel = this.#sessionOptions.mode === MockTestRunner.MODE_OFFLINE ? "Offline" : "Online";
 
         const offlineBannerHtml = this.#sessionOptions.mode === MockTestRunner.MODE_OFFLINE
-            ? `<div class="mock-test-runner-offline-banner">Offline mode — read on screen, write on paper, then upload your scans when finished.</div>`
+            ? `<div class="mock-test-runner-offline-banner">Offline mode — read each question here and write your answers on paper. Start every answer with its question number on the left (e.g. <strong>1.</strong>, <strong>2.</strong>) so we can match it back. When you finish, tap <strong>Finish Test</strong> and upload photos or a PDF of your sheets.</div>`
             : "";
 
         this.innerHTML = `
@@ -146,7 +151,7 @@ class MockTestRunner extends HTMLElement
                 <div class="mock-test-runner-upload-pane" hidden>
                     <div class="mock-test-runner-upload-pane-header">Upload your answer sheets</div>
                     <div class="mock-test-runner-upload-pane-description">
-                        Select a single PDF, or pick one or more image files. The files will be stored locally for evaluation later.
+                        Upload clear photos or a single PDF of your handwritten sheets, in page order. Make sure each answer's question number (written on the left) is legible — we use it to line your answer up with the right question. You'll get to review and fix the read-back before it's graded.
                     </div>
                     <input
                         type="file"
@@ -257,7 +262,12 @@ class MockTestRunner extends HTMLElement
         const additionalData = questionItem.getAdditionalData ? questionItem.getAdditionalData() : {};
         const resolvedQuestionType = additionalData.type ?? null;
 
-        const inputHtml = this.#renderQuestionInputHtml(questionId, resolvedQuestionType, additionalData, isOffline);
+        // Offline mode is question-paper-only: the candidate writes on paper, so
+        // no answer inputs are rendered — just the question, marks, and the
+        // running timer in the header stay on screen.
+        const inputBlockHtml = isOffline
+            ? ""
+            : `<div class="mock-test-runner-question-input">${this.#renderQuestionInputHtml(questionId, resolvedQuestionType, additionalData, isOffline)}</div>`;
 
         return `
             <div class="mock-test-runner-question" data-question-id="${MockTestRunner.#escapeHtml(questionId)}">
@@ -266,7 +276,7 @@ class MockTestRunner extends HTMLElement
                     <div class="mock-test-runner-question-text">${questionHtml}</div>
                     <div class="mock-test-runner-question-marks">[${marks} M]</div>
                 </div>
-                <div class="mock-test-runner-question-input">${inputHtml}</div>
+                ${inputBlockHtml}
             </div>
         `;
     }
@@ -480,7 +490,7 @@ class MockTestRunner extends HTMLElement
         }
         else
         {
-            await this.#performSubmit({ uploadedFilePaths: null });
+            await this.#performSubmit();
         }
     }
 
@@ -548,7 +558,7 @@ class MockTestRunner extends HTMLElement
         else
         {
             await DialogBox.alert("Time Up", "Time is up. Submitting your answers.");
-            await this.#performSubmit({ uploadedFilePaths: null });
+            await this.#performSubmit();
         }
     }
 
@@ -589,34 +599,34 @@ class MockTestRunner extends HTMLElement
     {
         if (this.#pendingUploadFiles.length === 0)
         {
-            const proceedWithoutFiles = await DialogBox.confirm(
+            await DialogBox.alert(
                 "No files selected",
-                "You haven't picked any scan files. Submit anyway? You will not be able to add scans to this attempt later."
+                "Pick at least one photo or a PDF of your answer sheets before submitting."
             );
-            if (!proceedWithoutFiles)
-            {
-                return;
-            }
+            return;
         }
 
-        const uploadedRelativePaths = [];
-        for (const file of this.#pendingUploadFiles)
+        // The test is over. Tear down the live-test guards exactly like an
+        // online submit, then hand the raw scans to the session — it uploads
+        // them for transcription and opens the review screen. The answers
+        // themselves are on paper, so there is nothing to extract from the DOM.
+        const uploadSubmitButton = this.querySelector(".mock-test-runner-upload-submit-button");
+        if (uploadSubmitButton)
         {
-            try
-            {
-                const arrayBuffer = await file.arrayBuffer();
-                const bytes = new Uint8Array(arrayBuffer);
-                const relativePath = `MockTestUploads/${this.#attemptId}/${file.name}`;
-                await Persistence.write(relativePath, bytes, dataFormats.BUFFER);
-                uploadedRelativePaths.push(relativePath);
-            }
-            catch (uploadError)
-            {
-                console.error("[MockTestRunner] Failed to persist upload:", file.name, uploadError);
-            }
+            uploadSubmitButton.disabled = true;
+            uploadSubmitButton.textContent = "Uploading…";
         }
 
-        await this.#performSubmit({ uploadedFilePaths: uploadedRelativePaths });
+        this.#isActive = false;
+        this.#stopTimer();
+        this.#removeBackNavigationGuard();
+        this.#removeFullscreenWatcher();
+
+        const scanFiles = this.#pendingUploadFiles.slice();
+        if (typeof this.#onOfflineSubmitCallback === "function")
+        {
+            this.#onOfflineSubmitCallback(scanFiles, this.#attemptId);
+        }
     }
 
     /**
@@ -650,7 +660,7 @@ class MockTestRunner extends HTMLElement
 
     // ── Submission ─────────────────────────────────────────────────────────────
 
-    async #performSubmit({ uploadedFilePaths } = {})
+    async #performSubmit()
     {
         if (!this.#isActive)
         {
@@ -680,16 +690,11 @@ class MockTestRunner extends HTMLElement
             }
         }
 
-        let additionalData = null;
-        if (this.#sessionOptions.mode === MockTestRunner.MODE_OFFLINE)
-        {
-            // TODO: trigger OCR + LLM evaluation pipeline on these uploaded files.
-            additionalData = { uploadedFiles: uploadedFilePaths || [] };
-        }
-
+        // Online-only path — offline mode never reaches here (it routes through
+        // #onUploadSubmitClicked → the offline scan callback instead).
         if (typeof this.#onSubmitCallback === "function")
         {
-            this.#onSubmitCallback(clonedItems, additionalData);
+            this.#onSubmitCallback(clonedItems, null);
         }
     }
 

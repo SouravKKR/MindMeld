@@ -1,3 +1,5 @@
+import PopupStack from "../Classes/PopupStack.js";
+
 class KeyboardEvents
 {
     static
@@ -9,9 +11,20 @@ class KeyboardEvents
                 return;
             }
 
-            // Esc inside a text input / textarea / contenteditable cell is a
-            // canonical "cancel edit / blur" gesture — don't hijack it for
-            // navigation. The form control's own handler decides what to do.
+            // A popup owns Escape whenever one is open: dismiss the top-most
+            // popup instead of navigating back. This runs before the text-
+            // field exception below on purpose — Escape inside a dialog's own
+            // input (a password prompt, a search box) should close the dialog,
+            // not merely blur the field.
+            if (PopupStack.handleEscape())
+            {
+                return;
+            }
+
+            // No popup open: Esc inside a text input / textarea /
+            // contenteditable cell is a canonical "cancel edit / blur"
+            // gesture — don't hijack it for navigation. The form control's
+            // own handler decides what to do.
             const eventTarget = event.target;
             if (eventTarget && typeof eventTarget.matches === "function"
                 && eventTarget.matches("input, textarea, [contenteditable=\"true\"], [contenteditable=\"\"]"))

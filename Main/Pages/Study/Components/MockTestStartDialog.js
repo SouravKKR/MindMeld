@@ -211,7 +211,7 @@ class MockTestStartDialog
                             <input type="radio" name="mock-test-start-mode" value="${MockTestStartDialog.MODE_OFFLINE}" />
                             <div class="mock-test-start-mode-option-body">
                                 <div class="mock-test-start-mode-option-name">Offline</div>
-                                <div class="mock-test-start-mode-option-description">Read on screen, write on paper. Upload scans when finished.</div>
+                                <div class="mock-test-start-mode-option-description">Read on screen, write on paper — start each answer with its question number on the left. Upload photos or a PDF when finished; we read them and let you review before grading.</div>
                             </div>
                         </label>
                     </div>

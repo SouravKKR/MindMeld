@@ -11,8 +11,13 @@ const path = require("path");
  *        Optional per-line callback invoked as the child emits output. When provided,
  *        stdout/stderr are streamed line-by-line in addition to being buffered for the
  *        final result.
+ * @param {number} [maxDurationMilliseconds]
+ *        Optional hard ceiling on the child's lifetime. When > 0, a child that has
+ *        not exited by then is terminated (SIGTERM, then SIGKILL) and the promise
+ *        rejects, so a wedged child can never block the caller forever. 0 (default)
+ *        disables the timeout, leaving every existing caller's behaviour unchanged.
  */
-function launchPythonScript(pythonInterpreterPath, scriptPath, commandLineArguments = [], onLine = null)
+function launchPythonScript(pythonInterpreterPath, scriptPath, commandLineArguments = [], onLine = null, maxDurationMilliseconds = 0)
 {
     return new Promise((resolve, reject) =>
     {
@@ -28,6 +33,32 @@ function launchPythonScript(pythonInterpreterPath, scriptPath, commandLineArgume
         let stderrAll = "";
         let stdoutTail = "";
         let stderrTail = "";
+
+        // Backstop timeout: kill a child that never exits (e.g. a wedged
+        // interpreter shutdown) so the caller's await rejects instead of hanging.
+        // SIGTERM first, then a SIGKILL a few seconds later if it is ignored. The
+        // timers are cleared the moment the child closes or errors on its own.
+        let killTimer = null;
+        let forceKillTimer = null;
+
+        const clearTimers = () =>
+        {
+            if (killTimer !== null) { clearTimeout(killTimer); killTimer = null; }
+            if (forceKillTimer !== null) { clearTimeout(forceKillTimer); forceKillTimer = null; }
+        };
+
+        if (maxDurationMilliseconds > 0)
+        {
+            killTimer = setTimeout(() =>
+            {
+                try { child.kill("SIGTERM"); } catch (terminateError) { /* already gone */ }
+                forceKillTimer = setTimeout(() =>
+                {
+                    try { child.kill("SIGKILL"); } catch (forceKillError) { /* already gone */ }
+                }, 5000);
+                reject(new Error(`Python script exceeded ${maxDurationMilliseconds}ms and was terminated: ${scriptPath}`));
+            }, maxDurationMilliseconds);
+        }
 
         const consume = (chunk, streamName) =>
         {
@@ -49,6 +80,7 @@ function launchPythonScript(pythonInterpreterPath, scriptPath, commandLineArgume
 
         child.on("close", (code) =>
         {
+            clearTimers();
             if (onLine)
             {
                 if (stdoutTail) onLine("stdout", stdoutTail);
@@ -65,7 +97,7 @@ function launchPythonScript(pythonInterpreterPath, scriptPath, commandLineArgume
             }
         });
 
-        child.on("error", (error) => reject(error));
+        child.on("error", (error) => { clearTimers(); reject(error); });
     });
 }
 

@@ -113,6 +113,13 @@ async function handleGetProgress(request, response)
     // stamped FAILED + USER_PAUSED by the Generate pipeline's pause handler.
     tree.paused = !!(rootTask && rootTask.getPayload && rootTask.getPayload() && rootTask.getPayload().error === TaskManager.USER_PAUSED_REASON);
 
+    // Flag a post-pipeline image-step failure (text succeeded, PrepareImages /
+    // EnhanceImages failed). Also recoverable: the run is held un-persisted with a
+    // resumable snapshot, so the client shows a "text ready — resume to finish the
+    // images" prompt instead of a dead-end "failed". The root is stamped FAILED +
+    // IMAGE_PREPARATION_FAILED by the Generate pipeline's image-failure handler.
+    tree.imagePreparationFailed = !!(rootTask && rootTask.getPayload && rootTask.getPayload() && rootTask.getPayload().error === TaskManager.IMAGE_PREPARATION_FAILED_REASON);
+
     // Surface a transient "AI provider is busy" signal so the client can show a
     // non-alarming banner ("slower than usual but still running") instead of the
     // user reading a long-flat bar as a hang. Self-expiring key — false once the

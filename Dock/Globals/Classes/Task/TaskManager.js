@@ -38,6 +38,17 @@ class TaskManager
     // checkpoints). Never a real error stamped on a task payload — TaskState only.
     static INTERRUPTED_REASON = "INTERRUPTED";
 
+    // The payload.error / TaskState pausedReason stamped on a generation root
+    // when every text stage succeeded but the post-pipeline image step
+    // (PrepareImages → EnhanceImages) failed (e.g. the image service was
+    // disabled). Instead of dead-ending the run, the pipeline saves a resumable
+    // snapshot under this reason so the user can Resume later — the resumed run
+    // reuses the same GCS namespace, skips the already-finished text stages, and
+    // re-runs only the image step. Surfaced by GetProgress (tree.imagePreparationFailed)
+    // and worded by the PausedTaskBanner. Must stay byte-identical to the string
+    // literals the frontend compares against.
+    static IMAGE_PREPARATION_FAILED_REASON = "IMAGE_PREPARATION_FAILED";
+
     // ── Reliable polling queue ──────────────────────────────────────────────
     // Producer side. Dock pushes a small JSON envelope onto the pending list;
     // long-lived Agent workers (Agent/Worker.py) atomically move it to the
@@ -50,6 +61,14 @@ class TaskManager
     // out from under an in-flight await.
     static #QUEUE_AWAIT_POLL_INTERVAL_MILLISECONDS = TaskManager.#resolvePositiveIntegerSetting("TASK_QUEUE_AWAIT_POLL_MILLISECONDS", 1000);
     static #QUEUE_AWAIT_TIMEOUT_MILLISECONDS = TaskManager.#resolvePositiveIntegerSetting("TASK_QUEUE_AWAIT_TIMEOUT_SECONDS", 3 * 60 * 60) * 1000;
+    // Hard ceiling on a single LOCAL Agent subprocess. In local/dev mode (queue
+    // disabled) execute() awaits the child's exit with no bound, so a wedged
+    // child — e.g. one that hangs on interpreter shutdown after the task was
+    // already marked COMPLETED — would block the whole pipeline forever. This
+    // kills such a child so the await rejects and the run settles. Generous by
+    // default (matches the queue-await ceiling): it is a backstop, not the
+    // primary bound — the per-image race in Generate.js is the tight one.
+    static #LOCAL_SUBPROCESS_MAX_DURATION_MILLISECONDS = TaskManager.#resolvePositiveIntegerSetting("LOCAL_TASK_MAX_DURATION_SECONDS", 3 * 60 * 60) * 1000;
 
     /**
      * Reads a strictly-positive integer from the environment, falling back when
@@ -92,6 +111,12 @@ class TaskManager
     static #PAUSED_PREFIX = "Paused/";
     static #SYNC_LOCK_TTL_SECONDS = 5 * 60;
     static #SYNC_LOCK_PREFIX = "SyncLock/";
+    // Boot-time reconciliation lock. In a future multi-Dock generation
+    // deployment this ensures only one booting node settles the orphaned
+    // post-pipeline runs. Short TTL so a crashed holder can't block the next
+    // boot's sweep. Single-Packetron today, so it is cheap insurance.
+    static #RECONCILE_LOCK_KEY = "ReconcileLock/boot";
+    static #RECONCILE_LOCK_TTL_SECONDS = 60;
     // Per-user index of top-level task ids so the Activity preview can
     // list a user's in-progress tasks without scanning the entire
     // Task/* keyspace. Membership is the truth: rows are added on
@@ -462,7 +487,7 @@ class TaskManager
                             ? (stream, line) => Logger.logWorker(taskTypeName, taskDescriptor.getId(), stream, line)
                             : null;
 
-                        await launchPythonScript(pythonPath, scriptPath, scriptArgs, onLine);
+                        await launchPythonScript(pythonPath, scriptPath, scriptArgs, onLine, TaskManager.#LOCAL_SUBPROCESS_MAX_DURATION_MILLISECONDS);
 
                         Logger.log(`Finished execution of task ${taskTypeName}.`);
 
@@ -670,6 +695,47 @@ class TaskManager
             return;
         }
         await TaskManager.#redisClient.del(TaskManager.#POST_PIPELINE_TASKS_PREFIX + mainTaskId);
+    }
+
+    /**
+     * Scans Redis for every generation root whose post-pipeline marker is still
+     * "pending" — the candidate set for boot reconciliation (a run whose
+     * in-process Dock driver died before markPostPipelineDone, leaving a phantom
+     * "finalization" node forever). Uses a bounded SCAN (never KEYS) so it stays
+     * cheap on a large keyspace; it runs once at boot, not on a hot path. The
+     * "PostPipeline/*" match cannot collide with the "PostPipelineTasks/" keys
+     * (the slash after "PostPipeline" differs), and isPostPipelinePending()
+     * re-checks the value, so the result is exactly the pending roots.
+     *
+     * @returns {Promise<string[]>}
+     */
+    static async listPendingPostPipelineMainTaskIds()
+    {
+        const matchPattern = TaskManager.#POST_PIPELINE_PREFIX + "*";
+        const pendingMainTaskIds = [];
+        // Both the cursor and the keys come back as Buffers under the blob-string
+        // type mapping — coerce both to strings so the "0" terminator compares
+        // cleanly and each key can be sliced.
+        let cursor = "0";
+
+        do
+        {
+            const scanReply = await TaskManager.#redisClient.scan(cursor, { MATCH: matchPattern, COUNT: 200 });
+            cursor = Buffer.isBuffer(scanReply.cursor) ? scanReply.cursor.toString("utf8") : String(scanReply.cursor);
+
+            for (const rawKey of scanReply.keys)
+            {
+                const key = Buffer.isBuffer(rawKey) ? rawKey.toString("utf8") : String(rawKey);
+                const mainTaskId = key.slice(TaskManager.#POST_PIPELINE_PREFIX.length);
+                if (mainTaskId && await TaskManager.isPostPipelinePending(mainTaskId))
+                {
+                    pendingMainTaskIds.push(mainTaskId);
+                }
+            }
+        }
+        while (cursor !== "0");
+
+        return pendingMainTaskIds;
     }
 
     /**
@@ -944,6 +1010,31 @@ class TaskManager
         const lockKey       = TaskManager.#SYNC_LOCK_PREFIX + userId;
         const deletedCount  = await TaskManager.#redisClient.del(lockKey);
         return deletedCount > 0;
+    }
+
+    /**
+     * Acquires the boot-time reconciliation lock so only one node sweeps
+     * orphaned post-pipeline runs. Returns true on success. Self-expiring (short
+     * TTL) so a crashed holder never blocks the next boot's sweep.
+     * @returns {Promise<boolean>}
+     */
+    static async acquireReconcileLock()
+    {
+        const result = await TaskManager.#redisClient.set(
+            TaskManager.#RECONCILE_LOCK_KEY,
+            "1",
+            { NX: true, EX: TaskManager.#RECONCILE_LOCK_TTL_SECONDS }
+        );
+        return result !== null;
+    }
+
+    /**
+     * Releases the boot-time reconciliation lock. Best-effort — the short TTL
+     * also clears it, so a failed release is harmless.
+     */
+    static async releaseReconcileLock()
+    {
+        await TaskManager.#redisClient.del(TaskManager.#RECONCILE_LOCK_KEY);
     }
 }
 

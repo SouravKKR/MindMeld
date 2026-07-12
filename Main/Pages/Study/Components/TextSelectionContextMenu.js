@@ -14,6 +14,7 @@ import StudySessionEvents from "../Events/StudySessionEvents.js";
 import AskAiSession from "../Classes/AskAiSession.js";
 import AskAiImageAttachmentManager from "../Classes/AskAiImageAttachmentManager.js";
 import EnhanceFlow from "../Classes/EnhanceFlow.js";
+import PopupStack from "../../../Globals/Classes/PopupStack.js";
 
 /**
  * TextSelectionContextMenu
@@ -103,7 +104,7 @@ class TextSelectionContextMenu extends ContextMenu
     #selectedText = "";
     #selectionRect = null;
     #outsidePointerdownHandler = null;
-    #escapeKeydownHandler = null;
+    #popupStackHandle = null;
     #sizeObserver = null;
     #studyDeck = null;
     #boundTierSelectedHandler = null;
@@ -245,11 +246,8 @@ class TextSelectionContextMenu extends ContextMenu
             document.removeEventListener("pointerdown", this.#outsidePointerdownHandler, true);
             this.#outsidePointerdownHandler = null;
         }
-        if (this.#escapeKeydownHandler)
-        {
-            document.removeEventListener("keydown", this.#escapeKeydownHandler, true);
-            this.#escapeKeydownHandler = null;
-        }
+        PopupStack.unregister(this.#popupStackHandle);
+        this.#popupStackHandle = null;
         if (this.#boundTierSelectedHandler)
         {
             // The select lives inside this; it's about to be removed
@@ -607,18 +605,19 @@ class TextSelectionContextMenu extends ContextMenu
             this.remove();
         };
 
-        this.#escapeKeydownHandler = (keyboardEvent) =>
+        // Escape dismissal goes through the PopupStack so the global Escape
+        // handler closes this menu instead of navigating the page away —
+        // and so a menu opened over another popup only pops one layer at a
+        // time. (This class skips super.connectedCallback, so it registers
+        // here rather than inheriting the base ContextMenu registration.)
+        this.#popupStackHandle = PopupStack.register(
         {
-            if (keyboardEvent.key === "Escape")
-            {
-                this.remove();
-            }
-        };
+            dismiss: () => this.remove()
+        });
 
         // Capture phase so we beat any other handler that might
         // stopPropagation on outside elements.
         document.addEventListener("pointerdown", this.#outsidePointerdownHandler, true);
-        document.addEventListener("keydown", this.#escapeKeydownHandler, true);
     }
 
     /**

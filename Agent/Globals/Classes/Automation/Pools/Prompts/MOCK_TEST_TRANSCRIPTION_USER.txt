@@ -1,0 +1,28 @@
+Exam: {exam_name}
+Subject: {subject_name}
+
+The attached image(s) are the pages of ONE candidate's handwritten answer sheet for this exam, in order. Transcribe the candidate's answers and map each one to the correct question below using the question number written on the left of each answer block.
+
+════════════════════════════════════════════════════
+QUESTIONS ON THIS EXAM
+════════════════════════════════════════════════════
+
+{questions_block}
+
+════════════════════════════════════════════════════
+OUTPUT INSTRUCTIONS
+════════════════════════════════════════════════════
+
+Return a single JSON object with an `answers` array containing exactly {question_count} object(s) — one per question above, matched by `questionId` — plus an `unmatched` array (use `[]` if every numbered block mapped cleanly). Schema:
+{
+    "answers": [
+        { "questionId": string, "questionNumber": string, "answer": string }
+    ],
+    "unmatched": [
+        { "questionNumberSeen": string, "answer": string }
+    ]
+}
+
+Transcribe faithfully — do not grade, correct, or complete anything. For MULTIPLE_CHOICE / MULTIPLE_CORRECT questions `answer` is the selected 0-based option index/indices as a string ("2" or "[0,2]"); for every other type it is HTML. Leave `answer` as "" for any question the candidate did not answer.
+
+Return only the JSON object. No other text, no markdown fences.

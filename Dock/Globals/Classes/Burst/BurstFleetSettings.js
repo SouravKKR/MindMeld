@@ -182,6 +182,12 @@ class BurstFleetSettings
     static getWorkerRuntimeEnvironment()
     {
         const environment = {
+            // The container has no env file baked in, so the worker resolves its
+            // environment (database-name selection, per-env storage credential) from
+            // this variable exactly the way the base-node Agent resolves it from the
+            // systemd unit. Without it a testing/development worker would fall back to
+            // "production" and read the wrong per-environment resources.
+            MINDMELD_ENVIRONMENT: BurstFleetSettings.#resolveEnvironmentName(),
             REDIS_URL: BurstFleetSettings.#resolveStringSetting("BURST_WORKER_REDIS_URL", process.env.REDIS_URL || "redis://127.0.0.1:6379"),
             MONGODB_URL: BurstFleetSettings.#resolveStringSetting("BURST_WORKER_MONGODB_URL", process.env.MONGODB_URL || ""),
             MONGODB_DATABASE_NAME: process.env.MONGODB_DATABASE_NAME || "",
@@ -195,6 +201,16 @@ class BurstFleetSettings
         // worker, which runs the Agent but has no env file baked into its image.
         Object.assign(environment, BurstFleetSettings.#readAgentLlmKeys());
 
+        // The Google Cloud Storage service-account key. Burst workers run the Agent
+        // in a container with no repo Common/ directory, so the key is forwarded as
+        // base64 env (never baked into the image — see Agent/.dockerignore) and read
+        // by the Agent's Persistence. Without it every worker GCS read/write fails.
+        const storageCredentialsBase64 = BurstFleetSettings.#readStorageCredentialsBase64();
+        if (storageCredentialsBase64)
+        {
+            environment.MINDMELD_STORAGE_CREDENTIALS_BASE64 = storageCredentialsBase64;
+        }
+
         return environment;
     }
 
@@ -205,10 +221,66 @@ class BurstFleetSettings
      * irrelevant. Returns {} (with a warning) if the file is absent/unreadable.
      * @returns {Record<string, string>}
      */
+    // Resolves the active environment name the same way Dock/index.js does, so the
+    // burst fleet forwards the correct per-environment env file, database and
+    // credential to every worker it launches.
+    static #resolveEnvironmentName()
+    {
+        const explicitEnvironmentFlag = process.argv.find(argument => argument.startsWith("--environment="));
+        if (explicitEnvironmentFlag)
+        {
+            return explicitEnvironmentFlag.slice("--environment=".length);
+        }
+        if (process.env.MINDMELD_ENVIRONMENT)
+        {
+            return process.env.MINDMELD_ENVIRONMENT;
+        }
+        if (process.argv.includes("--debug"))
+        {
+            return "local";
+        }
+        return "production";
+    }
+
+    // The sibling Agent env file for the active environment (Agent/.<env>.env, with
+    // "local" also falling back to the historic Agent/.env), anchored to __dirname.
+    static #resolveAgentEnvironmentFilePath()
+    {
+        const environmentName = BurstFleetSettings.#resolveEnvironmentName();
+        const candidateFileNames = environmentName === "local" ? [".local.env", ".env"] : [`.${environmentName}.env`];
+        const agentDirectory = path.join(__dirname, "..", "..", "..", "..", "Agent");
+        for (const candidateFileName of candidateFileNames)
+        {
+            const candidateFilePath = path.join(agentDirectory, candidateFileName);
+            if (fs.existsSync(candidateFilePath))
+            {
+                return candidateFilePath;
+            }
+        }
+        return path.join(agentDirectory, candidateFileNames[0]);
+    }
+
+    // Reads the active environment's Google Cloud Storage service-account key and
+    // returns it base64-encoded for forwarding to burst workers. Returns "" (with a
+    // warning) if the file is absent, so provisioning still proceeds.
+    static #readStorageCredentialsBase64()
+    {
+        const environmentName = BurstFleetSettings.#resolveEnvironmentName();
+        const credentialFilePath = path.join(__dirname, "..", "..", "..", "..", "Common", "Credentials", `mindmeld-storage.${environmentName}.json`);
+        try
+        {
+            return fs.readFileSync(credentialFilePath).toString("base64");
+        }
+        catch (readError)
+        {
+            console.warn(`[BurstFleetSettings] Could not read the storage credential ${credentialFilePath}; burst workers will be unable to authenticate to Google Cloud Storage: ${readError.message}`);
+            return "";
+        }
+    }
+
     static #readAgentLlmKeys()
     {
-        const environmentFileName = process.argv.includes("--debug") ? ".env" : ".production.env";
-        const agentEnvironmentPath = path.join(__dirname, "..", "..", "..", "..", "Agent", environmentFileName);
+        const agentEnvironmentPath = BurstFleetSettings.#resolveAgentEnvironmentFilePath();
 
         try
         {

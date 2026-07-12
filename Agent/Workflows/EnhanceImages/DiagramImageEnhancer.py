@@ -39,6 +39,14 @@ class DiagramImageEnhancer:
     GPT_IMAGE_SIZE = "1024x1024"
     GPT_IMAGE_QUALITY = "low"
 
+    # Per-call bound on the GPT-Image generation request so a stuck socket
+    # surfaces as a caught error (which degrades to DIAGRAM_FALLBACK_ORIGINAL)
+    # rather than hanging the enhance stage indefinitely. max_retries keeps a
+    # transient blip recoverable while still bounding the worst-case wall time
+    # to roughly OPENAI_REQUEST_TIMEOUT_SECONDS * (OPENAI_MAX_RETRIES + 1).
+    OPENAI_REQUEST_TIMEOUT_SECONDS = 120
+    OPENAI_MAX_RETRIES = 2
+
     # Each generated image is billed at roughly this many credits. The credit
     # system only METERS TOKENS (CreditMeter) and converts them to credits via
     # the admin-configured ENHANCE_IMAGES rule -- the image API's own token usage
@@ -80,6 +88,26 @@ class DiagramImageEnhancer:
             "image_bytes": generated_image_bytes,
             "renderer": "gemini-gpt-image",
         }
+
+    async def close(self):
+        """
+        Releases the underlying HTTP clients (OpenAI + Gemini) so the owning
+        EnhanceImages task can shut down without leaking sockets or stalling
+        interpreter teardown -- the root cause of the enhance subprocess hanging
+        after its task was already marked COMPLETED. Idempotent and
+        error-swallowing: a close fault must never fail the task.
+        """
+        if self.__openai_client is not None:
+            try:
+                await self.__openai_client.close()
+            except Exception as openai_close_error:
+                print(f"[DiagramImageEnhancer] OpenAI client close failed (continuing): {openai_close_error}")
+            self.__openai_client = None
+
+        try:
+            await self.__gemini_caller.aclose()
+        except Exception as gemini_close_error:
+            print(f"[DiagramImageEnhancer] Gemini caller close failed (continuing): {gemini_close_error}")
 
     @staticmethod
     def __record_image_credits() -> None:
@@ -167,5 +195,9 @@ class DiagramImageEnhancer:
         if not api_key:
             print("[DiagramImageEnhancer] OPENAI_API_KEY not set -- image generation unavailable.")
             return None
-        self.__openai_client = AsyncOpenAI(api_key=api_key)
+        self.__openai_client = AsyncOpenAI(
+            api_key=api_key,
+            timeout=DiagramImageEnhancer.OPENAI_REQUEST_TIMEOUT_SECONDS,
+            max_retries=DiagramImageEnhancer.OPENAI_MAX_RETRIES,
+        )
         return self.__openai_client

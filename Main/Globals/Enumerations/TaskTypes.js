@@ -35,6 +35,7 @@ const taskTypes =
   ASK_AI_PRO: 32,
   ASK_AI_PRO_PLUS: 33,
   AUTO_FILL_GENERATION_OPTIONS: 34,
+  TRANSCRIBE_MOCK_TEST_ATTEMPT: 35,
 }
 
 module.exports = { taskTypes };

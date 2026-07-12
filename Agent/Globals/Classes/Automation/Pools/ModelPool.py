@@ -138,5 +138,15 @@ class ModelPool:
     # low enough that the (future) credit deduction won't sting.
     MOCK_TEST_GRADING_MODEL = ("gemini-2.5-flash-lite", GoogleEnterpriseAiProvider)
 
+    # Vision model that reads a student's scanned, handwritten answer sheet for
+    # an OFFLINE mock-test attempt and transcribes each answer into per-question
+    # HTML, mapping answers to questions by the question number the student
+    # writes on the left of each block. Transcription (reading handwriting,
+    # honouring layout, preserving lists/numbering) is a materially harder
+    # multimodal task than the text-only grading pass, so this uses the fuller
+    # flash model rather than flash-lite — a misread here silently corrupts the
+    # candidate's answer before it is ever graded.
+    MOCK_TEST_TRANSCRIPTION_MODEL = ("gemini-2.5-flash", GoogleEnterpriseAiProvider)
+
     IMAGE_VALIDATION_MODEL = ("gemini-2.5-flash-lite", GoogleEnterpriseAiProvider)
     IMAGE_VERIFICATION_MODEL = ("gemini-3.1-flash-lite", GoogleEnterpriseAiProvider)

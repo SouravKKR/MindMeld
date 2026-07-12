@@ -78,6 +78,9 @@ class GetActiveTaskProgressEndpoint
             // Mirror /Generate/Progress so reopening a live generation from
             // Activity gets the same paused / provider-busy / TTL signals.
             tree.paused = !!(rootPayload && typeof rootPayload === "object" && rootPayload.error === TaskManager.USER_PAUSED_REASON);
+            // Same for a recoverable post-pipeline image-step failure, so the
+            // Activity view shows the "resume to finish images" prompt too.
+            tree.imagePreparationFailed = !!(rootPayload && typeof rootPayload === "object" && rootPayload.error === TaskManager.IMAGE_PREPARATION_FAILED_REASON);
             tree.providerSlowdown = await TaskManager.isProviderSlowdownActive(taskId);
             tree.remainingTtlMillis = await TaskManager.getRemainingTtlMillis(taskId);
             response.sendJson(tree);

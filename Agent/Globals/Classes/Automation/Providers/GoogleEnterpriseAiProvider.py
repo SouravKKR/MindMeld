@@ -102,7 +102,7 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
     DEFAULT_VERTEX_LOCATION = "global"
 
     @staticmethod
-    def __build_client() -> genai.Client:
+    def __build_client(sync_client: httpx.Client, async_client: httpx.AsyncClient) -> genai.Client:
         """
         Builds a google-genai client bound to Google's enterprise (Vertex)
         backend. Two auth shapes are supported, checked in priority order:
@@ -124,7 +124,6 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
         GOOGLE_GENAI_USE_VERTEXAI / GOOGLE_CLOUD_* auto-discovery) so the wiring
         is readable and a misconfiguration fails loudly here.
         """
-        sync_client, async_client = GoogleEnterpriseAiProvider.__build_ipv4_httpx_clients()
         http_options = types.HttpOptions(
             httpx_client       = sync_client,
             httpx_async_client = async_client,
@@ -179,7 +178,28 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
         )
 
     def __init__(self):
-        self.__client = GoogleEnterpriseAiProvider.__build_client()
+        # Hold references to the outbound httpx clients (the genai.Client wraps
+        # them via http_options) so aclose() can release them when a short-lived
+        # owner shuts down -- otherwise they linger and can stall interpreter
+        # teardown of a one-shot Agent subprocess.
+        self.__sync_httpx_client, self.__async_httpx_client = GoogleEnterpriseAiProvider.__build_ipv4_httpx_clients()
+        self.__client = GoogleEnterpriseAiProvider.__build_client(self.__sync_httpx_client, self.__async_httpx_client)
+
+    async def aclose(self):
+        """
+        Releases the outbound HTTP clients that back this provider's genai.Client
+        so a short-lived owner (e.g. EnhanceImages' DiagramImageEnhancer) can shut
+        down without leaking sockets or stalling asyncio.run() teardown.
+        Idempotent and error-swallowing -- a close fault must never fail a task.
+        """
+        try:
+            await self.__async_httpx_client.aclose()
+        except Exception as async_close_error:
+            print(f"[GoogleEnterpriseAiProvider] async client close failed (continuing): {async_close_error}")
+        try:
+            self.__sync_httpx_client.close()
+        except Exception as sync_close_error:
+            print(f"[GoogleEnterpriseAiProvider] sync client close failed (continuing): {sync_close_error}")
 
     async def __fetch_url_content(self, url: str) -> str:
         try:

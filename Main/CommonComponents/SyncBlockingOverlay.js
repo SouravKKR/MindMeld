@@ -1,4 +1,5 @@
 import SyncEvents from "../Globals/Events/SyncEvents.js";
+import PopupStack from "../Globals/Classes/PopupStack.js";
 
 /**
  * SyncBlockingOverlay
@@ -26,6 +27,7 @@ class SyncBlockingOverlay extends HTMLElement
     static #STYLE_ID = "sync-blocking-overlay-style";
 
     #activeBlockCount = 0;
+    #popupStackHandle = null;
 
     connectedCallback()
     {
@@ -67,12 +69,22 @@ class SyncBlockingOverlay extends HTMLElement
         window.removeEventListener(SyncEvents.ACTIVE_ENTITY_SYNC_ENDED,   this.#handleEnded);
         window.removeEventListener(SyncEvents.COMPLETED,                  this.#handleSyncFinished);
         window.removeEventListener(SyncEvents.FAILED,                     this.#handleSyncFinished);
+
+        PopupStack.unregister(this.#popupStackHandle);
+        this.#popupStackHandle = null;
     }
 
     #handleStarted = () =>
     {
         this.#activeBlockCount++;
         this.style.display = "block";
+
+        // Swallow Escape (non-dismissible) so it can't navigate the page
+        // behind the overlay while the blocking pull is applying.
+        if (this.#popupStackHandle === null)
+        {
+            this.#popupStackHandle = PopupStack.register({ dismissible: false });
+        }
     };
 
     #handleEnded = () =>
@@ -82,6 +94,8 @@ class SyncBlockingOverlay extends HTMLElement
         if (this.#activeBlockCount === 0)
         {
             this.style.display = "none";
+            PopupStack.unregister(this.#popupStackHandle);
+            this.#popupStackHandle = null;
         }
     };
 
@@ -95,6 +109,8 @@ class SyncBlockingOverlay extends HTMLElement
     {
         this.#activeBlockCount = 0;
         this.style.display = "none";
+        PopupStack.unregister(this.#popupStackHandle);
+        this.#popupStackHandle = null;
     };
 
     static #ensureStylesInjected()

@@ -9,5 +9,6 @@ class PersistenceConstants:
     MOCK_TEST_QUESTIONS_DIRECTORY = 'MockTestQuestions'
     MOCK_TESTS_DIRECTORY = 'MockTests'
     MOCK_TEST_EVALUATIONS_DIRECTORY = 'MockTestEvaluations'
+    MOCK_TEST_TRANSCRIPTIONS_DIRECTORY = 'MockTestTranscriptions'
     IMAGE_SYLLABUS_FILE_NAME = 'ImageSyllabus.json'
     VALIDATED_FIGURES_FILE_NAME = 'ValidatedFigures.json'

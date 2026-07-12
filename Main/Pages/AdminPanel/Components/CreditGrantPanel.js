@@ -290,12 +290,12 @@ class CreditGrantPanel extends HTMLElement
 
     #bindEvents()
     {
-        this.querySelector('[data-field="targetType"]').addEventListener("change", async (changeEvent) =>
+        this.#own('[data-field="targetType"]').addEventListener("change", async (changeEvent) =>
         {
             const targetType = Number(changeEvent.currentTarget.value);
-            this.querySelector('[data-role="emails-section"]').style.display = targetType === creditGrantTargetTypes.USER_EMAILS ? "" : "none";
-            this.querySelector('[data-role="filter-section"]').style.display = targetType === creditGrantTargetTypes.USER_FILTER ? "" : "none";
-            this.querySelector('[data-role="organization-section"]').style.display = targetType === creditGrantTargetTypes.ORGANIZATION ? "" : "none";
+            this.#own('[data-role="emails-section"]').style.display = targetType === creditGrantTargetTypes.USER_EMAILS ? "" : "none";
+            this.#own('[data-role="filter-section"]').style.display = targetType === creditGrantTargetTypes.USER_FILTER ? "" : "none";
+            this.#own('[data-role="organization-section"]').style.display = targetType === creditGrantTargetTypes.ORGANIZATION ? "" : "none";
 
             if (targetType === creditGrantTargetTypes.ORGANIZATION)
             {
@@ -307,7 +307,7 @@ class CreditGrantPanel extends HTMLElement
         // split amount) may no longer match what the admin saw. The reason
         // field is exempt: it is read at apply time and never affects
         // targeting or amounts.
-        const grantForm = this.querySelector('[data-role="grant-form"]');
+        const grantForm = this.#own('[data-role="grant-form"]');
         const invalidateUnlessReason = (formEvent) =>
         {
             if (formEvent.target?.dataset?.field !== "reason")
@@ -318,18 +318,18 @@ class CreditGrantPanel extends HTMLElement
         grantForm.addEventListener("input", invalidateUnlessReason);
         grantForm.addEventListener("change", invalidateUnlessReason);
 
-        this.querySelector('[data-action="preview"]').addEventListener("click", () => this.#preview());
-        this.querySelector('[data-action="grant"]').addEventListener("click", () => this.#applyGrant());
+        this.#own('[data-action="preview"]').addEventListener("click", () => this.#preview());
+        this.#own('[data-action="grant"]').addEventListener("click", () => this.#applyGrant());
 
-        this.querySelector('[data-field="grantKind"]').addEventListener("change", () => this.#applyGrantKind());
+        this.#own('[data-field="grantKind"]').addEventListener("change", () => this.#applyGrantKind());
         this.#applyGrantKind();
     }
 
     #applyGrantKind()
     {
-        const isPeriodic = Number(this.querySelector('[data-field="grantKind"]').value) === creditGrantKinds.PERIODIC;
-        this.querySelector('[data-role="fixed-form"]').style.display = isPeriodic ? "none" : "";
-        this.querySelector('[data-role="periodic-panel-wrap"]').style.display = isPeriodic ? "" : "none";
+        const isPeriodic = Number(this.#own('[data-field="grantKind"]').value) === creditGrantKinds.PERIODIC;
+        this.#own('[data-role="fixed-form"]').style.display = isPeriodic ? "none" : "";
+        this.#own('[data-role="periodic-panel-wrap"]').style.display = isPeriodic ? "" : "none";
     }
 
     #invalidateStagedGrant()
@@ -339,7 +339,7 @@ class CreditGrantPanel extends HTMLElement
             return;
         }
         this.#stagedGrant = null;
-        this.querySelector('[data-action="grant"]').disabled = true;
+        this.#own('[data-action="grant"]').disabled = true;
         this.#setStatus("Inputs changed — preview again before granting.", false);
     }
 
@@ -350,7 +350,7 @@ class CreditGrantPanel extends HTMLElement
             return;
         }
 
-        const organizationSelect = this.querySelector('[data-field="organizationId"]');
+        const organizationSelect = this.#own('[data-field="organizationId"]');
         try
         {
             const response = await fetch("/Admin/Organizations/List");
@@ -386,9 +386,9 @@ class CreditGrantPanel extends HTMLElement
      */
     #buildRequestPayload()
     {
-        const targetType = Number(this.querySelector('[data-field="targetType"]').value);
-        const amount = parseFloat(this.querySelector('[data-field="amount"]').value);
-        const amountMode = Number(this.querySelector('[data-field="amountMode"]').value);
+        const targetType = Number(this.#own('[data-field="targetType"]').value);
+        const amount = parseFloat(this.#own('[data-field="amount"]').value);
+        const amountMode = Number(this.#own('[data-field="amountMode"]').value);
 
         if (!(amount > 0))
         {
@@ -399,7 +399,7 @@ class CreditGrantPanel extends HTMLElement
 
         if (targetType === creditGrantTargetTypes.USER_EMAILS)
         {
-            const emails = this.querySelector('[data-field="emails"]').value
+            const emails = this.#own('[data-field="emails"]').value
                 .split(/[\s,;]+/)
                 .map(email => email.trim())
                 .filter(email => email.length > 0);
@@ -411,12 +411,12 @@ class CreditGrantPanel extends HTMLElement
         }
         else if (targetType === creditGrantTargetTypes.USER_FILTER)
         {
-            const roleRaw = this.querySelector('[data-field="roleFilter"]').value;
-            const minimumBalance = parseFloat(this.querySelector('[data-field="minimumBalance"]').value);
-            const maximumBalance = parseFloat(this.querySelector('[data-field="maximumBalance"]').value);
+            const roleRaw = this.#own('[data-field="roleFilter"]').value;
+            const minimumBalance = parseFloat(this.#own('[data-field="minimumBalance"]').value);
+            const maximumBalance = parseFloat(this.#own('[data-field="maximumBalance"]').value);
             target.filter =
             {
-                emailContains: this.querySelector('[data-field="emailContains"]').value.trim(),
+                emailContains: this.#own('[data-field="emailContains"]').value.trim(),
                 role: roleRaw === "" ? null : Number(roleRaw),
                 minimumBalance: isNaN(minimumBalance) ? null : minimumBalance,
                 maximumBalance: isNaN(maximumBalance) ? null : maximumBalance
@@ -424,7 +424,7 @@ class CreditGrantPanel extends HTMLElement
         }
         else if (targetType === creditGrantTargetTypes.ORGANIZATION)
         {
-            const organizationId = this.querySelector('[data-field="organizationId"]').value;
+            const organizationId = this.#own('[data-field="organizationId"]').value;
             if (!organizationId)
             {
                 return { error: "Select an organization." };
@@ -445,7 +445,7 @@ class CreditGrantPanel extends HTMLElement
         }
 
         this.#stagedGrant = null;
-        this.querySelector('[data-action="grant"]').disabled = true;
+        this.#own('[data-action="grant"]').disabled = true;
         this.#setStatus("Resolving recipients…", false);
 
         let previewJson;
@@ -474,7 +474,7 @@ class CreditGrantPanel extends HTMLElement
         if (previewJson.recipientCount > 0 && previewJson.perUserAmount > 0)
         {
             this.#stagedGrant = { grantKey: crypto.randomUUID(), payload: payload, preview: previewJson };
-            this.querySelector('[data-action="grant"]').disabled = false;
+            this.#own('[data-action="grant"]').disabled = false;
             this.#setStatus(`Preview ready — ${previewJson.recipientCount} recipient(s).`, false);
         }
         else if (previewJson.recipientCount > 0)
@@ -489,7 +489,7 @@ class CreditGrantPanel extends HTMLElement
 
     #renderPreviewResults(preview)
     {
-        const resultsContainer = this.querySelector('[data-role="preview-results"]');
+        const resultsContainer = this.#own('[data-role="preview-results"]');
         const recipients = preview.recipients || [];
         const unmatchedEmails = preview.unmatchedEmails || [];
 
@@ -556,11 +556,11 @@ class CreditGrantPanel extends HTMLElement
         {
             ...this.#stagedGrant.payload,
             grantKey: this.#stagedGrant.grantKey,
-            reason: this.querySelector('[data-field="reason"]').value.trim()
+            reason: this.#own('[data-field="reason"]').value.trim()
         };
 
         this.#setStatus("Granting…", false);
-        this.querySelector('[data-action="grant"]').disabled = true;
+        this.#own('[data-action="grant"]').disabled = true;
 
         let applyJson;
         try
@@ -575,14 +575,14 @@ class CreditGrantPanel extends HTMLElement
             {
                 // Keep the staged grant (same grantKey) so a retry can never
                 // double-grant recipients that already went through.
-                this.querySelector('[data-action="grant"]').disabled = false;
+                this.#own('[data-action="grant"]').disabled = false;
                 this.#setStatus(`${applyJson.error || `Grant failed (HTTP ${response.status})`} — you can safely retry.`, true);
                 return;
             }
         }
         catch (applyError)
         {
-            this.querySelector('[data-action="grant"]').disabled = false;
+            this.#own('[data-action="grant"]').disabled = false;
             this.#setStatus(`${applyError.message} — you can safely retry.`, true);
             return;
         }
@@ -594,14 +594,14 @@ class CreditGrantPanel extends HTMLElement
         // grantKey). Bookkeeping only — never affects the grant itself.
         try
         {
-            const dealEditor = this.querySelector('[data-role="deal-editor"]');
+            const dealEditor = this.#own('[data-role="deal-editor"]');
             if (dealEditor && typeof dealEditor.submitForTarget === "function")
             {
                 const dealResult = await dealEditor.submitForTarget(creditDealTargetTypes.FIXED_GRANT, grantKeyForDeal);
                 if (dealResult.recorded)
                 {
                     const note = dealResult.error ? ` (payment note: ${dealResult.error})` : (dealResult.captured ? " Payment captured." : (dealResult.invoiceUploaded ? " Invoice attached." : " Payment recorded."));
-                    this.#setStatus(this.querySelector('[data-role="status"]').textContent + note, dealResult.error ? true : false);
+                    this.#setStatus(this.#own('[data-role="status"]').textContent + note, dealResult.error ? true : false);
                     dealEditor.reset();
                 }
             }
@@ -630,7 +630,7 @@ class CreditGrantPanel extends HTMLElement
 
         if (failedResults.length > 0)
         {
-            const resultsContainer = this.querySelector('[data-role="preview-results"]');
+            const resultsContainer = this.#own('[data-role="preview-results"]');
             resultsContainer.insertAdjacentHTML
             (
                 "beforeend",
@@ -639,9 +639,43 @@ class CreditGrantPanel extends HTMLElement
         }
     }
 
+    /**
+     * Scoped query — returns the first element matching `selector` that
+     * belongs to THIS panel directly, skipping matches inside nested web
+     * components (periodic-assignments-panel, deal-payment-editor) which
+     * reuse the same data-field / data-role names. Those nested panels are
+     * rendered BEFORE the grant form, so a plain this.querySelector returns
+     * their hidden, empty duplicates — which silently made the amount /
+     * amountMode / organizationId reads and the status writes target the
+     * wrong element (the reported "Preview does nothing" bug: amount always
+     * read "" and the status message landed in an invisible span).
+     */
+    #own(selector)
+    {
+        for (const candidate of this.querySelectorAll(selector))
+        {
+            let ancestor = candidate.parentElement;
+            let belongsToThisPanel = true;
+            while (ancestor && ancestor !== this)
+            {
+                if (ancestor.tagName.includes("-"))
+                {
+                    belongsToThisPanel = false;
+                    break;
+                }
+                ancestor = ancestor.parentElement;
+            }
+            if (belongsToThisPanel)
+            {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
     #setStatus(message, isError)
     {
-        const statusLabel = this.querySelector('[data-role="status"]');
+        const statusLabel = this.#own('[data-role="status"]');
         statusLabel.textContent = message;
         statusLabel.classList.toggle("credit-grant-status-error", isError === true);
     }

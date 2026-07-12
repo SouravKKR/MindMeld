@@ -12,6 +12,8 @@
  * Dismissal: ESC key, backdrop click, or close button. Image clicks are
  * absorbed so pinch / long-press interactions don't accidentally dismiss.
  */
+import PopupStack from "../Globals/Classes/PopupStack.js";
+
 class FullscreenImageViewer
 {
     static OVERLAY_CLASS_NAME = "fullscreen-image-viewer";
@@ -27,19 +29,18 @@ class FullscreenImageViewer
             <button type="button" class="${FullscreenImageViewer.CLOSE_BUTTON_CLASS_NAME}" aria-label="Close fullscreen">&times;</button>
         `;
 
+        // Escape dismissal routes through the PopupStack so the global Escape
+        // handler closes the lightbox instead of navigating the page away.
+        let popupStackHandle = null;
+
         const dismiss = () =>
         {
             overlayElement.remove();
-            window.removeEventListener("keydown", handleKeyDown);
+            PopupStack.unregister(popupStackHandle);
+            popupStackHandle = null;
         };
 
-        const handleKeyDown = (keyboardEvent) =>
-        {
-            if(keyboardEvent.key === "Escape")
-            {
-                dismiss();
-            }
-        };
+        popupStackHandle = PopupStack.register({ dismiss });
 
         overlayElement.addEventListener("click", dismiss);
 
@@ -59,7 +60,6 @@ class FullscreenImageViewer
             });
         }
 
-        window.addEventListener("keydown", handleKeyDown);
         document.body.appendChild(overlayElement);
 
         return { close: dismiss };

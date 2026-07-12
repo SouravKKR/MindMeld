@@ -8,3 +8,5 @@ class MockTestEvaluationConstants:
     FALLBACK_GRADING_BATCH_SIZE = 5
     ATTEMPT_INPUT_FILENAME = 'Attempt.json'
     GRADED_ATTEMPT_OUTPUT_FILENAME = 'GradedAttempt.json'
+    TRANSCRIPTION_REQUEST_FILENAME = 'TranscriptionRequest.json'
+    TRANSCRIBED_ANSWERS_OUTPUT_FILENAME = 'TranscribedAnswers.json'

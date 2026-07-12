@@ -113,7 +113,8 @@ class MockTestSession extends StudySession
         mockTestRunner.initialize(
             this.#mockTest,
             this.#sessionOptions,
-            (clonedItems, additionalData) => this.#handleSubmit(clonedItems, additionalData)
+            (clonedItems, additionalData) => this.#handleSubmit(clonedItems, additionalData),
+            (scanFiles, attemptId) => this.#handleOfflineScans(scanFiles, attemptId)
         );
         runnerHostContainer.appendChild(mockTestRunner);
     }
@@ -143,15 +144,14 @@ class MockTestSession extends StudySession
     }
 
     /**
-     * Persists a completed attempt to the mock test's history, exits
-     * fullscreen, and navigates back. Evaluation is intentionally a
-     * TODO — answers (and any offline scan upload paths) are stored
-     * on the attempt for the future OCR + LLM evaluation pipeline.
+     * Online submit. The runner hands back the cloned items stamped with the
+     * candidate's on-screen answers; grading + navigation is shared with the
+     * offline path via the static gradeAndNavigate below.
      *
-     * In preview mode (started from the editor's Preview button) the
-     * attempt is neither created nor saved — the runner just closes —
-     * so the in-memory transient MockTest used by the editor never
-     * touches storage or the deck's mock-test list.
+     * In preview mode (started from the editor's Preview button) the attempt is
+     * neither created nor saved — the runner just closes — so the in-memory
+     * transient MockTest used by the editor never touches storage or the deck's
+     * mock-test list.
      */
     async #handleSubmit(clonedItems, additionalData)
     {
@@ -165,7 +165,63 @@ class MockTestSession extends StudySession
             return;
         }
 
-        const maxScore = MockTestSession.#computeMaxScore(clonedItems, this.#mockTest);
+        await MockTestSession.gradeAndNavigate(this.#mockTest, clonedItems, { additionalData });
+    }
+
+    /**
+     * Offline submit. The runner hands back the raw scanned answer sheets. The
+     * answers live on paper, so rather than grading here we open the
+     * transcription review page, which uploads the scans, waits for the vision
+     * model to read them, lets the candidate review/fix the read-back, and then
+     * routes into the SAME grading path an online attempt uses. In preview mode
+     * there is nothing to persist — just close.
+     */
+    async #handleOfflineScans(scanFiles, attemptId)
+    {
+        if (this.isPreviewMode())
+        {
+            if (document.fullscreenElement)
+            {
+                try { await document.exitFullscreen(); } catch (exitError) { /* ignore */ }
+            }
+            PageNavigator.back();
+            return;
+        }
+
+        if (!Array.isArray(scanFiles) || scanFiles.length === 0)
+        {
+            return;
+        }
+
+        if (document.fullscreenElement)
+        {
+            try { await document.exitFullscreen(); } catch (exitError) { /* ignore */ }
+        }
+
+        // clearAndOpen mirrors the online submit → answer-key handoff: the test
+        // surface is wiped and the review page becomes the root. Leaving the
+        // review page abandons the un-persisted attempt — the same "back
+        // discards" contract a running test has.
+        PageNavigator.clearAndOpen("mock-test-transcription-review-page", this.#mockTest, scanFiles, attemptId);
+    }
+
+    /**
+     * Shared grading + navigation for BOTH the online submit and the offline
+     * transcription-review paths. Creates the attempt from the cloned items
+     * (already stamped with answers), asks for optional evaluation guidance,
+     * then grades MCQ-only papers inline (no server, no credits) or POSTs to
+     * /MockTest/EvaluateAttempt for LLM grading, finally landing on the
+     * answer-key page. From here on an offline attempt is identical to online.
+     *
+     * @param {MockTest} mockTest
+     * @param {Array} clonedItems
+     * @param {{ additionalData?: Object|null, bTutorialDemo?: boolean }} [options]
+     */
+    static async gradeAndNavigate(mockTest, clonedItems, options = {})
+    {
+        const additionalData = options.additionalData || null;
+
+        const maxScore = MockTestSession.#computeMaxScore(clonedItems, mockTest);
         const attempt = new MockTestAttempt(undefined, new Date(), clonedItems, 0, maxScore);
         if (additionalData)
         {
@@ -175,7 +231,7 @@ class MockTestSession extends StudySession
         // Paid-deck mock tests grade through the SAME pipeline, but the server
         // sources/sinks the attempt from the buyer's encrypted per-user entity
         // store (passed via paidDeckId) instead of the plaintext collection.
-        const paidDeckId = this.#mockTest.getDeck()?.getAdditionalData?.()?.paidDeckId || null;
+        const paidDeckId = mockTest.getDeck()?.getAdditionalData?.()?.paidDeckId || null;
 
         const isOfflineOnlyCandidate = MockTestSession.#attemptIsOfflineOnly(clonedItems);
 
@@ -183,7 +239,7 @@ class MockTestSession extends StudySession
         // call the grading server: grade locally and instantly. The sample
         // mock test is MCQ-only, so offline grading produces real scores
         // with zero credits and no network call.
-        const bTutorialDemo = TutorialEngine.isRunning();
+        const bTutorialDemo = options.bTutorialDemo === true || TutorialEngine.isRunning();
         const dialogResult = bTutorialDemo
             ? { confirmed: true, instructions: "", enableLlmMcqFeedback: false }
             : await EvaluationInstructionsDialog.open({
@@ -214,12 +270,12 @@ class MockTestSession extends StudySession
 
         if (shouldRunInlineOfflineGrading)
         {
-            attempt.evaluate(this.#mockTest);
+            attempt.evaluate(mockTest);
             attempt.setEvaluationStatus(mockTestEvaluationStatuses.COMPLETED);
-            this.#mockTest.addAttempt(attempt);
+            mockTest.addAttempt(attempt);
             try
             {
-                await this.#mockTest.save();
+                await mockTest.save();
             }
             catch (saveError)
             {
@@ -250,15 +306,15 @@ class MockTestSession extends StudySession
                     `Your attempt was graded offline. Score: ${attempt.getScore()} / ${attempt.getMaxScore()}.`
                 );
             }
-            PageNavigator.clearAndOpen("mock-test-answer-key-page", this.#mockTest, attempt);
+            PageNavigator.clearAndOpen("mock-test-answer-key-page", mockTest, attempt);
             return;
         }
 
         attempt.setEvaluationStatus(mockTestEvaluationStatuses.GRADING);
-        this.#mockTest.addAttempt(attempt);
+        mockTest.addAttempt(attempt);
         try
         {
-            await this.#mockTest.save();
+            await mockTest.save();
         }
         catch (saveError)
         {
@@ -287,7 +343,7 @@ class MockTestSession extends StudySession
                 credentials: "include",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    mockTestId: this.#mockTest.getId(),
+                    mockTestId: mockTest.getId(),
                     attemptId: attempt.getId(),
                     evaluationInstructions: dialogResult.instructions,
                     enableLlmMcqFeedback: dialogResult.enableLlmMcqFeedback === true,
@@ -307,7 +363,7 @@ class MockTestSession extends StudySession
             {
                 const insufficientDetail = await evaluationResponse.json().catch(() => ({}));
                 attempt.setEvaluationStatus(mockTestEvaluationStatuses.FAILED);
-                try { await this.#mockTest.save(); } catch (resaveError) { /* ignore */ }
+                try { await mockTest.save(); } catch (resaveError) { /* ignore */ }
 
                 if (document.fullscreenElement)
                 {
@@ -315,7 +371,7 @@ class MockTestSession extends StudySession
                 }
 
                 await CreditNotice.showInsufficientCredits(insufficientDetail);
-                PageNavigator.clearAndOpen("mock-test-answer-key-page", this.#mockTest, attempt);
+                PageNavigator.clearAndOpen("mock-test-answer-key-page", mockTest, attempt);
                 return;
             }
 
@@ -330,14 +386,14 @@ class MockTestSession extends StudySession
             {
                 const previousAdditional = attempt.getAdditionalData() || {};
                 attempt.setAdditionalData({ ...previousAdditional, evaluationTaskId: responseBody.taskId });
-                try { await this.#mockTest.save(); } catch (resaveError) { /* ignore */ }
+                try { await mockTest.save(); } catch (resaveError) { /* ignore */ }
             }
         }
         catch (requestError)
         {
             console.error("[MockTestSession] Failed to start evaluation task:", requestError);
             attempt.setEvaluationStatus(mockTestEvaluationStatuses.FAILED);
-            try { await this.#mockTest.save(); } catch (resaveError) { /* ignore */ }
+            try { await mockTest.save(); } catch (resaveError) { /* ignore */ }
 
             if (document.fullscreenElement)
             {
@@ -348,7 +404,7 @@ class MockTestSession extends StudySession
                 "Couldn't start grading",
                 "We couldn't reach the grading service just now. Your attempt is saved — you can grade it later from the answer key page."
             );
-            PageNavigator.clearAndOpen("mock-test-answer-key-page", this.#mockTest, attempt);
+            PageNavigator.clearAndOpen("mock-test-answer-key-page", mockTest, attempt);
             return;
         }
 
@@ -361,7 +417,7 @@ class MockTestSession extends StudySession
             "Evaluation in progress",
             "Your attempt is being graded. Track progress in Activity — the score and examiner remarks will appear on the answer key page once it finishes."
         );
-        PageNavigator.clearAndOpen("mock-test-answer-key-page", this.#mockTest, attempt);
+        PageNavigator.clearAndOpen("mock-test-answer-key-page", mockTest, attempt);
     }
 
     static #attemptIsOfflineOnly(clonedItems)

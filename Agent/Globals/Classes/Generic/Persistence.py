@@ -1,8 +1,11 @@
+import base64
+import json
 import os
 
 from google.cloud import storage
 from google.cloud.storage import Client, Bucket
 from Globals.Enumerations.StorageTargets import StorageTargets
+from Globals.Utility.EnvironmentLoader import EnvironmentLoader
 
 
 class Persistence:
@@ -17,11 +20,24 @@ class Persistence:
     @staticmethod
     def __initialize():
         if Persistence.__storage_client is None:
-            credentials_path = os.path.join(
-                os.path.dirname(__file__), "..", "..", "..", "..",
-                "Common", "Credentials", "mindmeld-storage-2026-249fc22c6610.json"
-            )
-            Persistence.__storage_client = storage.Client.from_service_account_json(credentials_path)
+            # Burst workers run this Agent in a container with no repo Common/
+            # directory, so the storage service-account key is injected as base64 env
+            # (never baked into the image — see Agent/.dockerignore + Dock's
+            # BurstFleetSettings). On the base node no such variable is set and the key
+            # is read from disk: Common/Credentials/mindmeld-storage.<environment>.json,
+            # selected per environment exactly the way EnvironmentLoader/Dock resolve
+            # it, so every service authenticates with its own environment's credential.
+            storage_credentials_base64 = os.getenv("MINDMELD_STORAGE_CREDENTIALS_BASE64")
+            if storage_credentials_base64:
+                credentials_info = json.loads(base64.b64decode(storage_credentials_base64))
+                Persistence.__storage_client = storage.Client.from_service_account_info(credentials_info)
+            else:
+                environment_name = EnvironmentLoader.resolve_environment_name()
+                credentials_path = os.path.join(
+                    os.path.dirname(__file__), "..", "..", "..", "..",
+                    "Common", "Credentials", f"mindmeld-storage.{environment_name}.json"
+                )
+                Persistence.__storage_client = storage.Client.from_service_account_json(credentials_path)
             Persistence.__bucket = Persistence.__storage_client.bucket(
                 Persistence.__GOOGLE_CLOUD_STORAGE_BUCKET_NAME
             )

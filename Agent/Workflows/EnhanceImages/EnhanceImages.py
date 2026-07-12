@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 
@@ -58,6 +59,25 @@ class EnhanceImages(Workflow):
         "see Figure N" reference keeps resolving.
     """
 
+    # Checkpoint-resume completion marker. EnhanceImages injects enhanced figures
+    # directly into the per-task flashcard / study-material JSONs, and a resumed
+    # generation REUSES those JSONs verbatim (the workers skip already-written
+    # topics). Re-injecting would duplicate every figure, so this marker records
+    # which files have already been enhanced. Written per-file so a crash mid-run
+    # resumes at the next un-enhanced file; a "complete" marker skips the whole
+    # stage. Lives at Tasks/{mainTaskId}/_enhance_images_complete.json and is
+    # deleted with the task folder once moveToDatabase succeeds.
+    _ENHANCE_IMAGES_COMPLETE_MARKER_NAME = "_enhance_images_complete.json"
+
+    # How many figures to enhance concurrently. Each figure is a Gemini describe
+    # + GPT-Image generate (~20s wall, almost entirely awaiting the APIs), so
+    # enhancing a figure-heavy deck serially (e.g. 191 figures) takes ~70 min and
+    # blows any sane budget. Bounded concurrency turns that into
+    # ~ceil(figures / _ENHANCE_CONCURRENCY) waves (~10 min) without overwhelming
+    # the image API. Gemini describe calls are additionally capped cluster-wide by
+    # the provider's RedisSemaphore; this constant bounds the GPT-Image fan-out.
+    _ENHANCE_CONCURRENCY = 6
+
     def __init__(self, payload = {}):
         super().__init__(payload)
         self.__generation_task_id = os.getenv("MAIN_TASK_ID")
@@ -68,6 +88,17 @@ class EnhanceImages(Workflow):
             return
 
         await self.__update_progress(0.05)
+
+        # Checkpoint-resume: a fully-complete marker means every figure was
+        # already enhanced-and-injected in a prior run, so there is nothing to do
+        # (re-injecting would duplicate figures). A partial marker lists the files
+        # already enhanced so the loop below skips exactly those.
+        completion_marker = await self.__load_completion_marker()
+        if completion_marker is not None and completion_marker.get("complete") is True:
+            print("[EnhanceImages] Already complete -- figures were enhanced in a prior run (resume); skipping stage.")
+            await self.__update_progress(1.0)
+            return
+        already_enhanced_file_paths = set((completion_marker or {}).get("enhancedFilePaths") or [])
 
         sidecar_path = self.__compute_sidecar_path()
         sidecar_document = await self.__load_sidecar(sidecar_path)
@@ -87,11 +118,9 @@ class EnhanceImages(Workflow):
 
         print(f"[EnhanceImages] Enhancing {len(assignments)} assignment(s) from sidecar.")
 
-        # Group assignments by their target file so we load + write each
-        # JSON exactly once. Per-file lists are sorted by block index
-        # descending so we splice from the back -- preserving the
-        # earlier-block byte offsets while inserting later-block figures
-        # (the same trick PrepareImages.HtmlInjector relies on).
+        # Group assignments by their target file. Per-file lists are spliced
+        # back-to-front later so the earlier-block byte offsets stay valid while
+        # inserting later-block figures (the trick PrepareImages.HtmlInjector uses).
         assignments_by_file_path: dict[str, list] = {}
         for assignment in assignments:
             file_path = assignment.get("filePath")
@@ -99,41 +128,87 @@ class EnhanceImages(Workflow):
                 continue
             assignments_by_file_path.setdefault(file_path, []).append(assignment)
 
+        # On a resumed run, files already fully enhanced-and-written must be left
+        # untouched (their JSON already carries the injected figures; re-injecting
+        # would duplicate them). Only the remaining files are enhanced.
+        files_to_process = [file_path for file_path in assignments_by_file_path if file_path not in already_enhanced_file_paths]
+        pending_assignments = [assignment for file_path in files_to_process for assignment in assignments_by_file_path[file_path]]
+
+        if not pending_assignments:
+            # Everything was already enhanced by a prior run; just finalize the marker.
+            await self.__write_completion_marker(list(already_enhanced_file_paths), complete = True)
+            await self.__update_progress(1.0)
+            return
+
         await self.__update_progress(0.10)
 
+        enhanced_file_paths = list(already_enhanced_file_paths)
+
+        # The enhancer opens outbound HTTP clients (OpenAI + Gemini); close them in
+        # the finally so the one-shot Agent subprocess can exit cleanly instead of
+        # stalling interpreter teardown after the task is already marked complete.
         asset_enhancer = DiagramImageEnhancer()
-        total_assignment_count = len(assignments)
-        completed_assignment_count = 0
+        try:
+            # ── Phase 1: render every pending figure CONCURRENTLY. This is the
+            # slow part (GCS read + Gemini describe + GPT-Image generate, ~20s each
+            # and almost entirely awaiting), and injection order is irrelevant
+            # here, so a bounded semaphore lets many figures render at once. Each
+            # result HTML is stashed on its assignment for the serial phase below.
+            concurrency_gate = asyncio.Semaphore(EnhanceImages._ENHANCE_CONCURRENCY)
+            total_pending = len(pending_assignments)
+            completed_count = 0
 
-        for file_path, file_assignments in assignments_by_file_path.items():
-            file_document = await self.__load_json_file(file_path)
-            if file_document is None:
-                # PrepareImages flagged this file path but we can't read
-                # it back -- treat as a hard error so moveToDatabase
-                # doesn't persist a partially-enhanced deck.
-                raise RuntimeError(
-                    f"EnhanceImages: assignment references unreadable file '{file_path}'."
-                )
+            async def render_one(assignment):
+                nonlocal completed_count
+                async with concurrency_gate:
+                    assignment["_enhancedHtml"] = await self.__build_enhanced_html(assignment, asset_enhancer)
+                completed_count += 1
+                # Phase 1 spans 0.10 -> 0.90 (the dominant cost).
+                await self.__update_progress(0.10 + 0.80 * (completed_count / total_pending))
 
-            await self.__enhance_assignments_in_file(
-                file_document,
-                file_assignments,
-                asset_enhancer,
+            render_results = await asyncio.gather(
+                *[render_one(assignment) for assignment in pending_assignments],
+                return_exceptions = True,
             )
+            # A structural failure (missing gcsImagePath / unreadable figure bytes)
+            # must fail the whole task so a partially-enhanced deck is never
+            # persisted. Enhancement failures do NOT raise -- they fall back to the
+            # original figure inside __build_enhanced_html -- so any exception here
+            # is a hard error worth propagating.
+            for render_result in render_results:
+                if isinstance(render_result, Exception):
+                    raise render_result
 
-            await Persistence.write(
-                file_path,
-                json.dumps(file_document, ensure_ascii = False),
-            )
+            # ── Phase 2: splice the pre-rendered figures into each file's HTML and
+            # persist. Serial + per-file so the back-to-front block splicing stays
+            # correct and the completion marker advances file-by-file (resume-safe).
+            for processed_file_count, file_path in enumerate(files_to_process, start = 1):
+                file_document = await self.__load_json_file(file_path)
+                if file_document is None:
+                    # PrepareImages flagged this file path but we can't read it back
+                    # -- treat as a hard error so moveToDatabase doesn't persist a
+                    # partially-enhanced deck.
+                    raise RuntimeError(
+                        f"EnhanceImages: assignment references unreadable file '{file_path}'."
+                    )
 
-            completed_assignment_count += len(file_assignments)
-            if total_assignment_count > 0:
-                fraction_done = completed_assignment_count / total_assignment_count
-                await self.__update_progress(0.10 + 0.85 * fraction_done)
+                self.__inject_assignments_into_file(file_document, assignments_by_file_path[file_path])
+
+                await Persistence.write(file_path, json.dumps(file_document, ensure_ascii = False))
+
+                # Record the file as enhanced immediately after its write so a crash
+                # here resumes at the next file, never re-injecting this one.
+                enhanced_file_paths.append(file_path)
+                await self.__write_completion_marker(enhanced_file_paths, complete = False)
+                await self.__update_progress(0.90 + 0.10 * (processed_file_count / len(files_to_process)))
+        finally:
+            await asset_enhancer.close()
+
+        await self.__write_completion_marker(enhanced_file_paths, complete = True)
 
         print(
-            f"[EnhanceImages] Done. Enhanced {total_assignment_count} figure(s) across "
-            f"{len(assignments_by_file_path)} file(s)."
+            f"[EnhanceImages] Done. Enhanced {len(pending_assignments)} figure(s) across "
+            f"{len(files_to_process)} file(s)."
         )
         await self.__update_progress(1.0)
 
@@ -150,6 +225,42 @@ class EnhanceImages(Workflow):
             PersistenceConstants.TASKS_DIRECTORY,
             self.__generation_task_id,
             _FIGURE_ASSIGNMENTS_SIDECAR_FILENAME,
+        )
+
+    def __completion_marker_path(self) -> str:
+        return join_path(
+            "/",
+            PersistenceConstants.TASKS_DIRECTORY,
+            self.__generation_task_id,
+            EnhanceImages._ENHANCE_IMAGES_COMPLETE_MARKER_NAME,
+        )
+
+    async def __load_completion_marker(self) -> dict | None:
+        """
+        Reads the per-file completion marker, or None when absent. A corrupt or
+        unreadable marker is treated as absent (start fresh) so a resume is never
+        blocked by it -- the only cost is possibly re-enhancing a file, which is
+        strictly better than dead-ending the run.
+        """
+        marker_path = self.__completion_marker_path()
+        if not await Persistence.exists(marker_path):
+            return None
+        try:
+            marker_bytes = await Persistence.read(marker_path)
+            return json.loads(marker_bytes.decode("utf-8"))
+        except Exception as load_error:
+            print(f"[EnhanceImages] Ignoring unreadable completion marker at {marker_path}: {load_error}")
+            return None
+
+    async def __write_completion_marker(self, enhanced_file_paths: list, complete: bool):
+        marker_document = {
+            "version": 1,
+            "complete": complete,
+            "enhancedFilePaths": enhanced_file_paths,
+        }
+        await Persistence.write(
+            self.__completion_marker_path(),
+            json.dumps(marker_document, ensure_ascii = False),
         )
 
     async def __load_sidecar(self, sidecar_path: str) -> dict | None:
@@ -174,60 +285,46 @@ class EnhanceImages(Workflow):
             print(f"[EnhanceImages] Could not load file {file_path}: {load_error}")
             return None
 
-    async def __enhance_assignments_in_file(
-        self,
-        file_document: dict,
-        file_assignments: list,
-        asset_enhancer: DiagramImageEnhancer,
-    ):
+    def __inject_assignments_into_file(self, file_document: dict, file_assignments: list):
         """
-        Splices every assignment for a single content file into its HTML.
-        Study materials carry a single "content" field; flashcards carry a
-        list of cards each with question/answer fields. We dispatch on
-        the assignment's `fileType` rather than peeking at the document
-        shape so an unexpected payload fails loudly.
+        Splices every pre-rendered assignment for a single content file into its
+        HTML. The enhanced figure HTML was produced concurrently in phase 1 and
+        stashed on each assignment, so this does only the fast, in-memory splicing.
+        Study materials carry a single "content" field; flashcards carry a list of
+        cards each with question/answer fields. We dispatch on the assignment's
+        `fileType` rather than peeking at the document shape so an unexpected
+        payload fails loudly.
         """
-        # Inserting figures at later block positions FIRST keeps earlier-block
-        # byte offsets valid for the subsequent inserts in the same field.
-        # We bucket by (cardIndex, fieldName) for flashcards because each
-        # field is its own independent HTML blob; study-material content
-        # is a single field so all assignments share the same bucket.
+        # Inserting figures at later block positions FIRST keeps earlier-block byte
+        # offsets valid for the subsequent inserts in the same field.
         for assignment in sorted(file_assignments, key = lambda a: a.get("blockIndex", 0), reverse = True):
+            replacement_html = assignment.get("_enhancedHtml")
+            if not replacement_html:
+                continue
             file_type = assignment.get("fileType")
             if file_type == "studyMaterial":
-                await self.__inject_into_study_material(file_document, assignment, asset_enhancer)
+                self.__inject_into_study_material(file_document, assignment, replacement_html)
             elif file_type == "flashcard":
-                await self.__inject_into_flashcard(file_document, assignment, asset_enhancer)
+                self.__inject_into_flashcard(file_document, assignment, replacement_html)
             else:
                 raise RuntimeError(
                     f"EnhanceImages: unrecognized assignment fileType '{file_type}'."
                 )
 
-    async def __inject_into_study_material(
-        self,
-        study_material_document: dict,
-        assignment: dict,
-        asset_enhancer: DiagramImageEnhancer,
-    ):
+    def __inject_into_study_material(self, study_material_document: dict, assignment: dict, replacement_html: str):
         content_html = study_material_document.get("content") or ""
         block_elements = HtmlInjector.extract_block_elements(content_html)
         if not block_elements:
             return
 
-        target_block_index  = min(assignment.get("blockIndex", 0), len(block_elements) - 1)
-        insertion_position  = block_elements[target_block_index]["end"]
+        target_block_index = min(assignment.get("blockIndex", 0), len(block_elements) - 1)
+        insertion_position = block_elements[target_block_index]["end"]
 
-        replacement_html = await self.__build_enhanced_html(assignment, asset_enhancer)
         study_material_document["content"] = HtmlInjector.inject_figure_after_block(
             content_html, insertion_position, replacement_html
         )
 
-    async def __inject_into_flashcard(
-        self,
-        flashcard_document: dict,
-        assignment: dict,
-        asset_enhancer: DiagramImageEnhancer,
-    ):
+    def __inject_into_flashcard(self, flashcard_document: dict, assignment: dict, replacement_html: str):
         cards = flashcard_document.get("cards") or []
         card_index = assignment.get("cardIndex")
         if not isinstance(card_index, int) or card_index < 0 or card_index >= len(cards):
@@ -246,7 +343,6 @@ class EnhanceImages(Workflow):
         target_block_index = min(assignment.get("blockIndex", 0), len(block_elements) - 1)
         insertion_position = block_elements[target_block_index]["end"]
 
-        replacement_html = await self.__build_enhanced_html(assignment, asset_enhancer)
         card[field_name] = HtmlInjector.inject_figure_after_block(
             field_html, insertion_position, replacement_html
         )

@@ -63,6 +63,11 @@ class PausedTaskBanner extends HTMLElement
             return `Your ${labelHtml} was interrupted before it finished. Resume it to continue from where it left off.`;
         }
 
+        if (this.#taskState.pausedReason === "IMAGE_PREPARATION_FAILED")
+        {
+            return `Your ${labelHtml} finished the text, but preparing images didn't complete. Resume to finish adding the images.`;
+        }
+
         return `Your ${labelHtml} was paused (out of credits). Top up your credits, then resume it.`;
     }
 

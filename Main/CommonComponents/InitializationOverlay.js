@@ -1,6 +1,7 @@
 import InitializationEvents from "../Globals/Events/InitializationEvents.js";
 import BlockingOverlayCoordinator from "../Globals/Classes/BlockingOverlayCoordinator.js";
 import CopyrightNotice from "./CopyrightNotice.js";
+import PopupStack from "../Globals/Classes/PopupStack.js";
 
 /**
  * InitializationOverlay
@@ -33,6 +34,7 @@ class InitializationOverlay extends HTMLElement
     #progressFillElement = null;
     #messageElement  = null;
     #panelElement    = null;
+    #popupStackHandle = null;
 
     connectedCallback()
     {
@@ -67,6 +69,11 @@ class InitializationOverlay extends HTMLElement
         // nothing else has had a chance to grab the slot yet.
         BlockingOverlayCoordinator.markActive(InitializationOverlay.#COORDINATOR_OWNER_ID);
 
+        // A non-dismissible PopupStack entry so a stray Escape during startup
+        // is swallowed rather than driving history.back() on the page behind
+        // the overlay. Released in #handleComplete once the overlay hides.
+        this.#popupStackHandle = PopupStack.register({ dismissible: false });
+
         for(const eventName of ["click", "pointerdown", "pointerup", "keydown", "keyup", "wheel", "touchstart", "touchend"])
         {
             this.addEventListener(eventName, (event) =>
@@ -86,6 +93,9 @@ class InitializationOverlay extends HTMLElement
         window.removeEventListener(InitializationEvents.PROGRESS, this.#handleProgress);
         window.removeEventListener(InitializationEvents.COMPLETE, this.#handleComplete);
         window.removeEventListener(InitializationEvents.FAILED,   this.#handleFailed);
+
+        PopupStack.unregister(this.#popupStackHandle);
+        this.#popupStackHandle = null;
     }
 
     #handleProgress = (event) =>
@@ -125,6 +135,10 @@ class InitializationOverlay extends HTMLElement
             // Release the slot once we're visually gone so the next
             // queued overlay (sync / tutorial) can take over.
             BlockingOverlayCoordinator.release(InitializationOverlay.#COORDINATOR_OWNER_ID);
+
+            // Hand Escape back to normal navigation now the overlay is gone.
+            PopupStack.unregister(this.#popupStackHandle);
+            this.#popupStackHandle = null;
         });
     };
 

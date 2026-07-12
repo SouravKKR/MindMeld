@@ -1,7 +1,10 @@
+import PopupStack from "../Globals/Classes/PopupStack.js";
+
 class ContextMenu extends HTMLElement
 {
     #resizeObserver = null;
     #position = { x: 0, y: 0 };
+    #popupStackHandle = null;
 
     static create(position = { x: 0, y: 0 }, ...args)
     {
@@ -74,11 +77,21 @@ class ContextMenu extends HTMLElement
         });
 
         this.#resizeObserver.observe(this);
+
+        // Escape closes the menu instead of navigating the page away. An
+        // open context menu otherwise only dismisses on an outside click.
+        this.#popupStackHandle = PopupStack.register(
+        {
+            dismiss: () => this.remove()
+        });
     }
 
     disconnectedCallback()
     {
         this.#resizeObserver?.disconnect();
+
+        PopupStack.unregister(this.#popupStackHandle);
+        this.#popupStackHandle = null;
     }
 }
 
