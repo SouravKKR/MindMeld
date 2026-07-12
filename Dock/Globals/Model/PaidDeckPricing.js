@@ -8,11 +8,13 @@ class PaidDeckPricing
     #priceMinor;
     #currency;
     #discountPercent;
+    #durationDays;
+    #isPerpetual;
     #effectiveFrom;
     #effectiveUntil;
     #additionalData;
 
-    constructor({deckId = null, region = 'GLOBAL', priceMinor = 0, currency = 'INR', discountPercent = 0, effectiveFrom = new Date(), effectiveUntil = new Date(), additionalData = {}} = {})
+    constructor({deckId = null, region = 'GLOBAL', priceMinor = 0, currency = 'INR', discountPercent = 0, durationDays = 0, isPerpetual = false, effectiveFrom = new Date(), effectiveUntil = new Date(), additionalData = {}} = {})
     {
         this.#id = crypto.randomUUID();
         this.setDeckId(deckId);
@@ -20,6 +22,8 @@ class PaidDeckPricing
         this.setPriceMinor(priceMinor);
         this.setCurrency(currency);
         this.setDiscountPercent(discountPercent);
+        this.setDurationDays(durationDays);
+        this.setIsPerpetual(isPerpetual);
         this.setEffectiveFrom(effectiveFrom);
         this.setEffectiveUntil(effectiveUntil);
         this.setAdditionalData(additionalData);
@@ -124,6 +128,42 @@ class PaidDeckPricing
         this.#discountPercent = value;
     }
 
+    getDurationDays()
+    {
+        return this.#durationDays;
+    }
+
+    setDurationDays(value)
+    {
+        if (value !== null)
+        {
+            value = parseInt(value, 10);
+            if (isNaN(value))
+            {
+                value = 0;
+            }
+            else
+            {
+                value = Math.max(value, 0);
+            }
+        }
+        this.#durationDays = value;
+    }
+
+    getIsPerpetual()
+    {
+        return this.#isPerpetual;
+    }
+
+    setIsPerpetual(value)
+    {
+        if (value !== null)
+        {
+            value = Boolean(value);
+        }
+        this.#isPerpetual = value;
+    }
+
     getEffectiveFrom()
     {
         return this.#effectiveFrom;
@@ -187,6 +227,8 @@ class PaidDeckPricing
             priceMinor: this.getPriceMinor(),
             currency: this.getCurrency(),
             discountPercent: this.getDiscountPercent(),
+            durationDays: this.getDurationDays(),
+            isPerpetual: this.getIsPerpetual(),
             effectiveFrom: this.getEffectiveFrom() !== null ? this.getEffectiveFrom().toISOString() : null,
             effectiveUntil: this.getEffectiveUntil() !== null ? this.getEffectiveUntil().toISOString() : null,
             additionalData: this.getAdditionalData(),
@@ -201,6 +243,8 @@ class PaidDeckPricing
             priceMinor: json.priceMinor ?? null,
             currency: json.currency ?? null,
             discountPercent: json.discountPercent ?? null,
+            durationDays: json.durationDays ?? null,
+            isPerpetual: json.isPerpetual ?? null,
             effectiveFrom: json.effectiveFrom != null ? new Date(json.effectiveFrom) : null,
             effectiveUntil: json.effectiveUntil != null ? new Date(json.effectiveUntil) : null,
             additionalData: json.additionalData ?? null

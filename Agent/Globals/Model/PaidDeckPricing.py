@@ -3,13 +3,15 @@ from datetime import datetime
 
 
 class PaidDeckPricing:
-    def __init__(self, deck_id: str = None, region: str = 'GLOBAL', price_minor: int = 0, currency: str = 'INR', discount_percent: float = 0, effective_from: datetime = datetime.now(), effective_until: datetime = datetime.now(), additional_data: dict = {}) -> None:
+    def __init__(self, deck_id: str = None, region: str = 'GLOBAL', price_minor: int = 0, currency: str = 'INR', discount_percent: float = 0, duration_days: int = 0, is_perpetual: bool = False, effective_from: datetime = datetime.now(), effective_until: datetime = datetime.now(), additional_data: dict = {}) -> None:
         self.__id = str(uuid.uuid4())
         self.set_deck_id(deck_id)
         self.set_region(region)
         self.set_price_minor(price_minor)
         self.set_currency(currency)
         self.set_discount_percent(discount_percent)
+        self.set_duration_days(duration_days)
+        self.set_is_perpetual(is_perpetual)
         self.set_effective_from(effective_from)
         self.set_effective_until(effective_until)
         self.set_additional_data(additional_data)
@@ -69,6 +71,26 @@ class PaidDeckPricing:
                 value = 0
         self.__discount_percent = value
 
+    def get_duration_days(self) -> int:
+        return self.__duration_days
+
+    def set_duration_days(self, value: int) -> None:
+        if value is not None:
+            try:
+                value = int(value)
+                value = max(0, value)
+            except (ValueError, TypeError):
+                value = 0
+        self.__duration_days = value
+
+    def get_is_perpetual(self) -> bool:
+        return self.__is_perpetual
+
+    def set_is_perpetual(self, value: bool) -> None:
+        if value is not None:
+            value = bool(value)
+        self.__is_perpetual = value
+
     def get_effective_from(self) -> datetime:
         return self.__effective_from
 
@@ -119,6 +141,8 @@ class PaidDeckPricing:
             'priceMinor': self.get_price_minor(),
             'currency': self.get_currency(),
             'discountPercent': self.get_discount_percent(),
+            'durationDays': self.get_duration_days(),
+            'isPerpetual': self.get_is_perpetual(),
             'effectiveFrom': self.get_effective_from().isoformat() if self.get_effective_from() is not None else None,
             'effectiveUntil': self.get_effective_until().isoformat() if self.get_effective_until() is not None else None,
             'additionalData': self.get_additional_data(),
@@ -132,6 +156,8 @@ class PaidDeckPricing:
             price_minor=data.get('priceMinor'),
             currency=data.get('currency'),
             discount_percent=data.get('discountPercent'),
+            duration_days=data.get('durationDays'),
+            is_perpetual=data.get('isPerpetual'),
             effective_from=datetime.fromisoformat(data.get('effectiveFrom')) if data.get('effectiveFrom') is not None else None,
             effective_until=datetime.fromisoformat(data.get('effectiveUntil')) if data.get('effectiveUntil') is not None else None,
             additional_data=data.get('additionalData')

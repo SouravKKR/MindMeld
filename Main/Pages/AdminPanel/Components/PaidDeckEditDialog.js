@@ -520,6 +520,16 @@ class PaidDeckEditDialog
                         </select>
                     </label>
 
+                    <div class="paid-deck-upload-field paid-deck-upload-field-full">
+                        <span>License duration</span>
+                        <label class="paid-deck-upload-field paid-deck-upload-field-checkbox">
+                            <input type="checkbox" name="isPerpetual" ${deck.isPerpetual === true ? "checked" : ""}>
+                            <span>Perpetual — lifetime access, never expires</span>
+                        </label>
+                        <input type="number" name="durationDays" min="1" value="${Number(deck.durationDays) > 0 ? Number(deck.durationDays) : ""}" placeholder="Or a rental length in days (e.g. 365)">
+                        <small>Tick Perpetual for lifetime access, or enter a positive number of days for a time-limited license. A deck with neither set cannot be purchased.</small>
+                    </div>
+
                     <label class="paid-deck-upload-field">
                         <span>Granularity</span>
                         <select name="granularity">
@@ -668,6 +678,11 @@ class PaidDeckEditDialog
             thumbnailUrl: thumbnailSelection.thumbnailUrl,
             basePriceMinor: Number(getValue("basePriceMinor") || 0),
             currency: getValue("currency").trim().toUpperCase() || "INR",
+            // A ticked "Perpetual" box always wins; otherwise a positive day
+            // count sells a finite rental. Both blank leaves the deck ungrantable
+            // until the admin picks one (enforced server-side).
+            durationDays: getChecked("isPerpetual") ? 0 : (Number(getValue("durationDays") || 0) > 0 ? Math.floor(Number(getValue("durationDays"))) : 0),
+            isPerpetual: getChecked("isPerpetual"),
             granularity: Number(getValue("granularity") || 0),
             tags: PaidDeckEditDialog.#parseCsvList(getValue("tags")),
             extraTags: PaidDeckEditDialog.#parseCsvList(getValue("extraTags")),

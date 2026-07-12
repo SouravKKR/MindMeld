@@ -54,6 +54,17 @@
             "defaultValue": "INR",
             "maxLength": 8
         },
+        "durationDays":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "isPerpetual":
+        {
+            "datatype": "boolean",
+            "defaultValue": false
+        },
         "granularity":
         {
             "datatype": "enum:DeckPurchaseGranularity",

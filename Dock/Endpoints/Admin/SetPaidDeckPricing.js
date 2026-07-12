@@ -30,6 +30,11 @@ async function setPaidDeckPricing(request, response)
             priceMinor: entry.priceMinor || 0,
             currency: entry.currency || "INR",
             discountPercent: entry.discountPercent || 0,
+            // Explicit license duration for this (deck, region): durationDays > 0
+            // sells a finite rental, isPerpetual sells lifetime access. Neither
+            // set means a buyer's grant is refused (LicenseExpiryResolver).
+            durationDays: Number.isInteger(entry.durationDays) && entry.durationDays > 0 ? entry.durationDays : 0,
+            isPerpetual: entry.isPerpetual === true,
             effectiveFrom: entry.effectiveFrom ? new Date(entry.effectiveFrom).toISOString() : new Date().toISOString(),
             effectiveUntil: entry.effectiveUntil ? new Date(entry.effectiveUntil).toISOString() : new Date(8640000000000000).toISOString(),
             additionalData: entry.additionalData || {}

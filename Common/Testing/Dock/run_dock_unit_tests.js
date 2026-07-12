@@ -27,6 +27,9 @@ const CATALOGUED = [
     "PeriodicCreditAssignment.roundTrip", "PeriodicCreditAssignment.coercion",
     "LogFormatter.formatLine", "LogFormatter.severityName", "LogFormatter.renderHtmlLine",
     "DownloadLogs.splitEntries",
+    "LicenseExpiryResolver.resolve", "LicenseExpiryResolver.isGrantable",
+    "SyncPayloadValidator.isValidId", "SyncPayloadValidator.isValidDeviceId",
+    "SyncPayloadValidator.sanitizeChanges", "SyncPayloadValidator.sanitizeLastSync",
 ];
 
 // The Dock modules resolve their own dependencies against Dock/node_modules, so
@@ -46,6 +49,8 @@ let periodicAssignmentStatuses;
 let LogFormatter;
 let splitEntries;
 let logLevel;
+let LicenseExpiryResolver;
+let SyncPayloadValidator;
 try
 {
     KeyManagementService = require(path.join(DOCK_ROOT, "Globals/Classes/Security/KeyManagementService"));
@@ -63,6 +68,8 @@ try
     LogFormatter = require(path.join(DOCK_ROOT, "Globals/Classes/Logging/LogFormatter"));
     ({ splitEntries } = require(path.join(DOCK_ROOT, "Endpoints/Admin/Logs/DownloadLogs")));
     ({ logLevel } = require(path.join(DOCK_ROOT, "Globals/Enumerations/LogLevel")));
+    LicenseExpiryResolver = require(path.join(DOCK_ROOT, "Globals/Classes/Pricing/LicenseExpiryResolver"));
+    SyncPayloadValidator = require(path.join(DOCK_ROOT, "Globals/Classes/Sync/SyncPayloadValidator"));
 }
 catch (error)
 {
@@ -498,6 +505,103 @@ harness.test("splitEntries: 'hours:1' buckets entries by hour window", "Download
     assertEqual(segments.length, 2, "two distinct hour buckets (00:00 and 02:00)");
     assertEqual(segments[0].entries.length, 2, "both 00:xx entries land in the first bucket");
     assertEqual(segments[1].entries.length, 1);
+});
+
+// -- LicenseExpiryResolver: explicit-duration semantics -----------------------
+
+const FIXED_NOW = new Date("2026-07-12T00:00:00.000Z");
+
+harness.test("LicenseExpiryResolver.resolve: positive durationDays -> FINITE at now + days", "LicenseExpiryResolver.resolve", () =>
+{
+    const resolution = LicenseExpiryResolver.resolve({ durationDays: 365, isPerpetual: false }, FIXED_NOW);
+    assertEqual(resolution.status, LicenseExpiryResolver.STATUS_FINITE);
+    assertEqual(resolution.expiresAt.getTime(), FIXED_NOW.getTime() + 365 * 86_400_000, "expiry is now + durationDays");
+});
+
+harness.test("LicenseExpiryResolver.resolve: durationDays wins over isPerpetual", "LicenseExpiryResolver.resolve", () =>
+{
+    const resolution = LicenseExpiryResolver.resolve({ durationDays: 30, isPerpetual: true }, FIXED_NOW);
+    assertEqual(resolution.status, LicenseExpiryResolver.STATUS_FINITE, "a positive duration is never silently perpetual");
+});
+
+harness.test("LicenseExpiryResolver.resolve: isPerpetual true -> PERPETUAL (FOREVER sentinel)", "LicenseExpiryResolver.resolve", () =>
+{
+    const resolution = LicenseExpiryResolver.resolve({ durationDays: 0, isPerpetual: true }, FIXED_NOW);
+    assertEqual(resolution.status, LicenseExpiryResolver.STATUS_PERPETUAL);
+    assertEqual(resolution.expiresAt.getTime(), 0, "perpetual uses the epoch-zero FOREVER sentinel");
+});
+
+harness.test("LicenseExpiryResolver.resolve: neither set -> UNSPECIFIED (grant refused)", "LicenseExpiryResolver.resolve", () =>
+{
+    assertEqual(LicenseExpiryResolver.resolve({ durationDays: 0, isPerpetual: false }, FIXED_NOW).status, LicenseExpiryResolver.STATUS_UNSPECIFIED);
+    assertEqual(LicenseExpiryResolver.resolve({}, FIXED_NOW).status, LicenseExpiryResolver.STATUS_UNSPECIFIED);
+    assertEqual(LicenseExpiryResolver.resolve(undefined, FIXED_NOW).status, LicenseExpiryResolver.STATUS_UNSPECIFIED);
+});
+
+harness.test("LicenseExpiryResolver.resolve: non-integer / negative durationDays is not finite", "LicenseExpiryResolver.resolve", () =>
+{
+    assertEqual(LicenseExpiryResolver.resolve({ durationDays: -5, isPerpetual: false }, FIXED_NOW).status, LicenseExpiryResolver.STATUS_UNSPECIFIED);
+    assertEqual(LicenseExpiryResolver.resolve({ durationDays: 1.5, isPerpetual: false }, FIXED_NOW).status, LicenseExpiryResolver.STATUS_UNSPECIFIED);
+});
+
+harness.test("LicenseExpiryResolver.isGrantable: true only for finite or explicit perpetual", "LicenseExpiryResolver.isGrantable", () =>
+{
+    assertEqual(LicenseExpiryResolver.isGrantable({ durationDays: 10 }, FIXED_NOW), true);
+    assertEqual(LicenseExpiryResolver.isGrantable({ isPerpetual: true }, FIXED_NOW), true);
+    assertEqual(LicenseExpiryResolver.isGrantable({ durationDays: 0, isPerpetual: false }, FIXED_NOW), false);
+});
+
+// -- SyncPayloadValidator: NoSQL-operator injection defence --------------------
+
+harness.test("SyncPayloadValidator.isValidId: non-empty bounded string only", "SyncPayloadValidator.isValidId", () =>
+{
+    assertEqual(SyncPayloadValidator.isValidId("deck-123"), true);
+    assertEqual(SyncPayloadValidator.isValidId(""), false);
+    assertEqual(SyncPayloadValidator.isValidId({ $ne: null }), false, "an operator object must be rejected");
+    assertEqual(SyncPayloadValidator.isValidId(42), false);
+    assertEqual(SyncPayloadValidator.isValidId(null), false);
+    assertEqual(SyncPayloadValidator.isValidId("x".repeat(SyncPayloadValidator.MAX_ID_LENGTH + 1)), false);
+});
+
+harness.test("SyncPayloadValidator.isValidDeviceId: non-empty bounded string only", "SyncPayloadValidator.isValidDeviceId", () =>
+{
+    assertEqual(SyncPayloadValidator.isValidDeviceId("device-abc"), true);
+    assertEqual(SyncPayloadValidator.isValidDeviceId({ $gt: "" }), false);
+    assertEqual(SyncPayloadValidator.isValidDeviceId(""), false);
+});
+
+harness.test("SyncPayloadValidator.sanitizeLastSync: coerces to safe epoch millis", "SyncPayloadValidator.sanitizeLastSync", () =>
+{
+    assertEqual(SyncPayloadValidator.sanitizeLastSync(1_700_000_000_000), 1_700_000_000_000);
+    assertEqual(SyncPayloadValidator.sanitizeLastSync(0), 0);
+    assertEqual(SyncPayloadValidator.sanitizeLastSync(-1), 0, "negative collapses to 0");
+    assertEqual(SyncPayloadValidator.sanitizeLastSync({ $gt: 0 }), 0, "an operator object collapses to 0");
+    assertEqual(SyncPayloadValidator.sanitizeLastSync(NaN), 0);
+});
+
+harness.test("SyncPayloadValidator.sanitizeChanges: drops injected id fields, keeps valid ones", "SyncPayloadValidator.sanitizeChanges", () =>
+{
+    const changes =
+    [
+        { entityType: 1, data: { id: "card-1", question: "q" } },        // valid upsert
+        { entityType: 1, data: { id: { $ne: null } } },                  // injected data.id
+        { deleted: true, entityId: "deck-9", entityType: 0 },            // valid deletion
+        { deleted: true, entityId: { $ne: null }, entityType: 0 },       // injected entityId
+        { entityType: 1 },                                               // missing data
+        "not-an-object"                                                  // junk
+    ];
+    const { validChanges, droppedCount } = SyncPayloadValidator.sanitizeChanges(changes);
+    assertEqual(validChanges.length, 2, "only the two well-formed changes survive");
+    assertEqual(droppedCount, 4, "the four malformed changes are dropped");
+    assertEqual(validChanges[0].data.id, "card-1");
+    assertEqual(validChanges[1].entityId, "deck-9");
+});
+
+harness.test("SyncPayloadValidator.sanitizeChanges: non-array input yields empty result", "SyncPayloadValidator.sanitizeChanges", () =>
+{
+    const { validChanges, droppedCount } = SyncPayloadValidator.sanitizeChanges({ $where: "1==1" });
+    assertEqual(validChanges.length, 0);
+    assertEqual(droppedCount, 0);
 });
 
 harness.runAndWrite(RESULT_FILE);

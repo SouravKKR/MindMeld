@@ -443,6 +443,10 @@ class DatabaseConnector
         await deckLicensesCollection.createIndex({ userId: 1, deckId: 1 }, { unique: true });
         await deckLicensesCollection.createIndex({ userId: 1, rotatedAt: -1 });
         await deckLicensesCollection.createIndex({ deckId: 1, status: 1 });
+        // ExpiredLicenseSweeper scans "ACTIVE licenses with a finite expiry now
+        // in the past" server-wide; the status+expiresAt compound keeps that
+        // periodic sweep an index scan rather than a full collection scan.
+        await deckLicensesCollection.createIndex({ status: 1, expiresAt: 1 });
 
         // ── Devices ────────────────────────────────────────────────────────────
         // Login-flow checks: "list devices for this user, sorted by

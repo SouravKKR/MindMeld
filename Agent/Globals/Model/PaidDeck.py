@@ -6,7 +6,7 @@ from Globals.Enumerations.PaidDeckFeatureBadges import PaidDeckFeatureBadges
 
 
 class PaidDeck:
-    def __init__(self, title: str = None, description: str = '', seller_id: str = '', thumbnail_url: str = '', category: str = '', tags: List[str] = [], base_price_minor: int = 0, currency: str = 'INR', granularity: DeckPurchaseGranularity = DeckPurchaseGranularity(0), bundle_child_ids: List[str] = [], parent_bundle_ids: List[str] = [], asset_blob_id: str = '', key_version: int = 1, is_published: bool = False, published_at: datetime = datetime.now(), feature_badges: List[PaidDeckFeatureBadges] = [], extra_tags: List[str] = [], content_summary: dict = {}, additional_data: dict = {}) -> None:
+    def __init__(self, title: str = None, description: str = '', seller_id: str = '', thumbnail_url: str = '', category: str = '', tags: List[str] = [], base_price_minor: int = 0, currency: str = 'INR', duration_days: int = 0, is_perpetual: bool = False, granularity: DeckPurchaseGranularity = DeckPurchaseGranularity(0), bundle_child_ids: List[str] = [], parent_bundle_ids: List[str] = [], asset_blob_id: str = '', key_version: int = 1, is_published: bool = False, published_at: datetime = datetime.now(), feature_badges: List[PaidDeckFeatureBadges] = [], extra_tags: List[str] = [], content_summary: dict = {}, additional_data: dict = {}) -> None:
         self.__id = str(uuid.uuid4())
         self.set_title(title)
         self.set_description(description)
@@ -16,6 +16,8 @@ class PaidDeck:
         self.set_tags(tags)
         self.set_base_price_minor(base_price_minor)
         self.set_currency(currency)
+        self.set_duration_days(duration_days)
+        self.set_is_perpetual(is_perpetual)
         self.set_granularity(granularity)
         self.set_bundle_child_ids(bundle_child_ids)
         self.set_parent_bundle_ids(parent_bundle_ids)
@@ -111,6 +113,26 @@ class PaidDeck:
             if len(value) > 8:
                 value = value[:8]
         self.__currency = value
+
+    def get_duration_days(self) -> int:
+        return self.__duration_days
+
+    def set_duration_days(self, value: int) -> None:
+        if value is not None:
+            try:
+                value = int(value)
+                value = max(0, value)
+            except (ValueError, TypeError):
+                value = 0
+        self.__duration_days = value
+
+    def get_is_perpetual(self) -> bool:
+        return self.__is_perpetual
+
+    def set_is_perpetual(self, value: bool) -> None:
+        if value is not None:
+            value = bool(value)
+        self.__is_perpetual = value
 
     def get_granularity(self) -> DeckPurchaseGranularity:
         return self.__granularity
@@ -229,6 +251,8 @@ class PaidDeck:
             'tags': self.get_tags(),
             'basePriceMinor': self.get_base_price_minor(),
             'currency': self.get_currency(),
+            'durationDays': self.get_duration_days(),
+            'isPerpetual': self.get_is_perpetual(),
             'granularity': int(self.get_granularity().value) if self.get_granularity() is not None else None,
             'bundleChildIds': self.get_bundle_child_ids(),
             'parentBundleIds': self.get_parent_bundle_ids(),
@@ -253,6 +277,8 @@ class PaidDeck:
             tags=data.get('tags'),
             base_price_minor=data.get('basePriceMinor'),
             currency=data.get('currency'),
+            duration_days=data.get('durationDays'),
+            is_perpetual=data.get('isPerpetual'),
             granularity=DeckPurchaseGranularity(data.get('granularity')) if data.get('granularity') is not None else None,
             bundle_child_ids=data.get('bundleChildIds'),
             parent_bundle_ids=data.get('parentBundleIds'),

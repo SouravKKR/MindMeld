@@ -14,6 +14,8 @@ class PaidDeck
     #tags;
     #basePriceMinor;
     #currency;
+    #durationDays;
+    #isPerpetual;
     #granularity;
     #bundleChildIds;
     #parentBundleIds;
@@ -26,7 +28,7 @@ class PaidDeck
     #contentSummary;
     #additionalData;
 
-    constructor({title = null, description = '', sellerId = '', thumbnailUrl = '', category = '', tags = [], basePriceMinor = 0, currency = 'INR', granularity = 0, bundleChildIds = [], parentBundleIds = [], assetBlobId = '', keyVersion = 1, isPublished = false, publishedAt = new Date(), featureBadges = [], extraTags = [], contentSummary = {}, additionalData = {}} = {})
+    constructor({title = null, description = '', sellerId = '', thumbnailUrl = '', category = '', tags = [], basePriceMinor = 0, currency = 'INR', durationDays = 0, isPerpetual = false, granularity = 0, bundleChildIds = [], parentBundleIds = [], assetBlobId = '', keyVersion = 1, isPublished = false, publishedAt = new Date(), featureBadges = [], extraTags = [], contentSummary = {}, additionalData = {}} = {})
     {
         this.#id = crypto.randomUUID();
         this.setTitle(title);
@@ -37,6 +39,8 @@ class PaidDeck
         this.setTags(tags);
         this.setBasePriceMinor(basePriceMinor);
         this.setCurrency(currency);
+        this.setDurationDays(durationDays);
+        this.setIsPerpetual(isPerpetual);
         this.setGranularity(granularity);
         this.setBundleChildIds(bundleChildIds);
         this.setParentBundleIds(parentBundleIds);
@@ -200,6 +204,42 @@ class PaidDeck
             }
         }
         this.#currency = value;
+    }
+
+    getDurationDays()
+    {
+        return this.#durationDays;
+    }
+
+    setDurationDays(value)
+    {
+        if (value !== null)
+        {
+            value = parseInt(value, 10);
+            if (isNaN(value))
+            {
+                value = 0;
+            }
+            else
+            {
+                value = Math.max(value, 0);
+            }
+        }
+        this.#durationDays = value;
+    }
+
+    getIsPerpetual()
+    {
+        return this.#isPerpetual;
+    }
+
+    setIsPerpetual(value)
+    {
+        if (value !== null)
+        {
+            value = Boolean(value);
+        }
+        this.#isPerpetual = value;
     }
 
     getGranularity()
@@ -392,6 +432,8 @@ class PaidDeck
             tags: this.getTags(),
             basePriceMinor: this.getBasePriceMinor(),
             currency: this.getCurrency(),
+            durationDays: this.getDurationDays(),
+            isPerpetual: this.getIsPerpetual(),
             granularity: this.getGranularity() !== null ? Number(this.getGranularity()) : null,
             bundleChildIds: this.getBundleChildIds(),
             parentBundleIds: this.getParentBundleIds(),
@@ -417,6 +459,8 @@ class PaidDeck
             tags: json.tags ?? null,
             basePriceMinor: json.basePriceMinor ?? null,
             currency: json.currency ?? null,
+            durationDays: json.durationDays ?? null,
+            isPerpetual: json.isPerpetual ?? null,
             granularity: json.granularity ?? null,
             bundleChildIds: json.bundleChildIds ?? null,
             parentBundleIds: json.parentBundleIds ?? null,

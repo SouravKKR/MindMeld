@@ -903,6 +903,16 @@ class PaidDeckUploadDialog
                             <input type="number" name="basePriceMinor" min="0" value="0">
                         </label>
 
+                        <div class="paid-deck-upload-field paid-deck-upload-field-full">
+                            <span>License duration *</span>
+                            <label class="paid-deck-upload-field paid-deck-upload-field-checkbox">
+                                <input type="checkbox" name="isPerpetual" data-role="license-perpetual">
+                                <span>Perpetual — lifetime access, never expires</span>
+                            </label>
+                            <input type="number" name="durationDays" data-role="license-duration-days" min="1" placeholder="Or a rental length in days (e.g. 365)">
+                            <small>Access must be sold explicitly: tick Perpetual for lifetime access, or enter a positive number of days for a time-limited license. A deck with neither set cannot be purchased.</small>
+                        </div>
+
                         <div class="paid-deck-upload-field paid-deck-upload-field-full" data-role="regional-prices-block">
                             ${PaidDeckUploadDialog.#renderRegionalPriceEditor("The bundle price above is the default. Add a region only to set a specific price there — buyers in regions you don't list see the default auto-converted into their local currency.")}
                         </div>
@@ -1007,10 +1017,30 @@ class PaidDeckUploadDialog
         }
     }
 
+    /**
+     * Reads the explicit license-duration control into { durationDays,
+     * isPerpetual }. A ticked "Perpetual" box always wins (durationDays 0); a
+     * positive day count otherwise selects a finite rental. Leaving both blank
+     * yields { durationDays: 0, isPerpetual: false } — which the server refuses
+     * to grant, so the admin is nudged to choose one.
+     */
+    static #collectLicenseDuration(formElement)
+    {
+        const isPerpetual = Boolean(formElement.elements["isPerpetual"]?.checked);
+        if (isPerpetual)
+        {
+            return { durationDays: 0, isPerpetual: true };
+        }
+        const durationDaysRaw = Number(formElement.elements["durationDays"]?.value || 0);
+        const durationDays = Number.isFinite(durationDaysRaw) && durationDaysRaw > 0 ? Math.floor(durationDaysRaw) : 0;
+        return { durationDays: durationDays, isPerpetual: false };
+    }
+
     static #collectBundlePayload(formElement, dialog, selectedSourceDeck, bundleId, childIds)
     {
         const getValue = (name) => formElement.elements[name]?.value ?? "";
         const getChecked = (name) => Boolean(formElement.elements[name]?.checked);
+        const licenseDuration = PaidDeckUploadDialog.#collectLicenseDuration(formElement);
 
         const additionalDataRaw = getValue("additionalData");
         const additionalData = additionalDataRaw.trim().length > 0
@@ -1053,6 +1083,8 @@ class PaidDeckUploadDialog
             thumbnailUrl: bundleThumbnail.thumbnailUrl,
             basePriceMinor: Number(getValue("basePriceMinor") || 0),
             currency: getValue("currency").trim().toUpperCase() || "INR",
+            durationDays: licenseDuration.durationDays,
+            isPerpetual: licenseDuration.isPerpetual,
             granularity: Number(getValue("granularity") || 0),
             tags: PaidDeckUploadDialog.#parseCsvList(getValue("tags")),
             extraTags: PaidDeckUploadDialog.#parseCsvList(getValue("extraTags")),
@@ -1086,6 +1118,9 @@ class PaidDeckUploadDialog
         const sharedFeatureBadges = PaidDeckUploadDialog.#collectSelectedBadgeValues(dialog);
         const sharedSellerId = getValue("sellerId").trim();
         const sharedIsPublished = getChecked("isPublished");
+        // Individually-sold sub-decks inherit the bundle's license duration; the
+        // admin can override any child later via the Edit dialog.
+        const sharedLicenseDuration = PaidDeckUploadDialog.#collectLicenseDuration(formElement);
 
         const instituteName = getValue("instituteName").trim();
         const sharedInstitute = instituteName.length > 0
@@ -1119,6 +1154,8 @@ class PaidDeckUploadDialog
                 thumbnailUrl: childThumbnail.thumbnailUrl,
                 basePriceMinor: Number(childRow.priceInput.value || 0),
                 currency: sharedCurrency,
+                durationDays: sharedLicenseDuration.durationDays,
+                isPerpetual: sharedLicenseDuration.isPerpetual,
                 granularity: deckPurchaseGranularity.INDIVIDUAL,
                 tags: sharedTags,
                 extraTags: sharedExtraTags,

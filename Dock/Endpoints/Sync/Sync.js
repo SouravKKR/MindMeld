@@ -7,12 +7,15 @@ const TaskManager = require("../../Globals/Classes/Task/TaskManager");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const PaidDeckSyncCrypto = require("../../Globals/Classes/Security/PaidDeckSyncCrypto");
 const StorageCreditAssessor = require("../../Globals/Classes/Credits/StorageCreditAssessor");
+const StorageQuotaEnforcer = require("../../Globals/Classes/Storage/StorageQuotaEnforcer");
+const SyncPayloadValidator = require("../../Globals/Classes/Sync/SyncPayloadValidator");
+const LapsedPaidDeckReaper = require("../../Globals/Classes/PaidDeck/LapsedPaidDeckReaper");
 const AutoAnalysisDeckFields = require("../../Globals/Classes/Analysis/AutoAnalysisDeckFields");
 const CuratedStudyMaterialFields = require("../../Globals/Classes/Analysis/CuratedStudyMaterialFields");
 const { entityTypes } = require("../../Globals/Enumerations/EntityTypes");
-const { deckLicenseStatuses } = require("../../Globals/Enumerations/DeckLicenseStatuses");
 const { curatedBatchReviewStates } = require("../../Globals/Enumerations/CuratedBatchReviewStates");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 // ── Pull-phase chunking ────────────────────────────────────────────────
 //
@@ -60,14 +63,28 @@ async function handleSync(request, response)
     const body = await request.getBody();
     const userId = user.getId();
     const deviceId = body.deviceId;
-    const lastSync = body.lastSync || 0;
-    const changes = body.changes || [];
+    // Coerce the cursor to a safe number so it can never smuggle a query
+    // operator into `new Date(lastSync)` / the pull's serverUpdatedAt range.
+    const lastSync = SyncPayloadValidator.sanitizeLastSync(body.lastSync);
     const isLastChunk = body.isLastChunk !== false; // default true for backward compat
 
-    if (!deviceId)
+    // deviceId is threaded straight into MongoDB filters (sync-data upsert, the
+    // per-chunk lock check). Reject anything that is not a plain, bounded string
+    // so a hand-crafted request cannot inject a NoSQL operator in its place.
+    if (!SyncPayloadValidator.isValidDeviceId(deviceId))
     {
         response.sendStatusCode(httpStatus.BAD_REQUEST);
         return;
+    }
+
+    // Drop any change whose id fields (data.id for upserts, entityId for
+    // deletions) are not safe primitive strings BEFORE they reach a query
+    // filter. Every query is already userId-scoped, but an operator in a
+    // client's own id could still mass-match / corrupt its own records.
+    const { validChanges: changes, droppedCount: droppedChangeCount } = SyncPayloadValidator.sanitizeChanges(body.changes);
+    if (droppedChangeCount > 0)
+    {
+        console.warn(`[Sync] Dropped ${droppedChangeCount} change(s) with invalid id fields from user ${userId} device ${deviceId}.`);
     }
 
     // Lazily bill the recurring storage categories (debounced to once per
@@ -130,6 +147,27 @@ async function handleSync(request, response)
         {
             console.warn(`[Sync] Unknown entityType ${change.entityType}`);
         }
+    }
+
+    // ── Storage quota (hard 5 GB / user flood cap) ─────────────────────────
+    // Only a push that CREATES or UPDATES entities can grow the footprint —
+    // deletions always proceed (they shrink it). If the user is already at or
+    // over the cap, refuse the growth with 413 BEFORE writing anything, so a
+    // malicious client cannot flood the database with fabricated records. The
+    // enforcer memoises the footprint briefly, so a multi-chunk sync doesn't
+    // re-aggregate on every chunk.
+    const hasUpserts = byType[entityTypes.DECK].length > 0
+        || byType[entityTypes.CARD].length > 0
+        || byType[entityTypes.STUDY_MATERIAL].length > 0
+        || byType[entityTypes.MOCK_TEST].length > 0
+        || byType[entityTypes.ASK_AI_POPUP_LINK].length > 0;
+
+    if (hasUpserts && !(await StorageQuotaEnforcer.isWithinQuota(userId)))
+    {
+        console.warn(`[Sync] Rejecting push from user ${userId} — storage quota exceeded.`);
+        response.statusCode = httpStatus.PAYLOAD_TOO_LARGE;
+        response.sendJson({ error: ErrorCodes.STORAGE_QUOTA_EXCEEDED, limitBytes: StorageQuotaEnforcer.LIMIT_BYTES });
+        return;
     }
 
     // Paid decks now ride the normal sync pipeline, but their CONTENT is
@@ -267,8 +305,10 @@ async function handleSync(request, response)
         // Tombstone-on-lapse (security req #6 + stale-orphan cleanup): tear down
         // the seeded rows of any paid deck whose license has lapsed BEFORE the
         // pull fetch + getDeletionsSince, so the resulting tombstones ride out in
-        // this same response and the client drops its now-unlicensed copy.
-        await tombstoneLapsedPaidDeckRows(db, userId);
+        // this same response and the client drops its now-unlicensed copy. The
+        // ExpiredLicenseSweeper does the same on a schedule so cleanup never has
+        // to wait for the user to sync; both share LapsedPaidDeckReaper.
+        await LapsedPaidDeckReaper.reapForUser(db, userId);
 
         const pullConfig =
         [
@@ -593,80 +633,6 @@ async function handleSync(request, response)
         remainingEntityCount,
         requestFullResync:   bRequestFullResync
     });
-}
-
-/**
- * True iff a raw deckLicenses document is currently usable — status ACTIVE and
- * either a FOREVER sentinel expiry (epoch-zero) or a future expiry. Mirrors
- * KeyManagementService.isLicenseActive but reads the stored doc directly (the
- * pull path has no DeckLicense model instance handy).
- */
-function isPaidLicenseDocumentActive(licenseDocument)
-{
-    if (!licenseDocument || licenseDocument.status !== deckLicenseStatuses.ACTIVE)
-    {
-        return false;
-    }
-    const expiresAt = licenseDocument.expiresAt;
-    if (!expiresAt)
-    {
-        return true;
-    }
-    const expiryTimestampMs = new Date(expiresAt).getTime();
-    if (isNaN(expiryTimestampMs))
-    {
-        return true;
-    }
-    if (expiryTimestampMs <= 0)
-    {
-        return true; // FOREVER sentinel.
-    }
-    return expiryTimestampMs > Date.now();
-}
-
-/**
- * Tombstone-on-lapse: for each of the user's paid-deck licenses that EXISTS but
- * is no longer active (REVOKED, or a finite expiry now in the past), tears down
- * the deck's seeded rows still sitting in the server collections so the client
- * deletes its now-unlicensed copy instead of leaving it stranded on the home
- * page (security req #6 — access must not persist past expiry). Deliberately
- * scoped to existing-inactive licenses ONLY — never a merely-absent license,
- * which can be a deck still mid-provision. Idempotent: once a deck's rows are
- * gone, later pulls find none and do nothing.
- */
-async function tombstoneLapsedPaidDeckRows(database, userId)
-{
-    const licenseDocuments = await database
-        .collection(DatabaseConstants.DECK_LICENSES_COLLECTION)
-        .find({ userId: userId })
-        .toArray();
-
-    const lapsedDeckIds = licenseDocuments
-        .filter((licenseDocument) => !isPaidLicenseDocumentActive(licenseDocument))
-        .map((licenseDocument) => licenseDocument.deckId)
-        .filter((deckId) => typeof deckId === "string" && deckId.length > 0);
-
-    if (lapsedDeckIds.length === 0)
-    {
-        return;
-    }
-
-    const lapsedDeckRows = await database
-        .collection(DatabaseConstants.DECKS_COLLECTION)
-        .find({ userId: userId, "data.additionalData.paidDeckId": { $in: lapsedDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
-        .toArray();
-
-    const deletionChanges = lapsedDeckRows
-        .filter((row) => row?.data?.id)
-        .map((row) => ({ entityId: row.data.id, entityType: entityTypes.DECK }));
-
-    if (deletionChanges.length > 0)
-    {
-        // bulkRecordDeletions cascades each instance root to its cards /
-        // materials / mock tests / popups and both tombstones and deletes them.
-        await SyncQueryEngine.bulkRecordDeletions(userId, database, deletionChanges);
-        console.log(`[Sync] Tombstoned ${deletionChanges.length} lapsed paid-deck root(s) for user ${userId}.`);
-    }
 }
 
 /**

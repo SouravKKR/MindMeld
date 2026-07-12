@@ -43,6 +43,13 @@ async function upsertRegionalPriceOverrides(database, deckId, regionalPrices)
             priceMinor: entry.priceMinor || 0,
             currency: (entry.currency || RegionMetadata.getDisplayCurrency(region)).toUpperCase(),
             discountPercent: 0,
+            // License duration is explicit per region: a positive durationDays
+            // sells a finite rental; isPerpetual sells lifetime access. A region
+            // that overrides neither inherits the deck-level default below only
+            // if it also leaves both blank there — otherwise the buyer's grant is
+            // refused (see LicenseExpiryResolver).
+            durationDays: Number.isInteger(entry.durationDays) && entry.durationDays > 0 ? entry.durationDays : 0,
+            isPerpetual: entry.isPerpetual === true,
             effectiveFrom: new Date().toISOString(),
             effectiveUntil: farFutureIso,
             additionalData: {}
@@ -121,6 +128,12 @@ async function uploadPaidDeck(request, response)
         tags: metadata.tags || [],
         basePriceMinor: metadata.basePriceMinor || 0,
         currency: metadata.currency || "INR",
+        // Deck-level license duration default, applied by the pricing engine
+        // whenever a region has no override row. A positive durationDays sells a
+        // finite rental; isPerpetual sells lifetime access. Leaving both unset
+        // means the buyer's grant is refused until the admin configures one.
+        durationDays: Number.isInteger(metadata.durationDays) && metadata.durationDays > 0 ? metadata.durationDays : 0,
+        isPerpetual: metadata.isPerpetual === true,
         granularity: metadata.granularity || 0,
         bundleChildIds: metadata.bundleChildIds || [],
         parentBundleIds: metadata.parentBundleIds || [],

@@ -46,22 +46,38 @@ class DesktopRunner
         }
     }
 
-    findFirstFile(directory, matchesPredicate)
+    // Return the most recently modified matching file, not merely the first one readdir yields.
+    // `tauri build` never deletes previous-version bundles, so after a version bump the bundle
+    // directory holds both the stale and the freshly built installer; picking by newest mtime
+    // guarantees we install the build we just produced instead of an older leftover.
+    findNewestFile(directory, matchesPredicate)
     {
         if (fileSystem.existsSync(directory) === false)
         {
             return null;
         }
 
+        let newestFilePath = null;
+        let newestModifiedTime = -1;
+
         for (const entryName of fileSystem.readdirSync(directory))
         {
-            if (matchesPredicate(entryName))
+            if (matchesPredicate(entryName) === false)
             {
-                return path.join(directory, entryName);
+                continue;
+            }
+
+            const candidatePath = path.join(directory, entryName);
+            const modifiedTime = fileSystem.statSync(candidatePath).mtimeMs;
+
+            if (modifiedTime > newestModifiedTime)
+            {
+                newestModifiedTime = modifiedTime;
+                newestFilePath = candidatePath;
             }
         }
 
-        return null;
+        return newestFilePath;
     }
 
     launchDetached(executablePath, argumentList)
@@ -75,8 +91,8 @@ class DesktopRunner
 
     installAndLaunchWindows()
     {
-        const nsisSetupPath = this.findFirstFile(path.join(this.bundleDirectory, 'nsis'), (name) => name.toLowerCase().endsWith('.exe'));
-        const msiInstallerPath = this.findFirstFile(path.join(this.bundleDirectory, 'msi'), (name) => name.toLowerCase().endsWith('.msi'));
+        const nsisSetupPath = this.findNewestFile(path.join(this.bundleDirectory, 'nsis'), (name) => name.toLowerCase().endsWith('.exe'));
+        const msiInstallerPath = this.findNewestFile(path.join(this.bundleDirectory, 'msi'), (name) => name.toLowerCase().endsWith('.msi'));
 
         if (nsisSetupPath !== null)
         {
@@ -108,7 +124,7 @@ class DesktopRunner
     installAndLaunchMac()
     {
         // The .app bundle is the installable unit on macOS; "open" launches it directly.
-        const applicationBundlePath = this.findFirstFile(path.join(this.bundleDirectory, 'macos'), (name) => name.toLowerCase().endsWith('.app'));
+        const applicationBundlePath = this.findNewestFile(path.join(this.bundleDirectory, 'macos'), (name) => name.toLowerCase().endsWith('.app'));
 
         if (applicationBundlePath === null)
         {
@@ -122,7 +138,7 @@ class DesktopRunner
 
     installAndLaunchLinux()
     {
-        const appImagePath = this.findFirstFile(path.join(this.bundleDirectory, 'appimage'), (name) => name.toLowerCase().endsWith('.appimage'));
+        const appImagePath = this.findNewestFile(path.join(this.bundleDirectory, 'appimage'), (name) => name.toLowerCase().endsWith('.appimage'));
 
         if (appImagePath !== null)
         {

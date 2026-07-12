@@ -197,7 +197,11 @@ class PaidDeckPricingEngine
                         reason: "ORG_PERK",
                         organizationId: fallbackPerkResult.organizationId,
                         perkType: fallbackPerkResult.perkType,
-                        durationDays: fallbackPerkResult.durationDays
+                        durationDays: fallbackPerkResult.durationDays,
+                        // An org perk with no finite window is a perpetual grant
+                        // (the historical org-perk semantics); a positive
+                        // durationDays makes it a finite rental instead.
+                        isPerpetual: !(Number.isInteger(fallbackPerkResult.durationDays) && fallbackPerkResult.durationDays > 0)
                     });
                     continue;
                 }
@@ -210,7 +214,11 @@ class PaidDeckPricingEngine
                     discountMinor: 0,
                     finalPriceMinor: fallbackPrice,
                     currency: fallbackCurrency,
-                    reason: "BASE_PRICE"
+                    reason: "BASE_PRICE",
+                    // No regional pricing row exists — the deck document carries
+                    // the duration configuration for the base price.
+                    durationDays: Number.isInteger(deckDocument.durationDays) ? deckDocument.durationDays : 0,
+                    isPerpetual: deckDocument.isPerpetual === true
                 });
                 continue;
             }
@@ -245,7 +253,10 @@ class PaidDeckPricingEngine
                     reason: "ORG_PERK",
                     organizationId: perkResult.organizationId,
                     perkType: perkResult.perkType,
-                    durationDays: perkResult.durationDays
+                    durationDays: perkResult.durationDays,
+                    // An org perk with no finite window is a perpetual grant; a
+                    // positive durationDays makes it a finite rental instead.
+                    isPerpetual: !(Number.isInteger(perkResult.durationDays) && perkResult.durationDays > 0)
                 });
                 continue;
             }
@@ -280,7 +291,13 @@ class PaidDeckPricingEngine
                 discountMinor: discountMinor,
                 finalPriceMinor: finalMinor,
                 currency: deckCurrency,
-                reason: discountMinor > 0 ? "DISCOUNTED" : "BASE_PRICE"
+                reason: discountMinor > 0 ? "DISCOUNTED" : "BASE_PRICE",
+                // The active regional pricing row carries the duration
+                // configuration for this (deck, region). Absent / zero
+                // durationDays with isPerpetual false is a misconfiguration the
+                // grant paths refuse (see LicenseExpiryResolver).
+                durationDays: Number.isInteger(pricing.durationDays) ? pricing.durationDays : 0,
+                isPerpetual: pricing.isPerpetual === true
             });
         }
 

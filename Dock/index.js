@@ -92,6 +92,7 @@ const LogIngester = require("./Globals/Classes/Logging/LogIngester");
 const LogArchivalScheduler = require("./Globals/Classes/Logging/LogArchivalScheduler");
 const KeyManagementService = require("./Globals/Classes/Security/KeyManagementService");
 const KeyRotationScheduler = require("./Globals/Classes/Security/KeyRotationScheduler");
+const ExpiredLicenseSweeper = require("./Globals/Classes/PaidDeck/ExpiredLicenseSweeper");
 const AuthenticationQueryEngine = require("./Globals/Classes/Database/AuthenticationQueryEngine");
 const { getSession } = require("./Endpoints/Helpers/GetSession");
 const { rateLimitPlugin } = require("./Endpoints/Plugins/EnsureRateLimit");
@@ -127,6 +128,16 @@ TaskManager.initialize()
     });
 KeyManagementService.initialize();
 KeyRotationScheduler.start();
+
+// Eagerly expire lapsed paid-deck licenses on a schedule (tombstone the seeded
+// rows + flip the license to EXPIRED) so cleanup never waits for the affected
+// user to sync. Runs one best-effort sweep at boot, then periodically; every
+// step is idempotent and it never blocks boot.
+ExpiredLicenseSweeper.start();
+ExpiredLicenseSweeper.sweep().catch((sweepError) =>
+{
+    console.error("[ExpiredLicenseSweeper] Boot sweep failed:", sweepError);
+});
 
 // ── Distributed task queue + burst fleet (production only) ──────────────────
 // When the server is started WITHOUT --debug and DOCK_USE_TASK_QUEUE is on:

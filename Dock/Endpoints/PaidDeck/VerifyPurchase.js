@@ -10,6 +10,7 @@ const { getUser } = require("../Helpers/GetUser");
 const { purchaseStatuses } = require("../../Globals/Enumerations/PurchaseStatuses");
 const { seedProtectedContentForLicense, checkUserHasPaidDeckPassword } = require("./PaidDeckGrantHelpers");
 const LicenseClientView = require("../../Globals/Classes/Security/LicenseClientView");
+const LicenseExpiryResolver = require("../../Globals/Classes/Pricing/LicenseExpiryResolver");
 const ZohoInvoiceService = require("../../Globals/Classes/Invoicing/ZohoInvoiceService");
 const GrantSources = require("../../Globals/Constants/GrantSources");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
@@ -17,8 +18,6 @@ const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const Logger = require("../../Globals/Classes/Logger");
 const LogTitles = require("../../Globals/Classes/Logging/LogTitles");
 const { logCategory } = require("../../Globals/Enumerations/LogCategory");
-
-const MILLISECONDS_PER_DAY = 86_400_000;
 
 async function verifyPurchase(request, response)
 {
@@ -133,6 +132,23 @@ async function verifyPurchase(request, response)
     {
         const perkBreakdown = breakdownByDeckId.get(deckId);
         const orgPerkActive = perkBreakdown !== undefined && perkBreakdown.reason === "ORG_PERK";
+
+        // Explicit-duration gate (defence in depth). InitiatePurchase already
+        // refused to create the order for a deck with no finite / perpetual
+        // configuration, so this should never fire — but if pricing changed
+        // between initiation and verification, skip the deck rather than mint a
+        // forever license. The buyer keeps their paid decks; a misconfigured one
+        // is simply not granted and is logged for follow-up.
+        const expiryResolution = LicenseExpiryResolver.resolve(perkBreakdown);
+        if (expiryResolution.status === LicenseExpiryResolver.STATUS_UNSPECIFIED)
+        {
+            Logger.warning(logCategory.PURCHASE, LogTitles.PURCHASE_DECK, "Skipped granting a deck with no explicit license duration",
+            {
+                accountId: session.getUserId(),
+                additionalData: { deckId: deckId, providerOrderId: providerOrderId }
+            });
+            continue;
+        }
         const purchaseAdditionalData = orgPerkActive
             ? { organizationId: perkBreakdown.organizationId, perkType: "ORG_PERK", durationDays: perkBreakdown.durationDays }
             : {};
@@ -179,11 +195,14 @@ async function verifyPurchase(request, response)
             }
         });
 
-        // License expiry: finite for org-perk grants (now + durationDays),
-        // FOREVER sentinel for everything else.
-        const licenseOptions = orgPerkActive && Number.isInteger(perkBreakdown.durationDays) && perkBreakdown.durationDays > 0
-            ? { expiresAt: new Date(Date.now() + perkBreakdown.durationDays * MILLISECONDS_PER_DAY), grantSource: GrantSources.ORG_DISCOUNTED_PURCHASE }
-            : { expiresAt: new Date(0), grantSource: orgPerkActive ? GrantSources.ORG_DISCOUNTED_PURCHASE : GrantSources.PURCHASE };
+        // License expiry comes from the single resolver: a finite window when
+        // durationDays > 0 (org-perk rental or a time-limited sale) or the
+        // FOREVER sentinel only when the deck was explicitly sold as perpetual.
+        const licenseOptions =
+        {
+            expiresAt: expiryResolution.expiresAt,
+            grantSource: orgPerkActive ? GrantSources.ORG_DISCOUNTED_PURCHASE : GrantSources.PURCHASE
+        };
 
         const licenseResult = await KeyManagementService.issueLicenseForDeck(session.getUserId(), deckId, licenseOptions);
 

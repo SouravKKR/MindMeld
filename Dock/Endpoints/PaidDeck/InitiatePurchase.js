@@ -10,11 +10,16 @@ const { paymentProviders } = require("../../Globals/Enumerations/PaymentProvider
 const { purchaseStatuses } = require("../../Globals/Enumerations/PurchaseStatuses");
 const { grantAndSeedDeck, checkUserHasPaidDeckPassword } = require("./PaidDeckGrantHelpers");
 const LicenseClientView = require("../../Globals/Classes/Security/LicenseClientView");
+const LicenseExpiryResolver = require("../../Globals/Classes/Pricing/LicenseExpiryResolver");
 const GrantSources = require("../../Globals/Constants/GrantSources");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
-const MILLISECONDS_PER_DAY = 86_400_000;
+// Reasons that describe a deck the caller cannot / need not be granted — an
+// already-owned deck (a live license exists) or one that no longer resolves to
+// a paid-deck document. Both are skipped by the grant loop and are exempt from
+// the explicit-duration requirement.
+const NON_GRANTABLE_BREAKDOWN_REASONS = new Set([ErrorCodes.ALREADY_OWNED, ErrorCodes.DECK_NOT_FOUND]);
 
 async function initiatePurchase(request, response)
 {
@@ -59,23 +64,51 @@ async function initiatePurchase(request, response)
         // library" was a no-op (no license => nothing on the home page).
         const database = await DatabaseConnector.getDatabase();
 
-        const perkLookupByDeckId = new Map();
+        const breakdownByDeckId = new Map();
         for (const breakdownEntry of (pricing.breakdown || []))
         {
-            if (breakdownEntry.reason === "ORG_PERK")
+            breakdownByDeckId.set(breakdownEntry.deckId, breakdownEntry);
+        }
+
+        // Explicit-duration gate: a grant may only proceed when every grantable
+        // deck resolves to a finite rental or an explicit perpetual flag. A deck
+        // whose pricing declares neither is a misconfiguration — refuse the whole
+        // grant rather than silently minting a forever license.
+        const misconfiguredDeckIds = deckIds.filter((deckId) =>
+        {
+            const breakdownEntry = breakdownByDeckId.get(deckId);
+            if (breakdownEntry && NON_GRANTABLE_BREAKDOWN_REASONS.has(breakdownEntry.reason))
             {
-                perkLookupByDeckId.set(breakdownEntry.deckId, breakdownEntry);
+                return false;
             }
+            return !LicenseExpiryResolver.isGrantable(breakdownEntry);
+        });
+
+        if (misconfiguredDeckIds.length > 0)
+        {
+            response.statusCode = httpStatus.UNPROCESSABLE_ENTITY;
+            response.sendJson({ error: ErrorCodes.PRICING_DURATION_NOT_CONFIGURED, deckIds: misconfiguredDeckIds });
+            return;
         }
 
         const issuedLicenses = [];
         for (const deckId of deckIds)
         {
-            const perkBreakdown = perkLookupByDeckId.get(deckId);
-            const orgPerkActive = perkBreakdown !== undefined;
-            const licenseOptions = orgPerkActive && Number.isInteger(perkBreakdown.durationDays) && perkBreakdown.durationDays > 0
-                ? { expiresAt: new Date(Date.now() + perkBreakdown.durationDays * MILLISECONDS_PER_DAY), grantSource: GrantSources.ORG_DISCOUNTED_PURCHASE }
-                : { expiresAt: new Date(0), grantSource: orgPerkActive ? GrantSources.ORG_DISCOUNTED_PURCHASE : GrantSources.FREE_GRANT };
+            const breakdownEntry = breakdownByDeckId.get(deckId);
+            if (breakdownEntry && NON_GRANTABLE_BREAKDOWN_REASONS.has(breakdownEntry.reason))
+            {
+                // Already owned (live license) or no longer a paid deck — nothing
+                // to grant here.
+                continue;
+            }
+
+            const orgPerkActive = breakdownEntry !== undefined && breakdownEntry.reason === "ORG_PERK";
+            const expiryResolution = LicenseExpiryResolver.resolve(breakdownEntry);
+            const licenseOptions =
+            {
+                expiresAt: expiryResolution.expiresAt,
+                grantSource: orgPerkActive ? GrantSources.ORG_DISCOUNTED_PURCHASE : GrantSources.FREE_GRANT
+            };
 
             const licenseJson = await grantAndSeedDeck(database, session.getUserId(), deckId, licenseOptions);
             if (licenseJson)
@@ -101,7 +134,7 @@ async function initiatePurchase(request, response)
                     refundedAt: new Date(0),
                     status: purchaseStatuses.COMPLETED,
                     additionalData: orgPerkActive
-                        ? { organizationId: perkBreakdown.organizationId, perkType: "ORG_PERK", durationDays: perkBreakdown.durationDays }
+                        ? { organizationId: breakdownEntry.organizationId, perkType: "ORG_PERK", durationDays: breakdownEntry.durationDays }
                         : { grant: "FREE" }
                 });
 
@@ -126,6 +159,32 @@ async function initiatePurchase(request, response)
             licenses: issuedLicenses,
             requiresPasswordSetup: !hasExistingPaidDeckPassword
         });
+        return;
+    }
+
+    // Explicit-duration gate for the PAID path: validate every deck resolves to
+    // a finite or explicit-perpetual license BEFORE creating a payment order, so
+    // a buyer is never charged for a deck we would then refuse to grant in
+    // VerifyPurchase. Mirrors the free-path gate above.
+    const paidBreakdownByDeckId = new Map();
+    for (const breakdownEntry of (pricing.breakdown || []))
+    {
+        paidBreakdownByDeckId.set(breakdownEntry.deckId, breakdownEntry);
+    }
+    const paidMisconfiguredDeckIds = deckIds.filter((deckId) =>
+    {
+        const breakdownEntry = paidBreakdownByDeckId.get(deckId);
+        if (breakdownEntry && NON_GRANTABLE_BREAKDOWN_REASONS.has(breakdownEntry.reason))
+        {
+            return false;
+        }
+        return !LicenseExpiryResolver.isGrantable(breakdownEntry);
+    });
+
+    if (paidMisconfiguredDeckIds.length > 0)
+    {
+        response.statusCode = httpStatus.UNPROCESSABLE_ENTITY;
+        response.sendJson({ error: ErrorCodes.PRICING_DURATION_NOT_CONFIGURED, deckIds: paidMisconfiguredDeckIds });
         return;
     }
 

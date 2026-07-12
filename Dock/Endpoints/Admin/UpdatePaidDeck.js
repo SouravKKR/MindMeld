@@ -12,6 +12,8 @@ const ALLOWED_FIELDS = new Set
     "tags",
     "basePriceMinor",
     "currency",
+    "durationDays",
+    "isPerpetual",
     "granularity",
     "bundleChildIds",
     "parentBundleIds",
@@ -42,6 +44,19 @@ async function updatePaidDeck(request, response)
         {
             setOperations[fieldKey] = updates[fieldKey];
         }
+    }
+
+    // Coerce the license-duration controls to their canonical primitive types so
+    // a malformed payload can never persist a non-integer window or a truthy
+    // object as the perpetual flag.
+    if (Object.prototype.hasOwnProperty.call(setOperations, "durationDays"))
+    {
+        const durationDaysValue = Number(setOperations.durationDays);
+        setOperations.durationDays = Number.isFinite(durationDaysValue) && durationDaysValue > 0 ? Math.floor(durationDaysValue) : 0;
+    }
+    if (Object.prototype.hasOwnProperty.call(setOperations, "isPerpetual"))
+    {
+        setOperations.isPerpetual = setOperations.isPerpetual === true;
     }
 
     if (Object.keys(setOperations).length === 0)
