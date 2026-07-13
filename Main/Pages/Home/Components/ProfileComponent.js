@@ -18,7 +18,11 @@ class ProfileComponent extends HTMLElement
     #renderLoggedIn(user)
     {
         const displayName = user.getDisplayName();
-        const displayPicture = user.getProfilePictureUrl?.()
+        // Offline (stale) sessions carry an inlined data-URL avatar under this
+        // key — the cross-origin provider URL is unreachable offline and the
+        // service worker only caches same-origin assets. Prefer it when present.
+        const displayPicture = user.getAdditionalData?.()?.offlineProfilePictureDataUrl
+            || user.getProfilePictureUrl?.()
             || user.getAdditionalData()?.displayPicture
             || "/Globals/Assets/Images/Icons/ProfileIcon.svg";
 

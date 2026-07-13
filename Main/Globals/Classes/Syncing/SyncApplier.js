@@ -686,14 +686,42 @@ class SyncApplier
     // ── First-sync gather ─────────────────────────────────────────────
 
     /**
-     * Snapshots every in-memory entity into change records, indexed by id.
+     * Snapshots in-memory entities into change records, indexed by id.
      * Returned as a plain object so SyncTransport's pendingChanges can be
-     * replaced wholesale by the orchestrator.
+     * replaced wholesale (full push) or merged (reconciliation) by the
+     * orchestrator.
+     *
+     * @param {number} [sinceMilliseconds=0] When > 0, only entities whose
+     *   lifecycle.lastModified is strictly newer than this epoch-millis
+     *   value are gathered — the reconciliation "modified since last sync"
+     *   pass that lets sync converge local -> server even when the
+     *   opportunistically-persisted pending queue dropped a change (e.g. an
+     *   offline edit lost on a hard app close). 0 gathers everything (the
+     *   first-sync / wipe-recovery full push). An entity whose timestamp
+     *   cannot be read is included — fail toward pushing, never toward
+     *   silently orphaning local data.
      */
-    static gatherAllLocalEntities()
+    static gatherAllLocalEntities(sinceMilliseconds = 0)
     {
         const gatheredChanges = {};
         const allDecks        = Deck.getAll();
+
+        const isModifiedSinceCutoff = (entityWithLifecycle) =>
+        {
+            if (sinceMilliseconds <= 0)
+            {
+                return true;
+            }
+            try
+            {
+                const lastModified = entityWithLifecycle.getLifecycle().getLastModified();
+                return new Date(lastModified).getTime() > sinceMilliseconds;
+            }
+            catch (timestampError)
+            {
+                return true;
+            }
+        };
 
         let totalCards          = 0;
         let totalStudyMaterials = 0;
@@ -717,31 +745,48 @@ class SyncApplier
 
             if (isOrphan)
             {
-                console.warn(`[SyncApplier] gatherAllLocalEntities — local orphan deck "${deck.getName?.() || deckSyncData.name}" (${deck.getId()}); parent ${deckSyncData.parent} not in id map. Queuing deletion.`);
-                gatheredChanges[deck.getId()] =
+                // In reconciliation mode a long-standing orphan (unchanged
+                // since the cutoff) is already-known broken state; only
+                // (re)queue its deletion when it is fresh, so we don't spam
+                // the same tombstone every cycle.
+                if (isModifiedSinceCutoff(deck))
                 {
-                    entityId: deck.getId(),
-                    entityType: entityTypes.DECK,
-                    data: null,
-                    deleted: true,
-                };
-                orphanCount++;
+                    console.warn(`[SyncApplier] gatherAllLocalEntities — local orphan deck "${deck.getName?.() || deckSyncData.name}" (${deck.getId()}); parent ${deckSyncData.parent} not in id map. Queuing deletion.`);
+                    gatheredChanges[deck.getId()] =
+                    {
+                        entityId: deck.getId(),
+                        entityType: entityTypes.DECK,
+                        data: null,
+                        deleted: true,
+                    };
+                    orphanCount++;
+                }
                 continue;
             }
 
-            gatheredChanges[deck.getId()] =
+            // The deck record itself is gathered only when it changed since
+            // the cutoff, but its children are always scanned below — a card
+            // touched under an otherwise-unchanged deck must still be caught.
+            if (isModifiedSinceCutoff(deck))
             {
-                entityId:   deck.getId(),
-                entityType: entityTypes.DECK,
-                data:       deckSyncData,
-                deleted:    false,
-            };
+                gatheredChanges[deck.getId()] =
+                {
+                    entityId:   deck.getId(),
+                    entityType: entityTypes.DECK,
+                    data:       deckSyncData,
+                    deleted:    false,
+                };
+            }
 
             const directCards = deck.getCards(false, true);
             totalCards += directCards.length;
             for (let cardIndex = 0; cardIndex < directCards.length; cardIndex++)
             {
                 const card = directCards[cardIndex];
+                if (!isModifiedSinceCutoff(card))
+                {
+                    continue;
+                }
                 gatheredChanges[card.getId()] =
                 {
                     entityId:   card.getId(),
@@ -756,6 +801,10 @@ class SyncApplier
             for (let materialIndex = 0; materialIndex < studyMaterials.length; materialIndex++)
             {
                 const studyMaterial = studyMaterials[materialIndex];
+                if (!isModifiedSinceCutoff(studyMaterial))
+                {
+                    continue;
+                }
                 gatheredChanges[studyMaterial.getId()] =
                 {
                     entityId:   studyMaterial.getId(),
@@ -770,6 +819,10 @@ class SyncApplier
             for (let mockTestIndex = 0; mockTestIndex < mockTests.length; mockTestIndex++)
             {
                 const mockTest = mockTests[mockTestIndex];
+                if (!isModifiedSinceCutoff(mockTest))
+                {
+                    continue;
+                }
                 gatheredChanges[mockTest.getId()] =
                 {
                     entityId:   mockTest.getId(),
@@ -802,6 +855,13 @@ class SyncApplier
                             creationDate: stampedAt,
                             lastModified: stampedAt,
                         };
+                    }
+                    // Popups carry a plain lifecycle object (no getLifecycle
+                    // accessor), so the shared helper can't be reused here.
+                    if (sinceMilliseconds > 0
+                        && !(new Date(popupRecord.lifecycle.lastModified).getTime() > sinceMilliseconds))
+                    {
+                        continue;
                     }
                     gatheredChanges[popupId] =
                     {

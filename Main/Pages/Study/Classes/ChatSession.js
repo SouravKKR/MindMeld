@@ -24,6 +24,17 @@ class ChatSession extends StudySession
 {
     static #MAX_CONVERSATION_TURNS = 6;   // prior turns sent for context
 
+    // Per-snippet caps on the grounding TEXT sent to the model. Inline base64
+    // images are stripped BEFORE these apply (they travel to the model as
+    // dedicated vision input via DeckImageHarvester), so these bound real text.
+    static #MAX_STUDY_MATERIAL_SNIPPET_CHARS = 8000;
+    static #MAX_CARD_SNIPPET_CHARS = 2000;
+    // Ceiling for the serialized DECK contextPayload. Kept safely below the
+    // server's own DECK_CONTEXT_MAX_CHARS (200000) so a content-rich deck can
+    // never trip the 400 body validator; least-relevant snippets are dropped
+    // from the tail until the payload fits.
+    static #MAX_CONTEXT_PAYLOAD_CHARS = 150000;
+
     #chatView = null;
     #transcript = [];          // [{ role, text, htmlForSave }]
     #busy = false;
@@ -141,15 +152,24 @@ class ChatSession extends StudySession
 
             const { attachedImages, idToDataUrl } = DeckImageHarvester.harvest(retrieval.cards, retrieval.materials, {});
 
-            const snippets = [
-                ...retrieval.cards.map((card) => ({ kind: "CARD", question: card.getQuestion(), answer: card.getAnswer() })),
-                ...retrieval.materials.map((material) => ({ kind: "STUDY_MATERIAL", content: material.getContent() }))
-            ];
+            // Study-material / card HTML routinely embeds inline base64 images
+            // (<img src="data:image/…;base64,…">) that are megabytes each. Sending
+            // that verbatim in the grounding snippets (a) duplicates what
+            // DeckImageHarvester already sends as proper vision input and (b) can
+            // push the serialized contextPayload past the server's DECK cap, which
+            // rejects the whole turn with a 400 the user sees as "Couldn't reach
+            // the assistant". #buildBoundedDeckContext strips those inline images
+            // and size-bounds the payload so a content-rich deck always fits.
+            const contextPayload = ChatSession.#buildBoundedDeckContext(
+                retrieval,
+                conversation,
+                attachedImages.map((image) => image.id)
+            );
 
             const payload = {
                 promptMode:     "ASK",
                 contextKind:    "DECK",
-                contextPayload: { snippets, conversation, deckImageIds: attachedImages.map((image) => image.id) },
+                contextPayload: contextPayload,
                 userQuery:      trimmed,
                 attachedImages: attachedImages,
                 selectedLanguage: "ENGLISH"
@@ -170,6 +190,19 @@ class ChatSession extends StudySession
 
             if (!response.ok || !response.body)
             {
+                // Surface the server's own reason to the console — the generic
+                // bubble message hid it, which is why a 400 (e.g. an oversized
+                // contextPayload) was previously invisible from the client side.
+                let serverReason = "";
+                try
+                {
+                    serverReason = await response.text();
+                }
+                catch (readError)
+                {
+                    serverReason = "";
+                }
+                console.warn(`[ChatSession] AskAi request failed (${response.status}): ${serverReason}`);
                 bubble.error("Couldn't reach the assistant just now. Please try again in a moment.");
             }
             else
@@ -375,6 +408,70 @@ class ChatSession extends StudySession
     }
 
     // ── Static helpers ────────────────────────────────────────────────────────
+
+    /**
+     * Assembles the DECK contextPayload from a retrieval result while
+     * GUARANTEEING the serialized size stays under the server's DECK
+     * contextPayload cap.
+     *
+     * Two forces bloat the raw content: inline base64 images embedded in
+     * study-material / card HTML (megabytes each) and very long lessons. The
+     * images are stripped here — they already travel to the model as dedicated
+     * vision input via DeckImageHarvester, and the worker converts snippet
+     * content to plain text anyway, so keeping the base64 is pure duplicated
+     * weight — and the remaining text is capped per snippet. If the assembled
+     * payload is still over budget, whole snippets are dropped from the
+     * least-relevant tail (retrieval is relevance-ordered) until it fits.
+     */
+    static #buildBoundedDeckContext(retrieval, conversation, deckImageIds)
+    {
+        const snippets = [];
+
+        for (const card of retrieval.cards)
+        {
+            snippets.push({
+                kind: "CARD",
+                question: ChatSession.#sanitizeSnippetContent(card.getQuestion(), ChatSession.#MAX_CARD_SNIPPET_CHARS),
+                answer: ChatSession.#sanitizeSnippetContent(card.getAnswer(), ChatSession.#MAX_CARD_SNIPPET_CHARS)
+            });
+        }
+
+        for (const material of retrieval.materials)
+        {
+            snippets.push({
+                kind: "STUDY_MATERIAL",
+                content: ChatSession.#sanitizeSnippetContent(material.getContent(), ChatSession.#MAX_STUDY_MATERIAL_SNIPPET_CHARS)
+            });
+        }
+
+        let contextPayload = { snippets, conversation, deckImageIds };
+        while (snippets.length > 0 && JSON.stringify(contextPayload).length > ChatSession.#MAX_CONTEXT_PAYLOAD_CHARS)
+        {
+            snippets.pop();
+            contextPayload = { snippets, conversation, deckImageIds };
+        }
+
+        return contextPayload;
+    }
+
+    /**
+     * Strips inline base64 data-URL images out of a snippet's HTML (replacing
+     * each with a short "[image]" marker so the surrounding text still reads
+     * naturally) and truncates the result to maxChars. The stripped images are
+     * NOT lost — DeckImageHarvester extracts them from the same source HTML and
+     * sends them as vision input; this only removes their enormous base64 twin
+     * from the text context.
+     */
+    static #sanitizeSnippetContent(rawHtml, maxChars)
+    {
+        const withoutInlineImages = String(rawHtml ?? "").replace(
+            /<img\b[^>]*\bsrc\s*=\s*["']data:image\/[^"']*["'][^>]*>/gi,
+            "[image]"
+        );
+        return withoutInlineImages.length > maxChars
+            ? withoutInlineImages.slice(0, maxChars)
+            : withoutInlineImages;
+    }
 
     static #renderFinalHtml(rawModelHtml, idToDataUrl)
     {

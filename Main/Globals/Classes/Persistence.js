@@ -312,25 +312,17 @@ class Persistence
             case platforms.APP:
             {
                 const { fs } = window.__TAURI__;
-                const { removeFile, removeDir, BaseDirectory, exists } = fs;
+                // Tauri v2 merged v1's removeFile/removeDir into a single
+                // `remove` (v1's names are undefined in v2 — calling them
+                // threw "not a function", which broke every desktop deck
+                // deletion AND the sync-apply of a pulled deletion). The rest
+                // of this class already uses the v2 API (mkdir/writeFile/...).
+                // Every caller deletes a single file (Decks/*.mmd,
+                // Session/Cache.json, ...), so no directory/recursive handling
+                // is needed.
+                const { remove, BaseDirectory } = fs;
 
-                const isDir = await exists(path + "/", { baseDir: BaseDirectory.AppData });
-
-                if (isDir)
-                {
-                    await removeDir(path,
-                    {
-                        recursive: true,
-                        baseDir: BaseDirectory.AppData
-                    });
-                }
-                else
-                {
-                    await removeFile(path,
-                    {
-                        baseDir: BaseDirectory.AppData
-                    });
-                }
+                await remove(path, { baseDir: BaseDirectory.AppData });
             }
             break;
 

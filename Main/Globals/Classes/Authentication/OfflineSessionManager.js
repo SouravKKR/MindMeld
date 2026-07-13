@@ -1,6 +1,7 @@
 import Persistence from "../Persistence.js";
 import User from "../../Model/User.js";
 import LicenseConstants from "../../Constants/LicenseConstants.js";
+import UserIdentityConstants from "../../Constants/UserIdentityConstants.js";
 import { dataFormats } from "../../Enumerations/DataFormats.js";
 
 /**
@@ -21,16 +22,28 @@ import { dataFormats } from "../../Enumerations/DataFormats.js";
  *     is discarded. A device that hasn't been online in over a month
  *     loses its offline session.
  *
- * The cached payload is JSON, namespaced under the user's storage
- * prefix in Persistence. There is no encryption-at-rest on the cache
- * itself — Persistence already namespaces by userId and the data is
- * just the User document, which the server would hand back anyway on
- * the next /GetUser call. The cache is read-only fallback data, not a
- * secret.
+ * The cached payload is JSON, stored at a GLOBAL (unprefixed)
+ * Persistence path rather than under the user's storage prefix — it
+ * must be readable at boot before any identity is known, since it is
+ * the very thing that tells us which user was last signed in. Only the
+ * most recent login is retained (a new login overwrites it; logout
+ * clears it), which is exactly the "continue as the last logged-in
+ * user" contract. There is no encryption-at-rest on the cache itself —
+ * the data is just the User document, which the server would hand back
+ * anyway on the next /GetUser call. The cache is read-only fallback
+ * data, not a secret.
  */
 class OfflineSessionManager
 {
-    static #CACHE_PATH = "Session/Cache.json";
+    // Stored at a GLOBAL (unprefixed) Persistence path — see
+    // UserIdentityConstants.GLOBAL_KEYS. It has to be readable at boot,
+    // offline, BEFORE the identity is resolved (the identity comes FROM
+    // this cache), so it cannot live under Users/<identity>/.
+    static #CACHE_PATH = UserIdentityConstants.OFFLINE_SESSION_CACHE_PATH;
+
+    // Avatars are tiny; refuse anything unexpectedly large so a bad URL can't
+    // bloat the cache file (and, on Tauri, the app-data directory).
+    static #MAX_PROFILE_PICTURE_BYTES = 512 * 1024;
 
     static async saveCachedSession(user)
     {
@@ -39,6 +52,13 @@ class OfflineSessionManager
             return;
         }
 
+        // Fetch the profile picture (a cross-origin provider URL) and inline it
+        // as a data URL while we still have the network. The offline service
+        // worker only caches same-origin assets, so without this the avatar
+        // <img> 404s offline. Best-effort: on any failure we cache the session
+        // without an avatar rather than block the (more important) session save.
+        const profilePictureDataUrl = await OfflineSessionManager.#fetchProfilePictureAsDataUrl(user.getProfilePictureUrl?.());
+
         try
         {
             await Persistence.write
@@ -46,7 +66,8 @@ class OfflineSessionManager
                 OfflineSessionManager.#CACHE_PATH,
                 {
                     cachedAt: Date.now(),
-                    user: user.toJson()
+                    user: user.toJson(),
+                    profilePictureDataUrl: profilePictureDataUrl
                 },
                 dataFormats.JSON
             );
@@ -54,6 +75,50 @@ class OfflineSessionManager
         catch (writeError)
         {
             console.warn("[OfflineSessionManager] Failed to cache session:", writeError);
+        }
+    }
+
+    static async #fetchProfilePictureAsDataUrl(pictureUrl)
+    {
+        if (typeof pictureUrl !== "string" || pictureUrl.length === 0)
+        {
+            return null;
+        }
+
+        // Already inlined (e.g. a previously-hydrated user re-cached) — keep it.
+        if (pictureUrl.startsWith("data:"))
+        {
+            return pictureUrl;
+        }
+
+        try
+        {
+            const response = await fetch(pictureUrl);
+
+            if (!response.ok)
+            {
+                return null;
+            }
+
+            const blob = await response.blob();
+
+            if (blob.size === 0 || blob.size > OfflineSessionManager.#MAX_PROFILE_PICTURE_BYTES)
+            {
+                return null;
+            }
+
+            return await new Promise((resolve) =>
+            {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : null);
+                reader.onerror   = () => resolve(null);
+                reader.readAsDataURL(blob);
+            });
+        }
+        catch (fetchError)
+        {
+            // Cross-origin CORS denial, offline, etc. — degrade gracefully.
+            return null;
         }
     }
 
@@ -86,7 +151,27 @@ class OfflineSessionManager
 
         try
         {
-            return User.fromJson(cached.user);
+            const hydratedUser = User.fromJson(cached.user);
+
+            // Expose the avatar captured (inlined) at cache time so the profile
+            // picture still renders offline. It rides in additionalData under a
+            // dedicated key rather than profilePictureUrl, because that field is
+            // length-capped (2048 chars) and a data URL is far longer — the cap
+            // would silently truncate it into a broken image. ProfileComponent
+            // prefers this key. This lives only on the in-memory hydrated user
+            // (a stale-offline session is never re-cached), so it never leaks
+            // back into the persisted/synced user record.
+            if (typeof cached.profilePictureDataUrl === "string"
+                && cached.profilePictureDataUrl.startsWith("data:")
+                && typeof hydratedUser.getAdditionalData === "function"
+                && typeof hydratedUser.setAdditionalData === "function")
+            {
+                const additionalData = hydratedUser.getAdditionalData() || {};
+                additionalData.offlineProfilePictureDataUrl = cached.profilePictureDataUrl;
+                hydratedUser.setAdditionalData(additionalData);
+            }
+
+            return hydratedUser;
         }
         catch (parseError)
         {

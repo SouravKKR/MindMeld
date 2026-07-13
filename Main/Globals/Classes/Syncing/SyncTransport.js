@@ -34,6 +34,14 @@ class SyncTransport
 
     static #deviceId          = null;
     static #lastSyncTimestamp = 0;
+    // The LOCAL wall-clock time (Date.now()) captured at the last successful
+    // sync. Entity lifecycle.lastModified values are stamped from the local
+    // clock too, whereas #lastSyncTimestamp is the SERVER clock — so the
+    // reconciliation "modified since last sync" scan compares against THIS
+    // (client-vs-client, skew-immune) to decide what local edits still need
+    // pushing, and only falls back to the server timestamp when this has
+    // never been set (a client upgraded mid-session).
+    static #lastSyncLocalMillis = 0;
     static #pendingChanges    = {};
     // One-shot "reset lastSync to 0 inside the next sync cycle, after
     // it has acquired the mutex" flag. Used by forcePullFromServer so
@@ -71,8 +79,9 @@ class SyncTransport
 
         if (!bExists)
         {
-            SyncTransport.#lastSyncTimestamp = 0;
-            SyncTransport.#pendingChanges    = {};
+            SyncTransport.#lastSyncTimestamp   = 0;
+            SyncTransport.#lastSyncLocalMillis = 0;
+            SyncTransport.#pendingChanges      = {};
             return;
         }
 
@@ -81,14 +90,16 @@ class SyncTransport
             const syncLogBson = await Persistence.read(SyncTransport.#SYNC_LOG_PATH, dataFormats.BUFFER);
             const syncLogJson = deserialize(syncLogBson);
 
-            SyncTransport.#lastSyncTimestamp = syncLogJson.lastSyncTimestamp || 0;
-            SyncTransport.#pendingChanges    = syncLogJson.pendingChanges    || {};
+            SyncTransport.#lastSyncTimestamp   = syncLogJson.lastSyncTimestamp   || 0;
+            SyncTransport.#lastSyncLocalMillis = syncLogJson.lastSyncLocalMillis || 0;
+            SyncTransport.#pendingChanges      = syncLogJson.pendingChanges      || {};
         }
         catch (loadError)
         {
             console.error("[SyncTransport] Failed to load sync log. Resetting.", loadError);
-            SyncTransport.#lastSyncTimestamp = 0;
-            SyncTransport.#pendingChanges    = {};
+            SyncTransport.#lastSyncTimestamp   = 0;
+            SyncTransport.#lastSyncLocalMillis = 0;
+            SyncTransport.#pendingChanges      = {};
         }
     }
 
@@ -96,8 +107,9 @@ class SyncTransport
     {
         const syncLogJson =
         {
-            lastSyncTimestamp: SyncTransport.#lastSyncTimestamp,
-            pendingChanges:    SyncTransport.#pendingChanges,
+            lastSyncTimestamp:   SyncTransport.#lastSyncTimestamp,
+            lastSyncLocalMillis: SyncTransport.#lastSyncLocalMillis,
+            pendingChanges:      SyncTransport.#pendingChanges,
         };
 
         const syncLogBson = serialize(syncLogJson);
@@ -114,6 +126,19 @@ class SyncTransport
     static setLastSyncTimestamp(timestamp)
     {
         SyncTransport.#lastSyncTimestamp = timestamp;
+    }
+
+    // Client-clock anchor for reconciliation (see the field comment). Read
+    // as the cutoff for "which local entities changed since the last sync",
+    // stamped with Date.now() the moment a sync cycle succeeds.
+    static getLastSyncLocalMillis()
+    {
+        return SyncTransport.#lastSyncLocalMillis;
+    }
+
+    static setLastSyncLocalMillis(localMillis)
+    {
+        SyncTransport.#lastSyncLocalMillis = localMillis;
     }
 
     /**

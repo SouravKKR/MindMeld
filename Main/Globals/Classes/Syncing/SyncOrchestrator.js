@@ -379,6 +379,22 @@ class SyncOrchestrator
             if (connectionIssue)
             {
                 console.warn(`[SyncOrchestrator] sync() — deferred due to connection: ${connectionIssue}.`);
+                // Durably persist the pending queue before giving up on this
+                // offline cycle. Every offline edit/delete debounce-fires a
+                // sync that lands here, so this flushes the queue to disk
+                // within a few seconds of the change — covering the case
+                // reconciliation cannot (a delete: the entity is already gone
+                // from local disk, so a later timestamp-scan can't rediscover
+                // its tombstone; only a persisted queue entry survives a hard
+                // close and still tells the server to remove it).
+                try
+                {
+                    await SyncTransport.saveSyncLog();
+                }
+                catch (persistError)
+                {
+                    console.warn("[SyncOrchestrator] Failed to persist pending queue on deferred sync:", persistError);
+                }
                 window.dispatchEvent(new CustomEvent(SyncEvents.DEFERRED, { detail: { reason: connectionIssue } }));
                 return;
             }
@@ -788,6 +804,15 @@ class SyncOrchestrator
             }
         }
 
+        // NOTE: a timestamp-scan "reconciliation" pass was tried here to
+        // rediscover offline edits the pending queue dropped, but it reused
+        // gatherAllLocalEntities — whose orphan-detection emits DELETION
+        // tombstones — on every cycle (that path is only safe during a
+        // deliberate lastSync===0 full push). A deck that momentarily looked
+        // orphaned in memory got deleted server-side, oscillating between
+        // devices. Durability is instead handled without any delete logic by
+        // persisting the pending queue on the offline-defer path in sync().
+
         // Drain continuations are pull-only: they push an empty changes array
         // (still one isLastChunk chunk, so the server runs the pull) instead
         // of re-pushing the pending snapshot. Re-pushing the residue every
@@ -893,6 +918,10 @@ class SyncOrchestrator
             }
 
             SyncTransport.setLastSyncTimestamp(syncResponse.serverTime);
+            // Stamp the client-clock anchor alongside the server cursor so the
+            // reconciliation scan (above, next cycle) has a skew-immune "since"
+            // to compare entity lifecycle.lastModified against.
+            SyncTransport.setLastSyncLocalMillis(Date.now());
             // Reference-aware removal: clear only the entries that were
             // actually pushed AND have not been superseded by a newer
             // record (typically a delete that arrived mid-push). The
@@ -1204,6 +1233,10 @@ class SyncOrchestrator
             // server's view).
             const newLastSync = typeof snapshot.serverTime === "number" ? snapshot.serverTime : Date.now();
             SyncTransport.setLastSyncTimestamp(newLastSync);
+            // The local tree now exactly mirrors the server, so anchor the
+            // reconciliation cutoff at "now" — every pulled entity's
+            // lastModified predates this, so nothing is spuriously re-pushed.
+            SyncTransport.setLastSyncLocalMillis(Date.now());
             SyncTransport.clearPendingChanges();
             await SyncTransport.saveSyncLog();
             SyncProgressReporter.setFraction(1.0);
