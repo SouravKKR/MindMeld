@@ -91,7 +91,7 @@ async function finalizeOcrUploadInBackground({ trackingTask, localStagingFilePat
             localStagingFilePath,
             storageTargets.LOCAL_FILE_SYSTEM,
             gcsStagingPath,
-            storageTargets.GOOGLE_CLOUD_STORAGE,
+            storageTargets.LINODE_OBJECT_STORAGE,
         );
         bStagedToGcs = true;
 
@@ -125,7 +125,7 @@ async function finalizeOcrUploadInBackground({ trackingTask, localStagingFilePat
         // proof — verify the OCRed object exists before persisting the row, so a
         // future caller change (e.g. a DISABLED upload) can't strand a "saved"
         // source pointing at a missing GCS object.
-        const bContentObjectWritten = await Persistence.exists(informationSourcePath, storageTargets.GOOGLE_CLOUD_STORAGE);
+        const bContentObjectWritten = await Persistence.exists(informationSourcePath, storageTargets.LINODE_OBJECT_STORAGE);
         if (!bContentObjectWritten)
         {
             throw new Error("OCR task completed but produced no output object.");
@@ -156,7 +156,7 @@ async function finalizeOcrUploadInBackground({ trackingTask, localStagingFilePat
     {
         if (bStagedToGcs)
         {
-            try { await Persistence.delete(gcsStagingPath, storageTargets.GOOGLE_CLOUD_STORAGE); } catch (_) {}
+            try { await Persistence.delete(gcsStagingPath, storageTargets.LINODE_OBJECT_STORAGE); } catch (_) {}
         }
         try { fs.unlinkSync(localStagingFilePath); } catch (_) {}
     }
@@ -271,7 +271,7 @@ async function handleInformationSourceUpload(request, response)
     // ── Global CAS check ──
     // If the OCRed PDF for this content already exists in GCS (uploaded by any
     // user), reuse it — skip OCR entirely and return the ready source directly.
-    const bAlreadyInContentStore = await Persistence.exists(informationSourcePath, storageTargets.GOOGLE_CLOUD_STORAGE);
+    const bAlreadyInContentStore = await Persistence.exists(informationSourcePath, storageTargets.LINODE_OBJECT_STORAGE);
 
     if (bAlreadyInContentStore)
     {

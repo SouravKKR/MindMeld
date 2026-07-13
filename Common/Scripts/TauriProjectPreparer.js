@@ -18,7 +18,7 @@ class TauriProjectPreparer
 
     prepare()
     {
-        new BuildPipeline().run();
+        new BuildPipeline().runIfStale();
         new ConfigureTauriApp().run();
         CommandRunner.ensureDependencies(this.buildTemplateDirectory);
     }

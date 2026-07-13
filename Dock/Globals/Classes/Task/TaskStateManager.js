@@ -60,7 +60,7 @@ class TaskStateManager
                 continue;
             }
             const objectPath = `${bucketPrefix}/resources/${blob.name}`;
-            await Persistence.write(objectPath, blob.data, storageTargets.GOOGLE_CLOUD_STORAGE);
+            await Persistence.write(objectPath, blob.data, storageTargets.LINODE_OBJECT_STORAGE);
             resourcePaths.push(objectPath);
         }
 
@@ -79,7 +79,7 @@ class TaskStateManager
         });
 
         const statePath = TaskStateManager.#statePathForUser(userId);
-        await Persistence.write(statePath, JSON.stringify(taskState.toJson()), storageTargets.GOOGLE_CLOUD_STORAGE);
+        await Persistence.write(statePath, JSON.stringify(taskState.toJson()), storageTargets.LINODE_OBJECT_STORAGE);
 
         const collection = await TaskStateManager.#getCollection();
         await collection.replaceOne
@@ -122,7 +122,7 @@ class TaskStateManager
 
         try
         {
-            const content = await Persistence.read(indexDocument.statePath, storageTargets.GOOGLE_CLOUD_STORAGE);
+            const content = await Persistence.read(indexDocument.statePath, storageTargets.LINODE_OBJECT_STORAGE);
             const stateJson = JSON.parse(content.toString());
             return TaskState.fromJson(stateJson);
         }
@@ -174,10 +174,10 @@ class TaskStateManager
             // Trailing slash so the prefix matches ONLY this user's objects —
             // never a sibling whose id happens to start with this userId.
             const prefix = `${TaskStateManager.#bucketPrefixForUser(userId)}/`;
-            const objectPaths = await Persistence.list(prefix, storageTargets.GOOGLE_CLOUD_STORAGE);
+            const objectPaths = await Persistence.list(prefix, storageTargets.LINODE_OBJECT_STORAGE);
             for (const objectPath of objectPaths)
             {
-                await Persistence.delete(objectPath, storageTargets.GOOGLE_CLOUD_STORAGE);
+                await Persistence.delete(objectPath, storageTargets.LINODE_OBJECT_STORAGE);
             }
         }
         catch (cleanError)

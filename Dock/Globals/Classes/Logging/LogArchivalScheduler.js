@@ -166,9 +166,9 @@ class LogArchivalScheduler
         const storagePath = `${DatabaseConstants.LOG_ARCHIVE_STORAGE_PREFIX}/${LogArchivalScheduler.#environmentSegment()}/archive_${cutoffDate.toISOString().replace(/[:.]/g, "-")}_${batchIndex}_${crypto.randomUUID()}.ndjson`;
 
         // WRITE → VERIFY → DELETE. Never delete before a verified write.
-        await Persistence.write(storagePath, `${lines.join("\n")}\n`, storageTargets.GOOGLE_CLOUD_STORAGE);
+        await Persistence.write(storagePath, `${lines.join("\n")}\n`, storageTargets.LINODE_OBJECT_STORAGE);
 
-        const exists = await Persistence.exists(storagePath, storageTargets.GOOGLE_CLOUD_STORAGE);
+        const exists = await Persistence.exists(storagePath, storageTargets.LINODE_OBJECT_STORAGE);
         if (!exists)
         {
             throw new Error(`archive object ${storagePath} not found after write; aborting delete to avoid data loss`);

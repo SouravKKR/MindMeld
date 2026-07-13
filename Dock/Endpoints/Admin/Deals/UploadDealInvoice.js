@@ -112,7 +112,7 @@ async function uploadDealInvoice(request, response)
 
     try
     {
-        await Persistence.move(uploadedFilePath, storageTargets.LOCAL_FILE_SYSTEM, bucketPath, storageTargets.GOOGLE_CLOUD_STORAGE);
+        await Persistence.move(uploadedFilePath, storageTargets.LOCAL_FILE_SYSTEM, bucketPath, storageTargets.LINODE_OBJECT_STORAGE);
     }
     catch (uploadError)
     {

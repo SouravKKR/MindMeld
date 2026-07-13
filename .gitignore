@@ -71,6 +71,9 @@ web_modules/
 
 # dotenv environment variable files
 .env
+
+# Incremental-build freshness marker (written after each successful frontend build).
+.build-manifest.json
 .env.*
 !.env.example
 
@@ -428,3 +431,4 @@ Agent/.tools/
 # Desktop/mobile release artifacts served by Dock's /DesktopUpdates route (signed installers +
 # latest.json). Uploaded per release, machine-generated — never committed.
 Dock/DesktopUpdates/
+

@@ -33,7 +33,7 @@ async function downloadDealInvoice(request, response)
     let fileData;
     try
     {
-        fileData = await Persistence.read(deal.getInvoiceBucketPath(), storageTargets.GOOGLE_CLOUD_STORAGE);
+        fileData = await Persistence.read(deal.getInvoiceBucketPath(), storageTargets.LINODE_OBJECT_STORAGE);
     }
     catch (readError)
     {

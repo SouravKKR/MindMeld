@@ -19,7 +19,7 @@ class WebRunner
 
     run()
     {
-        new BuildPipeline().run();
+        new BuildPipeline().runIfStale();
 
         CommandRunner.ensureDependencies(this.dockDirectory);
 

@@ -42,7 +42,7 @@ async function handleInformationSourceDownload(request, response)
     }
 
     const filePath = path.join(informationSource.getDirectoryPath(), informationSource.getHash());
-    const fileData = await Persistence.read(filePath, storageTargets.GOOGLE_CLOUD_STORAGE);
+    const fileData = await Persistence.read(filePath, storageTargets.LINODE_OBJECT_STORAGE);
 
     response.setHeader("Content-Type", informationSource.getMimeType() || "application/octet-stream");
     response.setHeader("Content-Disposition", `attachment; filename="${informationSource.getName()}"`);
