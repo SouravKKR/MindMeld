@@ -26,7 +26,7 @@ class CreditLedger
     // additionalData keys owned exclusively by the credit subsystem. The
     // generic /UpdateUserAdditionalData merge MUST refuse these so a client
     // cannot set its own balance, spend history, or billing baseline.
-    static LEDGER_OWNED_ADDITIONAL_DATA_KEYS = ["credits", "lifetimeCreditsSpent", "lastStorageAssessedAt"];
+    static LEDGER_OWNED_ADDITIONAL_DATA_KEYS = ["credits", "lifetimeCreditsSpent", "lastStorageAssessedAt", "plan", "planExpiresAt", "planStatus", "planSubscriptionId"];
 
     static isLedgerOwnedAdditionalDataKey(fieldKey)
     {

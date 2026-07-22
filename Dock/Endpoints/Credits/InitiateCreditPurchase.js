@@ -4,9 +4,16 @@ const PaymentProviderFactory = require("../../Globals/Classes/Payments/PaymentPr
 const PendingCreditOrderQueryEngine = require("../../Globals/Classes/Database/PendingCreditOrderQueryEngine");
 const RegionResolver = require("../../Globals/Classes/Pricing/RegionResolver");
 const RegionMetadata = require("../../Globals/Classes/Pricing/RegionMetadata");
+const CouponCheckoutService = require("../../Globals/Classes/Coupons/CouponCheckoutService");
+const { getUser } = require("../Helpers/GetUser");
 const { paymentProviders } = require("../../Globals/Enumerations/PaymentProviders");
+const { couponBenefitTargets } = require("../../Globals/Enumerations/CouponBenefitTargets");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
+
+// Below this the payment provider will reject the order (100 minor units = the
+// smallest chargeable amount). A discount that dips under it can't be taken.
+const MINIMUM_CHARGE_MINOR_UNITS = 100;
 
 /**
  * POST /Credits/Purchase/Initiate
@@ -87,6 +94,47 @@ async function initiateCreditPurchase(request, response)
         return;
     }
 
+    // Optional discount coupon (CREDIT_PURCHASE_DISCOUNT). Reserved with the
+    // same three guards as a standalone redemption; released below if the order
+    // cannot be created so an unlaunched checkout does not burn the user's use.
+    let finalAmountMinor = charge.amountMinor;
+    let appliedCouponId = null;
+    let couponDiscountMinor = 0;
+    const rawCouponCode = typeof body?.couponCode === "string" ? body.couponCode.trim() : "";
+    if (rawCouponCode.length > 0)
+    {
+        const buyer = await getUser(request);
+        const buyerEmail = buyer?.getAdditionalData()?.email || "";
+        const couponResult = await CouponCheckoutService.resolveAndReserve
+        (
+            session.getUserId(),
+            buyerEmail,
+            rawCouponCode,
+            charge.amountMinor,
+            couponBenefitTargets.CREDIT_PURCHASE_DISCOUNT,
+            Date.now()
+        );
+        if (!couponResult.ok)
+        {
+            response.statusCode = couponResult.statusCode;
+            response.sendJson({ error: couponResult.reason });
+            return;
+        }
+        appliedCouponId = couponResult.coupon.getId();
+        couponDiscountMinor = couponResult.discountMinor;
+        finalAmountMinor = couponResult.discountedMinor;
+
+        // A discount that drops the charge below the provider minimum cannot be
+        // taken as a payment — release the reservation and reject.
+        if (finalAmountMinor < MINIMUM_CHARGE_MINOR_UNITS)
+        {
+            await CouponCheckoutService.release(appliedCouponId, session.getUserId());
+            response.statusCode = httpStatus.BAD_REQUEST;
+            response.sendJson({ error: ErrorCodes.AMOUNT_BELOW_PROVIDER_MINIMUM });
+            return;
+        }
+    }
+
     const providerEnum = typeof body?.paymentProvider === "number"
         ? body.paymentProvider
         : paymentProviders[String(body?.paymentProvider || "").toUpperCase()];
@@ -97,41 +145,62 @@ async function initiateCreditPurchase(request, response)
 
     if (!provider.isConfigured())
     {
+        if (appliedCouponId)
+        {
+            await CouponCheckoutService.release(appliedCouponId, session.getUserId());
+        }
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
         response.sendJson({ error: ErrorCodes.PAYMENT_PROVIDER_NOT_CONFIGURED });
         return;
     }
 
-    const order = await provider.initiateOrder
-    (
-        charge.amountMinor,
-        charge.currency,
-        {
-            receiptId: `mm_credits_${session.getUserId().slice(0, 8)}_${Date.now()}`,
-            notes:
+    let order;
+    try
+    {
+        order = await provider.initiateOrder
+        (
+            finalAmountMinor,
+            charge.currency,
             {
-                userId: session.getUserId(),
-                purpose: "CREDIT_PURCHASE",
-                credits: String(credits)
+                receiptId: `mm_credits_${session.getUserId().slice(0, 8)}_${Date.now()}`,
+                notes:
+                {
+                    userId: session.getUserId(),
+                    purpose: "CREDIT_PURCHASE",
+                    credits: String(credits)
+                }
             }
+        );
+    }
+    catch (orderError)
+    {
+        if (appliedCouponId)
+        {
+            await CouponCheckoutService.release(appliedCouponId, session.getUserId());
         }
-    );
+        console.error(`[InitiateCreditPurchase] Order creation failed for ${session.getUserId()}: ${orderError?.message || orderError}`);
+        response.statusCode = httpStatus.BAD_GATEWAY;
+        response.sendJson({ error: ErrorCodes.EXCEPTION });
+        return;
+    }
 
     // Bind the provider order to the buyer + the exact quantity + the
-    // server-priced amount. Verify and the webhook grant strictly from this
-    // row, so a buyer cannot inflate the quantity after paying. The order
-    // notes above are advisory only — this row is the trusted record.
+    // server-priced (post-discount) amount. Verify and the webhook grant
+    // strictly from this row, so a buyer cannot inflate the quantity after
+    // paying. The order notes above are advisory only — this row is trusted.
     await PendingCreditOrderQueryEngine.createPendingCreditOrder
     ({
         providerOrderId: order.providerOrderId,
         userId: session.getUserId(),
         credits: credits,
-        amountMinor: charge.amountMinor,
+        amountMinor: finalAmountMinor,
         currency: charge.currency,
         region: region,
         unitPrice: charge.unitPrice,
         discountPercent: charge.discountPercent,
-        paymentProvider: provider.getProviderEnumValue()
+        paymentProvider: provider.getProviderEnumValue(),
+        couponId: appliedCouponId,
+        couponDiscountMinor: couponDiscountMinor
     });
 
     response.statusCode = httpStatus.OK;
@@ -144,7 +213,9 @@ async function initiateCreditPurchase(request, response)
             credits: credits,
             unitPrice: charge.unitPrice,
             discountPercent: charge.discountPercent,
-            amountMinor: charge.amountMinor,
+            amountMinor: finalAmountMinor,
+            baseAmountMinor: charge.amountMinor,
+            couponDiscountMinor: couponDiscountMinor,
             currency: charge.currency,
             region: region,
             currencyConverted: charge.converted

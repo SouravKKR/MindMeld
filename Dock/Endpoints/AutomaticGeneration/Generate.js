@@ -23,6 +23,8 @@ const { clearPartialCompletionOnDecks } = require("../Helpers/ClearPartialComple
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const MaintenanceGate = require("../../Globals/Classes/Maintenance/MaintenanceGate");
+const PlanEntitlementGate = require("../../Globals/Classes/Plans/PlanEntitlementGate");
+const { planFeatures } = require("../../Globals/Enumerations/PlanFeatures");
 
 
 const VIRTUAL_WEB_SOURCE_TYPES = [
@@ -189,23 +191,16 @@ async function handleGenerate(request, response)
         return;
     }
 
-    // Best-effort credit gate on the pipeline's entry task. The Agent
-    // charges each task authoritatively; this just refuses an obviously
-    // unaffordable generation up front.
-    const creditPreflight = await CreditPreflight.check(userId, taskTypes.PREPARE_FOR_GENERATION);
-    if (!creditPreflight.allowed)
+    // Plan entitlement: automatic generation is a Pro-tier feature. Refuse a
+    // lower tier with FEATURE_NOT_IN_PLAN (403) BEFORE the credit preflight so
+    // the user sees an upgrade prompt rather than an out-of-credits message.
+    // Re-authorized server-side against the stored plan; the client is never
+    // trusted.
+    const generationEntitlement = await PlanEntitlementGate.requireFeature(userId, planFeatures.AUTOMATIC_GENERATION);
+    if (!generationEntitlement.allowed)
     {
-        // Out-of-credits is recoverable: save a resumable task state so the
-        // user can resume this exact generation after topping up. A disabled
-        // service is a permanent refusal, so it is NOT saved.
-        const bIsResumable = creditPreflight.reason === ErrorCodes.INSUFFICIENT_CREDITS;
-        if (bIsResumable)
-        {
-            try { await TaskStateManager.save({ userId: userId, taskType: taskTypes.PREPARE_FOR_GENERATION, route: "/Generate", payload: body, pausedReason: creditPreflight.reason }); }
-            catch (saveError) { console.warn(`[Generate] Failed to save resumable task state: ${saveError.message}`); }
-        }
-        response.statusCode = httpStatus.PAYMENT_REQUIRED;
-        response.sendJson({ error: creditPreflight.reason, balance: creditPreflight.balance, required: creditPreflight.required, resumable: bIsResumable });
+        response.statusCode = httpStatus.FORBIDDEN;
+        response.sendJson({ error: generationEntitlement.reason, currentTier: generationEntitlement.currentTier, requiredTier: generationEntitlement.requiredTier });
         return;
     }
 
@@ -223,6 +218,52 @@ async function handleGenerate(request, response)
 
     generalGenerationSettings.setInformationSources(effectiveInformationSources);
     generalGenerationSettings.setImageSources(normalizedImageSources);
+
+    // Plan entitlement: image extraction ("Capture Images / Diagrams") is a
+    // Pro Plus feature. Gate only when this run will actually produce images
+    // — the master switch is on AND a PDF image source or a web image source
+    // is present — so a lower tier generating from text is never blocked. This
+    // mirrors the shouldPrepareImages decision below but runs BEFORE the credit
+    // preflight (so a lower tier sees an upgrade prompt, not a 402) and before
+    // any task is scheduled (so a rejection can never orphan a task).
+    const runWillGenerateImages = generalGenerationSettings.getCaptureImagesEnabled() !== false
+        && (normalizedImageSources.length > 0 || effectiveInformationSources.some(extractableSource =>
+        {
+            const sourceType = extractableSource.getInformationSource().getSourceType();
+            return sourceType === informationSourceTypes.ANYWHERE_ON_THE_INTERNET
+                || sourceType === informationSourceTypes.REPUTED_EXTERNAL_SOURCES;
+        }));
+    if (runWillGenerateImages)
+    {
+        const imageEntitlement = await PlanEntitlementGate.requireFeature(userId, planFeatures.IMAGE_GENERATION);
+        if (!imageEntitlement.allowed)
+        {
+            response.statusCode = httpStatus.FORBIDDEN;
+            response.sendJson({ error: imageEntitlement.reason, currentTier: imageEntitlement.currentTier, requiredTier: imageEntitlement.requiredTier });
+            return;
+        }
+    }
+
+    // Best-effort credit gate on the pipeline's entry task. The Agent
+    // charges each task authoritatively; this just refuses an obviously
+    // unaffordable generation up front. Runs AFTER the plan gates so a
+    // tier-locked feature reports FEATURE_NOT_IN_PLAN (403) ahead of a 402.
+    const creditPreflight = await CreditPreflight.check(userId, taskTypes.PREPARE_FOR_GENERATION);
+    if (!creditPreflight.allowed)
+    {
+        // Out-of-credits is recoverable: save a resumable task state so the
+        // user can resume this exact generation after topping up. A disabled
+        // service is a permanent refusal, so it is NOT saved.
+        const bIsResumable = creditPreflight.reason === ErrorCodes.INSUFFICIENT_CREDITS;
+        if (bIsResumable)
+        {
+            try { await TaskStateManager.save({ userId: userId, taskType: taskTypes.PREPARE_FOR_GENERATION, route: "/Generate", payload: body, pausedReason: creditPreflight.reason }); }
+            catch (saveError) { console.warn(`[Generate] Failed to save resumable task state: ${saveError.message}`); }
+        }
+        response.statusCode = httpStatus.PAYMENT_REQUIRED;
+        response.sendJson({ error: creditPreflight.reason, balance: creditPreflight.balance, required: creditPreflight.required, resumable: bIsResumable });
+        return;
+    }
 
     // Re-serialize so downstream tasks see the normalized payload
     const normalizedGeneralGenerationJson = generalGenerationSettings.toJson();

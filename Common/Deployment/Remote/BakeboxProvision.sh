@@ -10,7 +10,7 @@
 set -euo pipefail
 
 AGENT_CONTEXT_ARCHIVE="/root/agent-context.tar.gz"
-REPOSITORY_DIRECTORY="/root/MindMeld"
+REPOSITORY_DIRECTORY="/root/CogniumLearn"
 MAXIMUM_USED_KILOBYTES=5662310   # 5.4 GB — Linode's "< 5.4 GB used" capture limit.
 
 echo "==> Installing Docker (Debian 12)..."
@@ -27,41 +27,41 @@ mkdir -p "$REPOSITORY_DIRECTORY"
 tar -xzf "$AGENT_CONTEXT_ARCHIVE" -C "$REPOSITORY_DIRECTORY"
 rm -f "$AGENT_CONTEXT_ARCHIVE"
 
-echo "==> Building the mindmeld-agent image..."
+echo "==> Building the cogniumlearn-agent image..."
 cd "$REPOSITORY_DIRECTORY/Agent"
-docker build -t mindmeld-agent -f Dockerfile .
-docker images mindmeld-agent
+docker build -t cogniumlearn-agent -f Dockerfile .
+docker images cogniumlearn-agent
 
 echo "==> Installing the worker systemd unit (started later by cloud-init on each burst VM)..."
-mkdir -p /etc/mindmeld
-cat >/etc/systemd/system/mindmeld-worker.service <<'EOF'
+mkdir -p /etc/cogniumlearn
+cat >/etc/systemd/system/cogniumlearn-worker.service <<'EOF'
 [Unit]
-Description=MindMeld Agent worker
+Description=CogniumLearn Agent worker
 After=docker.service network-online.target
 Requires=docker.service
 
 [Service]
 Restart=always
-EnvironmentFile=/etc/mindmeld/worker.env
-ExecStartPre=-/usr/bin/docker rm -f mindmeld-worker
-ExecStart=/usr/bin/docker run --rm --name mindmeld-worker --env-file /etc/mindmeld/worker.env mindmeld-agent
-ExecStop=/usr/bin/docker stop mindmeld-worker
+EnvironmentFile=/etc/cogniumlearn/worker.env
+ExecStartPre=-/usr/bin/docker rm -f cogniumlearn-worker
+ExecStart=/usr/bin/docker run --rm --name cogniumlearn-worker --env-file /etc/cogniumlearn/worker.env cogniumlearn-agent
+ExecStop=/usr/bin/docker stop cogniumlearn-worker
 
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl enable mindmeld-worker.service
+systemctl enable cogniumlearn-worker.service
 
 echo "==> Clearing the containerd image-store cache (the #1 capture gotcha)..."
 # Modern Docker stores images via the containerd snapshotter in /var/lib/containerd,
 # and `docker image prune` does NOT remove orphaned snapshots there — they pile up to
 # many GB and quietly blow the cap. Save → wipe the store → reload the one image.
-docker save -o /root/mindmeld-agent.tar mindmeld-agent:latest
+docker save -o /root/cogniumlearn-agent.tar cogniumlearn-agent:latest
 systemctl stop docker docker.socket containerd
 rm -rf /var/lib/containerd/*
 systemctl start containerd docker
-docker load -i /root/mindmeld-agent.tar
-rm -f /root/mindmeld-agent.tar
+docker load -i /root/cogniumlearn-agent.tar
+rm -f /root/cogniumlearn-agent.tar
 
 echo "==> Trimming the OS (docs, man pages, locales, apt lists, logs)..."
 apt-get clean

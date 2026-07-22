@@ -14,6 +14,9 @@ const adminListTypes =
   PROMO_CODE_REDEEMERS: 11,
   ALLOWED_LOGIN_EMAILS: 12,
   LOGS: 13,
+  COUPONS: 14,
+  COUPON_REDEEMERS: 15,
+  SUBSCRIPTIONS: 16,
 }
 
 module.exports = { adminListTypes };

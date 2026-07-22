@@ -180,7 +180,7 @@ class LogArchivalScheduler
 
     static #environmentSegment()
     {
-        const environment = process.env.MINDMELD_ENVIRONMENT || (process.argv.includes("--debug") ? "local" : "production");
+        const environment = process.env.COGNIUMLEARN_ENVIRONMENT || (process.argv.includes("--debug") ? "local" : "production");
         return String(environment).replace(/[^A-Za-z0-9_-]/g, "_");
     }
 }

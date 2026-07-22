@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# Shared environment-registry loader for the MindMeld deployment orchestrators
+# Shared environment-registry loader for the CogniumLearn deployment orchestrators
 # (provision / deploy / teardown / status / rename). Sourced after Logging.sh.
 #
 # Reads the non-secret desired shape of every environment from
 # Common/Deployment/Environments.json and exposes it as ENVIRONMENT_* globals plus
 # the label-naming helpers every orchestrator shares, so the naming convention
-# (MindMeld-<Env>-<Role>) lives in exactly one place.
+# (CogniumLearn-<Env>-<Role>) lives in exactly one place.
 
 # This file lives at <repo>/Common/Deployment/Library/EnvironmentConfig.sh, so the
 # repo root is three directories up (Library -> Deployment -> Common -> repo root).
@@ -65,7 +65,7 @@ load_environment_config()
     fi
 }
 
-# The MindMeld-<Env>-<Role> label for a given role (Server, MongoDB, VPC, Subnet,
+# The CogniumLearn-<Env>-<Role> label for a given role (Server, MongoDB, VPC, Subnet,
 # ServerFirewall, DatabaseFirewall, BurstFirewall, BurstImage).
 label_for_role()
 {

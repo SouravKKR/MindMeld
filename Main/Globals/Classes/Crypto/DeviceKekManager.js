@@ -16,7 +16,7 @@
  */
 class DeviceKekManager
 {
-    static #DB_NAME = "MindMeldCrypto";
+    static #DB_NAME = "CogniumLearnCrypto";
     static #STORE_NAME = "deviceKeks";
     static #RECORD_ID = "primary";
 
@@ -108,7 +108,7 @@ class DeviceKekManager
         // same across reloads, so the server can correlate one device's
         // multiple sessions.
         const kek = await DeviceKekManager.getOrCreateKek();
-        const constantPlaintext = new TextEncoder().encode("MindMeld:DeviceFingerprint:v1");
+        const constantPlaintext = new TextEncoder().encode("CogniumLearn:DeviceFingerprint:v1");
         const initializationVector = new Uint8Array(12);
 
         const ciphertext = await crypto.subtle.encrypt

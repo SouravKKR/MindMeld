@@ -69,8 +69,8 @@ class WebContentFetcher:
 
     @staticmethod
     def __user_agent() -> str:
-        contact_email = os.getenv("WEB_SCRAPE_CONTACT_EMAIL", "contact@mindmeld.local")
-        return f"MindMeld/1.0 (educational research; {contact_email})"
+        contact_email = os.getenv("WEB_SCRAPE_CONTACT_EMAIL", "contact@cogniumlearn.local")
+        return f"CogniumLearn/1.0 (educational research; {contact_email})"
 
     @staticmethod
     def __rate_limit_seconds() -> float:

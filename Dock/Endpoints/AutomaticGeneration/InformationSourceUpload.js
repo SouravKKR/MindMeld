@@ -284,7 +284,7 @@ async function handleInformationSourceUpload(request, response)
     // ── First-time upload: register a tracking task and finalize asynchronously ──
     // The multipart temp file may be reaped once this handler returns, so copy it
     // to a stable local path the background finalize can still read/upload.
-    const localStagingFilePath = path.join(os.tmpdir(), `mindmeld-upload-${Date.now()}-${crypto.randomBytes(8).toString("hex")}.bin`);
+    const localStagingFilePath = path.join(os.tmpdir(), `cogniumlearn-upload-${Date.now()}-${crypto.randomBytes(8).toString("hex")}.bin`);
 
     try
     {

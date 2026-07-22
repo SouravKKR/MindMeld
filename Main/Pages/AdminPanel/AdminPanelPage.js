@@ -11,6 +11,8 @@ import AlertNotifier from "./Components/AlertNotifier.js";
 import AdminCreditsTabs from "./Components/AdminCreditsTabs.js";
 import SetUserStreakPanel from "./Components/SetUserStreakPanel.js";
 import AdminLogsPanel from "./Components/AdminLogsPanel.js";
+import CouponsPanel from "./Components/CouponsPanel.js";
+import PlanFeaturesPanel from "./Components/PlanFeaturesPanel.js";
 import { userRoles } from "../../Globals/Enumerations/UserRoles.js";
 import { adminPanelTabs } from "../../Globals/Enumerations/AdminPanelTabs.js";
 import { adminListTypes } from "../../Globals/Enumerations/AdminListTypes.js";
@@ -91,6 +93,8 @@ class AdminPanelPage extends HTMLElement
             { tab: adminPanelTabs.RATE_LIMITS, label: "Rate Limits" },
             { tab: adminPanelTabs.AUDIT_LOG, label: "Audit Log" },
             { tab: adminPanelTabs.CREDITS, label: "Credits" },
+            { tab: adminPanelTabs.SUBSCRIPTIONS, label: "Plans" },
+            { tab: adminPanelTabs.COUPONS, label: "Coupons" },
             { tab: adminPanelTabs.MAINTENANCE, label: "Maintenance" },
             { tab: adminPanelTabs.STREAKS, label: "Streaks" },
             { tab: adminPanelTabs.LOGS, label: "Logs" }
@@ -133,7 +137,7 @@ class AdminPanelPage extends HTMLElement
         const currentUser = window["user"];
         const isSuperAdmin = currentUser && currentUser.getRole() === userRoles.ADMIN;
         const allowedTabs = isSuperAdmin
-            ? new Set([adminPanelTabs.DECKS, adminPanelTabs.STATS, adminPanelTabs.ADMINS, adminPanelTabs.ALLOWED_EMAILS, adminPanelTabs.RELEASE_NOTES, adminPanelTabs.ORGANIZATIONS, adminPanelTabs.ALERTS, adminPanelTabs.RATE_LIMITS, adminPanelTabs.AUDIT_LOG, adminPanelTabs.CREDITS, adminPanelTabs.MAINTENANCE, adminPanelTabs.STREAKS, adminPanelTabs.LOGS])
+            ? new Set([adminPanelTabs.DECKS, adminPanelTabs.STATS, adminPanelTabs.ADMINS, adminPanelTabs.ALLOWED_EMAILS, adminPanelTabs.RELEASE_NOTES, adminPanelTabs.ORGANIZATIONS, adminPanelTabs.ALERTS, adminPanelTabs.RATE_LIMITS, adminPanelTabs.AUDIT_LOG, adminPanelTabs.CREDITS, adminPanelTabs.SUBSCRIPTIONS, adminPanelTabs.COUPONS, adminPanelTabs.MAINTENANCE, adminPanelTabs.STREAKS, adminPanelTabs.LOGS])
             : new Set([adminPanelTabs.ORGANIZATION_MEMBERS]);
 
         if (!allowedTabs.has(this.#activeTab))
@@ -182,6 +186,12 @@ class AdminPanelPage extends HTMLElement
             case adminPanelTabs.CREDITS:
                 this.#renderCreditsTab(content);
                 break;
+            case adminPanelTabs.SUBSCRIPTIONS:
+                this.#renderSubscriptionsTab(content);
+                break;
+            case adminPanelTabs.COUPONS:
+                this.#renderCouponsTab(content);
+                break;
             case adminPanelTabs.MAINTENANCE:
                 await this.#renderMaintenanceTab(content);
                 break;
@@ -221,6 +231,19 @@ class AdminPanelPage extends HTMLElement
         // across sub-tab switches so unsaved edits survive.
         content.innerHTML = "";
         content.appendChild(document.createElement("admin-credits-tabs"));
+    }
+
+    #renderSubscriptionsTab(content)
+    {
+        // The plan tier × AI-feature access matrix (which plan unlocks what).
+        content.innerHTML = "";
+        content.appendChild(document.createElement("plan-features-panel"));
+    }
+
+    #renderCouponsTab(content)
+    {
+        content.innerHTML = "";
+        content.appendChild(document.createElement("coupons-panel"));
     }
 
     // ── Scheduled maintenance windows ──────────────────────────────────────
@@ -1391,7 +1414,7 @@ class AdminPanelPage extends HTMLElement
             content.innerHTML = `
                 <p>You don't currently administer any active organizations.</p>
                 <p class="admin-panel-pricing-note">
-                    If an organization is awaiting payment, the MindMeld team
+                    If an organization is awaiting payment, the CogniumLearn team
                     will activate it after payment clears — members can be
                     added at that point.
                 </p>
@@ -1528,7 +1551,7 @@ class AdminPanelPage extends HTMLElement
         const remainingSlots = Math.max(0, max - current);
         if (remainingSlots === 0)
         {
-            counts.innerHTML = `<strong>${current} / ${max}</strong> — capacity reached. Contact MindMeld to extend.`;
+            counts.innerHTML = `<strong>${current} / ${max}</strong> — capacity reached. Contact CogniumLearn to extend.`;
         }
         else
         {

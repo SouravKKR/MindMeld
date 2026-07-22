@@ -7,7 +7,7 @@
 //
 // Subcommands:
 //   field <dotted.path>                 — print a nested value (blank if missing)
-//   maxImageVersion <labelPrefix>       — highest <version> across MindMeldBurstVmImage<version> images (0 if none)
+//   maxImageVersion <labelPrefix>       — highest <version> across CogniumLearnBurstVmImage<version> images (0 if none)
 //   highestImageId <labelPrefix>        — id of the highest-version managed image (blank if none)
 //   olderImageIds <labelPrefix> <keep>  — image ids whose version < keep, one per line
 //   ext4DiskId                          — id of the single ext4 root disk in a disks listing
@@ -49,7 +49,7 @@ function parseVersionFromLabel(label, labelPrefix)
     const suffix = label.slice(labelPrefix.length);
 
     // Only a pure integer suffix counts as a managed version (e.g. "7"). Anything
-    // else (a hand-made "MindMeldBurstVmImage-backup") is ignored, never deleted.
+    // else (a hand-made "CogniumLearnBurstVmImage-backup") is ignored, never deleted.
     if (!/^[0-9]+$/.test(suffix))
     {
         return null;

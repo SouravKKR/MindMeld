@@ -146,7 +146,7 @@ class OptionsSidebar extends HTMLElement
                 const confirmed = await DialogBox.confirm
                 (
                     "Clear local data?",
-                    "This will erase every deck, card, and progress record stored on this device and sign you out. Your data on MindMeld's servers is NOT affected — the next sign-in re-syncs everything from the server. This cannot be undone."
+                    "This will erase every deck, card, and progress record stored on this device and sign you out. Your data on CogniumLearn's servers is NOT affected — the next sign-in re-syncs everything from the server. This cannot be undone."
                 );
 
                 if (!confirmed)
@@ -184,7 +184,7 @@ class OptionsSidebar extends HTMLElement
         aboutButton.addEventListener("click", () =>
         {
             console.log("Opening about page");
-            PageNavigator.open("mindmeld-about-page");
+            PageNavigator.open("cogniumlearn-about-page");
         });
 
         if (tutorialButton)

@@ -1,10 +1,10 @@
-// Browser UI tests for the BUILT MindMeld app (Dock/Static), driven by a real
+// Browser UI tests for the BUILT CogniumLearn app (Dock/Static), driven by a real
 // Chromium via Puppeteer. Covers: page-to-page navigation matrix, portrait /
 // landscape responsiveness (no horizontal overflow / blank screens), dialog
 // alignment + overflow + one-after-another queueing, and client-side error
 // capture (console.error / pageerror / unhandledrejection).
 //
-// MindMeld is a single-page app: the custom PageNavigator mounts exactly one
+// CogniumLearn is a single-page app: the custom PageNavigator mounts exactly one
 // page element at a time (the previous page is hidden via display:none or
 // cleared from the stack). A single boot-page check would therefore only cover
 // whatever the bootstrap happened to open, so the responsiveness + blank-screen
@@ -32,7 +32,7 @@ const CATEGORY = "UI Navigation / Responsive / Popups (Puppeteer)";
 // Fallback inventory; the runner also discovers registered tags at runtime.
 const KNOWN_PAGE_TAGS = [
     "home-page", "login-page", "admin-panel-page", "settings-page",
-    "mindmeld-about-page", "tutorials-page", "progress-page", "study-page",
+    "cogniumlearn-about-page", "tutorials-page", "progress-page", "study-page",
     "card-editor-page", "study-material-editor-page", "deck-editor-page",
     "mock-test-editor-page", "mock-test-answer-key-page", "browser-page",
     "deck-insights-page", "automatic-generation-page", "activity-page",

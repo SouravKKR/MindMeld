@@ -182,14 +182,14 @@ class SettingsPage extends HTMLElement
                     <div class="settings-danger-zone-row">
                         <div class="settings-danger-zone-description">
                             <strong>Clear all server data</strong>
-                            <span>Permanently deletes every deck, card, study material, mock test and sync record for your account from MindMeld's servers. Other devices will lose this data on next sync. Your account stays active.</span>
+                            <span>Permanently deletes every deck, card, study material, mock test and sync record for your account from CogniumLearn's servers. Other devices will lose this data on next sync. Your account stays active.</span>
                         </div>
                         <button class="settings-clear-server-data-button" type="button">Clear All Server Data</button>
                     </div>
                     <div class="settings-danger-zone-row">
                         <div class="settings-danger-zone-description">
                             <strong>Delete account</strong>
-                            <span>Permanently deletes your MindMeld account and every record tied to it — decks, cards, study materials, mock tests and sync history — and signs you out of every device. <strong>You will lose everything, including all paid content: purchased decks, their licenses and your access are revoked with no refund and cannot be recovered.</strong> This is irreversible and cannot be undone.</span>
+                            <span>Permanently deletes your CogniumLearn account and every record tied to it — decks, cards, study materials, mock tests and sync history — and signs you out of every device. <strong>You will lose everything, including all paid content: purchased decks, their licenses and your access are revoked with no refund and cannot be recovered.</strong> This is irreversible and cannot be undone.</span>
                         </div>
                         <button class="settings-delete-account-button" type="button">Delete Account</button>
                     </div>
@@ -556,7 +556,7 @@ class SettingsPage extends HTMLElement
         const confirmed = await DialogBox.confirm
         (
             "Permanently delete all your server data?",
-            "This wipes every deck, card, study material, mock test and sync record for your account from MindMeld's servers. Other devices will lose this data on next sync. Your account itself stays active. This cannot be undone."
+            "This wipes every deck, card, study material, mock test and sync record for your account from CogniumLearn's servers. Other devices will lose this data on next sync. Your account itself stays active. This cannot be undone."
         );
 
         if(!confirmed)
@@ -617,7 +617,7 @@ class SettingsPage extends HTMLElement
         const confirmed = await DialogBox.confirm
         (
             "Permanently delete your account?",
-            "WARNING: You will lose EVERYTHING. This deletes your MindMeld account and every record tied to it — decks, cards, study materials, mock tests and sync history — from MindMeld's servers, and signs you out of every device.<br><br>This INCLUDES all paid content: any decks you have purchased, their licenses and your access to them will be permanently revoked. You will NOT be refunded and you will NOT be able to recover or re-download purchased content. This is irreversible and cannot be undone."
+            "WARNING: You will lose EVERYTHING. This deletes your CogniumLearn account and every record tied to it — decks, cards, study materials, mock tests and sync history — from CogniumLearn's servers, and signs you out of every device.<br><br>This INCLUDES all paid content: any decks you have purchased, their licenses and your access to them will be permanently revoked. You will NOT be refunded and you will NOT be able to recover or re-download purchased content. This is irreversible and cannot be undone."
         );
 
         if(!confirmed)

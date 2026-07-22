@@ -26,7 +26,7 @@ import TutorialEngine from "../TutorialEngine.js";
  * pass deletes the lot when the user finishes or skips the tutorial —
  * no separate teardown wiring required.
  *
- * The main sample deck (createForUser) teaches the MindMeld learning
+ * The main sample deck (createForUser) teaches the CogniumLearn learning
  * lifecycle, and additionally carries an MCQ mock test (so the
  * grading demo runs fully offline) and a seeded `lastAnalysisTopics`
  * block (so Deck Insights renders populated panels without an analysis
@@ -41,22 +41,22 @@ class TutorialSampleDeckBuilder
     static #SAMPLE_CARDS =
     [
         {
-            question: "<p>What are the five phases of the MindMeld learning lifecycle?</p>",
+            question: "<p>What are the five phases of the CogniumLearn learning lifecycle?</p>",
             answer:   "<p><strong>Acquire → Encode → Consolidate → Validate → Reflect.</strong> Every feature in the app serves at least one of these phases.</p>"
         },
         {
-            question: "<p>Which study mode in MindMeld is built for the <em>Encode</em> phase?</p>",
+            question: "<p>Which study mode in CogniumLearn is built for the <em>Encode</em> phase?</p>",
             answer:   "<p><strong>Spaced Repetition</strong> — it shows each card on the day your memory of it is about to lapse, so the answer burns in instead of fading.</p>"
         },
         {
-            question: "<p>What's the difference between <em>Revise</em> and <em>Spaced Repetition</em> in MindMeld?</p>",
+            question: "<p>What's the difference between <em>Revise</em> and <em>Spaced Repetition</em> in CogniumLearn?</p>",
             answer:   "<p>Revise is a quick, linear glance-through of cards you've marked for review. Spaced Repetition schedules cards by when you're next due to see them and is meant for long-term retention — Revise is meant for short-term polish right before a test or recall session.</p>"
         }
     ];
 
     static #STANDARD_STUDY_MATERIAL_CONTENT = `
-        <h2>The MindMeld Learning Lifecycle</h2>
-        <p>MindMeld treats studying for an exam as a five-phase journey instead of a single act of memorisation. Each phase has its own goals, and the app gives you a different set of tools for each one.</p>
+        <h2>The CogniumLearn Learning Lifecycle</h2>
+        <p>CogniumLearn treats studying for an exam as a five-phase journey instead of a single act of memorisation. Each phase has its own goals, and the app gives you a different set of tools for each one.</p>
 
         <h3>1. Acquire</h3>
         <p>Capture material from any source — your textbook, your notes, a PDF, a website, even a quick voice memo. The Acquire phase is about getting raw information into the deck. You can paste content directly, upload a syllabus and let the app generate flashcards, or import an existing deck from a friend.</p>
@@ -74,7 +74,7 @@ class TutorialSampleDeckBuilder
         <p><strong>Deck Insights</strong> shows you exactly where you stand: which topics are confident, which are shaky, which keep flipping between right and wrong. The point isn't a single number — it's a map of where your remaining effort should go.</p>
 
         <h3>Why a lifecycle at all?</h3>
-        <p>Most flashcard apps stop at phase two: memorisation. MindMeld treats memorisation as one fifth of the problem. If you only encode, you never learn whether you can actually use what you've memorised in an exam-shaped situation — and you never learn what to study next.</p>
+        <p>Most flashcard apps stop at phase two: memorisation. CogniumLearn treats memorisation as one fifth of the problem. If you only encode, you never learn whether you can actually use what you've memorised in an exam-shaped situation — and you never learn what to study next.</p>
     `;
 
     static #SUMMARY_STUDY_MATERIAL_CONTENT = `
@@ -94,7 +94,7 @@ class TutorialSampleDeckBuilder
     static #SAMPLE_MOCK_TEST_QUESTIONS =
     [
         {
-            question: "Which study mode in MindMeld is built for the Encode phase?",
+            question: "Which study mode in CogniumLearn is built for the Encode phase?",
             options: ["Revise", "Spaced Repetition", "Mock Test", "Deck Insights"],
             correctIndex: 1,
             answerReason: "Spaced Repetition is the scheduled-review mode that drives long-term encoding."
@@ -163,7 +163,7 @@ class TutorialSampleDeckBuilder
 
         const generatedMaterial = new StudyMaterial(
             StudyMaterial.generateId(),
-            "<h2>Photosynthesis (AI-generated sample)</h2><p>This deck stands in for what MindMeld's AI would generate from a syllabus or your notes. In a real run it would contain dozens of flashcards, study materials and mock tests built from your source material.</p>",
+            "<h2>Photosynthesis (AI-generated sample)</h2><p>This deck stands in for what CogniumLearn's AI would generate from a syllabus or your notes. In a real run it would contain dozens of flashcards, study materials and mock tests built from your source material.</p>",
             generatedDeck.getId(),
             new Lifecycle(),
             0,

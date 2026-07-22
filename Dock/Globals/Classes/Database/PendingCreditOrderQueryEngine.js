@@ -67,7 +67,7 @@ class PendingCreditOrderQueryEngine
      * checkout initiation. Upsert on providerOrderId so a retried initiation
      * for the same order overwrites cleanly rather than duplicating.
      */
-    static async createPendingCreditOrder({ providerOrderId, userId, credits, amountMinor, currency, region, unitPrice, discountPercent, paymentProvider } = {})
+    static async createPendingCreditOrder({ providerOrderId, userId, credits, amountMinor, currency, region, unitPrice, discountPercent, paymentProvider, couponId, couponDiscountMinor } = {})
     {
         const collection = await PendingCreditOrderQueryEngine.#getCollection();
         if (!collection || typeof providerOrderId !== "string" || providerOrderId.length === 0)
@@ -91,6 +91,11 @@ class PendingCreditOrderQueryEngine
             unitPrice: Number(unitPrice) || 0,
             discountPercent: Number(discountPercent) || 0,
             paymentProvider: paymentProvider !== undefined ? paymentProvider : null,
+            // Discount coupon applied at checkout (null when none). The redemption
+            // row was already reserved by CouponCheckoutService; these fields are
+            // for the audit trail on the eventual grant.
+            couponId: (typeof couponId === "string" && couponId.length > 0) ? couponId : null,
+            couponDiscountMinor: Number(couponDiscountMinor) || 0,
             status: PendingCreditOrderQueryEngine.STATUS_PENDING,
             createdAt: new Date(),
             consumedAt: new Date(0)

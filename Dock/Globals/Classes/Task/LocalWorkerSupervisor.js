@@ -98,7 +98,7 @@ class LocalWorkerSupervisor
         const startedAtMilliseconds = Date.now();
 
         // In production (no --debug) inherit Dock's stdout/stderr so the worker
-        // writes straight to the journal (journalctl -u mindmeld-dock). This both
+        // writes straight to the journal (journalctl -u cogniumlearn-dock). This both
         // captures the full Python traceback of any task failure — which the old
         // pipe-into-a-no-op path silently discarded, leaving failures like
         // MapTopics' "[Errno 32] Broken pipe" un-diagnosable — and removes the

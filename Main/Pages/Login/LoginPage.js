@@ -56,9 +56,9 @@ class LoginPage extends HTMLElement
             <div class="login-page-backdrop">
                 <div class="login-page-panel">
                     <img class="login-page-logo"
-                         src="./Globals/Assets/Images/Logos/CogniumLabsLogo.png"
-                         alt="Cognium Labs">
-                    <div class="login-page-title">MindMeld</div>
+                         src="./Globals/Assets/Images/Logos/CogniumLearnLogoIcon.png"
+                         alt="CogniumLearn">
+                    <div class="login-page-title">CogniumLearn</div>
                     <div class="login-page-subtitle">Sign in to continue</div>
                     <div class="login-page-providers">
                         ${providerButtonsHtml}
@@ -72,6 +72,12 @@ class LoginPage extends HTMLElement
                         <a href="#" data-doc="TERMS_OF_SERVICE" class="login-page-legal-link">Terms of Service</a>
                         <span>and</span>
                         <a href="#" data-doc="PRIVACY_POLICY" class="login-page-legal-link">Privacy Policy</a>.
+                    </div>
+                    <div class="login-page-attribution">
+                        <span class="login-page-attribution-label">by</span>
+                        <img class="login-page-attribution-logo"
+                             src="./Globals/Assets/Images/Logos/CogniumLabsLogo.png"
+                             alt="Cognium Labs">
                     </div>
                 </div>
                 <copyright-notice position="bottom-center"></copyright-notice>

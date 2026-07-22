@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# MindMeld base-node setup — run as root on a fresh Debian 12 base node.
+# CogniumLearn base-node setup — run as root on a fresh Debian 12 base node.
 # Installs everything the base node needs and starts Dock under systemd.
 #
 # Prerequisites (do these BEFORE running):
-#   - The repo is cloned on the box (e.g. /root/mindmeld or /opt/mindmeld/MindMeld).
+#   - The repo is cloned on the box (e.g. /root/cogniumlearn or /opt/cogniumlearn/CogniumLearn).
 #   - Dock/.production.env AND Agent/.production.env are filled in and present.
 #   - The node is attached to the VPC. Mongo runs on its own node and is reachable
 #     at its VPC IP (Dock/.production.env -> MONGODB_URL uses that VPC IP). Redis is
@@ -12,7 +12,7 @@
 #
 # Usage (from anywhere; REPO_DIR defaults to the repo this script lives in):
 #   sudo bash Common/Scripts/setup-base-node.sh
-#   sudo REPO_DIR=/root/mindmeld bash Common/Scripts/setup-base-node.sh
+#   sudo REPO_DIR=/root/cogniumlearn bash Common/Scripts/setup-base-node.sh
 #
 set -euo pipefail
 
@@ -23,12 +23,12 @@ AGENT_DIR="$REPO_DIR/Agent"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 # Which environment this base node serves. Defaults to production (back-compat).
 # The env files are Dock/.<env>.env + Agent/.<env>.env and the systemd unit exports
-# MINDMELD_ENVIRONMENT so Dock + its Agent subprocesses load the right one. For a
+# COGNIUMLEARN_ENVIRONMENT so Dock + its Agent subprocesses load the right one. For a
 # full from-scratch provision use Common/Deployment/provision-environment.sh instead.
-MINDMELD_ENVIRONMENT="${MINDMELD_ENVIRONMENT:-production}"
-ENVIRONMENT_FILE_NAME=".${MINDMELD_ENVIRONMENT}.env"
+COGNIUMLEARN_ENVIRONMENT="${COGNIUMLEARN_ENVIRONMENT:-production}"
+ENVIRONMENT_FILE_NAME=".${COGNIUMLEARN_ENVIRONMENT}.env"
 
-echo "==> Repo root: $REPO_DIR  (environment: $MINDMELD_ENVIRONMENT)"
+echo "==> Repo root: $REPO_DIR  (environment: $COGNIUMLEARN_ENVIRONMENT)"
 [ -f "$DOCK_DIR/$ENVIRONMENT_FILE_NAME" ]  || { echo "ERROR: missing $DOCK_DIR/$ENVIRONMENT_FILE_NAME";  exit 1; }
 [ -f "$AGENT_DIR/$ENVIRONMENT_FILE_NAME" ] || { echo "ERROR: missing $AGENT_DIR/$ENVIRONMENT_FILE_NAME"; exit 1; }
 
@@ -82,9 +82,9 @@ npm install
 
 echo "==> Dock systemd service..."
 NODE_BIN="$(command -v node)"
-cat >/etc/systemd/system/mindmeld-dock.service <<EOF
+cat >/etc/systemd/system/cogniumlearn-dock.service <<EOF
 [Unit]
-Description=MindMeld Dock ($MINDMELD_ENVIRONMENT)
+Description=CogniumLearn Dock ($COGNIUMLEARN_ENVIRONMENT)
 After=network-online.target redis-server.service
 Wants=network-online.target
 
@@ -92,7 +92,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$DOCK_DIR
-Environment=MINDMELD_ENVIRONMENT=$MINDMELD_ENVIRONMENT
+Environment=COGNIUMLEARN_ENVIRONMENT=$COGNIUMLEARN_ENVIRONMENT
 ExecStart=$NODE_BIN index.js
 Restart=always
 RestartSec=5
@@ -101,12 +101,12 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl enable --now mindmeld-dock
+systemctl enable --now cogniumlearn-dock
 
 echo ""
 echo "==> Done. Dock is running under systemd."
-echo "    Logs:    journalctl -u mindmeld-dock -f"
-echo "    Restart: systemctl restart mindmeld-dock"
+echo "    Logs:    journalctl -u cogniumlearn-dock -f"
+echo "    Restart: systemctl restart cogniumlearn-dock"
 echo ""
 echo "Still MANUAL (not automated here):"
 echo "  1. Cloudflare Tunnel for public access  (Deployment.md 1.8)."

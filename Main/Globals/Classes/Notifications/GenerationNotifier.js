@@ -528,7 +528,7 @@ class GenerationNotifier
         {
             return {
                 title: "Generation failed",
-                body: `${safeLabel} couldn't be completed. Open MindMeld to try again.`
+                body: `${safeLabel} couldn't be completed. Open CogniumLearn to try again.`
             };
         }
         return {

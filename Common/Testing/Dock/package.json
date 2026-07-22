@@ -1,8 +1,8 @@
 {
-  "name": "mindmeld-dock-tests",
+  "name": "cogniumlearn-dock-tests",
   "version": "1.0.0",
   "private": true,
-  "description": "MindMeld Dock API + utility tests (Newman). Isolated here so the repo root and Dock/ stay clean.",
+  "description": "CogniumLearn Dock API + utility tests (Newman). Isolated here so the repo root and Dock/ stay clean.",
   "scripts": {
     "test:unit": "node run_dock_unit_tests.js",
     "test:api": "node run_newman.js"

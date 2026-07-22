@@ -24,6 +24,11 @@ class DatabaseConnector
     static TEXT_EMBEDDINGS_VECTOR_INDEX_NAME = "textEmbeddingsVectorSearch";
     static TEXT_EMBEDDINGS_VECTOR_DIMENSIONS = 768;
 
+    // Raised from the Node driver's default (100) so a concurrent burst
+    // across many users (e.g. simultaneous uploads) queues less at the
+    // connection-pool layer before ever reaching Mongo.
+    static MONGO_CLIENT_MAX_POOL_SIZE = 250;
+
     static async #connect()
     {
         try
@@ -43,7 +48,7 @@ class DatabaseConnector
                 return false;
             }
 
-            DatabaseConnector.#mongoClient = new MongoClient(databaseUrl);
+            DatabaseConnector.#mongoClient = new MongoClient(databaseUrl, { maxPoolSize: DatabaseConnector.MONGO_CLIENT_MAX_POOL_SIZE });
 
             await DatabaseConnector.#mongoClient.connect();
 

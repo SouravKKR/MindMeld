@@ -11,17 +11,17 @@ bash Common/Deployment/deploy.sh
 
 ## What it does
 
-1. Creates a throwaway Debian 12 **bakebox** Linode (tagged `mindmeld-bakebox`).
+1. Creates a throwaway Debian 12 **bakebox** Linode (tagged `cogniumlearn-bakebox`).
 2. Uploads the `Agent/` build context (excludes the venv, caches and `*.env` secrets).
-3. Builds the `mindmeld-agent` Docker image and installs the worker systemd unit.
+3. Builds the `cogniumlearn-agent` Docker image and installs the worker systemd unit.
 4. Wipes the containerd cache + trims the OS so the disk fits Linode's 6 GB Image cap.
-5. Powers off, shrinks the disk to 6144 MB, and captures **`MindMeldBurstVmImage<version>`**
+5. Powers off, shrinks the disk to 6144 MB, and captures **`CogniumLearnBurstVmImage<version>`**
    (version = highest existing + 1).
 6. SSHes into the always-on **base node** and refreshes the Agent code + venv.
 7. Writes the new image id into the base node's `Dock/.production.env`
    (`BURST_IMAGE_ID`), ensures Dock + cloudflared run as services (idempotent), and
    restarts Dock — so the live fleet immediately boots the new image.
-8. Deletes the bakebox and any **older** `MindMeldBurstVmImage<version>` images.
+8. Deletes the bakebox and any **older** `CogniumLearnBurstVmImage<version>` images.
 9. Prints a summary and (if `NOTIFY_WEBHOOK_URL` is set) POSTs it.
 
 On any failure before step 8 the bakebox is **left running** for inspection; the
@@ -48,7 +48,7 @@ documented inline in that file.
 | *(none)* | Full bake → frontend build → roll-out → cleanup. |
 | `--skip-base-update` | Bake + capture only; don't touch the base node or delete old images. |
 | `--skip-frontend-build` | Don't rebuild `Dock/Static`; ship it as-is (use if you already built). |
-| `--cleanup-bakeboxes` | Delete stray `mindmeld-bakebox` Linodes from a failed run, then exit. |
+| `--cleanup-bakeboxes` | Delete stray `cogniumlearn-bakebox` Linodes from a failed run, then exit. |
 | `--help` | Usage. |
 
 ## Files

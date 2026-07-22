@@ -18,7 +18,7 @@ import { devicePlatforms } from "../../Enumerations/DevicePlatforms.js";
  */
 class DeviceHeartbeatManager
 {
-    static #DEVICE_ID_STORAGE_KEY = "mindmeld.deviceId";
+    static #DEVICE_ID_STORAGE_KEY = "cogniumlearn.deviceId";
     static #heartbeatIntervalId = null;
     static #installed = false;
 

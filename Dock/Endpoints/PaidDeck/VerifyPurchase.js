@@ -234,7 +234,7 @@ async function verifyPurchase(request, response)
         try
         {
             const buyerEmail = user ? (user.getAdditionalData()?.email || "") : "";
-            const deckLabel = authoritativeDeckIds.length === 1 ? "MindMeld deck" : `MindMeld decks (${authoritativeDeckIds.length})`;
+            const deckLabel = authoritativeDeckIds.length === 1 ? "CogniumLearn deck" : `CogniumLearn decks (${authoritativeDeckIds.length})`;
             await ZohoInvoiceService.createPaidInvoice
             ({
                 email: buyerEmail,

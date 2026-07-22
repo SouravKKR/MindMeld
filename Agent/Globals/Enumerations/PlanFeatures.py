@@ -1,0 +1,10 @@
+from enum import IntEnum
+
+class PlanFeatures(IntEnum):
+    ASK_AI = 0
+    CHAT = 1
+    CURATED_STUDY = 2
+    MOCK_TEST_EVALUATION = 3
+    AUTOMATIC_GENERATION = 4
+    IMAGE_GENERATION = 5
+    MONTHLY_FREE_DECK = 6

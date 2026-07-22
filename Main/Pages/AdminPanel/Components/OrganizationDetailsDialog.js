@@ -1,5 +1,5 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
-import ZohoPaymentsCheckout from "../../../Globals/Classes/Payments/ZohoPaymentsCheckout.js";
+import PaymentCheckout from "../../../Globals/Classes/Payments/PaymentCheckout.js";
 import { organizationStatus } from "../../../Globals/Enumerations/OrganizationStatus.js";
 import { organizationDeckPerkTypes } from "../../../Globals/Enumerations/OrganizationDeckPerkTypes.js";
 
@@ -8,7 +8,7 @@ import { organizationDeckPerkTypes } from "../../../Globals/Enumerations/Organiz
  *
  * Super-admin view + edit for a single organization: shows payments,
  * lets the admin update the perk set, and exposes the "Expand
- * capacity" flow (Zoho Payments-driven). Member management is handled by
+ * capacity" flow (provider checkout, Razorpay today). Member management is handled by
  * the org admin's own tab; this dialog stays focused on the deal terms
  * and lifecycle.
  *
@@ -353,20 +353,20 @@ class OrganizationDetailsDialog
                 }
 
                 const checkoutContext = initiateJson.order?.checkoutContext;
-                if (!checkoutContext || !ZohoPaymentsCheckout.isAvailable())
+                if (!checkoutContext || !PaymentCheckout.isAvailable(initiateJson.provider))
                 {
-                    showError("Zoho checkout not available — reload the page and try again.");
+                    showError("Checkout not available — reload the page and try again.");
                     return;
                 }
 
                 let checkoutResult;
                 try
                 {
-                    checkoutResult = await ZohoPaymentsCheckout.open(checkoutContext, { description: `Capacity expansion: +${additionalMembers}` });
+                    checkoutResult = await PaymentCheckout.open(initiateJson.provider, checkoutContext, { description: `Capacity expansion: +${additionalMembers}` });
                 }
                 catch (checkoutError)
                 {
-                    showError(checkoutError.message || "Zoho checkout failed.");
+                    showError(checkoutError.message || "Checkout failed.");
                     return;
                 }
 

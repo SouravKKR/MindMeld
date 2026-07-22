@@ -4,7 +4,7 @@
 # provision-environment.sh for environments whose mongoTopology is "separate"
 # (Testing, Production). Installs MongoDB Community, binds it to loopback + the
 # node's VPC private IP, creates the root user and enables authorization. The
-# node's Cloud Firewall (MindMeld-<Env>-DatabaseFirewall) already restricts 27017
+# node's Cloud Firewall (CogniumLearn-<Env>-DatabaseFirewall) already restricts 27017
 # to the VPC CIDR, so the database is never exposed publicly.
 #
 # Inputs (exported on the ssh command line by provision-environment.sh):

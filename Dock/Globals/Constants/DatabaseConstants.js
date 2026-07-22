@@ -55,6 +55,12 @@ class DatabaseConstants
     static CREDIT_DEAL_PAYMENTS_COLLECTION = 'creditDealPayments';
     static PROMO_CODES_COLLECTION = 'promoCodes';
     static PROMO_CODE_REDEMPTIONS_COLLECTION = 'promoCodeRedemptions';
+    static COUPONS_COLLECTION = 'coupons';
+    static COUPON_REDEMPTIONS_COLLECTION = 'couponRedemptions';
+    static USER_SUBSCRIPTIONS_COLLECTION = 'userSubscriptions';
+    static RAZORPAY_PLAN_REGISTRY_COLLECTION = 'razorpayPlanRegistry';
+    static PLAN_DECK_CLAIMS_COLLECTION = 'planDeckClaims';
+    static PLAN_FEATURE_CONFIG_COLLECTION = 'planFeatureConfig';
     static LOG_EVENTS_COLLECTION = 'logEvents';
     static LOG_ARCHIVES_COLLECTION = 'logArchives';
     static LOG_CONFIGURATION_COLLECTION = 'logConfiguration';

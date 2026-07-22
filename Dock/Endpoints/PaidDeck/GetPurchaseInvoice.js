@@ -98,7 +98,7 @@ class GetPurchaseInvoiceEndpoint
 <body>
     <main class="invoice">
         <header class="invoice-header">
-            <div class="invoice-brand">MindMeld</div>
+            <div class="invoice-brand">CogniumLearn</div>
             <div class="invoice-meta">
                 <div><span class="invoice-meta-label">Invoice</span> #${escapedPurchaseId}</div>
                 <div><span class="invoice-meta-label">Date</span> ${purchaseDate}</div>
@@ -113,7 +113,7 @@ class GetPurchaseInvoiceEndpoint
             </div>
             <div>
                 <h3>From</h3>
-                <div>MindMeld</div>
+                <div>CogniumLearn</div>
                 <div>An AI-powered spaced repetition platform</div>
             </div>
         </section>

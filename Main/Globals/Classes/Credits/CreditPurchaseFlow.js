@@ -4,20 +4,21 @@ import CreditPurchaseDialog from "./CreditPurchaseDialog.js";
 import AuthenticationEvents from "../../Events/AuthenticationEvents.js";
 import RegionMetadata from "../RegionMetadata.js";
 import SoundEffects from "../SoundEffects.js";
-import ZohoPaymentsCheckout from "../Payments/ZohoPaymentsCheckout.js";
-import { paymentProviders } from "../../Enumerations/PaymentProviders.js";
+import PaymentCheckout from "../Payments/PaymentCheckout.js";
 
 /**
  * CreditPurchaseFlow
  *
  * Buyer-side flow for purchasing credits, mirroring PaidDeckPurchaseFlow's
- * Zoho Payments handling: quote (Options) → pick quantity (CreditPurchaseDialog)
- * → Initiate (server-priced order) → Zoho checkout → Verify → refresh the
- * cached user so the new balance shows everywhere immediately.
+ * checkout handling: quote (Options) → pick quantity (CreditPurchaseDialog)
+ * → Initiate (server-priced order) → provider checkout → Verify → refresh the
+ * cached user so the new balance shows everywhere immediately. The server
+ * selects the payment provider and returns its enum in the initiate response;
+ * PaymentCheckout opens the matching widget (Razorpay today).
  *
  * Returns true when credits were granted, false on cancellation or failure.
  * A payment captured without a successful Verify (closed tab, network drop)
- * is still completed server-side by the Zoho webhook — the balance then
+ * is still completed server-side by the provider webhook — the balance then
  * appears on the next Settings refresh.
  */
 class CreditPurchaseFlow
@@ -62,8 +63,7 @@ class CreditPurchaseFlow
                 body: JSON.stringify
                 ({
                     credits: selection.credits,
-                    localeRegionHint: localeRegionHint,
-                    paymentProvider: paymentProviders.ZOHO
+                    localeRegionHint: localeRegionHint
                 })
             });
         }
@@ -116,7 +116,7 @@ class CreditPurchaseFlow
         let checkoutResult;
         try
         {
-            checkoutResult = await ZohoPaymentsCheckout.open(checkoutContext, { description: `${quotedCredits} MindMeld credits` });
+            checkoutResult = await PaymentCheckout.open(initiateResponse.provider, checkoutContext, { description: `${quotedCredits} CogniumLearn credits` });
         }
         catch (checkoutError)
         {

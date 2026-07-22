@@ -278,10 +278,13 @@ class HomePage extends HTMLElement
         const homeHeaderComponent = activeHomePage.querySelector("header-component");
         if (homeHeaderComponent)
         {
-            const newTitle =
-                `<span style="vertical-align: middle;">` +
-                (deckToOpen.getNameWithAncestors(true, false) || "MindMeld Home") +
-                "</span>";
+            // At the deck-drill root, show the CogniumLearn wide logo in place of a text heading
+            // (a homepage-only exception, decided here where the header title is set). Once the
+            // user drills into a deck, show the deck breadcrumb instead.
+            const deckBreadcrumb = deckToOpen.getNameWithAncestors(true, false);
+            const newTitle = deckBreadcrumb
+                ? `<span style="vertical-align: middle;">${deckBreadcrumb}</span>`
+                : `<img class="header-logo" src="./Globals/Assets/Images/Logos/CogniumLearnLogoWide.png" alt="CogniumLearn">`;
             homeHeaderComponent.setAttribute("title", newTitle);
             homeHeaderComponent.render?.();
         }
@@ -314,7 +317,7 @@ class HomePage extends HTMLElement
 
         this.innerHTML =
         `
-            <header-component title="MindMeld Home"></header-component>
+            <header-component title="CogniumLearn Home"></header-component>
             <maintenance-banner></maintenance-banner>
             <paused-task-banner></paused-task-banner>
             <button class="back-to-parent-button">Navigate to ${Deck.getCurrentDeck()?.getParent()?.getName() || ""}</button>

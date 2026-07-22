@@ -13,7 +13,7 @@ class HeaderComponent extends HTMLElement
 
     render()
     {
-        this.innerHTML = 
+        this.innerHTML =
         `
 
             <h1 align="center">${this.getAttribute("title")}</h1>

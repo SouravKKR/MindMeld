@@ -24,6 +24,15 @@ class PaymentProvider
     {
         throw new Error("PaymentProvider.refund() must be implemented by subclass");
     }
+
+    // Whether this provider implements the recurring-subscription methods
+    // (createPlan / createSubscription / verifySubscriptionPayment /
+    // cancelSubscription). False here so one-time-only providers need not
+    // implement them; a subclass that supports auto-debit overrides to true.
+    supportsRecurringSubscriptions()
+    {
+        return false;
+    }
 }
 
 module.exports = PaymentProvider;

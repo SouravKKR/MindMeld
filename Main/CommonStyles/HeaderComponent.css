@@ -14,18 +14,36 @@ header-component
     
 }
 
-header-component h1 
+header-component h1
 {
 
     max-width: 90%;
-    margin: 0 auto; 
-    
+    margin: 0 auto;
+
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    
-    font-size: 1.5rem; 
+
+    font-size: 1.5rem;
     display: block;
+}
+
+/* Homepage-only: the CogniumLearn 2:1 wide logo shown in place of the text heading (rendered
+   inside the centered <h1> at the deck-drill root). The homepage header is made taller so the
+   logo reads as a prominent brand lockup; every other page keeps the normal header + heading. */
+header-component .header-logo
+{
+    height: 72px;
+    width: auto;
+    max-width: 90%;
+    object-fit: contain;
+    vertical-align: middle;
+    display: inline-block;
+}
+
+home-page header-component
+{
+    height: calc(var(--header-height) + 36px);
 }
 
 header-component .options-button

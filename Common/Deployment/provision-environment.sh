@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# Full, idempotent provision-from-zero of a MindMeld environment on Linode.
+# Full, idempotent provision-from-zero of a CogniumLearn environment on Linode.
 #
 #     bash Common/Deployment/provision-environment.sh <development|testing|production> [--dry-run] [--skip-deploy]
 #
 # It brings an environment up from nothing and is safe to re-run: every cloud
-# resource is matched by its MindMeld-<Env>-<Role> label (create-if-absent), and
+# resource is matched by its CogniumLearn-<Env>-<Role> label (create-if-absent), and
 # every remote step is idempotent. A run does, in order:
 #
 #   1. Scaffold the env files (deployment.env per-env keys, Dock/.<env>.env, Agent/.<env>.env)
@@ -63,7 +63,7 @@ DOCK_ENVIRONMENT_FILE="$REPOSITORY_ROOT/Dock/$(dock_environment_file_name)"
 AGENT_ENVIRONMENT_FILE="$REPOSITORY_ROOT/Agent/$(agent_environment_file_name)"
 DEPLOY_SSH_PRIVATE_KEY_PATH="${DEPLOY_SSH_PRIVATE_KEY_PATH/#\~/$HOME}"
 DEPLOY_SSH_PUBLIC_KEY_PATH="${DEPLOY_SSH_PUBLIC_KEY_PATH/#\~/$HOME}"
-BASE_NODE_REPO_DIR="${BASE_NODE_REPO_DIR:-/root/mindmeld}"
+BASE_NODE_REPO_DIR="${BASE_NODE_REPO_DIR:-/root/cogniumlearn}"
 BASE_NODE_SSH_USER="${BASE_NODE_SSH_USER:-root}"
 # ServerAliveInterval keeps long install sessions alive through NAT idle windows;
 # the install calls below also auto-retry if the link resets mid-stream.
@@ -86,7 +86,7 @@ write_env_value()
     if grep -qE "^${key}=" "$file"
     then
         # The value is passed through the environment, never as an argv, so Git Bash's
-        # MSYS layer cannot path-convert a POSIX value (e.g. /root/mindmeld/Agent) into a
+        # MSYS layer cannot path-convert a POSIX value (e.g. /root/cogniumlearn/Agent) into a
         # Windows path. The file arg stays positional because node on Windows needs the
         # converted path.
         WRITE_ENV_VALUE="$value" node -e '
@@ -227,15 +227,16 @@ ensure_infrastructure()
     [ "$ENVIRONMENT_MONGO_TOPOLOGY" = "colocated" ] && server_role="server-colocated"
 
     # Firewall labels are capped at 32 chars by Linode, so firewalls use the short
-    # role names ServerFW / DatabaseFW / BurstFW (still MindMeld-<Env>- prefixed).
-    SERVER_FIREWALL_ID="$(linode_ensure_firewall "$(label_for_role ServerFW)" "$(node "$FIREWALL_RULES_SCRIPT" "$server_role" "$ENVIRONMENT_SUBNET_CIDR" "$ADMIN_SSH_CIDR")" "$ENVIRONMENT_TAG")"
+    # role names SrvFW / DbFW / BurstFW (still CogniumLearn-<Env>- prefixed) — the
+    # longer "CogniumLearn" prefix no longer leaves room for "ServerFW"/"DatabaseFW".
+    SERVER_FIREWALL_ID="$(linode_ensure_firewall "$(label_for_role SrvFW)" "$(node "$FIREWALL_RULES_SCRIPT" "$server_role" "$ENVIRONMENT_SUBNET_CIDR" "$ADMIN_SSH_CIDR")" "$ENVIRONMENT_TAG")"
     BURST_FIREWALL_ID="$(linode_ensure_firewall "$(label_for_role BurstFW)" "$(node "$FIREWALL_RULES_SCRIPT" burst "$ENVIRONMENT_SUBNET_CIDR" "$ADMIN_SSH_CIDR")" "$ENVIRONMENT_TAG")"
     log_info "Server firewall id=$SERVER_FIREWALL_ID  Burst firewall id=$BURST_FIREWALL_ID"
 
     DATABASE_FIREWALL_ID=""
     if [ "$ENVIRONMENT_MONGO_TOPOLOGY" = "separate" ]
     then
-        DATABASE_FIREWALL_ID="$(linode_ensure_firewall "$(label_for_role DatabaseFW)" "$(node "$FIREWALL_RULES_SCRIPT" database "$ENVIRONMENT_SUBNET_CIDR" "$ADMIN_SSH_CIDR")" "$ENVIRONMENT_TAG")"
+        DATABASE_FIREWALL_ID="$(linode_ensure_firewall "$(label_for_role DbFW)" "$(node "$FIREWALL_RULES_SCRIPT" database "$ENVIRONMENT_SUBNET_CIDR" "$ADMIN_SSH_CIDR")" "$ENVIRONMENT_TAG")"
         log_info "Database firewall id=$DATABASE_FIREWALL_ID"
     fi
 
@@ -292,8 +293,8 @@ write_connection_configuration()
     log_step "Writing resolved ids + connection strings into the env files..."
     # Same DB name + same user across every environment; the password lives only in the
     # app env files (inside MONGODB_URL). Reuse an existing one so re-runs don't rotate it.
-    local database_name="mindmeld"
-    MONGO_USERNAME="mindmeld"
+    local database_name="cogniumlearn"
+    MONGO_USERNAME="cogniumlearn"
     MONGO_PASSWORD="$(extract_mongo_password "$(read_env_value "$DOCK_ENVIRONMENT_FILE" MONGODB_URL)")"
     if value_is_missing "$MONGO_PASSWORD"
     then
@@ -335,8 +336,8 @@ write_connection_configuration()
     # Per-environment burst identity is CRITICAL for isolation: the autoscaler deletes
     # every instance carrying its BURST_MANAGEMENT_TAG on startup, so each environment
     # MUST use a distinct tag/prefix or one env's restart would wipe another's fleet.
-    write_env_value "$DOCK_ENVIRONMENT_FILE" BURST_MANAGEMENT_TAG "mindmeld-${ENVIRONMENT_NAME}-worker"
-    write_env_value "$DOCK_ENVIRONMENT_FILE" BURST_LABEL_PREFIX "mindmeld-${ENVIRONMENT_NAME}-worker-"
+    write_env_value "$DOCK_ENVIRONMENT_FILE" BURST_MANAGEMENT_TAG "cogniumlearn-${ENVIRONMENT_NAME}-worker"
+    write_env_value "$DOCK_ENVIRONMENT_FILE" BURST_LABEL_PREFIX "cogniumlearn-${ENVIRONMENT_NAME}-worker-"
 
     # Agent (local workers + the template burst workers inherit): its own data tier + LLM keys.
     write_env_value "$AGENT_ENVIRONMENT_FILE" MONGODB_URL "$mongo_url"
@@ -404,8 +405,8 @@ provision_nodes()
 
     log_step "Uploading code contexts + env files to the base node..."
     local agent_archive dock_archive
-    agent_archive="$(mktemp -t mindmeld-agent-context.XXXXXX.tar.gz)"
-    dock_archive="$(mktemp -t mindmeld-dock-context.XXXXXX.tar.gz)"
+    agent_archive="$(mktemp -t cogniumlearn-agent-context.XXXXXX.tar.gz)"
+    dock_archive="$(mktemp -t cogniumlearn-dock-context.XXXXXX.tar.gz)"
     (
         cd "$REPOSITORY_ROOT"
         tar --exclude='.venv' --exclude='__pycache__' --exclude='*.pyc' --exclude='*.env' --exclude='Tasks' -czf "$agent_archive" Agent
@@ -418,7 +419,7 @@ provision_nodes()
     log_step "Installing the OS + data tier on the base node (Redis, Mongo?, Node, venv, npm)..."
     local mongo_user="$MONGO_USERNAME"
     ssh_install_with_retry "root@${BASE_NODE_PUBLIC_IP}" \
-        "REPO_DIR='$BASE_NODE_REPO_DIR' MINDMELD_ENVIRONMENT='$ENVIRONMENT_NAME' MONGO_TOPOLOGY='$ENVIRONMENT_MONGO_TOPOLOGY' BASE_PRIVATE_IP='$ENVIRONMENT_BASE_NODE_PRIVATE_IP' AGENT_CONTEXT_ARCHIVE='/tmp/agent-context.tar.gz' DOCK_CONTEXT_ARCHIVE='/tmp/dock-context.tar.gz' MONGO_ROOT_USER='$mongo_user' MONGO_ROOT_PASSWORD='$MONGO_PASSWORD'" \
+        "REPO_DIR='$BASE_NODE_REPO_DIR' COGNIUMLEARN_ENVIRONMENT='$ENVIRONMENT_NAME' MONGO_TOPOLOGY='$ENVIRONMENT_MONGO_TOPOLOGY' BASE_PRIVATE_IP='$ENVIRONMENT_BASE_NODE_PRIVATE_IP' AGENT_CONTEXT_ARCHIVE='/tmp/agent-context.tar.gz' DOCK_CONTEXT_ARCHIVE='/tmp/dock-context.tar.gz' MONGO_ROOT_USER='$mongo_user' MONGO_ROOT_PASSWORD='$MONGO_PASSWORD'" \
         "$SCRIPT_DIRECTORY/Remote/ProvisionBaseNode.sh"
 
     log_step "Placing the env files on the base node..."
@@ -427,14 +428,14 @@ provision_nodes()
 
     # Place this environment's Google Cloud Storage service-account key. It is
     # gitignored (rides neither git nor the code tarballs); both Dock and the Agent
-    # read Common/Credentials/mindmeld-storage.<env>.json, and without it every
+    # read Common/Credentials/cogniumlearn-storage.<env>.json, and without it every
     # Dock->GCS write (mock-test grading payload staging, log archival) fails.
-    local storage_credential_file="$REPOSITORY_ROOT/Common/Credentials/mindmeld-storage.${ENVIRONMENT_NAME}.json"
+    local storage_credential_file="$REPOSITORY_ROOT/Common/Credentials/cogniumlearn-storage.${ENVIRONMENT_NAME}.json"
     if [ -f "$storage_credential_file" ]
     then
-        log_step "Placing the GCS credential (mindmeld-storage.${ENVIRONMENT_NAME}.json) on the base node..."
+        log_step "Placing the GCS credential (cogniumlearn-storage.${ENVIRONMENT_NAME}.json) on the base node..."
         ssh "${SSH_COMMON_OPTIONS[@]}" "root@${BASE_NODE_PUBLIC_IP}" "mkdir -p '${BASE_NODE_REPO_DIR}/Common/Credentials'"
-        scp "${SSH_COMMON_OPTIONS[@]}" "$storage_credential_file" "root@${BASE_NODE_PUBLIC_IP}:${BASE_NODE_REPO_DIR}/Common/Credentials/mindmeld-storage.${ENVIRONMENT_NAME}.json"
+        scp "${SSH_COMMON_OPTIONS[@]}" "$storage_credential_file" "root@${BASE_NODE_PUBLIC_IP}:${BASE_NODE_REPO_DIR}/Common/Credentials/cogniumlearn-storage.${ENVIRONMENT_NAME}.json"
     else
         log_warning "GCS credential $storage_credential_file not found locally — Dock/Agent GCS writes will fail on the host until it is placed."
     fi
@@ -462,7 +463,7 @@ if [ "$DRY_RUN" -eq 1 ]
 then
     echo
     log_success "Dry run complete for '$ENVIRONMENT_NAME'. Planned resources:"
-    log_info "  VPC=$(label_for_role VPC)  Firewalls=$(label_for_role ServerFW),$(label_for_role BurstFW)$([ "$ENVIRONMENT_MONGO_TOPOLOGY" = separate ] && echo ",$(label_for_role DatabaseFW)")"
+    log_info "  VPC=$(label_for_role VPC)  Firewalls=$(label_for_role SrvFW),$(label_for_role BurstFW)$([ "$ENVIRONMENT_MONGO_TOPOLOGY" = separate ] && echo ",$(label_for_role DbFW)")"
     log_info "  Base=$(label_for_role Server) ($ENVIRONMENT_SERVER_TYPE)$([ "$ENVIRONMENT_MONGO_TOPOLOGY" = separate ] && echo "  Mongo=$(label_for_role MongoDB) ($ENVIRONMENT_MONGO_TYPE)")"
     log_info "  Burst image series: $(label_for_role BurstImage)<version>"
     exit 0

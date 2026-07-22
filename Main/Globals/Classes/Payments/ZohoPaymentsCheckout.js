@@ -68,8 +68,8 @@ class ZohoPaymentsCheckout
             currency_code: checkoutContext.currencyCode,
             payments_session_id: checkoutContext.paymentsSessionId,
             currency_symbol: checkoutContext.currencySymbol || checkoutContext.currencyCode,
-            business: checkoutContext.business || "MindMeld",
-            description: overrides.description || checkoutContext.description || "MindMeld purchase"
+            business: checkoutContext.business || "CogniumLearn",
+            description: overrides.description || checkoutContext.description || "CogniumLearn purchase"
         };
 
         if (overrides.address)

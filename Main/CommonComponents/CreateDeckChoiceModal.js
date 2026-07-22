@@ -82,7 +82,7 @@ class CreateDeckChoiceModal
                         <span class="create-deck-choice-option-icon">📂</span>
                         <span class="create-deck-choice-option-body">
                             <span class="create-deck-choice-option-title">Import from file</span>
-                            <span class="create-deck-choice-option-description">Load a .emmd deck exported from MindMeld</span>
+                            <span class="create-deck-choice-option-description">Load a .emmd deck exported from CogniumLearn</span>
                         </span>
                     </button>
                     <button class="create-deck-choice-option create-deck-choice-buy" data-choice="${deckCreationOptions.BROWSE_PAID_LIBRARY}">

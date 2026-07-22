@@ -16,7 +16,7 @@ const path = require("path");
 //
 // Which env file we load is selected by environment name, in priority order:
 //   1. an explicit --environment=<name> flag
-//   2. the MINDMELD_ENVIRONMENT variable (set by the systemd unit on each base
+//   2. the COGNIUMLEARN_ENVIRONMENT variable (set by the systemd unit on each base
 //      node, so Dock AND the Agent subprocesses it spawns agree on the environment)
 //   3. legacy --debug  -> local
 //   4. otherwise       -> production
@@ -33,9 +33,9 @@ function resolveEnvironmentName()
     {
         return explicitEnvironmentFlag.slice("--environment=".length);
     }
-    if (process.env.MINDMELD_ENVIRONMENT)
+    if (process.env.COGNIUMLEARN_ENVIRONMENT)
     {
-        return process.env.MINDMELD_ENVIRONMENT;
+        return process.env.COGNIUMLEARN_ENVIRONMENT;
     }
     if (process.argv.includes("--debug"))
     {
@@ -44,15 +44,30 @@ function resolveEnvironmentName()
     return "production";
 }
 
+// The directory the per-environment env file is read from. When COGNIUMLEARN_SECRETS_DIRECTORY
+// is set — the base node points it at a RAM-backed tmpfs mount so no plaintext secret ever
+// lands on persistent disk (keeping snapshots and backups clean) — the rendered Dock env
+// file lives at <COGNIUMLEARN_SECRETS_DIRECTORY>/Dock. Otherwise it sits beside this file, as it
+// always has for local development.
+function resolveDockSecretsDirectory()
+{
+    if (process.env.COGNIUMLEARN_SECRETS_DIRECTORY)
+    {
+        return path.join(process.env.COGNIUMLEARN_SECRETS_DIRECTORY, "Dock");
+    }
+    return __dirname;
+}
+
 const environmentName = resolveEnvironmentName();
+const dockSecretsDirectory = resolveDockSecretsDirectory();
 const candidateEnvironmentFileNames = environmentName === "local"
     ? [".local.env", ".env"]
     : [`.${environmentName}.env`];
 
-let selectedEnvironmentFilePath = path.join(__dirname, candidateEnvironmentFileNames[0]);
+let selectedEnvironmentFilePath = path.join(dockSecretsDirectory, candidateEnvironmentFileNames[0]);
 for (const candidateEnvironmentFileName of candidateEnvironmentFileNames)
 {
-    const candidateEnvironmentFilePath = path.join(__dirname, candidateEnvironmentFileName);
+    const candidateEnvironmentFilePath = path.join(dockSecretsDirectory, candidateEnvironmentFileName);
     if (fileSystem.existsSync(candidateEnvironmentFilePath))
     {
         selectedEnvironmentFilePath = candidateEnvironmentFilePath;
@@ -82,6 +97,7 @@ const { handleTaskStateEndpoints } = require("./Endpoints/HandleTaskStateEndpoin
 const { handleOrganizationEndpoints } = require("./Endpoints/HandleOrganizationEndpoints");
 const { handleWebhookEndpoints } = require("./Endpoints/HandleWebhookEndpoints");
 const { handleCreditEndpoints } = require("./Endpoints/HandleCreditEndpoints");
+const { handleSubscriptionEndpoints } = require("./Endpoints/HandleSubscriptionEndpoints");
 const { handleMaintenanceEndpoints } = require("./Endpoints/HandleMaintenanceEndpoints");
 const { handleStreakEndpoints } = require("./Endpoints/HandleStreakEndpoints");
 const { handleMetricsEndpoints } = require("./Endpoints/HandleMetricsEndpoints");
@@ -309,6 +325,7 @@ handleTaskStateEndpoints(server);
 handleOrganizationEndpoints(server);
 handleWebhookEndpoints(server);
 handleCreditEndpoints(server);
+handleSubscriptionEndpoints(server);
 handleMaintenanceEndpoints(server);
 handleStreakEndpoints(server);
 handleMetricsEndpoints(server);

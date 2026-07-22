@@ -6,7 +6,7 @@
  */
 class AudioSettingsManager
 {
-    static #STORAGE_KEY = "mindmeld.audioSettings";
+    static #STORAGE_KEY = "cogniumlearn.audioSettings";
     static #DEFAULT_VOLUME = 0.7;
 
     static #cached = null;

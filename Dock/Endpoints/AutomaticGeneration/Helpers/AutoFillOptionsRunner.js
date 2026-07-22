@@ -11,6 +11,8 @@ const CreditPreflight = require("../../../Globals/Classes/Credits/CreditPrefligh
 const CreditLedger = require("../../../Globals/Classes/Credits/CreditLedger");
 const CreditConfigurationStore = require("../../../Globals/Classes/Credits/CreditConfigurationStore");
 const MaintenanceGate = require("../../../Globals/Classes/Maintenance/MaintenanceGate");
+const PlanEntitlementGate = require("../../../Globals/Classes/Plans/PlanEntitlementGate");
+const { planFeatures } = require("../../../Globals/Enumerations/PlanFeatures");
 
 /**
  * AutoFillOptionsRunner
@@ -53,6 +55,17 @@ class AutoFillOptionsRunner
         {
             response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
             response.sendJson(MaintenanceGate.buildMaintenanceResponsePayload(activeMaintenanceWindow));
+            return;
+        }
+
+        // Plan entitlement: auto-filling generation options is part of the
+        // automatic-generation feature (Pro tier). Refuse a lower tier before
+        // the credit preflight so it sees an upgrade prompt, not a 402.
+        const autoFillEntitlement = await PlanEntitlementGate.requireFeature(userId, planFeatures.AUTOMATIC_GENERATION);
+        if (!autoFillEntitlement.allowed)
+        {
+            response.statusCode = httpStatus.FORBIDDEN;
+            response.sendJson({ error: autoFillEntitlement.reason, currentTier: autoFillEntitlement.currentTier, requiredTier: autoFillEntitlement.requiredTier });
             return;
         }
 

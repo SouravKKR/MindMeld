@@ -1,6 +1,6 @@
-// MindMeld offline cache — used ONLY by the native desktop/mobile shell.
+// CogniumLearn offline cache — used ONLY by the native desktop/mobile shell.
 //
-// The Tauri app loads the production site directly (https://mindmeld.cogniumlabs.io); this service
+// The Tauri app loads the production site directly (https://learn.cogniumlabs.io); this service
 // worker stores the pages + static assets it loads so that a later launch/reload works with no
 // network. It is registered ONLY from inside the native shell (see OfflineCacheManager, gated on
 // Platform.get() === APP), so ordinary web browsers never install it and the web version is
@@ -13,7 +13,7 @@
 //   - Everything else (API / dynamic / auth endpoints, non-GET, cross-origin): passthrough, never
 //     cached. Offline data behaviour is handled by the app itself (Persistence), not here.
 
-const OFFLINE_CACHE_NAME = "mindmeld-offline-v1";
+const OFFLINE_CACHE_NAME = "cogniumlearn-offline-v2";
 
 const STATIC_ASSET_EXTENSIONS = new Set([
     "html", "js", "mjs", "css", "json", "wasm", "bin",

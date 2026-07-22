@@ -11,6 +11,8 @@ const { getUser } = require("../Helpers/GetUser");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const MaintenanceGate = require("../../Globals/Classes/Maintenance/MaintenanceGate");
+const PlanEntitlementGate = require("../../Globals/Classes/Plans/PlanEntitlementGate");
+const { planFeatures } = require("../../Globals/Enumerations/PlanFeatures");
 
 
 /**
@@ -128,6 +130,19 @@ async function handleQueueDeckAnalysis(request, response)
     {
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
         response.sendJson(MaintenanceGate.buildMaintenanceResponsePayload(activeMaintenanceWindow));
+        return;
+    }
+
+    // Plan entitlement: deck performance analysis is the entry to curated
+    // study material, a Basic-tier feature. Use requireFeature (not the sync
+    // evaluateForUser) so the admin feature-access override is loaded even on a
+    // cold process where no other AI endpoint has run yet — keeping all gate
+    // sites uniform. Refuse a lower tier before the credit preflight.
+    const analysisEntitlement = await PlanEntitlementGate.requireFeature(user.getId(), planFeatures.CURATED_STUDY);
+    if (!analysisEntitlement.allowed)
+    {
+        response.statusCode = httpStatus.FORBIDDEN;
+        response.sendJson({ error: analysisEntitlement.reason, currentTier: analysisEntitlement.currentTier, requiredTier: analysisEntitlement.requiredTier });
         return;
     }
 

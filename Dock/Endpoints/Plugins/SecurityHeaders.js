@@ -18,7 +18,7 @@ const { PacketronPlugin, PacketronPluginPriority } = require("@gamiumgamers/pack
  *   • Strict-Transport-Security  — forces HTTPS (emitted only on secure requests
  *                                 so plain-http local development is unaffected).
  *
- * Compatibility-first CSP. MindMeld embeds third parties that are hostile to a
+ * Compatibility-first CSP. CogniumLearn embeds third parties that are hostile to a
  * strict nonce/hash policy: Google AdSense, the Zoho Payments checkout widget,
  * Google OAuth,
  * and in-browser LLMs (WebLLM / Transformers.js) that compile WebAssembly, spawn

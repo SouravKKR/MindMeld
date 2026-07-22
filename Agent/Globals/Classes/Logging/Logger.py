@@ -33,7 +33,7 @@ class Logger:
 
     @staticmethod
     def __resolve_environment() -> str:
-        environment = os.getenv("MINDMELD_ENVIRONMENT")
+        environment = os.getenv("COGNIUMLEARN_ENVIRONMENT")
         if environment:
             return environment
         return "local" if "--debug" in sys.argv else "production"

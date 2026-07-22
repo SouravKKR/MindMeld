@@ -23,9 +23,9 @@
  */
 class PhysicalDeviceFingerprint
 {
-    static #CACHE_STORAGE_KEY = "mindmeld.physicalDeviceFingerprint.v1";
+    static #CACHE_STORAGE_KEY = "cogniumlearn.physicalDeviceFingerprint.v1";
     static #STABLE_SIGNAL_VERSION = 1;
-    static #STABLE_SIGNAL_PAYLOAD_LABEL = "mindmeld.fingerprint";
+    static #STABLE_SIGNAL_PAYLOAD_LABEL = "cogniumlearn.fingerprint";
     static #UA_CLIENT_HINT_FIELDS = ["platform", "model", "architecture", "bitness"];
 
     static #cachedHashPromise = null;

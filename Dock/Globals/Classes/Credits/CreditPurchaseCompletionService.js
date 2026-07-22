@@ -135,7 +135,7 @@ class CreditPurchaseCompletionService
                 name: user.getDisplayName ? user.getDisplayName() : "",
                 amountMinor: pendingCreditOrder.amountMinor,
                 currency: pendingCreditOrder.currency,
-                description: `${pendingCreditOrder.credits} MindMeld credits`,
+                description: `${pendingCreditOrder.credits} CogniumLearn credits`,
                 referenceNumber: providerPaymentId || pendingCreditOrder.providerOrderId
             });
         }

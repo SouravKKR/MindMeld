@@ -1,7 +1,7 @@
 {
-  "name": "mindmeld",
+  "name": "cogniumlearn",
   "version": "1.0.0",
-  "description": "MindMeld — AI-powered spaced-repetition learning platform. Root launcher: always-aggressive build + run for web, desktop and mobile.",
+  "description": "CogniumLearn — AI-powered spaced-repetition learning platform. Root launcher: always-aggressive build + run for web, desktop and mobile.",
   "private": true,
   "scripts": {
     "setup": "node Common/Scripts/Setup.js",

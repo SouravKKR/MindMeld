@@ -65,6 +65,12 @@ const { createPromoCode } = require("./Admin/PromoCodes/CreatePromoCode");
 const { createPromoCodesBulk } = require("./Admin/PromoCodes/CreatePromoCodesBulk");
 const { setPromoCodeEnabled } = require("./Admin/PromoCodes/SetPromoCodeEnabled");
 const { deletePromoCode } = require("./Admin/PromoCodes/DeletePromoCode");
+const { createCoupon } = require("./Admin/Coupons/CreateCoupon");
+const { createCouponsBulk } = require("./Admin/Coupons/CreateCouponsBulk");
+const { setCouponEnabled } = require("./Admin/Coupons/SetCouponEnabled");
+const { deleteCoupon } = require("./Admin/Coupons/DeleteCoupon");
+const { getPlanFeatureConfig } = require("./Admin/Plans/GetPlanFeatureConfig");
+const { setPlanFeatureConfig } = require("./Admin/Plans/SetPlanFeatureConfig");
 const { getAdminListMetadata } = require("./Admin/Lists/GetAdminListMetadata");
 const { queryAdminList } = require("./Admin/Lists/QueryAdminList");
 const { ensureAdmin } = require("./Plugins/EnsureAdmin");
@@ -656,6 +662,61 @@ function handleAdminEndpoints(server)
     ({
         routePath: `/Admin/Credits/Promo/Delete`,
         handler: deletePromoCode,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Coupons (flexible, admin-configurable discounts / grants) ──────────
+    server.handle
+    ({
+        routePath: `/Admin/Coupons/Create`,
+        handler: createCoupon,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Coupons/CreateBulk`,
+        handler: createCouponsBulk,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Coupons/SetEnabled`,
+        handler: setCouponEnabled,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Coupons/Delete`,
+        handler: deleteCoupon,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Plans (which tier unlocks which AI feature) ────────────────────────
+    server.handle
+    ({
+        routePath: `/Admin/Plans/Features/Get`,
+        handler: getPlanFeatureConfig,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Plans/Features/Save`,
+        handler: setPlanFeatureConfig,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureAdmin]

@@ -38,14 +38,14 @@ class TutorialDemoResponses
     // The HTML body shown for each Ask-AI prompt mode, pre-split into a few
     // fragments so playback mimics token streaming. Keyed by the
     // askAiPromptModes enum value. Content is written about the sample
-    // deck's subject (the MindMeld learning lifecycle) so it reads as a
+    // deck's subject (the CogniumLearn learning lifecycle) so it reads as a
     // genuine in-context answer.
     static #ASK_AI_BODY_CHUNKS_BY_MODE = new Map
     ([
         [askAiPromptModes.EXPLAIN,
         [
             "<h3>The Encode phase, in plain terms</h3>",
-            "<p>Encoding is where a fact stops being something you just read and becomes something you can actually recall. In MindMeld this is the job of <strong>Spaced Repetition</strong>.</p>",
+            "<p>Encoding is where a fact stops being something you just read and becomes something you can actually recall. In CogniumLearn this is the job of <strong>Spaced Repetition</strong>.</p>",
             "<p>Spaced Repetition estimates the day your memory of each card is about to dip below a usable level, and shows you the card right then — not too early (wasteful) and not too late (already forgotten). Each honest rating you give nudges that estimate, so the schedule keeps tightening around how <em>you</em> actually remember.</p>"
         ]],
         [askAiPromptModes.SUMMARIZE,

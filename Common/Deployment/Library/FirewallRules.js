@@ -1,4 +1,4 @@
-// Firewall-rule generator for the MindMeld environment provisioner
+// Firewall-rule generator for the CogniumLearn environment provisioner
 // (Common/Deployment/provision-environment.sh). Prints the `rules` object of a
 // Linode Cloud Firewall create/update body as JSON on stdout, so the bash
 // orchestrator never has to hand-build the nested structure.

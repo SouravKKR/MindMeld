@@ -12,6 +12,9 @@ const { grantAndSeedDeck, checkUserHasPaidDeckPassword } = require("./PaidDeckGr
 const LicenseClientView = require("../../Globals/Classes/Security/LicenseClientView");
 const LicenseExpiryResolver = require("../../Globals/Classes/Pricing/LicenseExpiryResolver");
 const GrantSources = require("../../Globals/Constants/GrantSources");
+const PlanDeckPerkService = require("../../Globals/Classes/Plans/PlanDeckPerkService");
+const PlanTierResolver = require("../../Globals/Classes/Plans/PlanTierResolver");
+const { planTiers } = require("../../Globals/Enumerations/PlanTiers");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
@@ -55,6 +58,108 @@ async function initiatePurchase(request, response)
     // display currency so the payment provider captures the same amount the
     // storefront showed (no display-vs-charge mismatch).
     const pricing = await PaidDeckPricingEngine.computeFinalPrice(session.getUserId(), deckIds, region, user, true);
+
+    // Pro Plus monthly free-deck perk. When the client explicitly claims it for
+    // a single deck, atomically consume this month's claim and grant that deck
+    // free. Gated by the claim (not by pricing) so it is spendable on at most
+    // one deck per month; on grant failure the claim is released so the perk is
+    // not lost. Re-authorized server-side against the stored plan tier.
+    if (body?.useMonthlyFreeDeckClaim === true)
+    {
+        if (deckIds.length !== 1)
+        {
+            response.statusCode = httpStatus.BAD_REQUEST;
+            response.sendJson({ error: ErrorCodes.INVALID_REQUEST });
+            return;
+        }
+
+        const claimTier = user ? PlanTierResolver.getEffectiveTier(user) : planTiers.FREE;
+        if (PlanDeckPerkService.getMonthlyClaimAllowance(claimTier) <= 0)
+        {
+            response.statusCode = httpStatus.FORBIDDEN;
+            response.sendJson({ error: ErrorCodes.FEATURE_NOT_IN_PLAN });
+            return;
+        }
+
+        const claimDeckId = deckIds[0];
+        const claimBreakdownEntry = (pricing.breakdown || []).find(entry => entry.deckId === claimDeckId);
+        if (claimBreakdownEntry && NON_GRANTABLE_BREAKDOWN_REASONS.has(claimBreakdownEntry.reason))
+        {
+            // Already owned (live license) or no longer a paid deck — nothing to claim.
+            response.statusCode = httpStatus.CONFLICT;
+            response.sendJson({ error: claimBreakdownEntry.reason });
+            return;
+        }
+        if (!LicenseExpiryResolver.isGrantable(claimBreakdownEntry))
+        {
+            response.statusCode = httpStatus.UNPROCESSABLE_ENTITY;
+            response.sendJson({ error: ErrorCodes.PRICING_DURATION_NOT_CONFIGURED, deckIds: [claimDeckId] });
+            return;
+        }
+
+        const consumeResult = await PlanDeckPerkService.tryConsumeClaim(session.getUserId(), claimTier, claimDeckId);
+        if (!consumeResult.consumed)
+        {
+            response.statusCode = httpStatus.CONFLICT;
+            response.sendJson({ error: ErrorCodes.MONTHLY_DECK_CLAIM_USED });
+            return;
+        }
+
+        const database = await DatabaseConnector.getDatabase();
+        const expiryResolution = LicenseExpiryResolver.resolve(claimBreakdownEntry);
+        const licenseJson = await grantAndSeedDeck(database, session.getUserId(), claimDeckId,
+        {
+            expiresAt: expiryResolution.expiresAt,
+            grantSource: GrantSources.PLAN_PERK
+        });
+
+        if (!licenseJson)
+        {
+            // Grant failed after the claim was consumed — release it so the user
+            // keeps this month's free deck.
+            await PlanDeckPerkService.releaseClaim(session.getUserId(), consumeResult.periodKey);
+            response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
+            response.sendJson({ error: ErrorCodes.LICENSE_PERSIST_FAILED });
+            return;
+        }
+
+        const planPerkOrderId = `planPerk:${consumeResult.periodKey}:${claimDeckId}`;
+        const planPerkPurchase = new Purchase
+        ({
+            userId: session.getUserId(),
+            deckId: claimDeckId,
+            paymentProvider: paymentProviders.ORG_AUTO_ASSIGN,
+            providerOrderId: planPerkOrderId,
+            providerPaymentId: "",
+            amountMinor: 0,
+            currency: pricing.currency || "INR",
+            region: region,
+            purchaseDate: new Date(),
+            refundedAt: new Date(0),
+            status: purchaseStatuses.COMPLETED,
+            additionalData: { grant: "PLAN_PERK", periodKey: consumeResult.periodKey }
+        });
+        await database
+            .collection(DatabaseConstants.PURCHASES_COLLECTION)
+            .updateOne
+            (
+                { userId: session.getUserId(), deckId: claimDeckId, providerOrderId: planPerkOrderId },
+                { $set: planPerkPurchase.toJson() },
+                { upsert: true }
+            );
+
+        const hasExistingPaidDeckPassword = await checkUserHasPaidDeckPassword(database, session.getUserId());
+        response.statusCode = httpStatus.OK;
+        response.sendJson
+        ({
+            requiresPayment: false,
+            pricing: pricing,
+            licenses: [LicenseClientView.sanitize(licenseJson)],
+            requiresPasswordSetup: !hasExistingPaidDeckPassword,
+            monthlyFreeDeckClaimed: true
+        });
+        return;
+    }
 
     if (pricing.totalMinor === 0)
     {

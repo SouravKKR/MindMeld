@@ -1,6 +1,7 @@
 const { PacketronRequestMethod, PacketronHandlerFlags } = require("@gamiumgamers/packetron");
 const { clearUserData } = require("./Profile/ClearUserData");
 const { redeemPromoCode } = require("./Profile/RedeemPromoCode");
+const { redeemCoupon } = require("./Profile/RedeemCoupon");
 const { ensureLogin } = require("./Plugins/EnsureLogin");
 const {httpStatus} = require("../Globals/Enumerations/HttpStatus");
 
@@ -35,6 +36,15 @@ function handleProfileEndpoints(server)
     ({
         routePath: `/Profile/RedeemPromoCode`,
         handler: wrapHandler(redeemPromoCode),
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureLogin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Profile/RedeemCoupon`,
+        handler: wrapHandler(redeemCoupon),
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureLogin]

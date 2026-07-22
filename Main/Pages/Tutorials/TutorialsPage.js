@@ -90,7 +90,7 @@ class TutorialsPage extends HTMLElement
             <div class="tutorials-page-container">
                 <h2 class="tutorials-page-heading">Interactive Tutorials</h2>
                 <p class="tutorials-page-intro">
-                    Pick a tutorial below to walk through a guided tour. The Beginners tour plays automatically the first time you open MindMeld on a new device.
+                    Pick a tutorial below to walk through a guided tour. The Beginners tour plays automatically the first time you open CogniumLearn on a new device.
                 </p>
                 <div class="tutorials-list">
                     ${await this.#renderRows()}

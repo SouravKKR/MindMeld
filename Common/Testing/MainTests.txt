@@ -78,7 +78,7 @@ exercises the login-page and any page reachable without a session and records
 the rest as SKIPPED (not FAIL).
 
 Page inventory under test (PageNavigator tag names):
-  home-page, login-page, admin-panel-page, settings-page, mindmeld-about-page,
+  home-page, login-page, admin-panel-page, settings-page, cogniumlearn-about-page,
   tutorials-page, progress-page, study-page, card-editor-page,
   study-material-editor-page, deck-editor-page, mock-test-editor-page,
   mock-test-answer-key-page, browser-page, deck-insights-page,

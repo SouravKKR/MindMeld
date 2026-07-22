@@ -16,6 +16,7 @@ const OrganizationPaymentQueryEngine = require("../Organization/OrganizationPaym
 const { logLevel } = require("../../Enumerations/LogLevel");
 const { logCategory } = require("../../Enumerations/LogCategory");
 const { logServiceOrigin } = require("../../Enumerations/LogServiceOrigin");
+const { couponBenefitTargets } = require("../../Enumerations/CouponBenefitTargets");
 
 const LOG_CATEGORY_NAME_BY_VALUE = Object.fromEntries(Object.entries(logCategory).map(([categoryName, categoryValue]) => [categoryValue, categoryName]));
 const LOG_SERVICE_NAME_BY_VALUE = Object.fromEntries(Object.entries(logServiceOrigin).map(([serviceName, serviceValue]) => [serviceValue, serviceName]));
@@ -698,6 +699,127 @@ class AdminListRegistry
                     email: document.email || "",
                     userId: document.userId || "",
                     creditsGranted: document.creditsGranted || 0,
+                    redeemedAt: document.redeemedAt || null
+                }));
+
+                return { items: items, totalCount: totalCount };
+            }
+        }));
+
+        // ── Coupons ────────────────────────────────────────────────────────
+        // Collection-backed; the displayed used count is the stored usedCount
+        // field claimRedemptionSlot enforces the cap against, so "Used /
+        // Remaining" always agrees with whether a coupon can still be redeemed.
+        AdminListRegistry.register(new AdminListDefinition
+        ({
+            listKey: adminListTypes.COUPONS,
+            collectionName: DatabaseConstants.COUPONS_COLLECTION,
+            searchableFields: ["codeString"],
+            searchPlaceholder: "Search code…",
+            filters:
+            [
+                new BooleanFilter({ key: "enabled", label: "Enabled", field: "enabled" }),
+                new DateRangeFilter({ key: "createdAt", label: "Created", field: "createdAt" })
+            ],
+            columns:
+            [
+                { key: "codeString", label: "Code" },
+                { key: "benefitLabel", label: "Benefit" },
+                { key: "maxRedemptions", label: "Max redemptions" },
+                { key: "usedCount", label: "Used" },
+                { key: "remaining", label: "Remaining" },
+                { key: "statusLabel", label: "Status" },
+                { key: "createdAt", label: "Created", format: "date" }
+            ],
+            rowMapper: (document) =>
+            {
+                const usedCount = document.usedCount || 0;
+                const maxRedemptions = document.maxRedemptions || 0;
+                const benefitTargetLabels =
+                {
+                    [couponBenefitTargets.CREDIT_PURCHASE_DISCOUNT]: "Credit-purchase discount",
+                    [couponBenefitTargets.PLAN_DISCOUNT]: "Plan discount",
+                    [couponBenefitTargets.GRANT_CREDITS]: "Grant credits",
+                    [couponBenefitTargets.GRANT_FREE_PLAN]: "Free plan",
+                    [couponBenefitTargets.GRANT_FREE_DECK]: "Free deck"
+                };
+                return {
+                    id: document.id,
+                    codeString: document.codeString,
+                    benefitLabel: benefitTargetLabels[document.benefitTarget] || "—",
+                    maxRedemptions: maxRedemptions,
+                    usedCount: usedCount,
+                    remaining: Math.max(maxRedemptions - usedCount, 0),
+                    enabled: !!document.enabled,
+                    statusLabel: document.enabled ? "Enabled" : "Disabled",
+                    createdAt: document.createdAt || null
+                };
+            },
+            defaultSort: { field: "createdAt", direction: -1 },
+            sortableFields: ["createdAt", "usedCount"],
+            rowIdField: "id"
+        }));
+
+        // ── Coupon redeemers (scoped to one coupon via context) ────────────
+        AdminListRegistry.register(new AdminListDefinition
+        ({
+            listKey: adminListTypes.COUPON_REDEEMERS,
+            searchableFields: ["email", "userId"],
+            searchPlaceholder: "Search email or user id…",
+            filters:
+            [
+                new DateRangeFilter({ key: "redeemedAt", label: "Redeemed", field: "redeemedAt" })
+            ],
+            columns:
+            [
+                { key: "email", label: "Email" },
+                { key: "userId", label: "User ID" },
+                { key: "grantedSummary", label: "Granted" },
+                { key: "redeemedAt", label: "Redeemed", format: "dateTime" }
+            ],
+            rowIdField: "id",
+            customQueryBuilder: async (database, parameters) =>
+            {
+                const couponId = parameters.context?.couponId;
+                if (typeof couponId !== "string" || couponId.length === 0)
+                {
+                    return { items: [], totalCount: 0 };
+                }
+
+                const collection = database.collection(DatabaseConstants.COUPON_REDEMPTIONS_COLLECTION);
+                const queryParts = [ { couponId: couponId } ];
+
+                if (typeof parameters.search === "string" && parameters.search.trim().length > 0)
+                {
+                    const pattern = AdminListRegistry.#escapeRegex(parameters.search.trim());
+                    queryParts.push({ $or: [ { email: { $regex: pattern, $options: "i" } }, { userId: { $regex: pattern, $options: "i" } } ] });
+                }
+
+                const redeemedRange = parameters.filters?.redeemedAt;
+                if (redeemedRange && (redeemedRange.from || redeemedRange.to))
+                {
+                    const rangeClause = {};
+                    if (redeemedRange.from)
+                    {
+                        rangeClause.$gte = new Date(redeemedRange.from);
+                    }
+                    if (redeemedRange.to)
+                    {
+                        rangeClause.$lte = new Date(redeemedRange.to);
+                    }
+                    queryParts.push({ redeemedAt: rangeClause });
+                }
+
+                const mongoQuery = { $and: queryParts };
+                const totalCount = await collection.countDocuments(mongoQuery);
+                const documents = await collection.find(mongoQuery).sort({ redeemedAt: -1 }).skip(parameters.offset).limit(parameters.limit).toArray();
+
+                const items = documents.map(document =>
+                ({
+                    id: document.id,
+                    email: document.email || "",
+                    userId: document.userId || "",
+                    grantedSummary: document.grantedSummary || "",
                     redeemedAt: document.redeemedAt || null
                 }));
 

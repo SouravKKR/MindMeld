@@ -54,7 +54,7 @@ linode_request()
     printf '%s' "$response_body"
 }
 
-# Print the highest existing MindMeldBurstVmImage<version> number (0 if none).
+# Print the highest existing CogniumLearnBurstVmImage<version> number (0 if none).
 linode_get_highest_image_version()
 {
     local label_prefix="$1"

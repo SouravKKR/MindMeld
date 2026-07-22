@@ -14,6 +14,8 @@ const CreditLedger = require("../../../Globals/Classes/Credits/CreditLedger");
 const CreditConfigurationStore = require("../../../Globals/Classes/Credits/CreditConfigurationStore");
 const MaintenanceGate = require("../../../Globals/Classes/Maintenance/MaintenanceGate");
 const MetricBadgeManager = require("../../../Globals/Classes/Metrics/MetricBadgeManager");
+const PlanEntitlementGate = require("../../../Globals/Classes/Plans/PlanEntitlementGate");
+const { planFeatures } = require("../../../Globals/Enumerations/PlanFeatures");
 
 /**
  * AskAiStreamRunner
@@ -76,6 +78,18 @@ class AskAiStreamRunner
         {
             response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
             response.sendJson(MaintenanceGate.buildMaintenanceResponsePayload(activeMaintenanceWindow));
+            return;
+        }
+
+        // Plan entitlement: Ask AI is available on every tier by default, but
+        // the check is applied here too so an admin can restrict it via the
+        // feature-access override. Refuse with FEATURE_NOT_IN_PLAN (403) before
+        // the credit preflight when the tier does not include it.
+        const askAiEntitlement = await PlanEntitlementGate.requireFeature(userId, planFeatures.ASK_AI);
+        if (!askAiEntitlement.allowed)
+        {
+            response.statusCode = httpStatus.FORBIDDEN;
+            response.sendJson({ error: askAiEntitlement.reason, currentTier: askAiEntitlement.currentTier, requiredTier: askAiEntitlement.requiredTier });
             return;
         }
 

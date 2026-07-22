@@ -154,12 +154,12 @@ class LinodeComputeProvider extends CloudComputeProvider
         const cloudConfig = [
             "#cloud-config",
             "write_files:",
-            "  - path: /etc/mindmeld/worker.env",
+            "  - path: /etc/cogniumlearn/worker.env",
             "    permissions: '0600'",
             "    content: |",
             ...environmentLines.split("\n").map(line => `      ${line}`),
             "runcmd:",
-            "  - systemctl restart mindmeld-worker.service"
+            "  - systemctl restart cogniumlearn-worker.service"
         ].join("\n");
 
         return Buffer.from(cloudConfig, "utf-8").toString("base64");

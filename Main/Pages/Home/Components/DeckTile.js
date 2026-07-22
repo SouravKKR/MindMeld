@@ -490,7 +490,7 @@ class DeckTile extends HTMLElement
         {
             FullscreenImageViewer.open
             (
-                "./Globals/Assets/Images/Diagrams/MindMeldKnowledgeConsolidationLifecycle.png",
+                "./Globals/Assets/Images/Diagrams/CogniumLearnKnowledgeConsolidationLifecycle.png",
                 "Knowledge consolidation lifecycle"
             );
         });

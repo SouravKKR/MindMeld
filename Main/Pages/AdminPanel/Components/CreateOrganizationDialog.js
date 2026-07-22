@@ -1,5 +1,5 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
-import ZohoPaymentsCheckout from "../../../Globals/Classes/Payments/ZohoPaymentsCheckout.js";
+import PaymentCheckout from "../../../Globals/Classes/Payments/PaymentCheckout.js";
 import { organizationDeckPerkTypes } from "../../../Globals/Enumerations/OrganizationDeckPerkTypes.js";
 
 /**
@@ -14,8 +14,8 @@ import { organizationDeckPerkTypes } from "../../../Globals/Enumerations/Organiz
  *                      back into the form, server returns a one-shot
  *                      verificationToken.
  *   3) Create        — Posts to /Admin/Organizations/Create. If amount
- *                      is 0, the org goes ACTIVE immediately. Otherwise
- *                      Zoho Payments checkout opens (mirroring the existing
+ *                      is 0, the org goes ACTIVE immediately. Otherwise the
+ *                      provider checkout opens (mirroring the existing
  *                      paid-deck purchase flow). On success, the
  *                      verify-creation-payment endpoint is called.
  *
@@ -386,12 +386,12 @@ class CreateOrganizationDialog
                         return;
                     }
 
-                    // Zoho Payments path — open the checkout exactly as the
+                    // Payment path — open the checkout exactly as the
                     // paid-deck library page does.
                     const checkoutContext = createJson.order?.checkoutContext;
-                    if (!checkoutContext || !ZohoPaymentsCheckout.isAvailable())
+                    if (!checkoutContext || !PaymentCheckout.isAvailable(createJson.provider))
                     {
-                        showError("Zoho checkout not available — reload the page and try again.");
+                        showError("Checkout not available — reload the page and try again.");
                         createButton.disabled = false;
                         createButton.textContent = "Create organization";
                         return;
@@ -400,11 +400,11 @@ class CreateOrganizationDialog
                     let checkoutResult;
                     try
                     {
-                        checkoutResult = await ZohoPaymentsCheckout.open(checkoutContext, { description: `Organization: ${name}` });
+                        checkoutResult = await PaymentCheckout.open(createJson.provider, checkoutContext, { description: `Organization: ${name}` });
                     }
                     catch (checkoutError)
                     {
-                        showError(checkoutError.message || "Zoho checkout failed.");
+                        showError(checkoutError.message || "Checkout failed.");
                         createButton.disabled = false;
                         createButton.textContent = "Create organization";
                         return;
@@ -434,7 +434,7 @@ class CreateOrganizationDialog
                         });
                         if (!verifyResponse.ok)
                         {
-                            await DialogBox.alert("Payment captured but verify failed", "Zoho says the payment succeeded; our verification call did not. The webhook will reconcile this within a few seconds — refresh the list to confirm.");
+                            await DialogBox.alert("Payment captured but verify failed", "The provider says the payment succeeded; our verification call did not. The webhook will reconcile this within a few seconds — refresh the list to confirm.");
                         }
                     }
                     catch (verifyError)

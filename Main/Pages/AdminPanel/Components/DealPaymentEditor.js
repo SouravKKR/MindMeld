@@ -1,5 +1,6 @@
 import { creditDealPaymentModes } from "../../../Globals/Enumerations/CreditDealPaymentModes.js";
-import ZohoPaymentsCheckout from "../../../Globals/Classes/Payments/ZohoPaymentsCheckout.js";
+import { paymentProviders } from "../../../Globals/Enumerations/PaymentProviders.js";
+import PaymentCheckout from "../../../Globals/Classes/Payments/PaymentCheckout.js";
 
 /**
  * DealPaymentEditor  (<deal-payment-editor>)
@@ -8,9 +9,10 @@ import ZohoPaymentsCheckout from "../../../Globals/Classes/Payments/ZohoPayments
  * the periodic-assignment panel and the fixed-grant panel. The admin picks a
  * mode (None / On-spot / Independent), optionally an amount + label, and
  * optionally an invoice file (PDF / image) that can be uploaded now or left for
- * later. The on-spot mode collects through the active payment provider (Zoho
- * Payments today); the ON_SPOT_RAZORPAY enum value is retained for storage
- * compatibility but is provider-agnostic at the call site.
+ * later. The on-spot mode collects through the active payment provider
+ * (Razorpay today); the ON_SPOT_RAZORPAY enum value names the storage mode but
+ * the checkout itself is provider-agnostic — the server returns which provider
+ * created the order and PaymentCheckout opens the matching widget.
  *
  * After the PRIMARY entity (assignment or grant) exists, the host calls
  * `submitForTarget(targetType, targetId)`: it creates the deal record, runs
@@ -75,7 +77,7 @@ class DealPaymentEditor extends HTMLElement
                 <label class="deal-editor-field">Payment record
                     <select class="deal-editor-select" data-field="mode">
                         <option value="${creditDealPaymentModes.NONE}" selected>None — don't record a payment</option>
-                        <option value="${creditDealPaymentModes.ON_SPOT_RAZORPAY}">On-spot — collect via Zoho now</option>
+                        <option value="${creditDealPaymentModes.ON_SPOT_RAZORPAY}">On-spot — collect via Razorpay now</option>
                         <option value="${creditDealPaymentModes.INDEPENDENT}">Independent — record an offline payment</option>
                     </select>
                 </label>
@@ -182,12 +184,13 @@ class DealPaymentEditor extends HTMLElement
         const deal = createJson.deal;
         const result = { recorded: true, captured: false, invoiceUploaded: false };
 
-        // In-page checkout for an on-spot deal (Zoho Payments).
+        // In-page checkout for an on-spot deal (provider chosen server-side).
         if (mode === creditDealPaymentModes.ON_SPOT_RAZORPAY && createJson.checkoutContext)
         {
             try
             {
-                const checkoutResult = await ZohoPaymentsCheckout.open(createJson.checkoutContext, { description: label || "MindMeld credit deal" });
+                const dealProvider = typeof createJson.provider === "number" ? createJson.provider : paymentProviders.RAZORPAY;
+                const checkoutResult = await PaymentCheckout.open(dealProvider, createJson.checkoutContext, { description: label || "CogniumLearn credit deal" });
                 if (checkoutResult)
                 {
                     const verifyResponse = await fetch("/Admin/Credits/Deals/VerifyPayment", {

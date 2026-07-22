@@ -17,6 +17,8 @@ const CreditPreflight = require("../../Globals/Classes/Credits/CreditPreflight")
 const { getUser } = require("../Helpers/GetUser");
 const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
 const MaintenanceGate = require("../../Globals/Classes/Maintenance/MaintenanceGate");
+const PlanEntitlementGate = require("../../Globals/Classes/Plans/PlanEntitlementGate");
+const { planFeatures } = require("../../Globals/Enumerations/PlanFeatures");
 
 
 // Ceiling on how many scan pages one attempt may upload — kept in step with the
@@ -164,6 +166,16 @@ async function handleTranscribeOfflineAttempt(request, response)
     {
         response.statusCode = httpStatus.NOT_FOUND;
         response.end("Mock test not found.");
+        return;
+    }
+
+    // Plan entitlement: offline-attempt transcription feeds LLM mock-test
+    // evaluation, a Basic-tier feature. Refuse a lower tier before staging.
+    const transcriptionEntitlement = await PlanEntitlementGate.requireFeature(userId, planFeatures.MOCK_TEST_EVALUATION);
+    if (!transcriptionEntitlement.allowed)
+    {
+        response.statusCode = httpStatus.FORBIDDEN;
+        response.sendJson({ error: transcriptionEntitlement.reason, currentTier: transcriptionEntitlement.currentTier, requiredTier: transcriptionEntitlement.requiredTier });
         return;
     }
 

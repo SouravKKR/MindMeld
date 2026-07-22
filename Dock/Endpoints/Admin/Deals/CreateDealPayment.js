@@ -80,6 +80,7 @@ async function createDealPayment(request, response)
     });
 
     let checkoutContext = null;
+    let onSpotProviderEnum = null;
 
     if (mode === creditDealPaymentModes.ON_SPOT_RAZORPAY)
     {
@@ -91,9 +92,10 @@ async function createDealPayment(request, response)
         }
 
         // Provider-agnostic: the on-spot order is created with the configured
-        // default provider (Zoho today). The provider that actually created the
-        // order is persisted on the deal so VerifyPayment + the webhook verify
-        // against the SAME provider.
+        // default provider (Razorpay today). The provider that actually created
+        // the order is persisted on the deal so VerifyPayment + the webhook
+        // verify against the SAME provider, and returned to the client so it
+        // opens the matching checkout widget.
         const provider = PaymentProviderFactory.getDefaultProvider();
         if (!provider.isConfigured())
         {
@@ -105,7 +107,7 @@ async function createDealPayment(request, response)
         let order;
         try
         {
-            order = await provider.initiateOrder(amountMinor, currency, { receiptId: `deal_${deal.getId()}`, description: label || "MindMeld credit deal", notes: { dealId: deal.getId(), targetType: String(targetType), targetId: targetId } });
+            order = await provider.initiateOrder(amountMinor, currency, { receiptId: `deal_${deal.getId()}`, description: label || "CogniumLearn credit deal", notes: { dealId: deal.getId(), targetType: String(targetType), targetId: targetId } });
         }
         catch (orderError)
         {
@@ -119,6 +121,7 @@ async function createDealPayment(request, response)
         deal.setProviderOrderId(order.providerOrderId);
         deal.setStatus(creditDealPaymentStatuses.PENDING);
         checkoutContext = order.checkoutContext;
+        onSpotProviderEnum = provider.getProviderEnumValue();
     }
     else if (mode === creditDealPaymentModes.INDEPENDENT)
     {
@@ -132,7 +135,7 @@ async function createDealPayment(request, response)
     await CreditDealPaymentQueryEngine.createDeal(deal);
 
     response.statusCode = httpStatus.OK;
-    response.sendJson({ success: true, deal: deal.toJson(), checkoutContext: checkoutContext });
+    response.sendJson({ success: true, deal: deal.toJson(), checkoutContext: checkoutContext, provider: onSpotProviderEnum });
 }
 
 module.exports = { createDealPayment };

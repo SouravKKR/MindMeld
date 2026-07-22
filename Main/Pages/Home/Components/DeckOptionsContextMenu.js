@@ -283,7 +283,7 @@ class DeckOptionsContextMenu extends ContextMenu
                         <div class="export-options-title">Export Options</div>
                         <div class="export-ipr-disclaimer">
                             <strong>You are responsible for any third-party content in this deck.</strong>
-                            By exporting and sharing it, you confirm you have the rights to do so. MindMeld does not verify ownership of exported material.
+                            By exporting and sharing it, you confirm you have the rights to do so. CogniumLearn does not verify ownership of exported material.
                         </div>
                         <div class="export-field-container">
                             <label for="retain-progress-checkbox">Retain Progress</label>

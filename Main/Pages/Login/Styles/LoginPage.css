@@ -37,8 +37,36 @@ login-page
 
 .login-page-logo
 {
-    width: 220px;
-    max-width: 60vw;
+    width: 124px;
+    max-width: 45vw;
+    height: auto;
+    display: block;
+    user-select: none;
+    -webkit-user-drag: none;
+    pointer-events: none;
+}
+
+.login-page-attribution
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 18px;
+    opacity: 0.7;
+}
+
+.login-page-attribution-label
+{
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: lowercase;
+    color: var(--secondary-text-color);
+}
+
+.login-page-attribution-logo
+{
+    width: 116px;
+    max-width: 40vw;
     height: auto;
     display: block;
     user-select: none;

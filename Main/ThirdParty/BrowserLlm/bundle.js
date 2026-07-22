@@ -8,7 +8,7 @@ import * as esbuild from "esbuild";
  * this one file instead of pulling either library from a CDN at run-
  * time — which matters because:
  *
- *   - MindMeld's "no CDN at run-time" rule means the Free-tier LLM
+ *   - CogniumLearn's "no CDN at run-time" rule means the Free-tier LLM
  *     code path is fully local, including its WebLLM / Transformers
  *     dependencies.
  *   - One bundled file is simpler to ship via the existing
@@ -25,7 +25,7 @@ import * as esbuild from "esbuild";
  * @huggingface/transformers.
  *
  * Adapted from the reference implementation at
- * F:/Testing/MindMeld/browserllm/bundle.js. The httpPlugin lets esbuild
+ * F:/Testing/CogniumLearn/browserllm/bundle.js. The httpPlugin lets esbuild
  * pull the CDN-only source distributions during bundling without us
  * having to host them in package.json.
  */

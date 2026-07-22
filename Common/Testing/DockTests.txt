@@ -92,8 +92,8 @@ Notes:
 SUITE 2 - Endpoints + Auth isolation (server required)
 -----------------------------------------------------------------------------
 Runner:     Common/Testing/Dock/run_newman.js
-Collection: Common/Testing/Dock/MindMeld.postman_collection.json
-Environment: Common/Testing/Dock/MindMeld.postman_environment.json
+Collection: Common/Testing/Dock/CogniumLearn.postman_collection.json
+Environment: Common/Testing/Dock/CogniumLearn.postman_environment.json
 Coverage metric: endpoint -- distinct routes exercised over total catalogued.
 
 Folder "Public (must be reachable unauthenticated -- assert no 5xx)":

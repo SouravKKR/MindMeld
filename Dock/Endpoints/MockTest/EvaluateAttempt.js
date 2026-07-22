@@ -20,6 +20,8 @@ const { getUser } = require("../Helpers/GetUser");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const MaintenanceGate = require("../../Globals/Classes/Maintenance/MaintenanceGate");
+const PlanEntitlementGate = require("../../Globals/Classes/Plans/PlanEntitlementGate");
+const { planFeatures } = require("../../Globals/Enumerations/PlanFeatures");
 
 
 function joinPersistencePath(...segments)
@@ -174,6 +176,18 @@ async function handleEvaluateAttempt(request, response)
     {
         response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
         response.sendJson(MaintenanceGate.buildMaintenanceResponsePayload(activeMaintenanceWindow));
+        return;
+    }
+
+    // Plan entitlement: LLM mock-test evaluation is a Basic-tier feature. The
+    // offline-graded path already returned above (no AI, free on every tier);
+    // only the LLM path reaches here. Refuse a lower tier before the credit
+    // preflight so it sees an upgrade prompt, not an out-of-credits message.
+    const evaluationEntitlement = await PlanEntitlementGate.requireFeature(userId, planFeatures.MOCK_TEST_EVALUATION);
+    if (!evaluationEntitlement.allowed)
+    {
+        response.statusCode = httpStatus.FORBIDDEN;
+        response.sendJson({ error: evaluationEntitlement.reason, currentTier: evaluationEntitlement.currentTier, requiredTier: evaluationEntitlement.requiredTier });
         return;
     }
 

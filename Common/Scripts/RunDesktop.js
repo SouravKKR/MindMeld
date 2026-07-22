@@ -117,7 +117,7 @@ class DesktopRunner
             process.exit(1);
         }
 
-        console.log('Launching MindMeld ...');
+        console.log('Launching CogniumLearn ...');
         this.launchDetached(executablePath);
     }
 
@@ -163,7 +163,7 @@ class DesktopRunner
             process.exit(1);
         }
 
-        console.log('Launching MindMeld ...');
+        console.log('Launching CogniumLearn ...');
         this.launchDetached(executablePath);
     }
 }

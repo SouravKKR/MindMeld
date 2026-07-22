@@ -1,4 +1,4 @@
-MindMeld Test Plan (master)
+CogniumLearn Test Plan (master)
 ===========================
 
 This is the source of truth for the automated pre-production test suite, the

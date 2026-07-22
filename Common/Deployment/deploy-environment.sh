@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# MindMeld per-environment code + burst-image roll-out.
+# CogniumLearn per-environment code + burst-image roll-out.
 #
 #     bash Common/Deployment/deploy-environment.sh <development|testing|production> [flags]
 #
@@ -26,7 +26,7 @@ source "$SCRIPT_DIRECTORY/Library/Logging.sh"
 source "$SCRIPT_DIRECTORY/Library/LinodeApi.sh"
 source "$SCRIPT_DIRECTORY/Library/EnvironmentConfig.sh"
 
-BAKEBOX_MANAGEMENT_TAG="mindmeld-bakebox"
+BAKEBOX_MANAGEMENT_TAG="cogniumlearn-bakebox"
 
 SKIP_BASE_UPDATE=0
 SKIP_BAKE=0
@@ -66,7 +66,7 @@ configure_for_environment()
     load_deployment_secrets "$ENVIRONMENT_NAME"
 
     # Image label prefix is ALWAYS derived per-environment from the naming
-    # convention (MindMeld-<Env>-BurstImage) so a stale shared value can never leak
+    # convention (CogniumLearn-<Env>-BurstImage) so a stale shared value can never leak
     # one environment's images into another's version series.
     IMAGE_LABEL_PREFIX="$(label_for_role BurstImage)"
     # Bakebox region defaults to the environment's region; a per-env deployment file
@@ -134,7 +134,7 @@ send_notification()
     payload="$(node -e '
         const [status, message, env, version, imageId, baseNodeUpdated] = process.argv.slice(1);
         process.stdout.write(JSON.stringify({
-            text: `MindMeld [${env}] deploy ${status}: ${message}`,
+            text: `CogniumLearn [${env}] deploy ${status}: ${message}`,
             status, message, environment: env,
             version: version || null, imageId: imageId || null,
             baseNodeUpdated: baseNodeUpdated === "1"
@@ -273,7 +273,7 @@ create_and_provision_bakebox()
 
     log_step "Building the Agent context archive locally..."
     local context_archive
-    context_archive="$(mktemp -t mindmeld-agent-context.XXXXXX.tar.gz)"
+    context_archive="$(mktemp -t cogniumlearn-agent-context.XXXXXX.tar.gz)"
     ( cd "$REPOSITORY_ROOT" && build_agent_context "$context_archive" )
 
     log_step "Uploading the context + provisioning script to the bakebox..."
@@ -298,7 +298,7 @@ capture_image()
     linode_resize_disk "$BAKEBOX_INSTANCE_ID" "$disk_id" "$BAKEBOX_DISK_CAPTURE_SIZE_MB"
 
     log_step "Capturing the image as ${NEW_IMAGE_LABEL}..."
-    NEW_IMAGE_ID="$(linode_capture_image "$disk_id" "$NEW_IMAGE_LABEL" "MindMeld ${ENVIRONMENT_NAME} burst worker image, version ${NEW_IMAGE_VERSION}")"
+    NEW_IMAGE_ID="$(linode_capture_image "$disk_id" "$NEW_IMAGE_LABEL" "CogniumLearn ${ENVIRONMENT_NAME} burst worker image, version ${NEW_IMAGE_VERSION}")"
     log_info "New image id: $NEW_IMAGE_ID (waiting for it to become available)..."
     linode_wait_for_image_available "$NEW_IMAGE_ID" 1200
     # Tag the image so it is swept by teardown-environment.sh.
@@ -322,23 +322,23 @@ update_base_node()
 
     log_step "Uploading the Agent + Dock contexts to the base node..."
     local agent_archive dock_archive
-    agent_archive="$(mktemp -t mindmeld-agent-context.XXXXXX.tar.gz)"
-    dock_archive="$(mktemp -t mindmeld-dock-context.XXXXXX.tar.gz)"
+    agent_archive="$(mktemp -t cogniumlearn-agent-context.XXXXXX.tar.gz)"
+    dock_archive="$(mktemp -t cogniumlearn-dock-context.XXXXXX.tar.gz)"
     ( cd "$REPOSITORY_ROOT" && build_agent_context "$agent_archive" && build_dock_context "$dock_archive" )
-    copy_over_scp "$agent_archive" "${base_node_target}:/tmp/mindmeld-agent-context.tar.gz"
-    copy_over_scp "$dock_archive" "${base_node_target}:/tmp/mindmeld-dock-context.tar.gz"
+    copy_over_scp "$agent_archive" "${base_node_target}:/tmp/cogniumlearn-agent-context.tar.gz"
+    copy_over_scp "$dock_archive" "${base_node_target}:/tmp/cogniumlearn-dock-context.tar.gz"
     rm -f "$agent_archive" "$dock_archive"
 
     # Ship this environment's Google Cloud Storage service-account key. It is
     # gitignored, so it rides neither git nor the Dock/Agent code tarballs; both Dock
-    # and the Agent read Common/Credentials/mindmeld-storage.<env>.json, and without it
+    # and the Agent read Common/Credentials/cogniumlearn-storage.<env>.json, and without it
     # every Dock->GCS write (mock-test grading payload staging, log archival) fails.
-    local storage_credential_file="$REPOSITORY_ROOT/Common/Credentials/mindmeld-storage.${ENVIRONMENT_NAME}.json"
+    local storage_credential_file="$REPOSITORY_ROOT/Common/Credentials/cogniumlearn-storage.${ENVIRONMENT_NAME}.json"
     if [ -f "$storage_credential_file" ]
     then
-        log_step "Placing the GCS credential (mindmeld-storage.${ENVIRONMENT_NAME}.json) on the base node..."
+        log_step "Placing the GCS credential (cogniumlearn-storage.${ENVIRONMENT_NAME}.json) on the base node..."
         run_ssh "$base_node_target" "mkdir -p '$BASE_NODE_REPO_DIR/Common/Credentials'"
-        copy_over_scp "$storage_credential_file" "${base_node_target}:$BASE_NODE_REPO_DIR/Common/Credentials/mindmeld-storage.${ENVIRONMENT_NAME}.json"
+        copy_over_scp "$storage_credential_file" "${base_node_target}:$BASE_NODE_REPO_DIR/Common/Credentials/cogniumlearn-storage.${ENVIRONMENT_NAME}.json"
     else
         log_warning "GCS credential $storage_credential_file not found locally — Dock/Agent GCS writes will fail on the host."
     fi
@@ -346,11 +346,11 @@ update_base_node()
     log_step "Refreshing Agent + Dock code, image pointer + restarting Dock for '$ENVIRONMENT_NAME'..."
     run_ssh "$base_node_target" \
         "REPO_DIR='$BASE_NODE_REPO_DIR' \
-         AGENT_CONTEXT_ARCHIVE='/tmp/mindmeld-agent-context.tar.gz' \
-         DOCK_CONTEXT_ARCHIVE='/tmp/mindmeld-dock-context.tar.gz' \
+         AGENT_CONTEXT_ARCHIVE='/tmp/cogniumlearn-agent-context.tar.gz' \
+         DOCK_CONTEXT_ARCHIVE='/tmp/cogniumlearn-dock-context.tar.gz' \
          NEW_IMAGE_ID='$image_id_to_set' \
          DOCK_ENV_FILE='$(dock_environment_file_name)' \
-         MINDMELD_ENVIRONMENT='$ENVIRONMENT_NAME' \
+         COGNIUMLEARN_ENVIRONMENT='$ENVIRONMENT_NAME' \
          CLOUDFLARE_TUNNEL_TOKEN='${CLOUDFLARE_TUNNEL_TOKEN:-}' \
          bash -s" \
         < "$SCRIPT_DIRECTORY/Remote/BaseNodeUpdate.sh"

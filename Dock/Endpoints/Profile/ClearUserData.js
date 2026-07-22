@@ -6,7 +6,7 @@ const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 /**
  * POST /Profile/ClearUserData
  *
- * Wipes every user-owned record from MindMeld's database — decks, cards,
+ * Wipes every user-owned record from CogniumLearn's database — decks, cards,
  * study materials, mock tests, sync metadata, and accumulated tombstones.
  * The user account itself stays intact (no users-collection delete) so the
  * sessionId cookie remains valid and the next page load lands the user on

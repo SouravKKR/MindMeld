@@ -24,7 +24,7 @@ import Deck from "../../Model/Deck.js";
  */
 class CuratedStudyMaterialMigration
 {
-    static #STORAGE_FLAG_KEY = "mindmeld-curated-pending-review-migrated-v2";
+    static #STORAGE_FLAG_KEY = "cogniumlearn-curated-pending-review-migrated-v2";
     static #LEGACY_PENDING_REVIEW_NAME = "PENDING_REVIEW";
     static #ARCHIVED_NAME              = "ARCHIVED";
     static #AUTO_REPLACED_OUTCOME_NAME = "AUTO_REPLACED";

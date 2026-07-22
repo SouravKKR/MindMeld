@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Idempotently tear down every cloud resource of a MindMeld environment. Resources
-# are found by the MindMeld-<Env>-* label prefix (and the VPC by its exact label),
+# Idempotently tear down every cloud resource of a CogniumLearn environment. Resources
+# are found by the CogniumLearn-<Env>-* label prefix (and the VPC by its exact label),
 # then deleted in dependency order: instances first (which frees their VPC + firewall
 # attachments), then burst images, then firewalls, then the VPC.
 #
@@ -88,7 +88,7 @@ delete_each "$INSTANCE_IDS" linode_delete_instance
 
 # Also sweep any live burst worker VMs the autoscaler may have left running.
 log_step "Sweeping stray burst worker VMs for this environment..."
-BURST_WORKER_IDS="$(linode_find_instance_ids_by_prefix "mindmeld-${ENVIRONMENT_NAME}-worker")"
+BURST_WORKER_IDS="$(linode_find_instance_ids_by_prefix "cogniumlearn-${ENVIRONMENT_NAME}-worker")"
 delete_each "$BURST_WORKER_IDS" linode_delete_instance
 
 log_step "Deleting burst images..."

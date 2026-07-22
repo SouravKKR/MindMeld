@@ -1,6 +1,7 @@
 const { getUser } = require("../Helpers/GetUser");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const PeriodicCreditReconciler = require("../../Globals/Classes/Credits/PeriodicCreditReconciler");
+const PlanReconciler = require("../../Globals/Classes/Plans/PlanReconciler");
 const StreakManager = require("../../Globals/Classes/Streak/StreakManager");
 const LegalAcceptanceService = require("../../Globals/Classes/Authentication/LegalAcceptanceService");
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
@@ -13,6 +14,27 @@ async function handleGetUser(request, response)
     {
         response.sendStatusCode(httpStatus.UNAUTHORIZED);
         return;
+    }
+
+    // Lazy, pull-based plan reconciliation: persist a lapsed paid plan down to
+    // FREE so the stored field agrees with read-time expiry. Fully guarded so a
+    // failure never blocks the response; re-fetch when it changed so the
+    // response carries the corrected plan.
+    try
+    {
+        const planReconcileResult = await PlanReconciler.reconcile(user.getId());
+        if (planReconcileResult.changed)
+        {
+            const refreshed = await AuthenticationQueryEngine.getUserById(user.getId());
+            if (refreshed)
+            {
+                user = refreshed;
+            }
+        }
+    }
+    catch (planReconcileError)
+    {
+        console.warn(`[HandleGetUser] Plan reconcile failed for ${user.getId()}: ${planReconcileError?.message || planReconcileError}`);
     }
 
     // Lazy, pull-based enforcement of periodic credit assignments: querying

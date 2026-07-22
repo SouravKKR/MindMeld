@@ -11,7 +11,7 @@ const path = require('path');
 // modification time — a pure stat walk, so it stays fast even though Main/ contains
 // large third-party assets. It is stored after each successful build and compared on
 // the next run. `npm run setup` never consults this (it is the explicit "always
-// rebuild" command), and MINDMELD_FORCE_BUILD forces a rebuild from any entry point.
+// rebuild" command), and COGNIUMLEARN_FORCE_BUILD forces a rebuild from any entry point.
 class BuildFreshness
 {
     // Everything the build reads. Generated mirrors (Dock/Globals, Agent/Globals,

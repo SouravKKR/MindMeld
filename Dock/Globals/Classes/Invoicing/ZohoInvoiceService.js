@@ -73,7 +73,7 @@ class ZohoInvoiceService
 
             const accessToken = await ZohoOAuthTokenManager.getAccessToken();
             const currency = String(details?.currency || "INR").toUpperCase();
-            const description = String(details?.description || "MindMeld purchase").slice(0, 500);
+            const description = String(details?.description || "CogniumLearn purchase").slice(0, 500);
 
             const contactId = await ZohoInvoiceService.#resolveOrCreateContact(accessToken, email, details?.name, currency);
             if (!contactId)

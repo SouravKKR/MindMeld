@@ -1,0 +1,10 @@
+class PlanMetadataConstants
+{
+    static ORDER = ["FREE","BASIC","PRO","PRO_PLUS"];
+    static FREE = {"label":"Free","tagline":"Ask AI and chat with your decks","monthlyCredits":0,"storageBytes":20971520,"maxDevices":2,"maxSessions":2,"monthlyFreeDeckCount":0,"features":["ASK_AI","CHAT"],"priceMinorByCurrency":{},"razorpayPeriod":"monthly","razorpayInterval":1};
+    static BASIC = {"label":"Basic","tagline":"Curated study and mock-test evaluation","monthlyCredits":25,"storageBytes":262144000,"maxDevices":4,"maxSessions":4,"monthlyFreeDeckCount":0,"features":["ASK_AI","CHAT","CURATED_STUDY","MOCK_TEST_EVALUATION"],"priceMinorByCurrency":{"INR":19900},"razorpayPeriod":"monthly","razorpayInterval":1};
+    static PRO = {"label":"Pro","tagline":"AI generation without images","monthlyCredits":60,"storageBytes":524288000,"maxDevices":5,"maxSessions":5,"monthlyFreeDeckCount":0,"features":["ASK_AI","CHAT","CURATED_STUDY","MOCK_TEST_EVALUATION","AUTOMATIC_GENERATION"],"priceMinorByCurrency":{"INR":49900},"razorpayPeriod":"monthly","razorpayInterval":1};
+    static PRO_PLUS = {"label":"Pro Plus","tagline":"Image generation and a free marketplace deck each month","monthlyCredits":125,"storageBytes":2147483648,"maxDevices":6,"maxSessions":6,"monthlyFreeDeckCount":1,"features":["ASK_AI","CHAT","CURATED_STUDY","MOCK_TEST_EVALUATION","AUTOMATIC_GENERATION","IMAGE_GENERATION","MONTHLY_FREE_DECK"],"priceMinorByCurrency":{"INR":99900},"razorpayPeriod":"monthly","razorpayInterval":1};
+}
+
+module.exports = PlanMetadataConstants;

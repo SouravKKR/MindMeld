@@ -1,4 +1,4 @@
-// Browser UI tests for MindMeld's interactive TUTORIALS, driven by a real
+// Browser UI tests for CogniumLearn's interactive TUTORIALS, driven by a real
 // Chromium via Puppeteer against the BUILT app (Dock/Static). For every
 // tutorial registered in TutorialRegistry this suite:
 //
@@ -53,7 +53,7 @@ const CATEGORY = "Tutorial Walkthrough (Puppeteer)";
 // the seam's own currentPageTag().
 const KNOWN_PAGE_TAGS = [
     "home-page", "login-page", "admin-panel-page", "settings-page",
-    "mindmeld-about-page", "tutorials-page", "progress-page", "study-page",
+    "cogniumlearn-about-page", "tutorials-page", "progress-page", "study-page",
     "card-editor-page", "study-material-editor-page", "deck-editor-page",
     "mock-test-editor-page", "mock-test-answer-key-page", "browser-page",
     "deck-insights-page", "automatic-generation-page", "activity-page",

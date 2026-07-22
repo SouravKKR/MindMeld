@@ -17,7 +17,7 @@ import ChatStudyMaterialFields from "../Globals/Classes/Analysis/ChatStudyMateri
  */
 class DetailLevelPickerDialog
 {
-    static #STORAGE_KEY = "mindmeld-detail-level-picker-selection";
+    static #STORAGE_KEY = "cogniumlearn-detail-level-picker-selection";
 
     static #LEVEL_DESCRIPTIONS =
     {

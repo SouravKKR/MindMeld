@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Read-only status of a MindMeld environment: which cloud resources exist (matched
-# by the MindMeld-<Env>-* label prefix) and, if the base node is reachable over
+# Read-only status of a CogniumLearn environment: which cloud resources exist (matched
+# by the CogniumLearn-<Env>-* label prefix) and, if the base node is reachable over
 # SSH, the state of its services. Makes no changes.
 #
 # Usage:  bash Common/Deployment/status-environment.sh <development|testing|production>
@@ -55,7 +55,7 @@ then
     log_info "Base node services (${BASE_NODE_SSH_USER:-root}@${BASE_NODE_SSH_HOST}):"
     ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 \
         -i "${DEPLOY_SSH_PRIVATE_KEY_PATH/#\~/$HOME}" "${BASE_NODE_SSH_USER:-root}@${BASE_NODE_SSH_HOST}" \
-        'systemctl is-active mindmeld-dock cloudflared redis-server 2>/dev/null | paste -sd" " -' \
+        'systemctl is-active cogniumlearn-dock cloudflared redis-server 2>/dev/null | paste -sd" " -' \
         2>/dev/null | sed 's/^/    dock cloudflared redis: /' || log_warning "    (base node not reachable)"
 fi
 

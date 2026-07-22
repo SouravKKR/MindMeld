@@ -135,7 +135,7 @@ class LogFormatter
             .log-level-warning { color: ${LogFormatter.severityColor(logLevel.WARNING)}; }
             .log-level-error { color: ${LogFormatter.severityColor(logLevel.ERROR)}; font-weight: 600; }
         `;
-        return `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>MindMeld Logs</title>\n<style>${style}</style>\n</head>\n<body>\n${lines}\n</body>\n</html>\n`;
+        return `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>CogniumLearn Logs</title>\n<style>${style}</style>\n</head>\n<body>\n${lines}\n</body>\n</html>\n`;
     }
 }
 

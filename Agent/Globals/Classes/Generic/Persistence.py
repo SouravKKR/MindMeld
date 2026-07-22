@@ -12,13 +12,13 @@ from Globals.Utility.EnvironmentLoader import EnvironmentLoader
 
 
 class Persistence:
-    __GOOGLE_CLOUD_STORAGE_BUCKET_NAME = "mindmeld-bucket"
+    __GOOGLE_CLOUD_STORAGE_BUCKET_NAME = "cogniumlearn-bucket"
     # Linode Object Storage is S3-compatible and shares the bucket name with the
     # legacy Google Cloud Storage bucket, so object paths never change across
     # providers. Credentials and endpoint come from the environment
     # (LINODE_STORAGE_BUCKET_ACCESS_KEY / LINODE_STORAGE_BUCKET_SECRET /
     # LINODE_S3_ENDPOINT_HOSTNAMES).
-    __LINODE_OBJECT_STORAGE_BUCKET_NAME = "mindmeld-bucket"
+    __LINODE_OBJECT_STORAGE_BUCKET_NAME = "cogniumlearn-bucket"
     __default_storage_target = StorageTargets.LINODE_OBJECT_STORAGE
     __INFORMATION_SOURCE_DIRECTORY = "InformationSources"
     __TASKS_DIRECTORY = "Tasks"
@@ -34,10 +34,10 @@ class Persistence:
             # directory, so the storage service-account key is injected as base64 env
             # (never baked into the image — see Agent/.dockerignore + Dock's
             # BurstFleetSettings). On the base node no such variable is set and the key
-            # is read from disk: Common/Credentials/mindmeld-storage.<environment>.json,
+            # is read from disk: Common/Credentials/cogniumlearn-storage.<environment>.json,
             # selected per environment exactly the way EnvironmentLoader/Dock resolve
             # it, so every service authenticates with its own environment's credential.
-            storage_credentials_base64 = os.getenv("MINDMELD_STORAGE_CREDENTIALS_BASE64")
+            storage_credentials_base64 = os.getenv("COGNIUMLEARN_STORAGE_CREDENTIALS_BASE64")
             if storage_credentials_base64:
                 credentials_info = json.loads(base64.b64decode(storage_credentials_base64))
                 Persistence.__storage_client = storage.Client.from_service_account_info(credentials_info)
@@ -45,7 +45,7 @@ class Persistence:
                 environment_name = EnvironmentLoader.resolve_environment_name()
                 credentials_path = os.path.join(
                     os.path.dirname(__file__), "..", "..", "..", "..",
-                    "Common", "Credentials", f"mindmeld-storage.{environment_name}.json"
+                    "Common", "Credentials", f"cogniumlearn-storage.{environment_name}.json"
                 )
                 Persistence.__storage_client = storage.Client.from_service_account_json(credentials_path)
             Persistence.__bucket = Persistence.__storage_client.bucket(

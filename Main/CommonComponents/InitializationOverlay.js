@@ -45,13 +45,19 @@ class InitializationOverlay extends HTMLElement
             <div class="initialization-overlay-backdrop">
                 <div class="initialization-overlay-panel">
                     <img class="initialization-overlay-logo"
-                         src="./Globals/Assets/Images/Logos/CogniumLabsLogo.png"
-                         alt="Cognium Labs">
-                    <div class="initialization-overlay-title">MindMeld</div>
+                         src="./Globals/Assets/Images/Logos/CogniumLearnLogoIcon.png"
+                         alt="CogniumLearn">
+                    <div class="initialization-overlay-title">CogniumLearn</div>
                     <div class="initialization-overlay-progress">
                         <div class="initialization-overlay-progress-fill"></div>
                     </div>
                     <div class="initialization-overlay-message">Preparing your library…</div>
+                    <div class="initialization-overlay-attribution">
+                        <span class="initialization-overlay-attribution-label">by</span>
+                        <img class="initialization-overlay-attribution-logo"
+                             src="./Globals/Assets/Images/Logos/CogniumLabsLogo.png"
+                             alt="Cognium Labs">
+                    </div>
                 </div>
                 <copyright-notice position="bottom-center"></copyright-notice>
             </div>
@@ -241,8 +247,8 @@ class InitializationOverlay extends HTMLElement
 
             .initialization-overlay-logo
             {
-                width: 240px;
-                max-width: 60vw;
+                width: 132px;
+                max-width: 45vw;
                 height: auto;
                 display: block;
                 user-select: none;
@@ -256,6 +262,34 @@ class InitializationOverlay extends HTMLElement
                 font-weight: 600;
                 letter-spacing: 0.04em;
                 color: var(--secondary-text-color, #b8b8c4);
+            }
+
+            .initialization-overlay-attribution
+            {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-top: 22px;
+                opacity: 0.7;
+            }
+
+            .initialization-overlay-attribution-label
+            {
+                font-size: 0.72rem;
+                letter-spacing: 0.06em;
+                text-transform: lowercase;
+                color: var(--secondary-text-color, #b8b8c4);
+            }
+
+            .initialization-overlay-attribution-logo
+            {
+                width: 118px;
+                max-width: 32vw;
+                height: auto;
+                display: block;
+                user-select: none;
+                -webkit-user-drag: none;
+                pointer-events: none;
             }
 
             .initialization-overlay-progress

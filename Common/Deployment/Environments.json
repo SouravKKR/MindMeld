@@ -5,7 +5,7 @@
     },
     "development": {
         "provisioning": "linode",
-        "domain": "development-mindmeld.cogniumlabs.io",
+        "domain": "development-learn.cogniumlabs.io",
         "region": "in-maa",
         "vpcCidr": "10.10.0.0/24",
         "subnetCidr": "10.10.0.0/24",
@@ -14,13 +14,13 @@
         "serverType": "g6-standard-1",
         "mongoType": null,
         "burstInstanceType": "g6-standard-2",
-        "labelPrefix": "MindMeld-Development",
-        "tag": "mindmeld-development",
+        "labelPrefix": "CogniumLearn-Development",
+        "tag": "cogniumlearn-development",
         "agentLocalWorkerCount": 1
     },
     "testing": {
         "provisioning": "linode",
-        "domain": "testing-mindmeld.cogniumlabs.io",
+        "domain": "testing-learn.cogniumlabs.io",
         "region": "in-maa",
         "vpcCidr": "10.20.0.0/24",
         "subnetCidr": "10.20.0.0/24",
@@ -30,13 +30,13 @@
         "serverType": "g6-standard-2",
         "mongoType": "g6-nanode-1",
         "burstInstanceType": "g6-standard-2",
-        "labelPrefix": "MindMeld-Testing",
-        "tag": "mindmeld-testing",
+        "labelPrefix": "CogniumLearn-Testing",
+        "tag": "cogniumlearn-testing",
         "agentLocalWorkerCount": 1
     },
     "production": {
         "provisioning": "linode",
-        "domain": "mindmeld.cogniumlabs.io",
+        "domain": "learn.cogniumlabs.io",
         "region": "in-maa",
         "vpcCidr": "10.0.0.0/24",
         "subnetCidr": "10.0.0.0/24",
@@ -46,8 +46,8 @@
         "serverType": "g6-standard-2",
         "mongoType": "g6-nanode-1",
         "burstInstanceType": "g6-standard-2",
-        "labelPrefix": "MindMeld-Production",
-        "tag": "mindmeld-production",
+        "labelPrefix": "CogniumLearn-Production",
+        "tag": "cogniumlearn-production",
         "agentLocalWorkerCount": 2,
         "existingResourceIds": {
             "vpc": 517962,

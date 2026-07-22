@@ -75,27 +75,27 @@ class TutorialRegistry
     {
         id: TutorialRegistry.BEGINNERS_ID,
         title: "Beginners",
-        body: "A short hands-on tour of MindMeld — you'll create your first deck and learn the five phases of learning along the way.",
+        body: "A short hands-on tour of CogniumLearn — you'll create your first deck and learn the five phases of learning along the way.",
         bAutoPlayOnFirstLaunch: true,
         steps:
         [
             {
                 type: tutorialStepTypes.MODAL,
-                title: "Welcome to MindMeld",
+                title: "Welcome to CogniumLearn",
                 tooltipWidth: "xwide",
                 expectedPageTagName: "home-page",
                 body:
                 `
                     <p>
-                        MindMeld walks with you from the moment you first encounter a topic
+                        CogniumLearn walks with you from the moment you first encounter a topic
                         all the way through finishing your exam — giving you the right tool
                         at every phase of your learning journey.
                     </p>
                     <button type="button" class="tutorial-lifecycle-diagram-zoom" aria-label="Open the lifecycle diagram fullscreen">
                         <img
                             class="tutorial-lifecycle-diagram"
-                            src="./Globals/Assets/Images/Diagrams/MindMeldKnowledgeConsolidationLifecycle.png"
-                            alt="MindMeld Knowledge Consolidation Lifecycle"
+                            src="./Globals/Assets/Images/Diagrams/CogniumLearnKnowledgeConsolidationLifecycle.png"
+                            alt="CogniumLearn Knowledge Consolidation Lifecycle"
                         >
                         <span class="tutorial-lifecycle-diagram-zoom-hint">Tap the diagram to expand</span>
                     </button>
@@ -115,7 +115,7 @@ class TutorialRegistry
                         <li><strong>Validate</strong> — prove what you know under exam conditions.</li>
                         <li><strong>Reflect</strong> — see exactly where you stand.</li>
                     </ol>
-                    <p>Every feature in MindMeld serves one of these phases. Let's set up your first deck so you have somewhere to start.</p>
+                    <p>Every feature in CogniumLearn serves one of these phases. Let's set up your first deck so you have somewhere to start.</p>
                 `
             },
             {
@@ -126,7 +126,7 @@ class TutorialRegistry
                 body:
                 `
                     <p>In most flashcard apps a deck is just a stack of cards — questions on one side, answers on the other. That's it.</p>
-                    <p>MindMeld's decks are different. A deck here is the <strong>home for everything you need to learn a topic</strong>:</p>
+                    <p>CogniumLearn's decks are different. A deck here is the <strong>home for everything you need to learn a topic</strong>:</p>
                     <ul>
                         <li><strong>Flashcards</strong> — for spaced repetition and recall practice.</li>
                         <li><strong>Study materials</strong> — your notes, summaries, PDFs and source documents, all in one place.</li>
@@ -309,7 +309,7 @@ class TutorialRegistry
         [
             {
                 type: tutorialStepTypes.MODAL,
-                title: "How to study with MindMeld",
+                title: "How to study with CogniumLearn",
                 expectedPageTagName: "home-page",
                 // Async sample-deck build runs while the user reads this
                 // modal; #goNext awaits it on Next click so the next
@@ -321,14 +321,14 @@ class TutorialRegistry
                 bWideTooltip: true,
                 body:
                 `
-                    <p>This walkthrough shows you how MindMeld supports the whole study journey — not just memorisation.</p>
+                    <p>This walkthrough shows you how CogniumLearn supports the whole study journey — not just memorisation.</p>
                     <p>We've added a small <strong>sample deck</strong> to your home page so we can demo every feature on real content. The deck (and its sample cards / materials) will be removed automatically when you finish or skip the tutorial.</p>
                 `
             },
             {
                 type: tutorialStepTypes.HIGHLIGHT,
                 title: "Your sample deck",
-                body: "<p>This is the sample deck we set up. It contains a study material and a few flashcards on MindMeld's own learning lifecycle.</p>",
+                body: "<p>This is the sample deck we set up. It contains a study material and a few flashcards on CogniumLearn's own learning lifecycle.</p>",
                 selector: "deck-tile[data-is-tutorial-sample=\"true\"]",
                 expectedPageTagName: "home-page",
                 fallbackBody: "<p>Look for the new deck tile on your home page named 'Tutorial Sample Deck'.</p>"
@@ -368,7 +368,7 @@ class TutorialRegistry
             {
                 type: tutorialStepTypes.HIGHLIGHT,
                 title: "Your study material",
-                body: "<p>This is the study material — read it like a textbook. MindMeld supports rich text, images, formulas, everything.</p>",
+                body: "<p>This is the study material — read it like a textbook. CogniumLearn supports rich text, images, formulas, everything.</p>",
                 selector: ".study-material-content-section",
                 expectedPageTagName: "study-page",
                 fallbackBody: "<p>The study material content is rendered on the page.</p>"
@@ -689,7 +689,7 @@ class TutorialRegistry
                 },
                 body:
                 `
-                    <p>MindMeld grades your mock tests — multiple-choice questions instantly and offline, subjective answers with AI. Let's take the sample deck's mock test <strong>end to end</strong>: launch it, answer a question, finish, and see the graded answer key.</p>
+                    <p>CogniumLearn grades your mock tests — multiple-choice questions instantly and offline, subjective answers with AI. Let's take the sample deck's mock test <strong>end to end</strong>: launch it, answer a question, finish, and see the graded answer key.</p>
                     <p>Everything in this tutorial runs offline on your device — no real grading and no credits spent.</p>
                 `
             },
@@ -778,7 +778,7 @@ class TutorialRegistry
     {
         id: TutorialRegistry.AI_GENERATION_ID,
         title: "Generate decks with AI",
-        body: "Watch MindMeld build a deck from your material — demonstrated with a built-in sample run, so the tutorial doesn't start a real generation.",
+        body: "Watch CogniumLearn build a deck from your material — demonstrated with a built-in sample run, so the tutorial doesn't start a real generation.",
         bAutoPlayOnFirstLaunch: false,
         steps:
         [
@@ -789,7 +789,7 @@ class TutorialRegistry
                 bWideTooltip: true,
                 body:
                 `
-                    <p>MindMeld can build a whole deck — flashcards, study materials and mock tests — from a syllabus, your notes, a PDF or a web link.</p>
+                    <p>CogniumLearn can build a whole deck — flashcards, study materials and mock tests — from a syllabus, your notes, a PDF or a web link.</p>
                     <p>Click <strong>Next</strong> and we'll play a <strong>built-in sample</strong> run so you can see the flow — the tutorial doesn't start a real generation. (Real generation uses credits.)</p>
                 `
             },
@@ -891,7 +891,7 @@ class TutorialRegistry
                 fallbackBody: "<p>The <strong>Clear &amp; Re-analyse</strong> button at the top of Topic Insights re-runs the AI analysis to refresh these topics.</p>",
                 body:
                 `
-                    <p><strong>Clear &amp; Re-analyse</strong> re-runs the AI analysis on demand: it clears the current breakdown and regenerates your strong / weak / confused topics from your latest study activity. MindMeld normally does this for you automatically after about a week of studying — this button is the manual override for when you want a fresh read right now.</p>
+                    <p><strong>Clear &amp; Re-analyse</strong> re-runs the AI analysis on demand: it clears the current breakdown and regenerates your strong / weak / confused topics from your latest study activity. CogniumLearn normally does this for you automatically after about a week of studying — this button is the manual override for when you want a fresh read right now.</p>
                     <p>Try clicking it. During this tutorial it plays a <strong>demo run</strong> — you'll see the progress and the same topics reappear, but no real analysis is queued and no credits are spent. Click <strong>Next</strong> when you're done.</p>
                 `
             },

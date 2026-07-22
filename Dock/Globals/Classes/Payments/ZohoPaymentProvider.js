@@ -29,7 +29,7 @@ class ZohoPaymentProvider extends PaymentProvider
 {
     static API_VERSION_PATH = "/api/v1";
     static SESSION_EXPIRY_SECONDS = 900;
-    static BUSINESS_NAME = "MindMeld";
+    static BUSINESS_NAME = "CogniumLearn";
 
     // Minor-unit minimums are converted with this divisor. Every Zoho-supported
     // currency this deployment sells in is 2-decimal, matching the pricing
@@ -125,7 +125,7 @@ class ZohoPaymentProvider extends PaymentProvider
         const accessToken = await ZohoOAuthTokenManager.getAccessToken();
         const amountMajor = ZohoPaymentProvider.#toMajorAmountString(amountMinor);
         const resolvedCurrency = currency || "INR";
-        const description = String(metadata?.description || "MindMeld purchase").slice(0, 500);
+        const description = String(metadata?.description || "CogniumLearn purchase").slice(0, 500);
 
         const requestBody =
         {

@@ -15,7 +15,7 @@ import AuthenticationEvents from "../../Events/AuthenticationEvents.js";
 class MetricTracker
 {
     static #SYNC_ENDPOINT = "/Metrics/Sync";
-    static #PENDING_STORAGE_KEY = "mindmeld.metricsPending";
+    static #PENDING_STORAGE_KEY = "cogniumlearn.metricsPending";
     static #STUDY_BLOCK_SECONDS = 300;
     static #MINUTES_PER_BLOCK = 5;
     static #BACKSTOP_SYNC_MILLISECONDS = 120000;

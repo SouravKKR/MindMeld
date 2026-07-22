@@ -1,6 +1,6 @@
-# MindMeld Deployment Guide
+# CogniumLearn Deployment Guide
 
-This is the complete, start-to-finish guide for deploying MindMeld to production on
+This is the complete, start-to-finish guide for deploying CogniumLearn to production on
 Linode — the Dock web server, the Agent task processor, the burst worker fleet, and
 scheduled maintenance. It is organized **by machine, in the exact order you should
 do things**.
@@ -77,7 +77,7 @@ grading, deck analysis) with an HTTP `503` and a "check back at \<time\>" messag
                                                              │ Linode VPC (private network)
                             ┌─────────────────────────────────┴─────────────────────────────┐
                             ▼                                                                 ▼
-                 Burst VM → docker: mindmeld-agent                            Burst VM → docker: mindmeld-agent
+                 Burst VM → docker: cogniumlearn-agent                            Burst VM → docker: cogniumlearn-agent
                   └─ Worker.py polls the queue                                 └─ Worker.py polls the queue
 ```
 
@@ -85,7 +85,7 @@ grading, deck analysis) with an HTTP `503` and a "check back at \<time\>" messag
 
 # Section 0 — Environments (read this first)
 
-MindMeld runs in **four fully-isolated environments**. Everything in Sections 1–2 below
+CogniumLearn runs in **four fully-isolated environments**. Everything in Sections 1–2 below
 describes the per-machine mechanics for **one** environment; this section explains how the
 four are kept separate and how to stand any of them up or tear it down **on demand and
 idempotently** with the `manage-environment` skill (which drives the orchestrators under
@@ -94,15 +94,15 @@ idempotently** with the `manage-environment` skill (which drives the orchestrato
 | Environment | Domain | Base node | Mongo | How it's built |
 |---|---|---|---|---|
 | **local** | `127.0.0.1:3000` | your dev box | local | `npm run web` (no Linode) |
-| **development** | `development-mindmeld.cogniumlabs.io` | own Linode | **colocated** on the base node | `provision-environment.sh development` |
-| **testing** | `testing-mindmeld.cogniumlabs.io` | own Linode | **separate Mongo VM** (prod-like) | `provision-environment.sh testing` |
+| **development** | `development-learn.cogniumlabs.io` | own Linode | **colocated** on the base node | `provision-environment.sh development` |
+| **testing** | `testing-learn.cogniumlabs.io` | own Linode | **separate Mongo VM** (prod-like) | `provision-environment.sh testing` |
 
 > **Domains are first-level subdomains on purpose.** Cloudflare's free Universal SSL only
 > covers the apex + one wildcard level (`*.cogniumlabs.io`), so a nested name like
-> `testing.mindmeld.cogniumlabs.io` (two levels) gets no edge cert
-> (`ERR_SSL_VERSION_OR_CIPHER_MISMATCH`). Dev/test therefore use `<env>-mindmeld.cogniumlabs.io`.
+> `testing.learn.cogniumlabs.io` (two levels) gets no edge cert
+> (`ERR_SSL_VERSION_OR_CIPHER_MISMATCH`). Dev/test therefore use `<env>-learn.cogniumlabs.io`.
 > To use a nested scheme instead, enable Cloudflare Advanced Certificate Manager / Total TLS.
-| **production** | `mindmeld.cogniumlabs.io` | own Linode | separate Mongo VM | already live (built by hand) |
+| **production** | `learn.cogniumlabs.io` | own Linode | separate Mongo VM | already live (built by hand) |
 
 Each cloud environment has its **own** VPC, subnet CIDR, three firewalls, base node, Mongo,
 burst-worker image and credentials. The **only** shared thing is the single Linode API
@@ -110,18 +110,18 @@ token — isolation comes from separate resources, not separate accounts.
 
 ## 0.1 Naming convention
 
-Every resource is labelled **`MindMeld-<Env>-<Role>`** and tagged **`mindmeld-<env>`**
+Every resource is labelled **`CogniumLearn-<Env>-<Role>`** and tagged **`cogniumlearn-<env>`**
 (the tag is how the tooling finds and tears down an environment). The non-secret desired
 shape of each environment lives in
 [Common/Deployment/Environments.json](../Deployment/Environments.json).
 
 | Role | Label | Dev CIDR | Test CIDR | Prod CIDR |
 |---|---|---|---|---|
-| VPC / Subnet | `MindMeld-<Env>-VPC` / `-Subnet` | `10.10.0.0/24` | `10.20.0.0/24` | `10.0.0.0/24` |
-| Base node | `MindMeld-<Env>-Server` | | | |
-| Mongo VM | `MindMeld-<Env>-MongoDB` | (colocated) | separate | separate |
-| Firewalls | `MindMeld-<Env>-{Server,Database,Burst}FW` (32-char cap) | | | |
-| Burst image | `MindMeld-<Env>-BurstImage<version>` | | | |
+| VPC / Subnet | `CogniumLearn-<Env>-VPC` / `-Subnet` | `10.10.0.0/24` | `10.20.0.0/24` | `10.0.0.0/24` |
+| Base node | `CogniumLearn-<Env>-Server` | | | |
+| Mongo VM | `CogniumLearn-<Env>-MongoDB` | (colocated) | separate | separate |
+| Firewalls | `CogniumLearn-<Env>-{Srv,Db,Burst}FW` (32-char cap; short role names since the "CogniumLearn" prefix is longer than the old "MindMeld" one) | | | |
+| Burst image | `CogniumLearn-<Env>-BurstImage<version>` | | | |
 
 The original production resources were built before this convention and are migrated to it
 (metadata only, no downtime) by `bash Common/Deployment/rename-production-entities.sh`.
@@ -129,7 +129,7 @@ The original production resources were built before this convention and are migr
 ## 0.2 Env-file scheme
 
 Each service selects its env file **by environment name**, resolved in this order:
-`--environment=<name>` flag → `MINDMELD_ENVIRONMENT` variable (exported by the base node's
+`--environment=<name>` flag → `COGNIUMLEARN_ENVIRONMENT` variable (exported by the base node's
 systemd unit) → legacy `--debug` → `production`. Each name maps to `Dock/.<name>.env` and
 `Agent/.<name>.env` (`local` also falls back to the historic `.env`). The resolver is in
 [Dock/index.js](../../Dock/index.js) and mirrored in
@@ -141,6 +141,11 @@ templates); `Dock/.env.example` remains the committed reference for the full Doc
 set. All deploy secrets live in a **single `deployment.env`**: shared values (Linode token,
 SSH keys) are unsuffixed, and per-environment values are keyed by an uppercase suffix
 (`CLOUDFLARE_TUNNEL_TOKEN_DEVELOPMENT`, `BASE_NODE_SSH_HOST_TESTING`, …).
+
+> **Central secret store (optional).** Instead of hand-editing these per-environment
+> files, you can make **Google Secret Manager** the source of truth and have the same files
+> *rendered* onto the base node — no application code changes. See
+> [§0.7](#07-managing-secrets-with-google-secret-manager).
 
 ## 0.3 Credentials — generated vs. supplied
 
@@ -159,12 +164,12 @@ supply is missing, namely, per environment:
   token for streaming (see the AI / Agent note in §1.5).
 - `Dock/.<env>.env`: **`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`**, with redirect URI
   `https://<env-domain>/Login/Callback` added to the OAuth client.
-- `Common/Credentials/mindmeld-storage.<env>.json`: **Google Cloud Storage service-account key** —
-  the JSON key both Dock and the Agent use to read/write the `mindmeld-bucket` GCS bucket (task
+- `Common/Credentials/cogniumlearn-storage.<env>.json`: **Google Cloud Storage service-account key** —
+  the JSON key both Dock and the Agent use to read/write the `cogniumlearn-bucket` GCS bucket (task
   payloads, mock-test grading payload staging, log archives). It is selected **by environment name**
   the same way the env files are (`Persistence` in `Dock/Globals/Classes/` and
   `Agent/Globals/Classes/Generic/`), so each environment maps to its own
-  `mindmeld-storage.<env>.json`. The whole `Common/Credentials/` directory is **gitignored**, so the
+  `cogniumlearn-storage.<env>.json`. The whole `Common/Credentials/` directory is **gitignored**, so the
   key rides neither git nor the Dock/Agent code tarballs — `provision-environment.sh` and
   `deploy-environment.sh` **`scp` it to `<repo>/Common/Credentials/` on the base node** on every run.
   If it is missing on the host, every Dock→GCS write returns **HTTP 500** (grading shows *"couldn't
@@ -173,7 +178,7 @@ supply is missing, namely, per environment:
   (swap in a distinct per-project key later to isolate each environment's storage).
   **Burst workers** run the Agent in a container with **no** repo `Common/` directory, so the key is
   **never** baked into the burst image (see `Agent/.dockerignore`). Instead Dock forwards it to each
-  worker as base64 env — `MINDMELD_STORAGE_CREDENTIALS_BASE64` (alongside `MINDMELD_ENVIRONMENT`) in
+  worker as base64 env — `COGNIUMLEARN_STORAGE_CREDENTIALS_BASE64` (alongside `COGNIUMLEARN_ENVIRONMENT`) in
   the cloud-init `worker.env` — and the Agent's `Persistence` prefers that variable, falling back to
   the on-disk file on the base node. Because the reader lives in the Agent image, changing this
   behaviour requires **re-baking the burst image** (`deploy-environment.sh <env>` without
@@ -207,10 +212,480 @@ frontend build + burst-image bake + tunnel + systemd), just parameterised by env
 ## 0.6 Burst-fleet isolation (important)
 
 The autoscaler **deletes every instance carrying its `BURST_MANAGEMENT_TAG` on startup**.
-Each environment therefore gets a distinct tag/prefix — `mindmeld-<env>-worker` — written
+Each environment therefore gets a distinct tag/prefix — `cogniumlearn-<env>-worker` — written
 into its `Dock/.<env>.env`, so one environment's Dock restart can **never** delete another
 environment's burst VMs. Combined with separate VPCs, firewalls and burst images, the
 fleets are fully isolated.
+
+## 0.7 Managing secrets with Google Secret Manager
+
+Everything above stores each environment's secrets as **hand-written files on the base
+node** (`Dock/.<env>.env` and `Agent/.<env>.env`).
+This section replaces the *source of truth* for those files with **Google Secret Manager
+(GSM)** — a central, IAM-controlled, versioned, audited secret store — and renders them to a
+**RAM-backed tmpfs mount so no plaintext secret ever touches persistent disk** (keeping them
+out of snapshots and backups). GSM holds the values; a small refresh step **renders the env
+files into tmpfs** at every Dock (re)start, and every consumer reads them exactly as before.
+
+GSM is a natural fit here: CogniumLearn is already a Google Cloud tenant — the Agent
+authenticates to Vertex AI with a **per-environment GCP project + service account** (§1.5),
+so the projects, billing and IAM you need already exist. Enabling Secret Manager is one API
+away.
+
+**The app change is minimal and additive.** Dock ([Dock/index.js](../../Dock/index.js)), the
+Agent ([EnvironmentLoader.py](../../Agent/Globals/Utility/EnvironmentLoader.py)) and Dock's
+burst-forwarding ([BurstFleetSettings.js](../../Dock/Globals/Classes/Burst/BurstFleetSettings.js))
+gained one opt-in: when `COGNIUMLEARN_SECRETS_DIRECTORY` is set they read the env file from that
+tmpfs directory (`<dir>/Dock`, `<dir>/Agent`); unset, they read the repo directory exactly as
+before, so **local development is untouched**.
+
+**What does NOT change:** Dock still loads `Dock/.<env>.env` via dotenv
+([Dock/index.js](../../Dock/index.js)); the Agent still loads `Agent/.<env>.env` via
+`load_dotenv` ([EnvironmentLoader.py](../../Agent/Globals/Utility/EnvironmentLoader.py)); and
+`BurstFleetSettings` still reads the Agent env file **from disk** to forward keys to burst
+workers ([BurstFleetSettings.js](../../Dock/Globals/Classes/Burst/BurstFleetSettings.js)).
+All of that is untouched — the files are simply generated from Secret Manager instead of
+edited by hand.
+
+> **Storage note.** CogniumLearn stores objects in **Linode Object Storage**, whose credentials
+> are ordinary environment variables (`LINODE_STORAGE_BUCKET_ACCESS_KEY`,
+> `LINODE_STORAGE_BUCKET_SECRET`, `LINODE_S3_ENDPOINT_HOSTNAMES`) that already live in the
+> Dock and Agent env files — so they are captured automatically by the two bundled secrets
+> below, with **no separate credential file** to manage. (The legacy Google Cloud Storage
+> service-account JSON, `Common/Credentials/cogniumlearn-storage.<env>.json`, is used only by the
+> dormant GCS *fallback* path and is out of scope here.)
+
+### 0.7.1 Why render-to-file, not in-process injection
+
+There are two ways to consume Secret Manager:
+
+- **In-process injection** — a wrapper or the client library loads secrets into the process
+  environment at launch (nothing on disk).
+- **Render-to-file** — a step pulls the secrets and writes the env files, which the app then
+  reads exactly as it does now.
+
+CogniumLearn needs **render-to-file**, because several consumers read the secret *files from
+disk*, not just `process.env`: the local Agent workers load their own `Agent/.<env>.env`,
+and Dock's burst-forwarding reads the Agent env file off disk to hand its keys to burst VMs
+via cloud-init. In-process injection would populate only Dock's own process environment, and
+those on-disk reads would come up empty — which would require code changes. Rendering the
+files keeps the change at **zero code** and preserves every existing read path. It also fits
+CogniumLearn's "read secrets once at boot" model: refreshing the files on each Dock restart is
+enough.
+
+### 0.7.2 The one-secret-per-file (bundle) pattern
+
+Do **not** store one GSM secret per variable — that is dozens of secrets per environment.
+Instead store **each whole env file as a single secret**. Two secrets per environment:
+
+| GSM secret | Value (the entire file) | Rendered to |
+|---|---|---|
+| `dock-env` | the contents of `Dock/.<env>.env` (`MONGODB_URL`, `GOOGLE_CLIENT_ID/SECRET`, `PAID_DECK_MASTER_KEY_BASE64`, `ZOHO_*`, `RAZORPAY_*`, `SMTP_*`, `LINODE_API_TOKEN`, the Linode Object Storage keys `LINODE_STORAGE_BUCKET_ACCESS_KEY` / `LINODE_STORAGE_BUCKET_SECRET` / `LINODE_S3_ENDPOINT_HOSTNAMES`, all `BURST_*`, `DOMAIN_NAME`, …) | `Dock/.<env>.env` |
+| `agent-env` | the contents of `Agent/.<env>.env` (`GOOGLE_ENTERPRISE_AGENT_PROJECT` / `_LOCATION` / `_CREDENTIALS_BASE64` / `_API_KEY`, `OPENAI_API_KEY`, `MONGODB_URL`, `MONGODB_DATABASE_NAME`, `REDIS_URL`, the same Linode Object Storage keys, `WEB_SCRAPE_CONTACT_EMAIL`) | `Agent/.<env>.env` |
+
+This keeps you to **two active secret versions per environment (six total)**, which sits
+inside Secret Manager's monthly free allowance, and makes rendering one command per file (no
+per-key plumbing). The trade-off is editing ergonomics: changing one value means uploading a
+**new version of the whole file** (`gcloud secrets versions add …`), which is fine for
+read-once-at-boot config. If you would rather edit per key in the console, use one secret per
+variable instead — at a small per-secret cost (see the official
+[Secret Manager pricing](https://cloud.google.com/secret-manager/pricing)).
+
+The Linode Object Storage credentials are ordinary env vars already inside those files, so
+they are captured automatically — there is no separate storage credential to render or manage.
+
+> **`PAID_DECK_MASTER_KEY_BASE64` is the one secret to treat specially.** Store the *exact
+> existing production value* — Secret Manager's versioning then proves it never drifts — and
+> keep an independent offline backup regardless (per §1.5 / §2.5, changing or losing it makes
+> every paid deck permanently undecryptable). Never enable rotation on it.
+
+### 0.7.3 Environment isolation — one GCP project per environment
+
+Model each CogniumLearn environment as its **own GCP project** — the same split you already use
+for Vertex AI (a per-environment project keeps usage, billing and IAM separate, §1.5). That
+environment's secret-reader service account can then read **only** its own project's secrets,
+giving true per-environment isolation at no cost. `local` stays on hand-written files on your
+dev box and never uses GSM.
+
+| CogniumLearn environment | GCP project (holds `dock-env` + `agent-env`) | `deployment.env` key |
+|---|---|---|
+| `local` (dev box) | — (keep hand-written `Dock/.env` / `Agent/.env`) | — |
+| `development` | your development GCP project (may reuse the Vertex one) | `GCP_PROJECT_ID_DEVELOPMENT` |
+| `testing` | your testing GCP project | `GCP_PROJECT_ID_TESTING` |
+| `production` | your production GCP project | `GCP_PROJECT_ID_PRODUCTION` |
+
+> **Single-project alternative:** if you keep everything in one GCP project, name the secrets
+> per environment instead (`dock-env-production`, `dock-env-development`, …) and scope IAM per
+> secret. The per-project split above is cleaner and matches your Vertex layout.
+
+### 0.7.4 One-time GCP setup (per environment project)
+
+Run these once per environment, from the repo root on your dev box, with `gcloud`
+authenticated as an owner/editor of that environment's project. Replace `PROJECT_ID` with
+that project. These are the official Secret Manager / IAM `gcloud` commands.
+
+1. **Enable the Secret Manager API:**
+   ```bash
+   gcloud services enable secretmanager.googleapis.com --project=PROJECT_ID
+   ```
+2. **Create the two secrets from your current live env files** (automatic replication):
+   ```bash
+   gcloud secrets create dock-env --project=PROJECT_ID --replication-policy="automatic" --data-file="Dock/.production.env"
+   gcloud secrets create agent-env --project=PROJECT_ID --replication-policy="automatic" --data-file="Agent/.production.env"
+   ```
+   To change a value later, edit the file and add a **new version**:
+   ```bash
+   gcloud secrets versions add dock-env --project=PROJECT_ID --data-file="Dock/.production.env"
+   ```
+3. **Create a dedicated least-privilege reader service account:**
+   ```bash
+   gcloud iam service-accounts create cogniumlearn-secret-reader \
+       --project=PROJECT_ID --display-name="CogniumLearn base-node secret reader"
+   ```
+   Its email is `cogniumlearn-secret-reader@PROJECT_ID.iam.gserviceaccount.com`.
+4. **Grant it read + version-add on ONLY those two secrets** (least privilege — not
+   project-wide). `secretAccessor` lets the node render (read the payload);
+   `secretVersionAdder` lets the deploy-time sync (§0.7.8) push updated env files back up.
+   Neither can read other secrets or destroy versions:
+   ```bash
+   for grantedRole in roles/secretmanager.secretAccessor roles/secretmanager.secretVersionAdder
+   do
+       for secretName in dock-env agent-env
+       do
+           gcloud secrets add-iam-policy-binding "$secretName" --project=PROJECT_ID \
+               --member="serviceAccount:cogniumlearn-secret-reader@PROJECT_ID.iam.gserviceaccount.com" \
+               --role="$grantedRole"
+       done
+   done
+   ```
+   If you keep the deploy-time sync on the dev box instead of the node (the alternative in
+   §0.7.8), grant only `roles/secretmanager.secretAccessor` here.
+5. **Download the reader's JSON key** — the base node's bootstrap credential (its
+   "secret-zero"). Store it gitignored alongside the existing storage credential:
+   ```bash
+   gcloud iam service-accounts keys create Common/Credentials/gcp-accessor.production.json \
+       --iam-account="cogniumlearn-secret-reader@PROJECT_ID.iam.gserviceaccount.com"
+   ```
+   `Common/Credentials/` is gitignored, so the key never enters git or the code tarballs —
+   exactly like `cogniumlearn-storage.<env>.json`.
+
+Repeat for the development and testing projects, writing `gcp-accessor.development.json` /
+`gcp-accessor.testing.json`. The rest is on the base node.
+
+### 0.7.5 Base node wiring (CLI + systemd — additive only)
+
+1. **Install the Google Cloud CLI** on the base node (official Debian apt repo). These
+   commands are idempotent — safe to re-run on every build:
+   ```bash
+   # Prerequisites. gnupg is required for the key import; without it the dearmor step
+   # yields an empty keyring and apt fails with "NO_PUBKEY … / not signed".
+   sudo apt-get install -y apt-transport-https ca-certificates gnupg curl
+   # Import the signing key. Remove any stale keyring first; --yes forces a clean, non-
+   # interactive overwrite (gpg --dearmor -o refuses to overwrite otherwise).
+   sudo rm -f /usr/share/keyrings/cloud.google.gpg
+   curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor --yes -o /usr/share/keyrings/cloud.google.gpg
+   # Add the repo with `tee` (overwrite, not `tee -a`) so re-runs never duplicate the line.
+   echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list
+   sudo apt-get update && sudo apt-get install -y google-cloud-cli
+   ```
+2. **Place the reader key + project config** (root-only). Put the JSON key at
+   `/etc/cogniumlearn/gcp-accessor.json` (chmod `600`) and write `/etc/cogniumlearn/gcp.env`:
+   ```ini
+   GCP_PROJECT_ID=<this environment's GCP project id>
+   GCP_SERVICE_ACCOUNT_KEY_PATH=/etc/cogniumlearn/gcp-accessor.json
+   COGNIUMLEARN_SECRETS_DIRECTORY=/run/cogniumlearn
+   ```
+   > **`COGNIUMLEARN_SECRETS_DIRECTORY` renders the env files to RAM, never persistent disk.**
+   > `/run` is a systemd **tmpfs** (RAM-backed) mount, so the rendered
+   > `Dock/.<env>.env` / `Agent/.<env>.env` never touch the disk — they stay out of
+   > snapshots and backups, and are wiped on reboot (re-rendered from Secret Manager at the
+   > next Dock start). Dock, the Agent (`EnvironmentLoader`) and Dock's burst-forwarding
+   > (`BurstFleetSettings`) all read from `<COGNIUMLEARN_SECRETS_DIRECTORY>/Dock` and `/Agent` when
+   > this variable is set, falling back to the repo directory when it is not (local
+   > development). Because the systemd unit loads `gcp.env` as its `EnvironmentFile`, the
+   > variable is inherited by the local Agent worker subprocesses Dock spawns. **Leave it unset
+   > to keep the legacy on-disk behaviour.**
+3. **Add the refresh script** `/etc/cogniumlearn/refresh-secrets.sh` (chmod `700`). It
+   authenticates the reader service account, renders the two files, and is **fail-soft**: if
+   Secret Manager is unreachable but the files already exist, it keeps them and exits `0`, so
+   an outage can never block a Dock restart.
+   ```bash
+   #!/usr/bin/env bash
+   # /etc/cogniumlearn/refresh-secrets.sh <cogniumlearnEnvironmentName>
+   # Renders the env files for one environment from Google Secret Manager into the RAM-backed
+   # tmpfs secrets mount, so no plaintext secret ever lands on persistent disk. GCP_PROJECT_ID
+   # + GCP_SERVICE_ACCOUNT_KEY_PATH + COGNIUMLEARN_SECRETS_DIRECTORY come from /etc/cogniumlearn/gcp.env
+   # (loaded by the systemd unit as EnvironmentFile).
+   set -u
+   cogniumlearnEnvironment="$1"
+
+   : "${COGNIUMLEARN_SECRETS_DIRECTORY:=/run/cogniumlearn}" # RAM-backed tmpfs; never persistent disk
+   dockDirectory="$COGNIUMLEARN_SECRETS_DIRECTORY/Dock"
+   agentDirectory="$COGNIUMLEARN_SECRETS_DIRECTORY/Agent"
+   mkdir -p "$dockDirectory" "$agentDirectory"
+   chmod 700 "$COGNIUMLEARN_SECRETS_DIRECTORY" "$dockDirectory" "$agentDirectory" 2>/dev/null || true
+   dockEnvironmentFile="$dockDirectory/.${cogniumlearnEnvironment}.env"
+   agentEnvironmentFile="$agentDirectory/.${cogniumlearnEnvironment}.env"
+
+   # Authenticate the base node's secret-reader service account (idempotent).
+   gcloud auth activate-service-account --key-file="$GCP_SERVICE_ACCOUNT_KEY_PATH" --quiet 2>/dev/null
+
+   renderSucceeded=1
+   umask 077 # rendered files are readable only by the owner
+   gcloud secrets versions access latest --project="$GCP_PROJECT_ID" --secret="dock-env" --out-file="$dockEnvironmentFile.tmp" 2>/dev/null && mv "$dockEnvironmentFile.tmp" "$dockEnvironmentFile" || renderSucceeded=0
+   gcloud secrets versions access latest --project="$GCP_PROJECT_ID" --secret="agent-env" --out-file="$agentEnvironmentFile.tmp" 2>/dev/null && mv "$agentEnvironmentFile.tmp" "$agentEnvironmentFile" || renderSucceeded=0
+
+   if [ "$renderSucceeded" -ne 1 ]; then
+       if [ -f "$dockEnvironmentFile" ] && [ -f "$agentEnvironmentFile" ]; then
+           echo "refresh-secrets: Secret Manager unreachable; keeping cached on-disk secrets." >&2
+           exit 0
+       fi
+       echo "refresh-secrets: Secret Manager unreachable and no cached secrets on disk — aborting." >&2
+       exit 1
+   fi
+   ```
+   (The `.tmp` + `mv` pattern makes each write atomic, so Dock never reads a half-written
+   file; `--out-file` writes the raw secret payload straight to disk.)
+   > **`latest` vs pinned version.** Secret Manager's docs recommend pinning a *specific*
+   > version rather than `latest` in production. To do that, replace `latest` with the version
+   > number and bump it whenever you add a version. For CogniumLearn's read-once-at-boot config,
+   > `latest` with refresh-on-restart is the hands-off choice — use whichever you prefer.
+4. **Hook it into Dock's startup with a systemd drop-in** — deliberately *additive*, so it
+   survives `deploy.sh` rewriting the main unit
+   ([Remote/BaseNodeUpdate.sh](../Deployment/Remote/BaseNodeUpdate.sh)). Create
+   `/etc/systemd/system/cogniumlearn-dock.service.d/secret-manager.conf`:
+   ```ini
+   [Service]
+   EnvironmentFile=/etc/cogniumlearn/gcp.env
+   ExecStartPre=/etc/cogniumlearn/refresh-secrets.sh production
+   ```
+   Then:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl restart cogniumlearn-dock
+   ```
+   Now every Dock (re)start first re-pulls fresh secrets from Secret Manager into the files,
+   then boots and reads them; the local Agent workers Dock spawns read the just-refreshed
+   `Agent/.<env>.env`, and burst forwarding reads the just-refreshed files. Use the matching
+   name in the drop-in on each node — `production` on the production node, `development` on
+   the dev node, `testing` on the test node.
+   > **Optional periodic refresh** to pick up rotated secrets without a restart: add a
+   > `cogniumlearn-secrets-refresh.timer` that runs the same script hourly. Because the app
+   > reads env only at boot, a refresh alone does not take effect until the next Dock
+   > restart, so pair the timer with a restart only for values you actually rotate. For
+   > CogniumLearn, refresh-on-restart is usually enough.
+
+### 0.7.6 Migrating an already-live environment
+
+Production is already running from hand-written files. Migrate it with zero downtime and an
+instant rollback:
+
+1. Load the **current live** values into Secret Manager (§0.7.4 steps 1–2) — build the
+   secrets straight from the running base node's files (or your verified dev-box copies) so
+   nothing changes value.
+
+   > **Reconciling local vs. node (important).** The dev-box copy and the node's live file
+   > often diverge: the node has **deploy/provision-written keys the dev box lacks**
+   > (`BURST_IMAGE_ID`, provision-appended `MONGODB_URL` / `REDIS_URL`), while your local copy
+   > may hold values you've updated (storage keys, `OPENAI_API_KEY`). If you seed Secret
+   > Manager from *only* the dev-box file, the render-on-restart **drops** the node-only keys
+   > and can disable burst or break the DB connection. Seed with a **union merge** instead:
+   > take your authoritative file as the base and **append every key the node has that the
+   > base lacks**, so nothing runtime-critical is lost. Then always run step 2's diff — it
+   > shows exactly what the render will add/change, and must never *remove* a key the node
+   > needs. (Production was seeded from its own live node files, so its diff was a clean
+   > no-op; development and testing were seeded from the authoritative local files
+   > union-merged with each node's `BURST_IMAGE_ID`.)
+2. On the base node, install the CLI + key + `gcp.env` + script, then render **by hand** and
+   `diff` the result against the originals (back them up first, since the render overwrites
+   the live file):
+   ```bash
+   cp Dock/.production.env Dock/.production.env.bak
+   set -a; . /etc/cogniumlearn/gcp.env; set +a # load GCP_PROJECT_ID as the unit would
+   sudo -E /etc/cogniumlearn/refresh-secrets.sh production
+   diff Dock/.production.env.bak Dock/.production.env
+   ```
+   They must match exactly — especially `PAID_DECK_MASTER_KEY_BASE64`.
+3. Only once the diff is clean, add the systemd drop-in and restart.
+4. **Rollback** is trivial: remove the drop-in (`rm …/secret-manager.conf` + `daemon-reload`)
+   and restore the `.bak` files — you are back to hand-written files with no code change.
+
+### 0.7.7 Automated credential injection via `deployment.env`
+
+Instead of hand-placing the key + config on each node (§0.7.5 step 2), let the deploy
+automation carry them. In the gitignored **`deployment.env`** (which **never leaves your dev
+box**), add the per-environment GCP project id, following the file's uppercase-suffix
+convention (exactly like `CLOUDFLARE_TUNNEL_TOKEN_<ENV>`):
+
+```ini
+# Google Secret Manager — one GCP project per environment.
+GCP_PROJECT_ID_PRODUCTION=<production GCP project id>
+GCP_PROJECT_ID_DEVELOPMENT=<development GCP project id>
+GCP_PROJECT_ID_TESTING=<testing GCP project id>
+```
+
+The reader **service-account key** is a JSON *file*, not a line value, so it rides the same
+path the storage credential already uses: keep it at
+`Common/Credentials/gcp-accessor.<env>.json` on your dev box (gitignored), and the deploy
+`scp`s it to the node — the provisioner already ships
+`Common/Credentials/cogniumlearn-storage.<env>.json` the identical way.
+
+For the deploy to push these to the node, two small hooks mirror how
+`CLOUDFLARE_TUNNEL_TOKEN_<ENV>` is already resolved and shipped:
+
+1. In [EnvironmentConfig.sh](../Deployment/Library/EnvironmentConfig.sh), add `GCP_PROJECT_ID`
+   to the `for scoped_variable in …` loop, so `GCP_PROJECT_ID_PRODUCTION` resolves to the bare
+   `GCP_PROJECT_ID` for the target environment.
+2. In [BaseNodeUpdate.sh](../Deployment/Remote/BaseNodeUpdate.sh), before the Dock restart,
+   `scp` `Common/Credentials/gcp-accessor.<env>.json` to `/etc/cogniumlearn/gcp-accessor.json`
+   (mode `600`) and write `/etc/cogniumlearn/gcp.env`, then install `refresh-secrets.sh` + the
+   drop-in from §0.7.5:
+   ```bash
+   install -m 600 /dev/null /etc/cogniumlearn/gcp.env
+   cat >/etc/cogniumlearn/gcp.env <<EOF
+   GCP_PROJECT_ID=${GCP_PROJECT_ID}
+   GCP_SERVICE_ACCOUNT_KEY_PATH=/etc/cogniumlearn/gcp-accessor.json
+   EOF
+   ```
+
+Until those hooks are added, place `/etc/cogniumlearn/gcp-accessor.json` + `/etc/cogniumlearn/gcp.env`
+on the node by hand (§0.7.5) — the rest of the flow is identical.
+
+> **`deployment.env` is the single most sensitive file you own** — Linode API token, root
+> password, SSH keys, tunnel tokens, and the GCP project ids. It is gitignored
+> (`deployment.env` / `deployment.*.env`) and must **only ever exist on your dev box**: never
+> `scp` it to a node, never commit it, never paste its contents. The project ids are not
+> secret, but the reader **key** file (`Common/Credentials/gcp-accessor.<env>.json`) is —
+> guard it like `cogniumlearn-storage.<env>.json`. If a key is ever exposed, disable and delete it
+> (`gcloud iam service-accounts keys delete <KEY_ID> --iam-account=…`) and create a new one.
+
+### 0.7.8 Keeping Secret Manager in sync on every deploy (idempotent — mandatory)
+
+**Once render-on-restart is live, this step is required on every build.** The deploy
+pipeline writes some values **into the node's env files** — most importantly `deploy.sh`
+stamps the freshly-baked `BURST_IMAGE_ID` into `Dock/.<env>.env` on the node
+([BaseNodeUpdate.sh](../Deployment/Remote/BaseNodeUpdate.sh)) and then restarts Dock. But the
+drop-in's `ExecStartPre` re-renders those files **from Secret Manager** on that same restart,
+so if Secret Manager still holds the *old* value the deploy's change is silently reverted
+(e.g. burst VMs boot the previous image).
+
+**This is now wired into the deploy automation.** Right before its Dock restart,
+[BaseNodeUpdate.sh](../Deployment/Remote/BaseNodeUpdate.sh) runs a diff-guarded sync **on the
+node**: when `/etc/cogniumlearn/gcp.env` is present (i.e. render-on-restart is set up on this
+node), it pushes the just-updated `dock-env` / `agent-env` files back up to Secret Manager —
+but **only when the content changed**, so the version history never bloats. The subsequent
+restart then renders those same values, so nothing reverts. It is best-effort: a failure
+warns in the deploy log but never aborts the deploy.
+
+For this, the node's `cogniumlearn-secret-reader` service account needs
+`roles/secretmanager.secretVersionAdder` on the two secrets (in addition to `secretAccessor`)
+— granted in §0.7.4 step 4. That is the only extra privilege; the key still cannot read other
+secrets or destroy versions.
+
+> **Active-version limit.** Secret Manager's free allowance counts *active* versions. The
+> diff-guard keeps new versions to genuine changes; periodically destroy superseded versions
+> (`gcloud secrets versions destroy <N> --secret=dock-env --project=<project>`) to keep the
+> active count small.
+
+**Alternative (keep the node read-only):** instead of the node self-syncing, push from the
+dev box (owner auth) as the final step of `deploy.sh` — after the node's env files are updated
+and before a final restart — and grant the node only `secretAccessor`:
+
+```bash
+NODE=172.232.112.40
+PROJECT=cogniumlearn-500509
+for secretPair in "dock-env:Dock/.production.env" "agent-env:Agent/.production.env"
+do
+    secretName="${secretPair%%:*}"
+    nodeRelativePath="${secretPair##*:}"
+    localCopy=$(mktemp)
+    scp -q "root@${NODE}:/root/cogniumlearn/${nodeRelativePath}" "$localCopy"
+    if gcloud secrets versions access latest --project="$PROJECT" --secret="$secretName" 2>/dev/null | diff -q - "$localCopy" >/dev/null
+    then
+        echo "${secretName}: unchanged — no new version."
+    else
+        gcloud secrets versions add "$secretName" --project="$PROJECT" --data-file="$localCopy"
+    fi
+    shred -u "$localCopy" 2>/dev/null || rm -f "$localCopy"
+done
+ssh "root@${NODE}" 'systemctl restart cogniumlearn-dock'
+```
+
+### 0.7.9 Post-deployment secret hygiene (what can and cannot be deleted)
+
+With Secret Manager as the source of truth the plaintext env files are redundant *as a
+source* — but they are **not** all safe to delete, because the render-to-file model (§0.7.1)
+means some are read at **runtime**, not just at boot. Per file:
+
+| File(s) | Delete after deploy? | Why |
+|---|---|---|
+| **Dev-box** `Dock/.<env>.env`, `Agent/.<env>.env` for cloud envs | **Yes — shred them** | Secret Manager is now the source; these are stale copies that can only drift. Back up `PAID_DECK_MASTER_KEY_BASE64` offline first. |
+| **Dev-box** `Common/Credentials/gcp-accessor.<env>.json` (reader key) + `cogniumlearn-storage.<env>.json` (GCS fallback) | **No — keep** | Bootstrap / fallback credential files the deploy still `scp`s to the node; gitignored. Guard them like any key. |
+| **Dev-box** `Dock/.env`, `Agent/.env` (local) | **No — keep** | `local` stays off GSM; `npm run web` reads these. |
+| **Base-node** `Dock/.<env>.env`, `Agent/.<env>.env` on **persistent disk** | **Yes — shred them** | With `COGNIUMLEARN_SECRETS_DIRECTORY` set they are rendered to the tmpfs mount instead, so any copy left in the repo directory is redundant **and** a snapshot/backup exposure. Also shred stale backups (`.env`, `.<env>.env.bak*`). |
+| **Base-node** tmpfs `/run/cogniumlearn/{Dock,Agent}/.<env>.env` | **Leave — RAM only** | The live env files. In tmpfs (RAM, never persistent disk), `600`, wiped on reboot and re-rendered from Secret Manager by the `ExecStartPre` refresh at the next start. dotenv, the Agent (`EnvironmentLoader`) and burst forwarding (`BurstFleetSettings`) read them from here. |
+| **Base-node** `/etc/cogniumlearn/gcp-accessor.json` + `/etc/cogniumlearn/gcp.env` | **No — must persist** | The bootstrap reader key + project config the refresh script needs on every restart. The key is the one unavoidable secret at rest on Linode (no keyless auth). |
+| **Committed** `*.env.example` / `.<env>.env.example` | **No — keep** | They hold **no secrets** (blank templates) and document the variable set; deleting them is a git change with zero security benefit. |
+
+So the honest answer to "no env file on disk": on the **base node** the live env files exist
+only in **tmpfs (RAM)** — none on persistent disk — and any persistent-disk copy or backup
+should be shredded (the `*.env.example` files carry no secrets and stay). On the **dev box**,
+shred the now-redundant per-environment secret files once a deploy has verified the node
+renders correctly from Secret Manager (§0.7.6):
+
+```bash
+# On the dev box, AFTER a verified deploy. Removes the now-redundant per-environment env
+# files; keeps the local .env, the committed .example templates, and the credential files
+# (gcp-accessor.<env>.json / cogniumlearn-storage.<env>.json) the deploy still ships.
+for secretFile in Dock/.production.env Dock/.development.env Dock/.testing.env \
+                  Agent/.production.env Agent/.development.env Agent/.testing.env; do
+    [ -f "$secretFile" ] && { shred -u "$secretFile" 2>/dev/null || rm -f "$secretFile"; }
+done
+```
+
+> **Provisioner note.** `provision-environment.sh` still `scp`s `Dock/.<env>.env` /
+> `Agent/.<env>.env` to the node's **repo** directory. With tmpfs rendering, Dock ignores those
+> (it reads `COGNIUMLEARN_SECRETS_DIRECTORY`), so that upload is now redundant **and** re-lands a
+> plaintext secret on persistent disk — remove/skip it so provisioning stays fileless. Not yet
+> wired.
+
+### 0.7.10 Gotchas specific to CogniumLearn
+
+- **Warm restarts are fail-soft; cold reboots need Secret Manager.** On a `systemctl restart`
+  the tmpfs files persist, so the fail-soft script keeps them if Secret Manager is briefly
+  unreachable. But `/run` (tmpfs) is **wiped on reboot**, so after a reboot the first render has
+  no cache to fall back on — the node needs the Secret Manager API enabled and reachable to
+  come up. That is the deliberate trade for keeping secrets off persistent disk.
+- **Secret-zero is the reader key.** The service-account JSON at `/etc/cogniumlearn/gcp-accessor.json`
+  is the one credential that cannot come from GSM. Keep it `600`; the service account holds
+  `secretAccessor` on **only** its two secrets; and because each environment is a **separate
+  GCP project**, a leaked key can read only that one environment — true per-environment
+  isolation at no cost (the advantage over a single shared-scope store).
+- **Burst VMs are outside the tmpfs change.** They still get secrets via cloud-init
+  `worker.env` (§0.3, §1.10) — a file on the burst VM's own disk. Burst VMs are **ephemeral**
+  (not snapshotted), so the exposure is smaller, but to make them fileless too you would render
+  `worker.env` to a tmpfs path in the burst image's worker unit + cloud-init — a burst-image
+  re-bake. The base-node tmpfs change does not touch this.
+- **`deploy.sh` will not clobber the rendered files** — it already excludes `Dock/.env` /
+  `Dock/.production.env` from the Dock copy (§2.0 / §2.1), and the drop-in re-renders on the
+  restart it triggers.
+- **Keep `local` off GSM.** Your dev box uses the historic `Dock/.env` / `Agent/.env`; it does
+  not need a GCP project.
+- **Cost.** The bundle pattern (two secrets per environment, six total) stays within Secret
+  Manager's monthly free allowance, and access operations are a couple per Dock restart —
+  negligible. Confirm current figures on the official
+  [Secret Manager pricing](https://cloud.google.com/secret-manager/pricing) page.
+- **Rotate the reader key periodically.** Service-account keys do not expire on their own —
+  create a new key, update the node, then delete the old one with
+  `gcloud iam service-accounts keys delete`.
+- **Node-side setup needs SSH, which each environment's own `*-SrvFW` gates by admin IP.**
+  If your public IP has changed since an environment was provisioned, its firewall's
+  `allow-ssh-admin` rule (port 22) still points at the stale address and SSH will time out —
+  even though the node is up. Update the SSH source to your current IP (`/32`) on that
+  environment's `CogniumLearn-<Env>-SrvFW` (Linode Cloud Manager, or `PUT
+  /v4/networking/firewalls/<id>/rules`). The Linode firewall-rules API can also return
+  transient `500`s during a platform wobble — retry, or use the Cloud Manager UI, which uses a
+  separate backend.
 
 ---
 
@@ -243,7 +718,7 @@ Do these in order. Step 1.1 is on your dev workstation; 1.3 onward are on Linode
 Burst VMs run the Agent as a Docker container, built from the `Agent/` directory with:
 
 ```bash
-docker build -t mindmeld-agent -f Dockerfile .
+docker build -t cogniumlearn-agent -f Dockerfile .
 ```
 
 > **Build this on the Debian 12 Linode bake box (§1.10), not on your Windows dev box.**
@@ -344,7 +819,7 @@ There's no image to move — you build it on the bake box in §1.10 and capture 
 ## 1.4 Base node — deploy the code and Python venv
 
 > ⚡ **Automated path.** Once the repo is cloned and `Dock/.production.env` +
-> `Agent/.production.env` + `Common/Credentials/mindmeld-storage.production.json` (the GCS
+> `Agent/.production.env` + `Common/Credentials/cogniumlearn-storage.production.json` (the GCS
 > service-account key, §0.3 — gitignored, so copy it in manually) are in place,
 > **[`Common/Scripts/setup-base-node.sh`](../Scripts/setup-base-node.sh)**
 > does all of §1.4–§1.7 in one shot: installs the OCR stack + Redis (bound to the VPC
@@ -354,17 +829,17 @@ There's no image to move — you build it on the bake box in §1.10 and capture 
 > it does (and the Cloudflare Tunnel in §1.8 + the burst firewall stay manual).
 
 1. Clone/copy the repo to a directory of your choice — call it `<repo-dir>`. The paths
-   in this guide use `/opt/mindmeld/MindMeld` as the example, but anywhere works (e.g.
-   `/root/mindmeld` if you deploy as root). **Whatever you pick, the same absolute path
+   in this guide use `/opt/cogniumlearn/CogniumLearn` as the example, but anywhere works (e.g.
+   `/root/cogniumlearn` if you deploy as root). **Whatever you pick, the same absolute path
    must be used consistently in three places** or the local workers won't start:
    - the **Agent venv** lives at `<repo-dir>/Agent/.venv` (created in step 3 below),
    - **`AGENT_SERVICE_PATH`** in `Dock/.production.env` is set to `<repo-dir>/Agent` (§1.5),
    - the **systemd unit**'s `WorkingDirectory` is `<repo-dir>/Dock` (§1.9).
 
    > Pick the layout up front. If you deploy under `/root/...`, run everything as `root`
-   > and **drop the `User=mindmeld` line** from the systemd unit (§1.9) — a non-root
-   > `mindmeld` user can't traverse `/root`. If you want a dedicated `mindmeld` user,
-   > deploy under `/opt/mindmeld` (or another world-traversable path) instead. Don't mix
+   > and **drop the `User=cogniumlearn` line** from the systemd unit (§1.9) — a non-root
+   > `cogniumlearn` user can't traverse `/root`. If you want a dedicated `cogniumlearn` user,
+   > deploy under `/opt/cogniumlearn` (or another world-traversable path) instead. Don't mix
    > the two.
 2. **Install Python 3.12** (no apt package on Debian — use a standalone build via `uv`,
    which needs no compiling):
@@ -406,7 +881,7 @@ Dock reads `Dock/.env` at boot (via dotenv, relative to its working directory). 
   public-IP connection comes from Dock's public address and gets dropped by that
   firewall. Also ensure Mongo's `bindIp` includes the VPC IP (or `0.0.0.0`), or it
   won't accept the VPC connection at all.
-- `MONGODB_DATABASE_NAME` — the database name (e.g. `mindmeld`).
+- `MONGODB_DATABASE_NAME` — the database name (e.g. `cogniumlearn`).
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — Google OAuth credentials for sign-in
   (from Google Cloud Console). The authorized redirect URI must be
   `https://<your domain>/Login/Callback`.
@@ -435,7 +910,7 @@ Dock reads `Dock/.env` at boot (via dotenv, relative to its working directory). 
   burst VM). The Agent talks to Google's enterprise **Vertex AI** backend and
   authenticates with a **service account** (strongly preferred) or an API key
   (slow fallback):
-  - `GOOGLE_ENTERPRISE_AGENT_PROJECT` — the GCP project id (e.g. `mindmeld-500509`).
+  - `GOOGLE_ENTERPRISE_AGENT_PROJECT` — the GCP project id (e.g. `cogniumlearn-500509`).
   - `GOOGLE_ENTERPRISE_AGENT_LOCATION` — Vertex region; defaults to `global`.
   - `GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64` — `base64 -w0` of a *Vertex AI User*
     service-account key JSON for that project. Blank ⇒ ambient ADC.
@@ -462,8 +937,8 @@ Dock reads `Dock/.env` at boot (via dotenv, relative to its working directory). 
   same value ships in the line-based env file and is injected verbatim into each burst
   VM's `worker.env` — no key file on disk, none baked into an image.
 - `AGENT_SERVICE_PATH` — absolute path to the Agent service so Dock can launch local
-  workers reliably. Set it to `<repo-dir>/Agent` (e.g. `/opt/mindmeld/MindMeld/Agent`,
-  or `/root/mindmeld/Agent` for a root deploy). It **must** match where the venv was
+  workers reliably. Set it to `<repo-dir>/Agent` (e.g. `/opt/cogniumlearn/CogniumLearn/Agent`,
+  or `/root/cogniumlearn/Agent` for a root deploy). It **must** match where the venv was
   created in §1.4 — Dock spawns `<AGENT_SERVICE_PATH>/.venv/bin/python3`, so a mismatch
   gives `spawn …/.venv/bin/python3 ENOENT` and nothing drains the queue locally.
 
@@ -505,7 +980,7 @@ aggressive build is always applied); on the Debian base node run the same steps
 directly (they are the plain Node scripts `npm run setup` invokes). What each does:
 
 ```bash
-cd /opt/mindmeld/MindMeld
+cd /opt/cogniumlearn/CogniumLearn
 node ./Common/Scripts/GenerateServiceManifest.js   # service registry for codegen
 node ./Common/Scripts/GenerateEnumerations.js      # Common/Enumerations → each service
 node ./Common/Scripts/GenerateConstants.js         # Common/Constants    → each service
@@ -533,49 +1008,32 @@ node ./Common/Scripts/MinifyAndObfuscateStaticFiles.js --aggressive
 OAuth requires your real `https://<domain>`. This deployment uses a **Cloudflare
 Tunnel**, which terminates TLS at Cloudflare's edge and forwards to Dock on
 `127.0.0.1:3000` over an encrypted outbound tunnel — so the base node exposes **no
-inbound ports** (no public `3000`, no nginx/certs to manage). The tunnel is named
-`mindmeld` and serves `mindmeld.cogniumlabs.io`
-(see `Common/Config/CloudflareTunnelConfig.yml`, the dev template you can run by hand
-with `cloudflared tunnel --config Common/Config/CloudflareTunnelConfig.yml run mindmeld`).
+inbound ports** (no public `3000`, no nginx/certs to manage).
 
-Set up the same tunnel as a service on the base node:
+Every environment — including production — uses a **remotely-managed (token-based)
+tunnel**, the same mechanism described in §0.3: no local `config.yml` or credentials
+JSON on the base node at all. `BaseNodeUpdate.sh` installs `cloudflared` if missing
+and runs `cloudflared service install "$CLOUDFLARE_TUNNEL_TOKEN"` on every deploy
+(idempotent — safe to re-run), where `CLOUDFLARE_TUNNEL_TOKEN` is resolved from
+`CLOUDFLARE_TUNNEL_TOKEN_<ENV>` in `deployment.env`.
 
-1. **Install `cloudflared`** (Debian):
-   ```bash
-   curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
-   sudo dpkg -i cloudflared.deb
-   ```
-2. **Provide the tunnel credentials.** The tunnel already exists (UUID
-   `6156d866-…`). Either copy its credentials JSON from the machine that created it
-   to `/etc/cloudflared/6156d866-df7e-47eb-a5e5-43810724ea26.json`, or re-auth and
-   recreate on the server:
-   ```bash
-   sudo mkdir -p /etc/cloudflared
-   # copy the existing creds JSON here, OR:
-   #   cloudflared tunnel login
-   #   cloudflared tunnel create mindmeld
-   ```
-3. **Install the production config.** Copy the committed Linux template to where the
-   service reads it:
-   ```bash
-   sudo cp /opt/mindmeld/MindMeld/Common/Config/CloudflareTunnelConfig.production.yml /etc/cloudflared/config.yml
-   ```
-   It points `mindmeld.cogniumlabs.io` → `http://127.0.0.1:3000` and references the
-   Linux credentials path. Adjust the `credentials-file` path if your JSON differs.
-4. **Route DNS to the tunnel** (once — creates the proxied CNAME in Cloudflare):
-   ```bash
-   cloudflared tunnel route dns mindmeld mindmeld.cogniumlabs.io
-   ```
-5. **Run it as a boot service:**
-   ```bash
-   sudo cloudflared service install     # generates a cloudflared systemd unit from /etc/cloudflared/config.yml
-   sudo systemctl enable --now cloudflared
-   sudo systemctl status cloudflared
-   ```
+To set it up (once per environment):
 
-Then in `Dock/.env` set `DOMAIN_NAME=mindmeld.cogniumlabs.io`, and in the Google
+1. In the Cloudflare Zero Trust dashboard, create (or reuse) a tunnel and add a
+   **Public Hostname** route for that environment's domain
+   (`learn.cogniumlabs.io` for production, `development-learn.cogniumlabs.io`,
+   `testing-learn.cogniumlabs.io`) pointing at `http://127.0.0.1:3000` (`HTTP`,
+   not `HTTPS` — Dock terminates plain HTTP behind the tunnel). This also creates
+   the DNS CNAME automatically.
+2. Copy the tunnel's **token** (Zero Trust → Networks → Tunnels → the tunnel →
+   Configure → the `cloudflared service install <token>` command shown there —
+   just the token portion) into `deployment.env` as `CLOUDFLARE_TUNNEL_TOKEN_<ENV>`.
+3. Deploy (or re-run `BaseNodeUpdate.sh` via `deploy-environment.sh`) — cloudflared
+   installs itself as a systemd service and starts routing immediately.
+
+Then in `Dock/.env` set `DOMAIN_NAME=learn.cogniumlabs.io`, and in the Google
 OAuth client set the authorized redirect URI to
-`https://mindmeld.cogniumlabs.io/Login/Callback`. (In Cloudflare, keep SSL/TLS mode
+`https://learn.cogniumlabs.io/Login/Callback`. (In Cloudflare, keep SSL/TLS mode
 at **Full** so the edge trusts the tunnel.)
 
 ## 1.9 Base node — run Dock on boot (systemd)
@@ -584,18 +1042,18 @@ This is what makes everything start when the server boots: a systemd service run
 `node index.js` (no `--debug`), which on launch starts the local workers and the
 autoscaler. **Working directory must be `Dock/`** so dotenv loads `Dock/.env`.
 
-`/etc/systemd/system/mindmeld-dock.service`:
+`/etc/systemd/system/cogniumlearn-dock.service`:
 
 ```ini
 [Unit]
-Description=MindMeld Dock server
+Description=CogniumLearn Dock server
 After=network-online.target redis-server.service mongod.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=mindmeld
-WorkingDirectory=/opt/mindmeld/MindMeld/Dock
+User=cogniumlearn
+WorkingDirectory=/opt/cogniumlearn/CogniumLearn/Dock
 ExecStart=/usr/bin/node index.js
 Restart=always
 RestartSec=5
@@ -605,16 +1063,16 @@ WantedBy=multi-user.target
 ```
 
 > Set `WorkingDirectory` to **`<repo-dir>/Dock`** — it must match the layout you chose
-> in §1.4 (e.g. `/root/mindmeld/Dock` for a root deploy). If you deployed under `/root`,
-> **delete the `User=mindmeld` line** (it runs as `root` by default); a non-root user
+> in §1.4 (e.g. `/root/cogniumlearn/Dock` for a root deploy). If you deployed under `/root`,
+> **delete the `User=cogniumlearn` line** (it runs as `root` by default); a non-root user
 > can't traverse `/root`, so leaving it there gives a `status=200/CHDIR` start failure.
-> Keep `User=mindmeld` only when the repo lives somewhere that user can read/execute
-> (e.g. under `/opt/mindmeld`) and you've created that user.
+> Keep `User=cogniumlearn` only when the repo lives somewhere that user can read/execute
+> (e.g. under `/opt/cogniumlearn`) and you've created that user.
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now mindmeld-dock.service
-sudo journalctl -u mindmeld-dock -f      # watch the logs
+sudo systemctl enable --now cogniumlearn-dock.service
+sudo journalctl -u cogniumlearn-dock -f      # watch the logs
 ```
 
 > No `--debug` here — that's exactly what enables distributed mode in production.
@@ -632,7 +1090,7 @@ worker automatically.
 > flow is automated by **[`Common/Deployment/deploy.sh`](../Deployment/deploy.sh)** —
 > run `bash Common/Deployment/deploy.sh` from your dev box (Git Bash). It creates the
 > bakebox, builds + trims the image, shrinks the disk and captures
-> `MindMeldBurstVmImage<version>` (auto-incremented), then rolls it out to the base
+> `CogniumLearnBurstVmImage<version>` (auto-incremented), then rolls it out to the base
 > node and deletes the bakebox + older images. Configure it via `deployment.env` at the
 > repo root (gitignored). See [Section 2.0](#20-automated-roll-out-recommended) and
 > [Common/Deployment/README.md](../Deployment/README.md). The manual steps below
@@ -643,7 +1101,7 @@ worker automatically.
 > autoscaler (recursive provisioning). Use a clean throwaway Linode.
 
 1. Create a **temporary Debian 12 Linode** in the target region, attached to the VPC.
-   This is also where you **build** the `mindmeld-agent` image (§1.2) — building in the
+   This is also where you **build** the `cogniumlearn-agent` image (§1.2) — building in the
    datacenter is far faster than Windows Docker Desktop and means there's no multi-GB tar
    to upload from your dev box.
 2. Install Docker, then **`scp` only the build context** onto the box and build it there:
@@ -671,11 +1129,11 @@ worker automatically.
 
    **On the bake box** — unpack and build:
    ```bash
-   mkdir -p /root/MindMeld
-   tar -xzf /root/agent-context.tar.gz -C /root/MindMeld && rm /root/agent-context.tar.gz
-   cd /root/MindMeld/Agent
-   docker build -t mindmeld-agent -f Dockerfile .
-   docker images               # confirm mindmeld-agent:latest is present
+   mkdir -p /root/CogniumLearn
+   tar -xzf /root/agent-context.tar.gz -C /root/CogniumLearn && rm /root/agent-context.tar.gz
+   cd /root/CogniumLearn/Agent
+   docker build -t cogniumlearn-agent -f Dockerfile .
+   docker images               # confirm cogniumlearn-agent:latest is present
    ```
 
    > Excluding `*.env` is **not optional** — those files hold the Gemini / OpenAI /
@@ -694,26 +1152,26 @@ worker automatically.
 3. Install the worker systemd unit so the container auto-starts on boot and reads the
    env file that cloud-init writes at provision time:
 
-   `/etc/systemd/system/mindmeld-worker.service`:
+   `/etc/systemd/system/cogniumlearn-worker.service`:
    ```ini
    [Unit]
-   Description=MindMeld Agent worker
+   Description=CogniumLearn Agent worker
    After=docker.service network-online.target
    Requires=docker.service
 
    [Service]
    Restart=always
-   EnvironmentFile=/etc/mindmeld/worker.env
-   ExecStartPre=-/usr/bin/docker rm -f mindmeld-worker
-   ExecStart=/usr/bin/docker run --rm --name mindmeld-worker --env-file /etc/mindmeld/worker.env mindmeld-agent
-   ExecStop=/usr/bin/docker stop mindmeld-worker
+   EnvironmentFile=/etc/cogniumlearn/worker.env
+   ExecStartPre=-/usr/bin/docker rm -f cogniumlearn-worker
+   ExecStart=/usr/bin/docker run --rm --name cogniumlearn-worker --env-file /etc/cogniumlearn/worker.env cogniumlearn-agent
+   ExecStop=/usr/bin/docker stop cogniumlearn-worker
 
    [Install]
    WantedBy=multi-user.target
    ```
    ```bash
-   sudo mkdir -p /etc/mindmeld
-   sudo systemctl enable mindmeld-worker.service
+   sudo mkdir -p /etc/cogniumlearn
+   sudo systemctl enable cogniumlearn-worker.service
    ```
 4. **Get under Linode's Image cap, then capture.** A captured Image requires the disk
    to be **≤ 6 GB** with **< 5.4 GB used** (ext3/ext4 only) — see
@@ -731,7 +1189,7 @@ worker automatically.
    `du`, then save → wipe the store → reload the one image:
    ```bash
    sudo du -sh /var/lib/containerd            # often several GB of orphans for one image
-   docker save -o /root/mm.tar mindmeld-agent:latest
+   docker save -o /root/mm.tar cogniumlearn-agent:latest
    sudo systemctl stop docker docker.socket containerd
    sudo rm -rf /var/lib/containerd/*
    sudo systemctl start containerd docker
@@ -754,7 +1212,7 @@ worker automatically.
    Linode → **Storage** → the disk → *Resize*, or API
    `PUT /v4/linode/instances/{linodeId}/disks/{diskId}` body `{"size":6144}`. Finally
    capture: dashboard → the Linode → **Create Image**, or API
-   `POST /v4/images` body `{"disk_id":<diskId>,"label":"mindmeld-burst-worker"}`. When
+   `POST /v4/images` body `{"disk_id":<diskId>,"label":"cogniumlearn-burst-worker"}`. When
    it reaches *available*, use its id (`private/NNNNNNNN`) as `BURST_IMAGE_ID`. (If the
    image 404s / deletes itself mid-creation, it's still over the cap — go back to a/b.)
 5. **Delete the temporary Linode** — you only needed it to produce the Image.
@@ -763,8 +1221,8 @@ worker automatically.
 `LinodeComputeProvider.createInstance` boots it from `BURST_IMAGE_ID`, attaches a
 public interface (egress) **and** the VPC interface (private Redis/Mongo), binds it
 to `BURST_FIREWALL_ID`, tags it `BURST_MANAGEMENT_TAG`, and passes cloud-init user-data that writes
-`/etc/mindmeld/worker.env` (private Redis/Mongo URLs + AI keys) and restarts
-`mindmeld-worker.service`. The container then drains the queue.
+`/etc/cogniumlearn/worker.env` (private Redis/Mongo URLs + AI keys) and restarts
+`cogniumlearn-worker.service`. The container then drains the queue.
 
 ## 1.11 Base node — configure the fleet
 
@@ -797,9 +1255,9 @@ Add the task-queue / burst variables to `Dock/.env`. **Every term explained:**
 
 **Scaling shape**
 
-- `BURST_MANAGEMENT_TAG` (default `mindmeld-burst`) — tag identifying managed VMs;
+- `BURST_MANAGEMENT_TAG` (default `cogniumlearn-burst`) — tag identifying managed VMs;
   the autoscaler **only ever touches** instances with this tag.
-- `BURST_LABEL_PREFIX` (default `mindmeld-burst-`) — label prefix for created VMs.
+- `BURST_LABEL_PREFIX` (default `cogniumlearn-burst-`) — label prefix for created VMs.
 - `BURST_WARM_POOL_SIZE` (default `2`) — always-on burst VMs. `0` = no idle burst
   VMs (base-node workers handle baseline; burst is pure overflow).
 - `BURST_MAX_INSTANCES` (default `8`) — **hard cap** on burst VMs. Never exceeded.
@@ -857,7 +1315,7 @@ BURST_MAX_INSTANCES=6
 
 ## 1.12 Go live (ramp up safely)
 
-Restart Dock after each change (`sudo systemctl restart mindmeld-dock.service`):
+Restart Dock after each change (`sudo systemctl restart cogniumlearn-dock.service`):
 
 1. **Dry run.** `BURST_DRY_RUN=1` → confirm the autoscaler logs simulated scaling and
    the local workers drain real tasks. No spend.
@@ -899,7 +1357,7 @@ outside dry-run — the provider fully configured (token + region + image + type
 
 Then launch a generation task and watch the reconcile line move, e.g.
 `[BurstAutoscaler] pending=1 processing=0 current=0 desired=1 (cap=1).` followed by
-`[BurstAutoscaler] Created burst instance … (mindmeld-burst-…).` In a live (non-dry)
+`[BurstAutoscaler] Created burst instance … (cogniumlearn-burst-…).` In a live (non-dry)
 run, confirm in Linode Cloud Manager that the new instance is bound to the **same
 firewall as the Dock Linode** (`BURST_FIREWALL_ID`). Restore your normal values
 (`BURST_DRY_RUN`, `AGENT_LOCAL_WORKER_COUNT`, cooldowns, cap) when done.
@@ -912,12 +1370,12 @@ list and it reacts exactly as if real tasks arrived. Run all of this **on the ba
 
 **Watch the decisions** — open one terminal and leave it running:
 ```bash
-journalctl -u mindmeld-dock -f | grep -E "BurstAutoscaler|BURST_DRY_RUN"
+journalctl -u cogniumlearn-dock -f | grep -E "BurstAutoscaler|BURST_DRY_RUN"
 ```
 Every line reads `pending=<items waiting> … desired=<VMs it wants> (cap=<max>)`.
 
 **1. Make the test safe + quick.** In `Dock/.production.env` set these, then
-`sudo systemctl restart mindmeld-dock`:
+`sudo systemctl restart cogniumlearn-dock`:
 ```ini
 BURST_DRY_RUN=1                     # pretend mode: no real VMs, no cost
 AGENT_LOCAL_WORKER_COUNT=0          # so the base node doesn't eat the fake items
@@ -946,9 +1404,9 @@ BURST_DRY_RUN=0                  # real this time
 BURST_MAX_INSTANCES=1            # only one VM, so spend is tiny
 BURST_IDLE_TIMEOUT_SECONDS=60    # it deletes itself ~1 min after the queue empties
 ```
-Now `Would create instance` becomes `Created burst instance …`, and a `mindmeld-burst-*`
+Now `Would create instance` becomes `Created burst instance …`, and a `cogniumlearn-burst-*`
 Linode appears in the dashboard. Clear the queue (step 3) and it's deleted after the
-idle timeout, or `sudo systemctl restart mindmeld-dock` removes all burst VMs at once.
+idle timeout, or `sudo systemctl restart cogniumlearn-dock` removes all burst VMs at once.
 
 **When done, put the normal values back** and clear leftovers:
 ```ini
@@ -962,7 +1420,7 @@ BURST_IDLE_TIMEOUT_SECONDS=600
 ```
 ```bash
 redis-cli DEL TaskQueue/pending TaskQueue/processing
-sudo systemctl restart mindmeld-dock
+sudo systemctl restart cogniumlearn-dock
 ```
 
 ---
@@ -984,13 +1442,13 @@ bash Common/Deployment/deploy.sh
 
 It performs every step of §1.10 + §2.2 automatically:
 
-1. Creates a throwaway Debian 12 **bakebox** Linode (tagged `mindmeld-bakebox`).
+1. Creates a throwaway Debian 12 **bakebox** Linode (tagged `cogniumlearn-bakebox`).
 2. Uploads the `Agent/` build context (the venv, caches and `*.env` secrets are
    excluded — they never leave your dev box).
-3. Builds `mindmeld-agent`, installs the worker systemd unit, wipes the containerd
+3. Builds `cogniumlearn-agent`, installs the worker systemd unit, wipes the containerd
    cache and trims the OS (asserts `< 5.4 GB` used before continuing).
 4. Powers off, **shrinks the disk to 6144 MB**, and captures
-   **`MindMeldBurstVmImage<version>`** — version = highest existing + 1.
+   **`CogniumLearnBurstVmImage<version>`** — version = highest existing + 1.
 5. Builds the **production frontend** (codegen + bundle + mangle + obfuscate, the
    `npm run setup` equivalent), then SSHes into the base node, refreshes the
    Agent code + venv **and the Dock code** (a brute-force copy of `Dock/` *including*
@@ -999,7 +1457,7 @@ It performs every step of §1.10 + §2.2 automatically:
    `Dock/.production.env` is never clobbered), writes the new image id into
    `Dock/.production.env` (`BURST_IMAGE_ID`), ensures Dock + cloudflared run as
    services (idempotent), and **restarts Dock** so the live fleet boots the new image.
-6. Deletes the bakebox and any **older** `MindMeldBurstVmImage<version>` images.
+6. Deletes the bakebox and any **older** `CogniumLearnBurstVmImage<version>` images.
 7. Prints a summary and (if `NOTIFY_WEBHOOK_URL` is set in `deployment.env`) POSTs it.
 
 > **After a successful run, mirror the new `BURST_IMAGE_ID` into your local
@@ -1022,14 +1480,14 @@ field is documented inline in that file.
 |------|--------|
 | *(none)* | Full bake → roll-out → cleanup. |
 | `--skip-base-update` | Bake + capture only; don't touch the base node or delete old images. |
-| `--cleanup-bakeboxes` | Delete stray `mindmeld-bakebox` Linodes from a failed run, then exit. |
+| `--cleanup-bakeboxes` | Delete stray `cogniumlearn-bakebox` Linodes from a failed run, then exit. |
 
 > **The Dock systemd service is created automatically.** On every base-node update
-> `deploy.sh` writes/refreshes `/etc/systemd/system/mindmeld-dock.service` (correct
+> `deploy.sh` writes/refreshes `/etc/systemd/system/cogniumlearn-dock.service` (correct
 > `node` path — it finds the nvm build, not `/usr/bin/node` — `WorkingDirectory` =
 > `<repo-dir>/Dock`, `Restart=always`, enabled so it survives reboots), then
 > `systemctl restart`s it. You never hand-write the unit, and on subsequent runs it's
-> just a plain `systemctl restart mindmeld-dock`. See
+> just a plain `systemctl restart cogniumlearn-dock`. See
 > [`Remote/BaseNodeUpdate.sh`](../Deployment/Remote/BaseNodeUpdate.sh).
 
 > **Scope.** `deploy.sh` rolls out **Agent** changes (the burst image + base-node
@@ -1076,14 +1534,14 @@ node. The frontend has to be **bundled + obfuscated** into `Dock/Static/` first.
 >    cd <repo-dir> && tar -xzf dock-update.tar.gz && rm dock-update.tar.gz
 >    # tar extraction overwrites changed/added files but does NOT remove files you
 >    # deleted in the change — delete those by hand, then:
->    sudo systemctl restart mindmeld-dock.service
+>    sudo systemctl restart cogniumlearn-dock.service
 >    ```
 
 If the base node **does** have the build toolchain (you ran `npm install` for the build
 scripts there), you can instead build in place:
 
 ```bash
-cd /opt/mindmeld/MindMeld
+cd /opt/cogniumlearn/CogniumLearn
 git pull                                   # or your deploy mechanism
 # rebuild generated files + frontend (the `npm run setup` equivalent):
 node ./Common/Scripts/GenerateServiceManifest.js
@@ -1094,7 +1552,7 @@ node ./Common/Scripts/CopyStaticFiles.js
 node ./Common/Scripts/BundleStaticFiles.js
 node ./Common/Scripts/ManglePrivateMembersInBundle.js
 node ./Common/Scripts/MinifyAndObfuscateStaticFiles.js --aggressive
-sudo systemctl restart mindmeld-dock.service
+sudo systemctl restart cogniumlearn-dock.service
 ```
 
 > For a **code-only** change (no `Common/` edits), the four `Generate*` codegen steps
@@ -1115,11 +1573,11 @@ needs a fresh Image:
    `python -m pip freeze | grep -v -i '^asyncio==' > requirements.txt`.
 3. Rebuild the image **on a Debian 12 bake box** (not Windows — see §1.2): spin up a
    throwaway Linode, get the `Agent/` build context onto it (the `tar` + `scp` method in
-   §1.10, or `git clone`), and run `docker build -t mindmeld-agent -f Dockerfile .`
+   §1.10, or `git clone`), and run `docker build -t cogniumlearn-agent -f Dockerfile .`
    from `Agent/`.
 4. Re-bake the Linode Image (step 1.10) and set the new `BURST_IMAGE_ID` in
    `Dock/.env`.
-5. Restart Dock: `sudo systemctl restart mindmeld-dock.service`. The startup teardown
+5. Restart Dock: `sudo systemctl restart cogniumlearn-dock.service`. The startup teardown
    removes any burst VMs still running the old image; new ones boot the new Image.
 
 ## 2.3 Configuration / scaling change only
@@ -1128,7 +1586,7 @@ Edit `Dock/.env` and restart — no code changes, no re-bake. This covers caps, 
 pool, cooldowns, region, instance type, the master switch, and maintenance lead time:
 
 ```bash
-sudo systemctl restart mindmeld-dock.service
+sudo systemctl restart cogniumlearn-dock.service
 ```
 
 ## 2.4 Shared schema change (`Common/`)
@@ -1150,7 +1608,7 @@ Agent, also re-bake (2.2).
 # Section 3 — Desktop & mobile app distribution
 
 The desktop (Windows/macOS/Linux) and mobile (Android/iOS) apps are a **Tauri shell that
-loads the production site directly** (`https://mindmeld.cogniumlabs.io`). Because the
+loads the production site directly** (`https://learn.cogniumlabs.io`). Because the
 webview origin *is* the production origin, every relative API call, cookie and
 `window.__TAURI__` integration works exactly as on the web — there is **no** separate API
 layer, and **the web deployment (Sections 1–2) is completely unaffected** by anything here.
@@ -1177,11 +1635,11 @@ Two things are added on top of "load the site":
 `Common/Scripts/ConfigureTauriApp.js` runs before every Tauri build and injects, **from env**
 (with production defaults):
 
-- `MINDMELD_APP_URL` (default `https://mindmeld.cogniumlabs.io`) — the site the window loads;
+- `COGNIUMLEARN_APP_URL` (default `https://learn.cogniumlabs.io`) — the site the window loads;
   also written into the remote-IPC capability (`Build/Template/src-tauri/capabilities/remote.json`)
   so `window.__TAURI__` (Persistence fs, notifications, updater) is permitted on the remote page.
-- `MINDMELD_UPDATE_ENDPOINT` (default `<app-url>/DesktopUpdates/latest.json`) — the updater feed.
-- `MINDMELD_UPDATER_PUBKEY` — the updater public key. **If unset, the updater is disabled** and
+- `COGNIUMLEARN_UPDATE_ENDPOINT` (default `<app-url>/DesktopUpdates/latest.json`) — the updater feed.
+- `COGNIUMLEARN_UPDATER_PUBKEY` — the updater public key. **If unset, the updater is disabled** and
   `tauri build` still produces a plain installer (no auto-update). Set it to enable signed OTA
   binary updates.
 
@@ -1200,16 +1658,16 @@ it fresh, ensure these (already applied on the current dev box):
 ## 3.2 Generate the updater signing keypair (once)
 
 ```bash
-npx tauri signer generate -w mindmeld-updater.key
+npx tauri signer generate -w cogniumlearn-updater.key
 ```
 
-This prints/creates a **private** key (`mindmeld-updater.key` + a password) and a **public**
+This prints/creates a **private** key (`cogniumlearn-updater.key` + a password) and a **public**
 key. Then:
 
 - Keep the **private** key out of the repo. Provide it to the build via the standard Tauri env
   vars at build time: `TAURI_SIGNING_PRIVATE_KEY` (the key content or a path) and
   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
-- Provide the **public** key as `MINDMELD_UPDATER_PUBKEY` when building, so
+- Provide the **public** key as `COGNIUMLEARN_UPDATER_PUBKEY` when building, so
   `ConfigureTauriApp.js` writes it into `plugins.updater.pubkey` and enables
   `createUpdaterArtifacts`.
 
@@ -1223,7 +1681,7 @@ key. Then:
 # From the repo root, with the signing env vars + public key set:
 export TAURI_SIGNING_PRIVATE_KEY=...            # or a path to the key file
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=...
-export MINDMELD_UPDATER_PUBKEY=...              # the public key from 3.2
+export COGNIUMLEARN_UPDATER_PUBKEY=...              # the public key from 3.2
 npm run desktop                                 # builds + signs the installer(s)
 ```
 
@@ -1244,7 +1702,7 @@ To publish, upload to the base node's `Dock/DesktopUpdates/` directory (served a
      "platforms": {
        "windows-x86_64": {
          "signature": "<contents of the .sig file>",
-         "url": "https://mindmeld.cogniumlabs.io/DesktopUpdates/mind-meld_1.0.1_x64-setup.exe"
+         "url": "https://learn.cogniumlabs.io/DesktopUpdates/mind-meld_1.0.1_x64-setup.exe"
        }
      }
    }
@@ -1283,7 +1741,7 @@ signature verifies against its baked-in public key, it downloads and installs th
 - **Nothing distributes after enabling.** Confirm Dock runs **without** `--debug` and
   `DOCK_USE_TASK_QUEUE=1`; check `LLEN TaskQueue/pending` in Redis.
 - **Burst VMs boot but do no work.** On the burst VM, check
-  `journalctl -u mindmeld-worker` — verify cloud-init wrote `/etc/mindmeld/worker.env`
+  `journalctl -u cogniumlearn-worker` — verify cloud-init wrote `/etc/cogniumlearn/worker.env`
   with reachable VPC-private Redis/Mongo URLs and the worker service is enabled.
 - **No burst VMs ever appear.** Check Admin Panel → Alerts for Linode API errors, and
   confirm `LINODE_API_TOKEN`, `BURST_IMAGE_ID`, `BURST_REGION`, `BURST_INSTANCE_TYPE`
@@ -1295,7 +1753,7 @@ signature verifies against its baked-in public key, it downloads and installs th
 - **Cloudflare 502/1033 (tunnel error).** Check `systemctl status cloudflared` and
   `journalctl -u cloudflared` — the tunnel must be running and Dock must be up on
   `127.0.0.1:3000`. Confirm the DNS route exists
-  (`cloudflared tunnel route dns mindmeld mindmeld.cogniumlabs.io`) and that
+  (`cloudflared tunnel route dns cogniumlearn learn.cogniumlabs.io`) and that
   `/etc/cloudflared/config.yml` points at the correct credentials JSON.
 - **Paid-deck endpoints return 503 `KEY_MANAGEMENT_NOT_READY`.**
   `PAID_DECK_MASTER_KEY_BASE64` is missing or not exactly 32 bytes.
@@ -1307,16 +1765,16 @@ signature verifies against its baked-in public key, it downloads and installs th
   then rebuild and re-bake.
 - **Desktop app: window is blank / `window.__TAURI__` is undefined.** The remote-IPC
   capability (`Build/Template/src-tauri/capabilities/remote.json` → `remote.urls`) must
-  list the exact `MINDMELD_APP_URL` the window loads. `ConfigureTauriApp.js` keeps them in
+  list the exact `COGNIUMLEARN_APP_URL` the window loads. `ConfigureTauriApp.js` keeps them in
   sync, so rebuild via `npm run desktop` (not a bare `tauri build`) after changing the URL.
 - **Desktop app: `tauri build` fails complaining about the updater public key.** Either set
-  `MINDMELD_UPDATER_PUBKEY` (+ `TAURI_SIGNING_PRIVATE_KEY`/`…_PASSWORD`) to enable signed
-  updates, or leave `MINDMELD_UPDATER_PUBKEY` unset — `ConfigureTauriApp.js` then disables
+  `COGNIUMLEARN_UPDATER_PUBKEY` (+ `TAURI_SIGNING_PRIVATE_KEY`/`…_PASSWORD`) to enable signed
+  updates, or leave `COGNIUMLEARN_UPDATER_PUBKEY` unset — `ConfigureTauriApp.js` then disables
   `createUpdaterArtifacts` so the build produces a plain, unsigned installer.
 - **Desktop app doesn't update.** Confirm `Dock/DesktopUpdates/latest.json` is reachable at
   `https://<domain>/DesktopUpdates/latest.json`, its `version` is newer than the installed
   app, and each platform `signature` matches the uploaded `.sig`. The app only trusts
-  installers signed by the key whose public half is baked in (`MINDMELD_UPDATER_PUBKEY`).
+  installers signed by the key whose public half is baked in (`COGNIUMLEARN_UPDATER_PUBKEY`).
 - **Desktop/mobile app has no offline cache.** The service worker registers only inside the
   native shell and only over HTTPS. On iOS/macOS (WKWebView) it additionally requires the
   production domain to be declared as a `WKAppBoundDomains` entry in the iOS project's

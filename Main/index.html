@@ -6,7 +6,14 @@
 
     <!-- Explicit favicon so browsers stop auto-requesting /favicon.ico (which
          the server does not serve, producing a 404 on every page load). -->
-    <link rel="icon" type="image/png" href="./Globals/Assets/Images/Logos/CogniumLabsLogo.png">
+    <link rel="icon" type="image/png" href="./Globals/Assets/Images/Logos/CogniumLearnLogoIcon.png">
+    <link rel="apple-touch-icon" href="./Globals/Assets/Images/Logos/CogniumLearnLogoIcon.png">
+
+    <!-- Social / link-preview image (2:1 brand lockup). -->
+    <meta property="og:title" content="CogniumLearn">
+    <meta property="og:image" content="https://learn.cogniumlabs.io/Globals/Assets/Images/Logos/CogniumLearnLogoWide.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image" content="https://learn.cogniumlabs.io/Globals/Assets/Images/Logos/CogniumLearnLogoWide.png">
 
     <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5117647314462332"
      crossorigin="anonymous"></script>
@@ -88,8 +95,8 @@
     <link rel="stylesheet" href="./Pages/AutomaticGeneration/Styles/MockTestSectionStructure.css">
 
 
-    <link rel="stylesheet" href="./Pages/About/Styles/MindmeldAboutComponent.css">
-    <link rel="stylesheet" href="./Pages/About/Styles/MindmeldAboutPage.css">
+    <link rel="stylesheet" href="./Pages/About/Styles/CogniumLearnAboutComponent.css">
+    <link rel="stylesheet" href="./Pages/About/Styles/CogniumLearnAboutPage.css">
 
     <link rel="stylesheet" href="./Pages/Progress/Styles/ProgressPage.css">
     <link rel="stylesheet" href="./Pages/Progress/Styles/GenerationProgressComponent.css">
@@ -112,7 +119,7 @@
     <script src="./ThirdParty/Latex/katex/contrib/auto-render.min.js"></script>
     <script src="./ThirdParty/JsPdf/jspdf.umd.min.js"></script>
     <script src="./ThirdParty/SheetJs/xlsx.full.min.js"></script>
-    <script src="https://static.zohocdn.com/zpay/zpay-js/v1/zpayments.js"></script>
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <script src="./Globals/Classes/Logging/LoggerBootstrap.js" type="module"></script>
     <script src="./CommonComponents/InitializationOverlay.js" type="module"></script>
     <script src="./CommonComponents/CopyrightNotice.js" type="module"></script>
@@ -144,7 +151,7 @@
     <script src="./Globals/Classes/LoginPopupSequence.js" type="module"></script>
     <script src="./Pages/Study/Classes/AskAiPopupLink.js" type="module"></script>
     <script src="./Pages/Study/Classes/AskAiInjectedBlock.js" type="module"></script>
-    <title>MindMeld</title>
+    <title>CogniumLearn</title>
 </head>
 <body>
     <initialization-overlay></initialization-overlay>

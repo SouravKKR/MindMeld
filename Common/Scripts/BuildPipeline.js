@@ -47,14 +47,14 @@ class BuildPipeline
     // Used by the run modes (web, production, desktop, android, ios): build only when a
     // build input changed since the last successful build, otherwise skip straight to
     // starting the server. `npm run setup` calls run() directly and always rebuilds.
-    // Set MINDMELD_FORCE_BUILD=1 to force a rebuild from any entry point.
+    // Set COGNIUMLEARN_FORCE_BUILD=1 to force a rebuild from any entry point.
     runIfStale()
     {
         const buildFreshness = new BuildFreshness(this.repositoryRootDirectory);
 
-        if ((process.env.MINDMELD_FORCE_BUILD || '').trim() !== '')
+        if ((process.env.COGNIUMLEARN_FORCE_BUILD || '').trim() !== '')
         {
-            console.log('MINDMELD_FORCE_BUILD is set — rebuilding regardless of freshness.');
+            console.log('COGNIUMLEARN_FORCE_BUILD is set — rebuilding regardless of freshness.');
         }
         else if (buildFreshness.isBuildUpToDate())
         {

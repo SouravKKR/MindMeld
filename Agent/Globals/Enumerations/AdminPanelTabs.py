@@ -15,3 +15,5 @@ class AdminPanelTabs(IntEnum):
     STREAKS = 11
     ALLOWED_EMAILS = 12
     LOGS = 13
+    SUBSCRIPTIONS = 14
+    COUPONS = 15

@@ -1,4 +1,4 @@
-# MindMeld Agent worker image (multi-stage).
+# CogniumLearn Agent worker image (multi-stage).
 #
 # Runs Agent/Worker.py — the long-lived poller that drains the shared Redis task
 # queue. The same image runs on the base node and on every burst VM (baked into
@@ -12,7 +12,7 @@
 # source (slow, fragile) — exactly the startup pain we want to avoid.
 #
 # Build context is the Agent/ directory:
-#   docker build -t mindmeld-agent -f Dockerfile .
+#   docker build -t cogniumlearn-agent -f Dockerfile .
 
 # ── Stage 1: builder — installs everything into an isolated venv ─────────────
 FROM python:3.12-slim AS builder

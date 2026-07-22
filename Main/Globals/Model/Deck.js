@@ -1387,7 +1387,7 @@ class Deck
         const acknowledged = await DialogBox.confirm
         (
             "Copyright & IPR responsibility",
-            "By importing this deck you confirm you have the right to use its contents and accept full responsibility for any copyright or intellectual-property implications of doing so. MindMeld does not verify the ownership of imported material."
+            "By importing this deck you confirm you have the right to use its contents and accept full responsibility for any copyright or intellectual-property implications of doing so. CogniumLearn does not verify the ownership of imported material."
         );
 
         if(!acknowledged)

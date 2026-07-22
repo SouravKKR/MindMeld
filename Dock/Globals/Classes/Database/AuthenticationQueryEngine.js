@@ -7,9 +7,44 @@ const UserSession = require("../../Model/UserSession");
 const Device = require("../../Model/Device");
 const DatabaseConnector = require("./DatabaseConnector");
 const DeviceLimitReachedError = require("./DeviceLimitReachedError");
+const PlanMetadata = require("../Plans/PlanMetadata");
+const PlanTierResolver = require("../Plans/PlanTierResolver");
 
 class AuthenticationQueryEngine
 {
+    /**
+     * The concurrent-session cap for a user, from their plan tier. Falls back
+     * to UserSession.MAX_ACTIVE_SESSIONS_PER_USER when the tier cannot be
+     * resolved, so a lookup hiccup never evicts more aggressively than the base.
+     * @param {string} userId
+     * @returns {Promise<number>}
+     */
+    static async #getMaxSessionsForUser(userId)
+    {
+        const user = await AuthenticationQueryEngine.getUserById(userId);
+        if (user)
+        {
+            return PlanMetadata.getMaxSessions(PlanTierResolver.getEffectiveTier(user));
+        }
+        return UserSession.MAX_ACTIVE_SESSIONS_PER_USER;
+    }
+
+    /**
+     * The device cap for a user, from their plan tier. Falls back to
+     * LicenseConstants.MAX_DEVICES_PER_USER when the tier cannot be resolved.
+     * @param {string} userId
+     * @returns {Promise<number>}
+     */
+    static async #getMaxDevicesForUser(userId)
+    {
+        const user = await AuthenticationQueryEngine.getUserById(userId);
+        if (user)
+        {
+            return PlanMetadata.getMaxDevices(PlanTierResolver.getEffectiveTier(user));
+        }
+        return LicenseConstants.MAX_DEVICES_PER_USER;
+    }
+
     static async createUser(user)
     {
         await (await DatabaseConnector.getDatabase())
@@ -138,6 +173,8 @@ class AuthenticationQueryEngine
             return;
         }
 
+        const maximumActiveSessions = await AuthenticationQueryEngine.#getMaxSessionsForUser(userId);
+
         const collection = (await DatabaseConnector.getDatabase())
             .collection(DatabaseConstants.SESSIONS_COLLECTION);
 
@@ -146,13 +183,13 @@ class AuthenticationQueryEngine
             .sort({ lastRefreshDate: -1 })
             .toArray();
 
-        if (sessions.length <= UserSession.MAX_ACTIVE_SESSIONS_PER_USER)
+        if (sessions.length <= maximumActiveSessions)
         {
             return;
         }
 
         const sessionIdsToEvict = sessions
-            .slice(UserSession.MAX_ACTIVE_SESSIONS_PER_USER)
+            .slice(maximumActiveSessions)
             .map(sessionDocument => sessionDocument.id);
 
         if (sessionIdsToEvict.length > 0)
@@ -255,7 +292,11 @@ class AuthenticationQueryEngine
             userId,
             LicenseConstants.OFFLINE_GRACE_DAYS_FOR_DEVICE_SIGNOUT
         );
-        if (activeDeviceCount >= LicenseConstants.MAX_DEVICES_PER_USER)
+        // Per-plan device cap. Only NEW device creation is gated here; existing
+        // devices refresh above without a count check, so a downgrade that
+        // lowers the cap never locks a user out of devices they already use.
+        const maximumDevices = await AuthenticationQueryEngine.#getMaxDevicesForUser(userId);
+        if (activeDeviceCount >= maximumDevices)
         {
             const currentDevices = await AuthenticationQueryEngine.listUserDevices(userId);
             throw new DeviceLimitReachedError(currentDevices.map((device) => device.toJson()));

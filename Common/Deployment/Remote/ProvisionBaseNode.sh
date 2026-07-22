@@ -10,8 +10,8 @@
 # in exactly one place).
 #
 # Inputs (exported on the ssh command line):
-#   REPO_DIR               — absolute repo path to create/populate (e.g. /root/mindmeld)
-#   MINDMELD_ENVIRONMENT   — environment name (for log lines)
+#   REPO_DIR               — absolute repo path to create/populate (e.g. /root/cogniumlearn)
+#   COGNIUMLEARN_ENVIRONMENT   — environment name (for log lines)
 #   MONGO_TOPOLOGY         — "colocated" | "separate"
 #   BASE_PRIVATE_IP        — this node's VPC private IP (Redis/Mongo bind target)
 #   AGENT_CONTEXT_ARCHIVE  — uploaded Agent build context tarball to extract
@@ -23,7 +23,7 @@
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:?REPO_DIR is required}"
-MINDMELD_ENVIRONMENT="${MINDMELD_ENVIRONMENT:-development}"
+COGNIUMLEARN_ENVIRONMENT="${COGNIUMLEARN_ENVIRONMENT:-development}"
 MONGO_TOPOLOGY="${MONGO_TOPOLOGY:-colocated}"
 BASE_PRIVATE_IP="${BASE_PRIVATE_IP:-}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
@@ -31,7 +31,7 @@ DOCK_DIRECTORY="$REPO_DIR/Dock"
 AGENT_DIRECTORY="$REPO_DIR/Agent"
 export DEBIAN_FRONTEND=noninteractive
 
-echo "==> [$MINDMELD_ENVIRONMENT] Extracting uploaded code contexts into $REPO_DIR..."
+echo "==> [$COGNIUMLEARN_ENVIRONMENT] Extracting uploaded code contexts into $REPO_DIR..."
 mkdir -p "$REPO_DIR"
 if [ -n "${AGENT_CONTEXT_ARCHIVE:-}" ] && [ -f "$AGENT_CONTEXT_ARCHIVE" ]
 then
@@ -129,4 +129,4 @@ echo "==> Dock dependencies (npm)..."
 cd "$DOCK_DIRECTORY"
 npm install
 
-echo "==> Base node OS + data tier ready ($MINDMELD_ENVIRONMENT). App layer follows via deploy."
+echo "==> Base node OS + data tier ready ($COGNIUMLEARN_ENVIRONMENT). App layer follows via deploy."

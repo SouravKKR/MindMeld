@@ -3,7 +3,7 @@ YoloImageEnhanceLab.py
 ======================
 
 A standalone, menu-driven experimentation harness for the two most
-expensive halves of the MindMeld image pipeline:
+expensive halves of the CogniumLearn image pipeline:
 
   1. YOLO figure detection           (Agent/Workflows/PrepareImages/ImageExtractor.py)
   2. LLM "is this educational" gate   (mirrors PrepareImages._validate_figures_with_vision)
@@ -670,7 +670,7 @@ async def run_pipeline(
 
 def build_text_report(report: dict) -> str:
     lines = []
-    lines.append("MindMeld YOLO + Image-Enhance Lab -- run report")
+    lines.append("CogniumLearn YOLO + Image-Enhance Lab -- run report")
     lines.append("=" * 60)
     lines.append(f"PDF:               {report.get('pdf')}")
     lines.append(f"Pages:             {report.get('pageFilter')}")
@@ -726,7 +726,7 @@ def launch_gui():
     worker_state = {"running": False, "lastRunDirectory": None, "logFilePath": None, "stopEvent": None}
 
     root = tkinter_module.Tk()
-    root.title("MindMeld -- YOLO + Image Enhance Lab")
+    root.title("CogniumLearn -- YOLO + Image Enhance Lab")
     root.geometry("960x680")
 
     selected_pdf_path_variable = tkinter_module.StringVar(value="")

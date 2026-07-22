@@ -21,7 +21,7 @@ class IndexedDbHelper
             // hanging at "Preparing your library…" forever.
             openRequest.onblocked = () =>
             {
-                reject(new Error("IndexedDB open is blocked — another tab may be holding the database open. Close other MindMeld tabs and retry."));
+                reject(new Error("IndexedDB open is blocked — another tab may be holding the database open. Close other CogniumLearn tabs and retry."));
             };
 
             // Backstop: some browser states (e.g. corrupted IDB

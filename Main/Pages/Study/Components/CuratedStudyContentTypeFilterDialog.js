@@ -19,7 +19,7 @@ import DialogBox from "../../../CommonComponents/DialogBox.js";
  */
 class CuratedStudyContentTypeFilterDialog
 {
-    static #STORAGE_KEY = "mindmeld-curated-archive-filter";
+    static #STORAGE_KEY = "cogniumlearn-curated-archive-filter";
 
     static BOTH       = "BOTH";
     static MATERIALS  = "MATERIALS";

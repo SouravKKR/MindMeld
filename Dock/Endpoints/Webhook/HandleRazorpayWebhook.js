@@ -5,6 +5,7 @@ const OrgAdminVerificationManager = require("../../Globals/Classes/Authenticatio
 const PendingCreditOrderQueryEngine = require("../../Globals/Classes/Database/PendingCreditOrderQueryEngine");
 const CreditPurchaseCompletionService = require("../../Globals/Classes/Credits/CreditPurchaseCompletionService");
 const CreditDealPaymentQueryEngine = require("../../Globals/Classes/Credits/CreditDealPaymentQueryEngine");
+const SubscriptionWebhookProcessor = require("../../Globals/Classes/Plans/SubscriptionWebhookProcessor");
 const { paymentProviders } = require("../../Globals/Enumerations/PaymentProviders");
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
 const { organizationPaymentKinds } = require("../../Globals/Enumerations/OrganizationPaymentKinds");
@@ -74,6 +75,26 @@ async function handleRazorpayWebhook(request, response)
     }
 
     const eventName = typeof payload?.event === "string" ? payload.event : "";
+
+    // Subscription lifecycle events (auto-debit recurring plans). Delegated to
+    // the processor, which drives credit grants + entitlement via
+    // PlanSubscriptionService. Ack 200 regardless so Razorpay stops retrying.
+    if (SubscriptionWebhookProcessor.isSubscriptionEvent(eventName))
+    {
+        try
+        {
+            const subscriptionResult = await SubscriptionWebhookProcessor.process(eventName, payload);
+            response.statusCode = httpStatus.OK;
+            response.sendJson({ acknowledged: true, event: eventName, ...subscriptionResult });
+        }
+        catch (subscriptionError)
+        {
+            console.error(`[HandleRazorpayWebhook] Subscription event ${eventName} failed: ${subscriptionError?.message || subscriptionError}`);
+            response.statusCode = httpStatus.OK;
+            response.sendJson({ acknowledged: true, event: eventName, reason: ErrorCodes.EXCEPTION });
+        }
+        return;
+    }
 
     // We care about two events that both indicate "payment is good":
     //   payment.captured — instant captures (most common)

@@ -32,7 +32,7 @@
 class CopyrightNotice extends HTMLElement
 {
     static #STYLE_ID = "copyright-notice-style";
-    static #COPYRIGHT_TEXT = "© 2025-26 MindMeld. All rights reserved.";
+    static #COPYRIGHT_TEXT = "© 2025-26 CogniumLearn. All rights reserved.";
 
     connectedCallback()
     {

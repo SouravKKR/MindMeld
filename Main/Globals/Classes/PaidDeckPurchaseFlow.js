@@ -4,8 +4,7 @@ import PaidDeckPasswordPrompt from "./PaidDeckPasswordPrompt.js";
 import PaidDeckLicenseSyncer from "./Syncing/PaidDeckLicenseSyncer.js";
 import PaidDeckSession from "./Crypto/PaidDeckSession.js";
 import SyncManager from "./SyncManager.js";
-import ZohoPaymentsCheckout from "./Payments/ZohoPaymentsCheckout.js";
-import { paymentProviders } from "../Enumerations/PaymentProviders.js";
+import PaymentCheckout from "./Payments/PaymentCheckout.js";
 import TutorialEngine from "./TutorialEngine.js";
 import TutorialSampleDeckBuilder from "./Tutorials/TutorialSampleDeckBuilder.js";
 
@@ -14,9 +13,11 @@ import TutorialSampleDeckBuilder from "./Tutorials/TutorialSampleDeckBuilder.js"
  *
  * Shared buyer-side purchase flow extracted from PaidDeckLibraryPage
  * so both the library card and the details page can initiate a
- * purchase with identical Zoho Payments checkout handling. Returns true
- * when the deck is successfully acquired (paid or zero-cost grant),
- * false on cancellation or failure.
+ * purchase with identical checkout handling. The server selects the payment
+ * provider and returns its enum in the initiate response; PaymentCheckout
+ * opens the matching widget (Razorpay today). Returns true when the deck is
+ * successfully acquired (paid or zero-cost grant), false on cancellation or
+ * failure.
  */
 class PaidDeckPurchaseFlow
 {
@@ -27,7 +28,7 @@ class PaidDeckPurchaseFlow
             return false;
         }
 
-        // Tutorial demo: never initiate a real order, open Zoho checkout, or
+        // Tutorial demo: never initiate a real order, open provider checkout, or
         // call the server. Silently drop a flagged local sample copy onto the
         // home page and report success — no alert (it would sit buried behind
         // the tutorial overlay); the tutorial's own copy explains what happened.
@@ -54,8 +55,7 @@ class PaidDeckPurchaseFlow
                     body: JSON.stringify
                     ({
                         deckIds: [deck.id],
-                        region: region,
-                        paymentProvider: paymentProviders.ZOHO
+                        region: region
                     })
                 })
             );
@@ -101,7 +101,7 @@ class PaidDeckPurchaseFlow
         let checkoutResult;
         try
         {
-            checkoutResult = await ZohoPaymentsCheckout.open(checkoutContext, { description: deck.title });
+            checkoutResult = await PaymentCheckout.open(initiateResponse.provider, checkoutContext, { description: deck.title });
         }
         catch (checkoutError)
         {

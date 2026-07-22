@@ -45,9 +45,9 @@ class Logger
         {
             return explicitEnvironmentFlag.slice("--environment=".length);
         }
-        if (process.env.MINDMELD_ENVIRONMENT)
+        if (process.env.COGNIUMLEARN_ENVIRONMENT)
         {
-            return process.env.MINDMELD_ENVIRONMENT;
+            return process.env.COGNIUMLEARN_ENVIRONMENT;
         }
         if (process.argv.includes("--debug"))
         {

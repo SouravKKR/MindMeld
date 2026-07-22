@@ -16,7 +16,7 @@ class StudyZoomControls extends HTMLElement
     static MAX_ZOOM_MULTIPLIER = 2.0;
     static ZOOM_STEP = 0.1;
     static DEFAULT_ZOOM_MULTIPLIER = 1.0;
-    static STORAGE_KEY = "mindmeld-study-zoom";
+    static STORAGE_KEY = "cogniumlearn-study-zoom";
     static CSS_VARIABLE_NAME = "--study-card-zoom";
 
     #zoomMultiplier = StudyZoomControls.DEFAULT_ZOOM_MULTIPLIER;

@@ -17,7 +17,7 @@ class Persistence
 {
     static #storage;
     static #bucket;
-    static #GOOGLE_CLOUD_STORAGE_BUCKET_NAME = 'mindmeld-bucket';
+    static #GOOGLE_CLOUD_STORAGE_BUCKET_NAME = 'cogniumlearn-bucket';
 
     // Linode Object Storage is S3-compatible, so it is reached through the AWS S3
     // client pointed at the Linode regional endpoint. Credentials come from the
@@ -26,17 +26,17 @@ class Persistence
     // kept identical to the legacy Google Cloud Storage bucket so object paths never
     // change across providers.
     static #linodeObjectStorageClient;
-    static #LINODE_OBJECT_STORAGE_BUCKET_NAME = 'mindmeld-bucket';
+    static #LINODE_OBJECT_STORAGE_BUCKET_NAME = 'cogniumlearn-bucket';
 
     static #defaultStorageTarget = storageTargets.LINODE_OBJECT_STORAGE;
 
     // The Google Cloud Storage service-account key is selected per environment, so
     // every environment authenticates with its own credential. Each environment name
-    // maps to Common/Credentials/mindmeld-storage.<environment>.json, mirroring the
+    // maps to Common/Credentials/cogniumlearn-storage.<environment>.json, mirroring the
     // Dock/.<environment>.env convention. The environment is resolved exactly the way
     // Dock/index.js resolves it, so Dock and this store can never disagree.
     static #CREDENTIALS_DIRECTORY = path.join(__dirname, "..", "..", "..", "Common", "Credentials");
-    static #STORAGE_CREDENTIAL_FILE_PREFIX = "mindmeld-storage.";
+    static #STORAGE_CREDENTIAL_FILE_PREFIX = "cogniumlearn-storage.";
     static #STORAGE_CREDENTIAL_FILE_SUFFIX = ".json";
 
     static #resolveEnvironmentName()
@@ -46,9 +46,9 @@ class Persistence
         {
             return explicitEnvironmentFlag.slice("--environment=".length);
         }
-        if (process.env.MINDMELD_ENVIRONMENT)
+        if (process.env.COGNIUMLEARN_ENVIRONMENT)
         {
-            return process.env.MINDMELD_ENVIRONMENT;
+            return process.env.COGNIUMLEARN_ENVIRONMENT;
         }
         if (process.argv.includes("--debug"))
         {

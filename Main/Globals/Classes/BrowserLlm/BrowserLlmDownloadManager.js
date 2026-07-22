@@ -24,7 +24,7 @@ import BrowserLlmCapability from "./BrowserLlmCapability.js";
  * surface integration — is wired and ready. When the user is ready to
  * connect the real WebLLM engine, replace the TODO block in
  * `#runDownload()` with the CreateMLCEngine call from the reference
- * implementation at [F:/Testing/MindMeld/webllm.html].
+ * implementation at [F:/Testing/CogniumLearn/webllm.html].
  */
 class BrowserLlmDownloadManager
 {
@@ -230,7 +230,7 @@ class BrowserLlmDownloadManager
 
         // TODO: replace the loop above with the real WebLLM
         // CreateMLCEngine call. See the reference at
-        // F:/Testing/MindMeld/webllm.html for the exact appConfig shape.
+        // F:/Testing/CogniumLearn/webllm.html for the exact appConfig shape.
     }
 }
 

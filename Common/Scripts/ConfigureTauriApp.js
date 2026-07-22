@@ -5,8 +5,8 @@ const path = require('path');
 // so "which server does the app load" and "where does it check for a new binary" come from env
 // (with production defaults) rather than being hard-coded. It:
 //
-//   1. Points the app window and the remote-IPC capability at MINDMELD_APP_URL.
-//   2. Configures the binary updater from MINDMELD_UPDATE_ENDPOINT + MINDMELD_UPDATER_PUBKEY.
+//   1. Points the app window and the remote-IPC capability at COGNIUMLEARN_APP_URL.
+//   2. Configures the binary updater from COGNIUMLEARN_UPDATE_ENDPOINT + COGNIUMLEARN_UPDATER_PUBKEY.
 //      When no public key is provided the updater is left disabled so a plain build still
 //      succeeds (an installer without auto-update), matching a dev machine with no signing key.
 //   3. Ensures the minimal offline fallback shell exists at Build/Template/src (frontendDist) —
@@ -14,7 +14,7 @@ const path = require('path');
 //      fallback; the service worker handles offline once the site has been loaded online once.
 class ConfigureTauriApp
 {
-    static DEFAULT_APP_URL = 'https://mindmeld.cogniumlabs.io';
+    static DEFAULT_APP_URL = 'https://learn.cogniumlabs.io';
 
     constructor()
     {
@@ -27,7 +27,7 @@ class ConfigureTauriApp
 
     resolveApplicationUrl()
     {
-        const configuredUrl = process.env.MINDMELD_APP_URL;
+        const configuredUrl = process.env.COGNIUMLEARN_APP_URL;
         const trimmedUrl = configuredUrl === undefined ? '' : configuredUrl.trim();
         const applicationUrl = trimmedUrl.length > 0 ? trimmedUrl : ConfigureTauriApp.DEFAULT_APP_URL;
         return applicationUrl.replace(/\/+$/, '');
@@ -35,7 +35,7 @@ class ConfigureTauriApp
 
     resolveUpdateEndpoint(applicationUrl)
     {
-        const configuredEndpoint = process.env.MINDMELD_UPDATE_ENDPOINT;
+        const configuredEndpoint = process.env.COGNIUMLEARN_UPDATE_ENDPOINT;
         const trimmedEndpoint = configuredEndpoint === undefined ? '' : configuredEndpoint.trim();
 
         if (trimmedEndpoint.length > 0)
@@ -48,7 +48,7 @@ class ConfigureTauriApp
 
     resolveUpdaterPublicKey()
     {
-        const configuredPublicKey = process.env.MINDMELD_UPDATER_PUBKEY;
+        const configuredPublicKey = process.env.COGNIUMLEARN_UPDATER_PUBKEY;
         const trimmedPublicKey = configuredPublicKey === undefined ? '' : configuredPublicKey.trim();
         return trimmedPublicKey.length > 0 ? trimmedPublicKey : null;
     }
@@ -63,7 +63,7 @@ class ConfigureTauriApp
         this.applyRemoteCapability(applicationUrl);
         this.ensureOfflineShell(applicationUrl);
 
-        const updaterState = updaterPublicKey === null ? 'disabled (no MINDMELD_UPDATER_PUBKEY)' : `enabled (endpoint ${updateEndpoint})`;
+        const updaterState = updaterPublicKey === null ? 'disabled (no COGNIUMLEARN_UPDATER_PUBKEY)' : `enabled (endpoint ${updateEndpoint})`;
         console.log(`Configured Tauri app: url=${applicationUrl}, updater=${updaterState}.`);
     }
 
@@ -133,7 +133,7 @@ class ConfigureTauriApp
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="refresh" content="3; url=${applicationUrl}">
-    <title>MindMeld</title>
+    <title>CogniumLearn</title>
     <style>
         html, body { height: 100%; margin: 0; background: #0f1117; color: #e8eaf0; font-family: system-ui, sans-serif; }
         .center { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 24px; }
@@ -142,8 +142,8 @@ class ConfigureTauriApp
 </head>
 <body>
     <div class="center">
-        <h1>MindMeld</h1>
-        <p class="muted">Connecting to MindMeld. If you are offline, please reconnect and reopen the app.</p>
+        <h1>CogniumLearn</h1>
+        <p class="muted">Connecting to CogniumLearn. If you are offline, please reconnect and reopen the app.</p>
     </div>
     <script>
         setTimeout(function () { window.location.replace(${JSON.stringify(applicationUrl)}); }, 3000);

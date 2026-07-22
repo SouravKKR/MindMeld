@@ -20,7 +20,7 @@ import ReleaseNotesBootstrap from "./ReleaseNotesBootstrap.js";
  *   1. Privacy Policy + Terms of Service. Mandatory; nothing else opens
  *      until every server-listed legal document is accepted.
  *   2. Beginners tutorial (auto-play once per device; carries the
- *      MindMeld Knowledge Consolidation Lifecycle diagram on step 1).
+ *      CogniumLearn Knowledge Consolidation Lifecycle diagram on step 1).
  *   3. Release notes for any version the user hasn't seen yet.
  *
  * The offline-AI-model download is deliberately NOT part of this

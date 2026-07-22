@@ -6,7 +6,7 @@
  */
 class TermsAndConditionsConstants
 {
-    static DOWNLOAD_FILE_NAME_TEMPLATE = "MindMeld-{title}.{ext}";
+    static DOWNLOAD_FILE_NAME_TEMPLATE = "CogniumLearn-{title}.{ext}";
 
     static AGREE_BUTTON_LABEL    = "I Agree";
     static DECLINE_BUTTON_LABEL  = "Decline & Log out";

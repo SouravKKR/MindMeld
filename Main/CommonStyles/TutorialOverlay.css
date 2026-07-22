@@ -63,7 +63,7 @@ tutorial-overlay .tutorial-overlay-tooltip.tutorial-overlay-tooltip--wide
 tutorial-overlay .tutorial-overlay-tooltip.tutorial-overlay-tooltip--xwide
 {
     /* Used by tutorial steps whose body carries a large diagram — the
-       Welcome step's MindMeldKnowledgeConsolidationLifecycle.png has fine
+       Welcome step's CogniumLearnKnowledgeConsolidationLifecycle.png has fine
        text that's unreadable at the standard 600px tooltip width. */
     width: 880px;
     max-width: 95vw;
