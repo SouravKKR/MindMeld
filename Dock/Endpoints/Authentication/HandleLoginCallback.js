@@ -175,13 +175,27 @@ async function handleLoginCallback(request, response)
             const { creditTransactionTypes } = require("../../Globals/Enumerations/CreditTransactionTypes");
 
             const creditConfiguration = await CreditConfigurationStore.load();
+            const signupGrantAmount = creditConfiguration.getSignupGrant();
             await CreditLedger.grant(
                 user.getId(),
-                creditConfiguration.getSignupGrant(),
+                signupGrantAmount,
                 creditTransactionTypes.SIGNUP_GRANT,
                 `signup:${user.getId()}`,
                 {}
             );
+
+            // Welcome the brand-new user with their starter credits. In-app only
+            // — no push token exists this early. Best-effort.
+            try
+            {
+                const NotificationDispatcher = require("../../Globals/Classes/Notifications/NotificationDispatcher");
+                const NotificationContent = require("../../Globals/Classes/Notifications/NotificationContent");
+                await NotificationDispatcher.dispatch(user.getId(), NotificationContent.signupCreditsGranted(signupGrantAmount), NotificationDispatcher.IN_APP_ONLY);
+            }
+            catch (welcomeNotifyError)
+            {
+                console.warn(`[HandleLoginCallback] signup welcome notification failed for ${user.getId()}: ${welcomeNotifyError.message}`);
+            }
         }
         catch (signupGrantError)
         {

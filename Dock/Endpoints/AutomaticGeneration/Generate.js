@@ -25,6 +25,9 @@ const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const MaintenanceGate = require("../../Globals/Classes/Maintenance/MaintenanceGate");
 const PlanEntitlementGate = require("../../Globals/Classes/Plans/PlanEntitlementGate");
 const { planFeatures } = require("../../Globals/Enumerations/PlanFeatures");
+const NotificationDispatcher = require("../../Globals/Classes/Notifications/NotificationDispatcher");
+const NotificationContent = require("../../Globals/Classes/Notifications/NotificationContent");
+const { notificationChannels } = require("../../Globals/Enumerations/NotificationChannels");
 
 
 const VIRTUAL_WEB_SOURCE_TYPES = [
@@ -259,6 +262,11 @@ async function handleGenerate(request, response)
         {
             try { await TaskStateManager.save({ userId: userId, taskType: taskTypes.PREPARE_FOR_GENERATION, route: "/Generate", payload: body, pausedReason: creditPreflight.reason }); }
             catch (saveError) { console.warn(`[Generate] Failed to save resumable task state: ${saveError.message}`); }
+
+            // Leave a persistent in-app record so the user can find + resume this
+            // later. In-app only — they already have the inline 402 on screen now.
+            try { await NotificationDispatcher.dispatch(userId, NotificationContent.outOfCredits("generation"), notificationChannels.IN_APP); }
+            catch (notifyError) { console.warn(`[Generate] Failed to dispatch out-of-credits notification: ${notifyError.message}`); }
         }
         response.statusCode = httpStatus.PAYMENT_REQUIRED;
         response.sendJson({ error: creditPreflight.reason, balance: creditPreflight.balance, required: creditPreflight.required, resumable: bIsResumable });
@@ -940,6 +948,12 @@ async function handleGenerate(request, response)
             await TaskManager.updateTask(settledTask);
         }
 
+        // Tracks whether this run genuinely produced content, so the
+        // completion notification below fires only on real success (never on a
+        // FAILED settle). Set inside the history try where the final status is
+        // known.
+        let bGenerationSucceeded = false;
+
         try
         {
             // Re-fetch so the archived record reflects any FAILED/partial status
@@ -965,6 +979,8 @@ async function handleGenerate(request, response)
                 }
             }
 
+            bGenerationSucceeded = taskForHistory && taskForHistory.getStatus() !== taskStatus.FAILED;
+
             await TaskHistoryQueryEngine.recordCompletion(taskForHistory);
         }
         catch (historyError)
@@ -972,6 +988,20 @@ async function handleGenerate(request, response)
             console.error(`[Generate] Failed to record taskHistory for ${mainTaskId}: ${historyError.message}`);
         }
         await TaskManager.untrackForUser(userId, mainTaskId);
+
+        // Notify the user their study set is ready — in-app + push so it lands
+        // even with the app closed. Success only; never throws into the pipeline.
+        if (bGenerationSucceeded)
+        {
+            try
+            {
+                await NotificationDispatcher.dispatch(userId, NotificationContent.generationComplete(deckId), notificationChannels.IN_APP | notificationChannels.PUSH);
+            }
+            catch (notifyError)
+            {
+                console.warn(`[Generate] Failed to dispatch generation-complete notification for ${mainTaskId}: ${notifyError.message}`);
+            }
+        }
         // The completion handler finished, so this run is NOT orphaned — clear the
         // start-saved resumable snapshot. (Credit/pause stops returned earlier and
         // keep their own saved state.)

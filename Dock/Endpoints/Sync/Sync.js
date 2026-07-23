@@ -166,7 +166,7 @@ async function handleSync(request, response)
     {
         console.warn(`[Sync] Rejecting push from user ${userId} — storage quota exceeded.`);
         response.statusCode = httpStatus.PAYLOAD_TOO_LARGE;
-        response.sendJson({ error: ErrorCodes.STORAGE_QUOTA_EXCEEDED, limitBytes: StorageQuotaEnforcer.LIMIT_BYTES });
+        response.sendJson({ error: ErrorCodes.STORAGE_QUOTA_EXCEEDED, limitBytes: await StorageQuotaEnforcer.getLimitBytes(userId) });
         return;
     }
 

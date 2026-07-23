@@ -18,6 +18,9 @@ const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const Logger = require("../../Globals/Classes/Logger");
 const LogTitles = require("../../Globals/Classes/Logging/LogTitles");
 const { logCategory } = require("../../Globals/Enumerations/LogCategory");
+const NotificationDispatcher = require("../../Globals/Classes/Notifications/NotificationDispatcher");
+const NotificationContent = require("../../Globals/Classes/Notifications/NotificationContent");
+const { notificationChannels } = require("../../Globals/Enumerations/NotificationChannels");
 
 async function verifyPurchase(request, response)
 {
@@ -225,6 +228,21 @@ async function verifyPurchase(request, response)
     // are idempotent upserts). The transition is atomic, so concurrent verifies
     // still grant exactly once.
     await PendingOrderQueryEngine.markConsumed(providerOrderId, session.getUserId());
+
+    // Purchase settled (this line is only reached on the first-time grant — a
+    // replay short-circuits earlier). Tell the buyer their deck(s) are ready,
+    // in-app + push. Best-effort; never blocks the grant / response.
+    if (issuedLicenses.length > 0)
+    {
+        try
+        {
+            await NotificationDispatcher.dispatch(session.getUserId(), NotificationContent.deckPurchaseComplete(issuedLicenses.length), notificationChannels.IN_APP | notificationChannels.PUSH);
+        }
+        catch (notifyError)
+        {
+            console.warn(`[VerifyPurchase] Failed to dispatch purchase-complete notification for order ${providerOrderId}: ${notifyError.message}`);
+        }
+    }
 
     // Invoice the paid acquisition (customer purchase) — best-effort, never
     // blocks the grant. Uses the server-recomputed total, not the client body.

@@ -1,8 +1,12 @@
 const OrganizationQueryEngine = require("../../Globals/Classes/Organization/OrganizationQueryEngine");
 const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
 const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/OrganizationAutoAssigner");
+const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
+const NotificationDispatcher = require("../../Globals/Classes/Notifications/NotificationDispatcher");
+const NotificationContent = require("../../Globals/Classes/Notifications/NotificationContent");
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
 const { userRoles } = require("../../Globals/Enumerations/UserRoles");
+const { notificationChannels } = require("../../Globals/Enumerations/NotificationChannels");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
@@ -105,6 +109,24 @@ async function addOrganizationMember(request, response)
     // it up via applyFreePerksOnLogin. The auto-assigner is already
     // best-effort internally (catches its own errors).
     const autoAssignResult = await OrganizationAutoAssigner.applyFreePerksForMember(organizationId, submittedEmail);
+
+    // Notify the added member — but only if they already have an account. New
+    // invitees (no user row yet) can't be addressed by userId and will discover
+    // the org on first login (applyFreePerksOnLogin). Best-effort; never blocks
+    // the response.
+    try
+    {
+        const addedUser = await AuthenticationQueryEngine.getUserByEmail(submittedEmail);
+        if (addedUser)
+        {
+            const organizationName = organization.getName ? organization.getName() : "";
+            await NotificationDispatcher.dispatch(addedUser.getId(), NotificationContent.addedToOrganization(organizationName), notificationChannels.IN_APP | notificationChannels.PUSH);
+        }
+    }
+    catch (notifyError)
+    {
+        console.warn(`[AddOrganizationMember] Failed to dispatch org-member notification for ${submittedEmail}: ${notifyError.message}`);
+    }
 
     response.statusCode = httpStatus.OK;
     response.sendJson

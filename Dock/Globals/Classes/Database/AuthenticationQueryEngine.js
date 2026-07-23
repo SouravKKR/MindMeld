@@ -346,6 +346,22 @@ class AuthenticationQueryEngine
             { upsert: true }
         );
 
+        // A genuinely first-seen device — the one clean "new sign-in" signal
+        // (resolveOrCreateDevice returns the same shape for a returning device).
+        // Security notice: in-app + push. Lazy-required so this boot-critical
+        // module never pulls the notification stack at load; best-effort.
+        try
+        {
+            const NotificationDispatcher = require("../Notifications/NotificationDispatcher");
+            const NotificationContent = require("../Notifications/NotificationContent");
+            const { notificationChannels } = require("../../Enumerations/NotificationChannels");
+            await NotificationDispatcher.dispatch(userId, NotificationContent.newDeviceSignIn(device.getDeviceName()), notificationChannels.IN_APP | notificationChannels.PUSH);
+        }
+        catch (notifyError)
+        {
+            console.warn(`[AuthenticationQueryEngine] Failed to dispatch new-device notification for ${userId}: ${notifyError.message}`);
+        }
+
         return device;
     }
 

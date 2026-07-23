@@ -1,0 +1,183 @@
+/* StorageManagerDialog — a tabbed "Manage storage" modal (Decks tree + Uploads
+   list) hosted inside a dialog-box. */
+
+.storage-manager
+{
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: 520px;
+    max-width: 100%;
+}
+
+.storage-manager-title
+{
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--primary-text-color);
+}
+
+.storage-manager-tabs
+{
+    display: flex;
+    gap: 8px;
+    border-bottom: 1px solid var(--outline-color-subtle);
+}
+
+.storage-manager-tab
+{
+    background: none;
+    border: none;
+    padding: 8px 14px;
+    font-size: 0.95rem;
+    color: var(--secondary-text-color);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+}
+
+.storage-manager-tab-active
+{
+    color: var(--primary-text-color);
+    border-bottom-color: var(--accent-color);
+    font-weight: 600;
+}
+
+.storage-manager-panel
+{
+    max-height: 50dvh;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.storage-manager-empty
+{
+    font-size: 0.85rem;
+    color: var(--secondary-text-color);
+    text-align: center;
+    padding: 28px 0;
+}
+
+/* ── Decks tree ─────────────────────────────────────────────────────────── */
+
+.storage-manager-tree
+{
+    display: flex;
+    flex-direction: column;
+}
+
+.storage-manager-tree-row
+{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 6px;
+    border-radius: 6px;
+}
+
+.storage-manager-tree-row:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.storage-manager-tree-caret
+{
+    flex-shrink: 0;
+    width: 14px;
+    text-align: center;
+    color: var(--secondary-text-color);
+    cursor: pointer;
+    user-select: none;
+}
+
+.storage-manager-tree-caret-empty
+{
+    cursor: default;
+}
+
+.storage-manager-tree-name
+{
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--primary-text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.storage-manager-tree-size
+{
+    flex-shrink: 0;
+    font-size: 0.8rem;
+    color: var(--secondary-text-color);
+    font-variant-numeric: tabular-nums;
+}
+
+.storage-manager-tree-delete,
+.storage-manager-upload-delete
+{
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--danger-text-color);
+    background-color: rgba(220, 80, 80, 0.12);
+    border: 1px solid rgba(220, 80, 80, 0.3);
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+}
+
+.storage-manager-tree-delete:hover,
+.storage-manager-upload-delete:hover
+{
+    background-color: rgba(220, 80, 80, 0.22);
+}
+
+.storage-manager-tree-paid
+{
+    flex-shrink: 0;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--highlight-color);
+    background-color: rgba(245, 184, 56, 0.12);
+    border: 1px solid rgba(245, 184, 56, 0.3);
+    border-radius: 6px;
+    padding: 4px 10px;
+}
+
+/* ── Uploads list ───────────────────────────────────────────────────────── */
+
+.storage-manager-upload-list
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.storage-manager-upload-row
+{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--outline-color-subtle);
+    background-color: var(--secondary-background-color);
+}
+
+.storage-manager-upload-name
+{
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--primary-text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.storage-manager-upload-size
+{
+    flex-shrink: 0;
+    font-size: 0.8rem;
+    color: var(--secondary-text-color);
+    font-variant-numeric: tabular-nums;
+}

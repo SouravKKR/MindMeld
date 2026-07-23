@@ -6,6 +6,7 @@ const { handleAutoFillOptions } = require("./AutomaticGeneration/AutoFillOptions
 const { handleInformationSourceUpload } = require("./AutomaticGeneration/InformationSourceUpload");
 const { handleListInformationSourcesForUser } = require("./AutomaticGeneration/ListInformationSourcesForUser");
 const { handleInformationSourceDownload } = require("./AutomaticGeneration/InformationSourceDownload");
+const { handleInformationSourceDelete } = require("./AutomaticGeneration/InformationSourceDelete");
 const { handleGetProgress } = require("./AutomaticGeneration/GetProgress");
 const { handlePauseGeneration } = require("./AutomaticGeneration/PauseGeneration");
 const { handleTemplatesSearch } = require("./AutomaticGeneration/TemplatesSearch");
@@ -79,6 +80,15 @@ function handleAutomaticGenerationEndpoints(server)
         routePath: `/InformationSource/Download`,
         handler: handleInformationSourceDownload,
         method: PacketronRequestMethod.GET,
+        plugins: [ ensureLogin ]
+    });
+
+    server.handle
+    ({
+        routePath: `/InformationSource/Delete`,
+        handler: handleInformationSourceDelete,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
         plugins: [ ensureLogin ]
     });
 

@@ -13,6 +13,9 @@ const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const MaintenanceGate = require("../../Globals/Classes/Maintenance/MaintenanceGate");
 const PlanEntitlementGate = require("../../Globals/Classes/Plans/PlanEntitlementGate");
 const { planFeatures } = require("../../Globals/Enumerations/PlanFeatures");
+const NotificationDispatcher = require("../../Globals/Classes/Notifications/NotificationDispatcher");
+const NotificationContent = require("../../Globals/Classes/Notifications/NotificationContent");
+const { notificationChannels } = require("../../Globals/Enumerations/NotificationChannels");
 
 
 /**
@@ -157,6 +160,9 @@ async function handleQueueDeckAnalysis(request, response)
         {
             try { await TaskStateManager.save({ userId: user.getId(), taskType: taskTypes.ANALYZE_DECK_PERFORMANCE, route: "/Analysis/QueueDeckAnalysis", payload: body, pausedReason: creditPreflight.reason }); }
             catch (saveError) { console.warn(`[QueueDeckAnalysis] Failed to save resumable task state: ${saveError.message}`); }
+
+            try { await NotificationDispatcher.dispatch(user.getId(), NotificationContent.outOfCredits("deckAnalysis"), notificationChannels.IN_APP); }
+            catch (notifyError) { console.warn(`[QueueDeckAnalysis] Failed to dispatch out-of-credits notification: ${notifyError.message}`); }
         }
         response.statusCode = httpStatus.PAYMENT_REQUIRED;
         response.sendJson({ error: creditPreflight.reason, balance: creditPreflight.balance, required: creditPreflight.required, resumable: bIsResumable });
@@ -199,9 +205,11 @@ async function handleQueueDeckAnalysis(request, response)
     TaskManager.execute(analyzeDeckPerformanceTask)
         .then(async () =>
         {
+            let bAnalysisSucceeded = false;
             try
             {
                 const completedTask = await TaskManager.getTask(taskId);
+                bAnalysisSucceeded = completedTask && completedTask.getStatus() !== taskStatus.FAILED;
                 await TaskHistoryQueryEngine.recordCompletion(completedTask);
             }
             catch (recordError)
@@ -209,6 +217,20 @@ async function handleQueueDeckAnalysis(request, response)
                 console.error(`[QueueDeckAnalysis] Failed to record taskHistory for ${taskId}: ${recordError.message}`);
             }
             await TaskManager.untrackForUser(user.getId(), taskId);
+
+            // Curated study material (and the refreshed analysis) is ready —
+            // notify in-app + push, success only. Never throws into the handler.
+            if (bAnalysisSucceeded)
+            {
+                try
+                {
+                    await NotificationDispatcher.dispatch(user.getId(), NotificationContent.deckAnalysisComplete(deckId), notificationChannels.IN_APP | notificationChannels.PUSH);
+                }
+                catch (notifyError)
+                {
+                    console.warn(`[QueueDeckAnalysis] Failed to dispatch deck-analysis notification for ${taskId}: ${notifyError.message}`);
+                }
+            }
         })
         .catch(async (executionError) =>
         {

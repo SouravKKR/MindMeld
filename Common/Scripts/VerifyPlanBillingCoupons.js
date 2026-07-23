@@ -10,6 +10,7 @@ const assert = require("assert");
 
 const PlanMetadata = require("../../Dock/Globals/Classes/Plans/PlanMetadata");
 const PlanTierResolver = require("../../Dock/Globals/Classes/Plans/PlanTierResolver");
+const StorageQuotaEnforcer = require("../../Dock/Globals/Classes/Storage/StorageQuotaEnforcer");
 const CouponResolver = require("../../Dock/Globals/Classes/Coupons/CouponResolver");
 const DurationConverter = require("../../Dock/Globals/Classes/Plans/DurationConverter");
 const Coupon = require("../../Dock/Globals/Classes/Coupons/Coupon");
@@ -54,6 +55,18 @@ PlanMetadata.applyFeatureAccessOverride({ FREE: ["ASK_AI", "CHAT", "AUTOMATIC_GE
 check("override unlocks generation for Free", PlanMetadata.hasFeature(planTiers.FREE, planFeatures.AUTOMATIC_GENERATION));
 PlanMetadata.clearFeatureAccessOverride();
 check("clearing override restores defaults", !PlanMetadata.hasFeature(planTiers.FREE, planFeatures.AUTOMATIC_GENERATION));
+
+// ── StorageQuotaEnforcer: combined-budget at-the-cap decision ──────────────
+// Uploads now share the single plan cap with deck content, so the upload
+// pre-check compares (used + fileSize) against the limit. Exercise the pure
+// boundary logic — the risky part is the at-cap edge and a bad file size.
+const twentyMegabytes = 20 * 1024 * 1024;
+check("upload that stays under cap fits", StorageQuotaEnforcer.fitsWithinLimit(10 * 1024 * 1024, 5 * 1024 * 1024, twentyMegabytes));
+check("upload exactly filling the cap fits", StorageQuotaEnforcer.fitsWithinLimit(15 * 1024 * 1024, 5 * 1024 * 1024, twentyMegabytes));
+check("upload one byte over the cap is refused", !StorageQuotaEnforcer.fitsWithinLimit(15 * 1024 * 1024, 5 * 1024 * 1024 + 1, twentyMegabytes));
+check("already over cap refuses any growth", !StorageQuotaEnforcer.fitsWithinLimit(twentyMegabytes + 1, 0, twentyMegabytes));
+check("negative addition treated as zero (used==limit still fits)", StorageQuotaEnforcer.fitsWithinLimit(twentyMegabytes, -100, twentyMegabytes));
+check("non-finite file size treated as zero", StorageQuotaEnforcer.fitsWithinLimit(5 * 1024 * 1024, NaN, twentyMegabytes));
 
 // ── PlanTierResolver: read-time expiry ─────────────────────────────────────
 const future = Date.now() + 86400000;

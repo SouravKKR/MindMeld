@@ -1,6 +1,9 @@
 const CreditLedger = require('./CreditLedger');
+const NotificationDispatcher = require('../Notifications/NotificationDispatcher');
+const NotificationContent = require('../Notifications/NotificationContent');
 const { creditTransactionTypes } = require('../../Enumerations/CreditTransactionTypes');
 const { creditGrantAmountModes } = require('../../Enumerations/CreditGrantAmountModes');
+const { notificationChannels } = require('../../Enumerations/NotificationChannels');
 
 /**
  * CreditGrantExecutor
@@ -91,6 +94,20 @@ class CreditGrantExecutor
                 alreadyApplied: outcome.alreadyApplied === true,
                 balanceAfter: typeof outcome.balanceAfter === "number" ? outcome.balanceAfter : null
             });
+
+            // Tell the recipient an admin added credits — only on a genuine
+            // first-time apply (not a replay). In-app + push; best-effort.
+            if (outcome.applied === true && outcome.alreadyApplied !== true)
+            {
+                try
+                {
+                    await NotificationDispatcher.dispatch(recipient.userId, NotificationContent.creditsGrantedByAdmin(grantRequest.perUserAmount), notificationChannels.IN_APP | notificationChannels.PUSH);
+                }
+                catch (notifyError)
+                {
+                    console.warn(`[CreditGrantExecutor] Failed to dispatch admin-grant notification for ${recipient.userId}: ${notifyError.message}`);
+                }
+            }
         }
 
         return results;

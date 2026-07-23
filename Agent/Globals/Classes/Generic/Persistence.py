@@ -1,56 +1,21 @@
-import base64
-import json
 import os
 import re
 
 import boto3
 from botocore.exceptions import ClientError
-from google.cloud import storage
-from google.cloud.storage import Client, Bucket
 from Globals.Enumerations.StorageTargets import StorageTargets
-from Globals.Utility.EnvironmentLoader import EnvironmentLoader
 
 
 class Persistence:
-    __GOOGLE_CLOUD_STORAGE_BUCKET_NAME = "cogniumlearn-bucket"
-    # Linode Object Storage is S3-compatible and shares the bucket name with the
-    # legacy Google Cloud Storage bucket, so object paths never change across
-    # providers. Credentials and endpoint come from the environment
-    # (LINODE_STORAGE_BUCKET_ACCESS_KEY / LINODE_STORAGE_BUCKET_SECRET /
+    # Linode Object Storage is S3-compatible. Credentials and endpoint come from
+    # the environment (LINODE_STORAGE_BUCKET_ACCESS_KEY / LINODE_STORAGE_BUCKET_SECRET /
     # LINODE_S3_ENDPOINT_HOSTNAMES).
     __LINODE_OBJECT_STORAGE_BUCKET_NAME = "cogniumlearn-bucket"
     __default_storage_target = StorageTargets.LINODE_OBJECT_STORAGE
     __INFORMATION_SOURCE_DIRECTORY = "InformationSources"
     __TASKS_DIRECTORY = "Tasks"
 
-    __storage_client: Client = None
-    __bucket: Bucket = None
     __linode_object_storage_client = None
-
-    @staticmethod
-    def __initialize_google_cloud_storage():
-        if Persistence.__storage_client is None:
-            # Burst workers run this Agent in a container with no repo Common/
-            # directory, so the storage service-account key is injected as base64 env
-            # (never baked into the image — see Agent/.dockerignore + Dock's
-            # BurstFleetSettings). On the base node no such variable is set and the key
-            # is read from disk: Common/Credentials/cogniumlearn-storage.<environment>.json,
-            # selected per environment exactly the way EnvironmentLoader/Dock resolve
-            # it, so every service authenticates with its own environment's credential.
-            storage_credentials_base64 = os.getenv("COGNIUMLEARN_STORAGE_CREDENTIALS_BASE64")
-            if storage_credentials_base64:
-                credentials_info = json.loads(base64.b64decode(storage_credentials_base64))
-                Persistence.__storage_client = storage.Client.from_service_account_info(credentials_info)
-            else:
-                environment_name = EnvironmentLoader.resolve_environment_name()
-                credentials_path = os.path.join(
-                    os.path.dirname(__file__), "..", "..", "..", "..",
-                    "Common", "Credentials", f"cogniumlearn-storage.{environment_name}.json"
-                )
-                Persistence.__storage_client = storage.Client.from_service_account_json(credentials_path)
-            Persistence.__bucket = Persistence.__storage_client.bucket(
-                Persistence.__GOOGLE_CLOUD_STORAGE_BUCKET_NAME
-            )
 
     @staticmethod
     def __resolve_linode_endpoint_hostname():
@@ -91,15 +56,6 @@ class Persistence:
             with open(file_path, mode) as file_handle:
                 file_handle.write(data)
 
-        elif target == StorageTargets.GOOGLE_CLOUD_STORAGE:
-            Persistence.__initialize_google_cloud_storage()
-            blob = Persistence.__bucket.blob(file_path)
-            blob.cache_control = "public, max-age=31536000"
-            if isinstance(data, (bytes, bytearray)):
-                blob.upload_from_string(data)
-            else:
-                blob.upload_from_string(data.encode())
-
         elif target == StorageTargets.LINODE_OBJECT_STORAGE:
             Persistence.__initialize_linode_object_storage()
             body = data if isinstance(data, (bytes, bytearray)) else data.encode()
@@ -119,11 +75,6 @@ class Persistence:
             with open(file_path, "rb") as file_handle:
                 return file_handle.read()
 
-        elif target == StorageTargets.GOOGLE_CLOUD_STORAGE:
-            Persistence.__initialize_google_cloud_storage()
-            blob = Persistence.__bucket.blob(file_path)
-            return blob.download_as_bytes()
-
         elif target == StorageTargets.LINODE_OBJECT_STORAGE:
             Persistence.__initialize_linode_object_storage()
             response = Persistence.__linode_object_storage_client.get_object(
@@ -139,11 +90,6 @@ class Persistence:
 
         if target == StorageTargets.LOCAL_FILE_SYSTEM:
             return os.path.exists(file_path)
-
-        elif target == StorageTargets.GOOGLE_CLOUD_STORAGE:
-            Persistence.__initialize_google_cloud_storage()
-            blob = Persistence.__bucket.blob(file_path)
-            return blob.exists()
 
         elif target == StorageTargets.LINODE_OBJECT_STORAGE:
             Persistence.__initialize_linode_object_storage()
@@ -165,11 +111,6 @@ class Persistence:
 
         if target == StorageTargets.LOCAL_FILE_SYSTEM:
             os.remove(file_path)
-
-        elif target == StorageTargets.GOOGLE_CLOUD_STORAGE:
-            Persistence.__initialize_google_cloud_storage()
-            blob = Persistence.__bucket.blob(file_path)
-            blob.delete()
 
         elif target == StorageTargets.LINODE_OBJECT_STORAGE:
             Persistence.__initialize_linode_object_storage()
@@ -196,11 +137,6 @@ class Persistence:
 
             return file_paths
 
-        elif target == StorageTargets.GOOGLE_CLOUD_STORAGE:
-            Persistence.__initialize_google_cloud_storage()
-            blobs = Persistence.__bucket.list_blobs(prefix=prefix)
-            return [blob.name for blob in blobs]
-
         elif target == StorageTargets.LINODE_OBJECT_STORAGE:
             Persistence.__initialize_linode_object_storage()
             object_keys = []
@@ -223,11 +159,7 @@ class Persistence:
         if destination_target is None:
             destination_target = Persistence.__default_storage_target
 
-        if source_target == StorageTargets.GOOGLE_CLOUD_STORAGE and destination_target == StorageTargets.GOOGLE_CLOUD_STORAGE:
-            Persistence.__initialize_google_cloud_storage()
-            blob = Persistence.__bucket.blob(source)
-            Persistence.__bucket.rename_blob(blob, destination)
-        elif source_target == StorageTargets.LINODE_OBJECT_STORAGE and destination_target == StorageTargets.LINODE_OBJECT_STORAGE:
+        if source_target == StorageTargets.LINODE_OBJECT_STORAGE and destination_target == StorageTargets.LINODE_OBJECT_STORAGE:
             Persistence.__initialize_linode_object_storage()
             Persistence.__linode_object_storage_client.copy_object(
                 Bucket=Persistence.__LINODE_OBJECT_STORAGE_BUCKET_NAME,

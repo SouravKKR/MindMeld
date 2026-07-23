@@ -1,0 +1,123 @@
+/* StorageMeter — a two-segment plan-storage usage bar (Decks + Uploads share
+   one plan cap). Colours follow the app identity: teal accent for decks, gold
+   highlight for uploads, red when the account is over its cap. */
+
+.storage-meter
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+}
+
+.storage-meter-header
+{
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.storage-meter-title
+{
+    font-weight: 600;
+    color: var(--primary-text-color);
+}
+
+.storage-meter-summary
+{
+    font-size: 0.85rem;
+    color: var(--secondary-text-color);
+}
+
+.storage-meter-summary--pending
+{
+    font-style: italic;
+}
+
+.storage-meter-summary--over
+{
+    color: var(--danger-text-color);
+    font-weight: 600;
+}
+
+.storage-meter-track
+{
+    display: flex;
+    width: 100%;
+    height: 10px;
+    border-radius: 6px;
+    overflow: hidden;
+    background-color: var(--tertiary-background-color);
+}
+
+.storage-meter-fill
+{
+    height: 100%;
+    transition: width 0.3s ease;
+}
+
+.storage-meter-fill--decks
+{
+    background-color: var(--accent-color);
+}
+
+.storage-meter-fill--uploads
+{
+    background-color: var(--highlight-color);
+}
+
+/* Over quota — recolour both filled segments red so the whole (full) bar reads
+   as a warning. */
+.storage-meter-track--over .storage-meter-fill--decks,
+.storage-meter-track--over .storage-meter-fill--uploads
+{
+    background-color: var(--status-failed);
+}
+
+.storage-meter-legend
+{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 16px;
+    font-size: 0.8rem;
+    color: var(--secondary-text-color);
+}
+
+.storage-meter-legend-item
+{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.storage-meter-swatch
+{
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+}
+
+.storage-meter-swatch--decks
+{
+    background-color: var(--accent-color);
+}
+
+.storage-meter-swatch--uploads
+{
+    background-color: var(--highlight-color);
+}
+
+.storage-meter-legend-free
+{
+    margin-left: auto;
+}
+
+.storage-meter-legend-over
+{
+    margin-left: auto;
+    color: var(--danger-text-color);
+    font-weight: 600;
+}

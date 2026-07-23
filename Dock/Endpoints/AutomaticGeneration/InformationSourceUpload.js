@@ -10,6 +10,7 @@ const InformationSourceQueryEngine = require("../../Globals/Classes/Database/Inf
 const PersistenceConstants = require("../../Globals/Constants/PersistenceConstants");
 const { joinPath } = require("../../Globals/UtilityFunctions.js/JoinPath");
 const UploadQuotaManager = require("../../Globals/Classes/Quotas/UploadQuotaManager");
+const StorageQuotaEnforcer = require("../../Globals/Classes/Storage/StorageQuotaEnforcer");
 const TaskManager = require("../../Globals/Classes/Task/TaskManager");
 const TaskDescriptor = require("../../Globals/Classes/Task/TaskDescriptor");
 const { taskTypes } = require("../../Globals/Enumerations/TaskTypes");
@@ -134,6 +135,9 @@ async function finalizeOcrUploadInBackground({ trackingTask, localStagingFilePat
         // OCR done — the OCRed PDF now lives at the content path. Persist the row.
         await InformationSourceQueryEngine.saveInformationSource(informationSource);
         await uploadQuotaManager.record(userId, fileSizeBytes);
+        // The upload grew the user's footprint — drop the cached measurement so
+        // the next storage-meter read (and the next quota check) re-measures.
+        StorageQuotaEnforcer.invalidate(userId);
 
         await markTrackingTaskTerminal(trackingTask, taskStatus.COMPLETED, null);
     }
@@ -229,6 +233,21 @@ async function handleInformationSourceUpload(request, response)
         return;
     }
 
+    // Persistent plan storage cap. Uploads share the single storage budget with
+    // synced deck content (StorageQuotaEnforcer counts both), so a file that
+    // would push the combined footprint over the plan cap is refused here BEFORE
+    // the blob is stored — the daily throttle above is a separate anti-abuse
+    // limit, not the cumulative cap the Settings storage meter shows.
+    if (!(await StorageQuotaEnforcer.wouldFitWithinQuota(user.getId(), fileSizeBytes)))
+    {
+        response.statusCode = httpStatus.PAYLOAD_TOO_LARGE;
+        response.sendJson({
+            error: ErrorCodes.STORAGE_QUOTA_EXCEEDED,
+            limitBytes: await StorageQuotaEnforcer.getLimitBytes(user.getId())
+        });
+        return;
+    }
+
     const metadataJson = JSON.parse(queryParams.metadata);
     const informationSource = InformationSource.fromJson(metadataJson);
 
@@ -277,6 +296,9 @@ async function handleInformationSourceUpload(request, response)
     {
         await InformationSourceQueryEngine.saveInformationSource(informationSource);
         await uploadQuotaManager.record(user.getId(), fileSizeBytes);
+        // The upload grew the user's footprint — drop the cached measurement so
+        // the next storage-meter read (and the next quota check) re-measures.
+        StorageQuotaEnforcer.invalidate(user.getId());
         response.sendJson(informationSource.toJson());
         return;
     }

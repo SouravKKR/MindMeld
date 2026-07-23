@@ -118,6 +118,60 @@ class App
         return process.env.SMTP_SOURCE_EMAIL || "";
     }
 
+    /**
+     * The provider-neutral "from" address every outbound email uses. Prefers
+     * the dedicated EMAIL_SOURCE_EMAIL and falls back to the legacy
+     * SMTP_SOURCE_EMAIL so existing deployments keep working. With SES this
+     * must be a verified SES identity (email or domain).
+     */
+    static getEmailSourceEmail()
+    {
+        return process.env.EMAIL_SOURCE_EMAIL || process.env.SMTP_SOURCE_EMAIL || "";
+    }
+
+    static getSesRegion()
+    {
+        return process.env.SES_REGION || "";
+    }
+
+    static getSesAccessKeyId()
+    {
+        return process.env.SES_ACCESS_KEY_ID || "";
+    }
+
+    static getSesSecretAccessKey()
+    {
+        return process.env.SES_SECRET_ACCESS_KEY || "";
+    }
+
+    // ── Firebase Cloud Messaging (push notifications) ────────────────────────
+    // A Firebase service account authorises the backend to send FCM pushes to
+    // web / Android / iOS devices. The three cert() fields come from the
+    // downloaded service-account JSON. FIREBASE_VAPID_KEY is the Web Push
+    // public key the browser client needs to obtain an FCM token. All are
+    // env-then-GSM placeholders (same pattern as the SES creds).
+    static getFirebaseProjectId()
+    {
+        return process.env.FIREBASE_PROJECT_ID || "";
+    }
+
+    static getFirebaseClientEmail()
+    {
+        return process.env.FIREBASE_CLIENT_EMAIL || "";
+    }
+
+    static getFirebasePrivateKey()
+    {
+        // Private keys are stored in env as a single line with literal "\n"
+        // escape sequences; restore the real newlines cert() expects.
+        return (process.env.FIREBASE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+    }
+
+    static getFirebaseVapidKey()
+    {
+        return process.env.FIREBASE_VAPID_KEY || "";
+    }
+
     static getRazorpayWebhookSecret()
     {
         return process.env.RAZORPAY_WEBHOOK_SECRET || "";

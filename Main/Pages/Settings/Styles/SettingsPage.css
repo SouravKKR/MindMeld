@@ -275,6 +275,39 @@ settings-page
 
 /* ── Redeem promo code ───────────────────────────────────────────────────── */
 
+.settings-storage-section
+{
+    margin-top: 16px;
+    padding: 16px;
+    border: 1px solid var(--outline-color-subtle);
+    border-radius: 8px;
+    background-color: var(--secondary-background-color);
+}
+
+.settings-storage-actions
+{
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 12px;
+}
+
+.settings-storage-manage-button
+{
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary-text-color);
+    background-color: var(--tertiary-background-color);
+    border: 1px solid var(--outline-color-subtle);
+    border-radius: 8px;
+    padding: 8px 16px;
+    cursor: pointer;
+}
+
+.settings-storage-manage-button:hover
+{
+    background-color: var(--quaternary-background-color);
+}
+
 .settings-promo-redeem
 {
     margin-top: 24px;

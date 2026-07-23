@@ -5,6 +5,7 @@ const PlanReconciler = require("../../Globals/Classes/Plans/PlanReconciler");
 const StreakManager = require("../../Globals/Classes/Streak/StreakManager");
 const LegalAcceptanceService = require("../../Globals/Classes/Authentication/LegalAcceptanceService");
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
+const StorageQuotaEnforcer = require("../../Globals/Classes/Storage/StorageQuotaEnforcer");
 
 async function handleGetUser(request, response)
 {
@@ -91,8 +92,26 @@ async function handleGetUser(request, response)
         console.warn(`[HandleGetUser] Streak update failed for ${user.getId()}: ${streakError?.message || streakError}`);
     }
 
+    // Attach the live storage picture as a transient sibling of the user JSON
+    // (NOT inside additionalData — it is measured, never persisted). GetUser is
+    // the channel the client already refreshes for the credit balance, so the
+    // Settings storage meter rides the same fetch. The enforcer memoises the
+    // measurement for 30s, so bootstrap/refresh bursts don't re-aggregate. A
+    // measurement failure must never block the response — omit the field and let
+    // the client fall back to its cached/empty state.
+    const responseJson = user.toJson();
+    try
+    {
+        responseJson.storageUsage = await StorageQuotaEnforcer.getUsageBreakdown(user.getId());
+    }
+    catch (storageUsageError)
+    {
+        console.warn(`[HandleGetUser] Storage usage measurement failed for ${user.getId()}: ${storageUsageError?.message || storageUsageError}`);
+        responseJson.storageUsage = null;
+    }
+
     response.statusCode = httpStatus.OK;
-    response.sendJson(user.toJson());
+    response.sendJson(responseJson);
 }
 
 module.exports = { handleGetUser };

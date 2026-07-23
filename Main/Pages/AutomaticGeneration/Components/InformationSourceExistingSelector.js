@@ -2,6 +2,8 @@ import InformationSource from "../../../Globals/Model/InformationSource.js";
 import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
 import { enumerationToTitleCase } from "../../../Globals/UtilityFunctions/EnumerationToTitleCase.js";
 import { informationSourceTypes } from "../../../Globals/Enumerations/InformationSourceTypes.js";
+import { formatBytes } from "../../../Globals/UtilityFunctions/FormatBytes.js";
+import DialogBox from "../../../CommonComponents/DialogBox.js";
 
 class InformationSourceExistingSelector extends HTMLElement
 {
@@ -124,6 +126,24 @@ class InformationSourceExistingSelector extends HTMLElement
                     border-radius: 4px;
                     padding: 1px 6px;
                 }
+
+                .existing-selector-item-delete
+                {
+                    flex-shrink: 0;
+                    font-size: 0.75rem;
+                    font-weight: 600;
+                    color: var(--danger-text-color, #f8a8a8);
+                    background-color: rgba(220, 80, 80, 0.12);
+                    border: 1px solid rgba(220, 80, 80, 0.3);
+                    border-radius: 6px;
+                    padding: 5px 10px;
+                    cursor: pointer;
+                }
+
+                .existing-selector-item-delete:hover
+                {
+                    background-color: rgba(220, 80, 80, 0.22);
+                }
             </style>
 
             <div class="existing-selector-list">
@@ -199,7 +219,12 @@ class InformationSourceExistingSelector extends HTMLElement
             key => informationSourceTypes[key] === informationSource.getSourceType()
         ) ?? "";
 
-        meta.textContent = sourceTypeKey.length > 0 ? enumerationToTitleCase(sourceTypeKey) : "";
+        // Meta line shows the source type and the stored file size, so a user
+        // deciding what to delete can see how much each source is costing them.
+        const sourceTypeLabel = sourceTypeKey.length > 0 ? enumerationToTitleCase(sourceTypeKey) : "";
+        const fileSizeBytes = informationSource.getFileSizeBytes() ?? 0;
+        const sizeLabel = fileSizeBytes > 0 ? formatBytes(fileSizeBytes) : "";
+        meta.textContent = [sourceTypeLabel, sizeLabel].filter(part => part.length > 0).join(" · ");
 
         details.appendChild(name);
         details.appendChild(meta);
@@ -216,9 +241,23 @@ class InformationSourceExistingSelector extends HTMLElement
             tagsContainer.appendChild(tagElement);
         }
 
+        const deleteButton = document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.classList.add("existing-selector-item-delete");
+        deleteButton.textContent = "Delete";
+
+        // The whole row is the "select this source" click target, so the delete
+        // button must stop propagation — a delete must never also select.
+        deleteButton.addEventListener("click", (clickEvent) =>
+        {
+            clickEvent.stopPropagation();
+            this.#handleDelete(informationSource);
+        });
+
         item.appendChild(icon);
         item.appendChild(details);
         item.appendChild(tagsContainer);
+        item.appendChild(deleteButton);
 
         item.addEventListener("click", () =>
         {
@@ -230,6 +269,46 @@ class InformationSourceExistingSelector extends HTMLElement
         });
 
         return item;
+    }
+
+    async #handleDelete(informationSource)
+    {
+        const sourceName = informationSource.getName() ?? "this source";
+        const confirmed = await DialogBox.confirm(
+            "Delete source",
+            `Delete "${sourceName}"? This permanently removes the uploaded file and frees its storage. This cannot be undone.`
+        );
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        try
+        {
+            const response = await fetch("/InformationSource/Delete",
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({ informationSourceId: informationSource.getId() })
+            });
+
+            if (!response.ok)
+            {
+                await DialogBox.alert("Delete failed", "The source could not be deleted. Please try again later.");
+                return;
+            }
+        }
+        catch (deleteError)
+        {
+            console.error("[InformationSourceExistingSelector] Delete request failed:", deleteError);
+            await DialogBox.alert("Delete failed", "Could not reach the server. Please try again later.");
+            return;
+        }
+
+        // Repaint the list in place so the removed source disappears immediately.
+        await this.#loadSources();
     }
 }
 

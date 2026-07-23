@@ -1,6 +1,9 @@
 const UserSubscriptionQueryEngine = require("../Database/UserSubscriptionQueryEngine");
 const PlanSubscriptionService = require("./PlanSubscriptionService");
+const NotificationDispatcher = require("../Notifications/NotificationDispatcher");
+const NotificationContent = require("../Notifications/NotificationContent");
 const { subscriptionStatuses } = require("../../Enumerations/SubscriptionStatuses");
+const { notificationChannels } = require("../../Enumerations/NotificationChannels");
 const ErrorCodes = require("../../Constants/ErrorCodes");
 
 // Turns a verified Razorpay subscription webhook into plan side effects. Keeps
@@ -55,6 +58,7 @@ class SubscriptionWebhookProcessor
             case "subscription.authenticated":
             case "subscription.activated":
                 await PlanSubscriptionService.applyActivation(subscription, { currentPeriodStartMs: currentPeriodStartMs, currentPeriodEndMs: currentPeriodEndMs });
+                await SubscriptionWebhookProcessor.#notify(subscription, NotificationContent.subscriptionActivated(), notificationChannels.IN_APP);
                 return { handled: true, applied: "ACTIVATION" };
 
             case "subscription.charged":
@@ -63,6 +67,7 @@ class SubscriptionWebhookProcessor
                 // idempotently on the charge payment id, then extend entitlement.
                 const razorpayPaymentId = payload?.payload?.payment?.entity?.id || "";
                 await PlanSubscriptionService.applyChargedCycle(subscription, { razorpayPaymentId: razorpayPaymentId, currentPeriodStartMs: currentPeriodStartMs, currentPeriodEndMs: currentPeriodEndMs });
+                await SubscriptionWebhookProcessor.#notify(subscription, NotificationContent.subscriptionRenewed(), notificationChannels.IN_APP | notificationChannels.PUSH);
                 return { handled: true, applied: "CHARGED" };
             }
 
@@ -70,24 +75,45 @@ class SubscriptionWebhookProcessor
                 // A charge failed; Razorpay will retry. GRACE — do NOT shorten
                 // planExpiresAt; the user keeps access through the retry window.
                 await PlanSubscriptionService.applyStatus(subscription, subscriptionStatuses.PENDING);
+                await SubscriptionWebhookProcessor.#notify(subscription, NotificationContent.subscriptionPaymentPending(), notificationChannels.IN_APP | notificationChannels.PUSH);
                 return { handled: true, applied: "PENDING" };
 
             case "subscription.halted":
                 // Retries exhausted. Still GRACE at the entitlement level — access
                 // holds until planExpiresAt, then read-time expiry drops to FREE.
                 await PlanSubscriptionService.applyStatus(subscription, subscriptionStatuses.HALTED);
+                await SubscriptionWebhookProcessor.#notify(subscription, NotificationContent.subscriptionHalted(), notificationChannels.IN_APP | notificationChannels.PUSH);
                 return { handled: true, applied: "HALTED" };
 
             case "subscription.cancelled":
                 await PlanSubscriptionService.applyStatus(subscription, subscriptionStatuses.CANCELLED);
+                await SubscriptionWebhookProcessor.#notify(subscription, NotificationContent.subscriptionCancelled(), notificationChannels.IN_APP | notificationChannels.PUSH);
                 return { handled: true, applied: "CANCELLED" };
 
             case "subscription.completed":
                 await PlanSubscriptionService.applyStatus(subscription, subscriptionStatuses.COMPLETED);
+                await SubscriptionWebhookProcessor.#notify(subscription, NotificationContent.subscriptionCompleted(), notificationChannels.IN_APP);
                 return { handled: true, applied: "COMPLETED" };
 
             default:
                 return { handled: false, reason: "EVENT_IGNORED" };
+        }
+    }
+
+    /**
+     * Best-effort per-subscriber notification. A notification failure must
+     * never fail the webhook (which would make Razorpay retry the whole event),
+     * so every error is swallowed with a warning.
+     */
+    static async #notify(subscription, content, channelFlags)
+    {
+        try
+        {
+            await NotificationDispatcher.dispatch(subscription.getUserId(), content, channelFlags);
+        }
+        catch (notifyError)
+        {
+            console.warn(`[SubscriptionWebhookProcessor] Failed to dispatch subscription notification for ${subscription.getUserId()}: ${notifyError.message}`);
         }
     }
 }

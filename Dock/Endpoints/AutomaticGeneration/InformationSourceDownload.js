@@ -1,6 +1,6 @@
 const { PacketronRequest, PacketronResponse } = require("@gamiumgamers/packetron");
 const { getUser } = require("../Helpers/GetUser");
-const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
+const InformationSourceQueryEngine = require("../../Globals/Classes/Database/InformationSourceQueryEngine");
 const Persistence = require("../../Globals/Classes/Persistence");
 const { storageTargets } = require("../../Globals/Enumerations/StorageTargets");
 const path = require("path");
@@ -23,7 +23,7 @@ async function handleInformationSourceDownload(request, response)
     const queryParams = await request.getQueryParams();
     const informationSourceId = queryParams.informationsourceid;
 
-    const informationSource = await AuthenticationQueryEngine.getInformationSourceById(informationSourceId);
+    const informationSource = await InformationSourceQueryEngine.getInformationSourceById(informationSourceId);
 
     if (informationSource === null)
     {
@@ -32,7 +32,7 @@ async function handleInformationSourceDownload(request, response)
         return;
     }
 
-    const userOwnsSource = await AuthenticationQueryEngine.doesUserOwnInformationSourceWithHash(user.getId(), informationSource.getHash());
+    const userOwnsSource = await InformationSourceQueryEngine.doesUserOwnInformationSourceWithHash(user.getId(), informationSource.getHash());
 
     if (!userOwnsSource)
     {

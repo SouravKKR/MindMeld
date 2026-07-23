@@ -425,20 +425,6 @@ provision_nodes()
     log_step "Placing the env files on the base node..."
     scp "${SSH_COMMON_OPTIONS[@]}" "$DOCK_ENVIRONMENT_FILE" "root@${BASE_NODE_PUBLIC_IP}:${BASE_NODE_REPO_DIR}/Dock/$(dock_environment_file_name)"
     scp "${SSH_COMMON_OPTIONS[@]}" "$AGENT_ENVIRONMENT_FILE" "root@${BASE_NODE_PUBLIC_IP}:${BASE_NODE_REPO_DIR}/Agent/$(agent_environment_file_name)"
-
-    # Place this environment's Google Cloud Storage service-account key. It is
-    # gitignored (rides neither git nor the code tarballs); both Dock and the Agent
-    # read Common/Credentials/cogniumlearn-storage.<env>.json, and without it every
-    # Dock->GCS write (mock-test grading payload staging, log archival) fails.
-    local storage_credential_file="$REPOSITORY_ROOT/Common/Credentials/cogniumlearn-storage.${ENVIRONMENT_NAME}.json"
-    if [ -f "$storage_credential_file" ]
-    then
-        log_step "Placing the GCS credential (cogniumlearn-storage.${ENVIRONMENT_NAME}.json) on the base node..."
-        ssh "${SSH_COMMON_OPTIONS[@]}" "root@${BASE_NODE_PUBLIC_IP}" "mkdir -p '${BASE_NODE_REPO_DIR}/Common/Credentials'"
-        scp "${SSH_COMMON_OPTIONS[@]}" "$storage_credential_file" "root@${BASE_NODE_PUBLIC_IP}:${BASE_NODE_REPO_DIR}/Common/Credentials/cogniumlearn-storage.${ENVIRONMENT_NAME}.json"
-    else
-        log_warning "GCS credential $storage_credential_file not found locally — Dock/Agent GCS writes will fail on the host until it is placed."
-    fi
 }
 
 print_summary()

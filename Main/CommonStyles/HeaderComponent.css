@@ -43,7 +43,7 @@ header-component .header-logo
 
 home-page header-component
 {
-    height: calc(var(--header-height) + 36px);
+    height: calc(var(--header-height) + var(--home-header-extra-height));
 }
 
 header-component .options-button

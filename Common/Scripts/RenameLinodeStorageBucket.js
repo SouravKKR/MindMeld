@@ -7,9 +7,9 @@
 // this creates the new bucket, copies its CORS configuration, then server-side-copies
 // every object across.
 //
-// Copy — never move/delete: the old bucket is left untouched as a cold backup, exactly
-// like Common/Scripts/MigrateStorageGcsToLinode.js. Re-runnable: an object already
-// present in the destination is skipped, so an interrupted run resumes cleanly.
+// Copy — never move/delete: the old bucket is left untouched as a cold backup.
+// Re-runnable: an object already present in the destination is skipped, so an
+// interrupted run resumes cleanly.
 //
 // Usage:
 //   node Common/Scripts/RenameLinodeStorageBucket.js                    # production (default)

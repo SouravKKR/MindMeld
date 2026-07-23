@@ -6,6 +6,9 @@ const { creditTransactionTypes } = require("../../Enumerations/CreditTransaction
 const Logger = require("../Logger");
 const LogTitles = require("../Logging/LogTitles");
 const { logCategory } = require("../../Enumerations/LogCategory");
+const NotificationDispatcher = require("../Notifications/NotificationDispatcher");
+const NotificationContent = require("../Notifications/NotificationContent");
+const { notificationChannels } = require("../../Enumerations/NotificationChannels");
 
 /**
  * CreditPurchaseCompletionService
@@ -104,6 +107,21 @@ class CreditPurchaseCompletionService
         const balanceAfter = grantResult.balanceAfter !== undefined && grantResult.balanceAfter !== null
             ? grantResult.balanceAfter
             : await CreditLedger.getBalance(pendingCreditOrder.userId);
+
+        // Notify the buyer their credits landed — only on the FIRST grant for
+        // this order (a replay lands as alreadyApplied). In-app + push; a
+        // failure here never affects the credits just granted or the response.
+        if (grantResult.applied === true && grantResult.alreadyApplied !== true)
+        {
+            try
+            {
+                await NotificationDispatcher.dispatch(pendingCreditOrder.userId, NotificationContent.creditTopUpComplete(pendingCreditOrder.credits, balanceAfter), notificationChannels.IN_APP | notificationChannels.PUSH);
+            }
+            catch (notifyError)
+            {
+                console.warn(`[CreditPurchaseCompletionService] Failed to dispatch top-up notification for ${pendingCreditOrder.userId}: ${notifyError.message}`);
+            }
+        }
 
         return {
             granted: grantResult.applied === true,

@@ -4,6 +4,9 @@ const TaskHistoryQueryEngine = require("../Database/TaskHistoryQueryEngine");
 const Persistence = require("../Persistence");
 const PersistenceConstants = require("../../Constants/PersistenceConstants");
 const { taskStatus } = require("../../Enumerations/TaskStatus");
+const NotificationDispatcher = require("../Notifications/NotificationDispatcher");
+const NotificationContent = require("../Notifications/NotificationContent");
+const { notificationChannels } = require("../../Enumerations/NotificationChannels");
 
 
 /**
@@ -118,6 +121,17 @@ class OrphanedGenerationReconciler
             {
                 await OrphanedGenerationReconciler.#deleteResumeSnapshotIfOwnedBy(userId, mainTaskId);
                 await TaskManager.untrackForUser(userId, mainTaskId);
+
+                // The run finished (its tail was skipped by a crash) — the user
+                // never got told. Notify now, in-app + push. Never throws.
+                try
+                {
+                    await NotificationDispatcher.dispatch(userId, NotificationContent.generationComplete(""), notificationChannels.IN_APP | notificationChannels.PUSH);
+                }
+                catch (notifyError)
+                {
+                    console.warn(`[OrphanedGenerationReconciler] ${mainTaskId}: failed to dispatch generation-complete notification: ${notifyError.message}`);
+                }
             }
 
             console.log(`[OrphanedGenerationReconciler] ${mainTaskId}: post-pipeline had actually completed; cleared marker and archived as done.`);

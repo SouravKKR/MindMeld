@@ -544,6 +544,27 @@ class DatabaseConnector
         await releaseNotesCollection.createIndex({ versionSortKey: -1 }, { unique: true });
         await releaseNotesCollection.createIndex({ releaseDate: -1 });
 
+        // ── Push tokens ────────────────────────────────────────────────────────
+        // Per-user device registration tokens for FCM push. One row per
+        // (userId, token) — the unique compound mirrors syncData's
+        // (userId, deviceId) and makes re-registering a known token a no-op
+        // upsert. The by-userId index backs the "list a user's tokens" fan-out
+        // the dispatcher issues on every push send.
+        const pushTokensCollection = database.collection(DatabaseConstants.PUSH_TOKENS_COLLECTION);
+        await pushTokensCollection.createIndex({ userId: 1, token: 1 }, { unique: true });
+        await pushTokensCollection.createIndex({ userId: 1 });
+
+        // ── Notifications ──────────────────────────────────────────────────────
+        // In-app notification feed. The (userId, createdAt:-1) compound powers
+        // the newest-first list query; the id index scopes mark-read updates.
+        // The TTL on createdAt auto-expires old notifications (NOTIFICATIONS_TTL_DAYS)
+        // so the feed never grows unbounded — same absolute-expiry pattern as
+        // the event logs above.
+        const notificationsCollection = database.collection(DatabaseConstants.NOTIFICATIONS_COLLECTION);
+        await notificationsCollection.createIndex({ userId: 1, createdAt: -1 });
+        await notificationsCollection.createIndex({ userId: 1, id: 1 }, { unique: true });
+        await notificationsCollection.createIndex({ createdAt: 1 }, { expireAfterSeconds: DatabaseConstants.NOTIFICATIONS_TTL_DAYS * 24 * 60 * 60 });
+
         // ── Organizations ──────────────────────────────────────────────────────
         // B2B partnership entities. One row per org; the admin user is
         // looked up by adminEmail (login-time reconciliation) so the email

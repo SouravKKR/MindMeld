@@ -16,6 +16,18 @@ options-sidebar
     transition: transform 0.5s ease-in-out;
 }
 
+/* The sidebar is appended to <body>, so it can't inherit the current page's
+   header height. On the homepage the header is taller (by
+   --home-header-extra-height), so drop the sidebar's top edge by the same
+   amount to sit flush beneath it. Scoped to a VISIBLE home-page — PageNavigator
+   hides stacked pages with an inline `display: none`, so a home-page that isn't
+   the active page is excluded. */
+body:has(home-page:not([style*="display: none"])) options-sidebar
+{
+    top: calc(var(--header-height) + var(--home-header-extra-height));
+    height: calc(100dvh - var(--header-height) - var(--home-header-extra-height));
+}
+
 options-sidebar[open]
 {
     transform: translateX(0%);

@@ -17,6 +17,12 @@
     --primary-background-gradient: linear-gradient(45deg, var(--gradient-start-color), var(--gradient-end-color));
     --header-height: 60px;
 
+    /* The homepage header is taller than the standard header so the brand logo
+       reads as a prominent lockup (see HeaderComponent.css). Exposed here so the
+       header height and everything that must align beneath it (the options
+       sidebar) reference the same extra height instead of repeating 36px. */
+    --home-header-extra-height: 36px;
+
     /* Outline colours used by hover / focus states. Keep these as
        outlines (not borders) so they sit on top of the element without
        shifting layout — Theme.css's generic `button:hover { border:none }`

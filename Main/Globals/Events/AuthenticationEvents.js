@@ -166,6 +166,12 @@ class AuthenticationEvents
         const userJson = await response.json();
         const user = User.fromJson(userJson);
 
+        // storageUsage is a transient, server-measured sibling of the user JSON
+        // (see HandleGetUser) — it is NOT part of the User model, so stash the
+        // live measurement on the window for the Settings storage meter to read.
+        // Null when the server couldn't measure it this time.
+        window["storageUsage"] = userJson.storageUsage || null;
+
         sessionStorage.setItem("user", JSON.stringify(user.toJson()));
         window["user"] = user;
         window["sessionState"] = AuthenticationEvents.SESSION_STATE_FRESH;

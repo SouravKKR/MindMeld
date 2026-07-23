@@ -5,6 +5,9 @@ const PeriodicAssignmentRecipientStore = require("./PeriodicAssignmentRecipientS
 const PeriodicSchedule = require("./PeriodicSchedule");
 const OrganizationMemberQueryEngine = require("../Organization/OrganizationMemberQueryEngine");
 const AuthenticationQueryEngine = require("../Database/AuthenticationQueryEngine");
+const NotificationDispatcher = require("../Notifications/NotificationDispatcher");
+const NotificationContent = require("../Notifications/NotificationContent");
+const { notificationChannels } = require("../../Enumerations/NotificationChannels");
 const { creditTransactionTypes } = require("../../Enumerations/CreditTransactionTypes");
 const { periodicScopeTypes } = require("../../Enumerations/PeriodicScopeTypes");
 const { periodicOnJoinModes } = require("../../Enumerations/PeriodicOnJoinModes");
@@ -104,6 +107,21 @@ class PeriodicCreditReconciler
             {
                 // One bad assignment must not stop the others.
                 console.warn(`[PeriodicCreditReconciler] Failed to reconcile assignment ${candidate.assignment?.getId?.()} for ${userId}: ${reconcileError?.message || reconcileError}`);
+            }
+        }
+
+        // Recurring credits actually arrived this reconcile — notify once with
+        // the total, in-app + push. This runs lazily inside a GetUser / preflight
+        // call, so it must never throw into that request.
+        if (totalCreditsGranted > 0)
+        {
+            try
+            {
+                await NotificationDispatcher.dispatch(userId, NotificationContent.recurringCreditsGranted(totalCreditsGranted), notificationChannels.IN_APP | notificationChannels.PUSH);
+            }
+            catch (notifyError)
+            {
+                console.warn(`[PeriodicCreditReconciler] Failed to dispatch recurring-credits notification for ${userId}: ${notifyError.message}`);
             }
         }
 

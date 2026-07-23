@@ -66,6 +66,9 @@ class DatabaseConstants
     static LOG_CONFIGURATION_COLLECTION = 'logConfiguration';
     static LOG_DEFAULT_ARCHIVAL_INTERVAL_DAYS = 7;
     static LOG_ARCHIVE_STORAGE_PREFIX = 'Logs';
+    static PUSH_TOKENS_COLLECTION = 'pushTokens';
+    static NOTIFICATIONS_COLLECTION = 'notifications';
+    static NOTIFICATIONS_TTL_DAYS = 30;
 }
 
 module.exports = DatabaseConstants;

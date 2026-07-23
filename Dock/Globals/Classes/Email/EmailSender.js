@@ -1,71 +1,60 @@
-const nodemailer = require("nodemailer");
 const App = require("../App");
+const EmailMessage = require("./EmailMessage");
+const EmailTemplate = require("./EmailTemplate");
+const EmailProviderFactory = require("./EmailProviderFactory");
 
+/**
+ * The high-level email API. It composes the message content (subject + branded
+ * body via EmailTemplate) and delegates the actual dispatch to whichever
+ * EmailProvider is active (EmailProviderFactory.getDefaultProvider() — AWS SES
+ * by default). It knows nothing about SES/SMTP internals.
+ *
+ * Adding a new email type — a notification, a feature-release announcement — is
+ * just another method here that builds an EmailMessage and calls send(); the
+ * transport, provider selection, and branding are all reused unchanged.
+ */
 class EmailSender
 {
-    static #transporter = null;
-
-    static #getTransporter()
+    /**
+     * Generalized dispatch seam. Any caller (current or future) can build an
+     * EmailMessage and send it through the active provider. When the message
+     * carries no source address, the platform default is filled in here so
+     * individual callers never have to know it.
+     */
+    static async send(emailMessage)
     {
-        if (EmailSender.#transporter !== null)
+        let messageToSend = emailMessage;
+
+        if (!messageToSend.getSourceEmail())
         {
-            return EmailSender.#transporter;
-        }
-
-        const host = App.getSmtpHost();
-        const port = App.getSmtpPort();
-        const user = App.getSmtpUser();
-        const password = App.getSmtpPassword();
-
-        if (!host || !port || !user || !password)
-        {
-            throw new Error("SMTP configuration is incomplete — set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD in Dock/.env");
-        }
-
-        EmailSender.#transporter = nodemailer.createTransport
-        ({
-            host: host,
-            port: port,
-            secure: port === 465,
-            auth:
+            const defaultSourceEmail = App.getEmailSourceEmail();
+            if (!defaultSourceEmail)
             {
-                user: user,
-                pass: password
+                throw new Error("No email source address configured — set EMAIL_SOURCE_EMAIL (or SMTP_SOURCE_EMAIL) in Dock/.env");
             }
-        });
+            messageToSend = messageToSend.withSourceEmail(defaultSourceEmail);
+        }
 
-        return EmailSender.#transporter;
+        await EmailProviderFactory.getDefaultProvider().sendEmail(messageToSend);
     }
 
     static async sendOtpEmail(toEmailAddress, sixDigitCode)
     {
-        const sourceEmail = App.getSmtpSourceEmail();
-        if (!sourceEmail)
-        {
-            throw new Error("SMTP_SOURCE_EMAIL is not configured");
-        }
-
         const subject = "Your CogniumLearn sign-in code";
         const plainTextBody =
             `Your CogniumLearn sign-in code is: ${sixDigitCode}\n\n` +
             `This code expires in 10 minutes. If you didn't request this, you can ignore this email.`;
 
-        const htmlBody =
-            `<div style="font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background-color: #ffffff; color: #1a1a1a;">` +
-                `<h1 style="font-size: 20px; margin: 0 0 16px 0;">Your CogniumLearn sign-in code</h1>` +
-                `<p style="font-size: 14px; line-height: 1.5; margin: 0 0 24px 0; color: #4a4a4a;">Enter this code to finish signing in:</p>` +
-                `<div style="font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 32px; font-weight: 600; letter-spacing: 8px; padding: 20px 24px; background-color: #f5f5f7; border-radius: 8px; text-align: center; color: #1a1a1a;">${sixDigitCode}</div>` +
-                `<p style="font-size: 13px; line-height: 1.5; margin: 24px 0 0 0; color: #6a6a6a;">This code expires in 10 minutes. If you didn't request this, you can safely ignore this email.</p>` +
-            `</div>`;
+        const htmlBody = EmailTemplate.buildCodeEmail
+        (
+            "Your CogniumLearn sign-in code",
+            "Enter this code to finish signing in:",
+            sixDigitCode,
+            "This code expires in 10 minutes. If you didn't request this, you can safely ignore this email."
+        );
 
-        await EmailSender.#getTransporter().sendMail
-        ({
-            from: sourceEmail,
-            to: toEmailAddress,
-            subject: subject,
-            text: plainTextBody,
-            html: htmlBody
-        });
+        const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody);
+        await EmailSender.send(emailMessage);
     }
 
     static async sendOrgAdminVerificationEmail(toEmailAddress, sixDigitCode, organizationName)
@@ -76,12 +65,6 @@ class EmailSender
         // the appointed admin verbally / out-of-band, then types it back
         // into the admin panel — the appointed admin does NOT enter the
         // code themselves anywhere in this flow.
-        const sourceEmail = App.getSmtpSourceEmail();
-        if (!sourceEmail)
-        {
-            throw new Error("SMTP_SOURCE_EMAIL is not configured");
-        }
-
         const orgLine = organizationName
             ? ` for the organization "${organizationName}"`
             : "";
@@ -94,22 +77,16 @@ class EmailSender
             `This code expires in 60 minutes. ` +
             `If you weren't expecting this, you can safely ignore this email.`;
 
-        const htmlBody =
-            `<div style="font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background-color: #ffffff; color: #1a1a1a;">` +
-                `<h1 style="font-size: 20px; margin: 0 0 16px 0;">Organization-admin verification code</h1>` +
-                `<p style="font-size: 14px; line-height: 1.5; margin: 0 0 24px 0; color: #4a4a4a;">CogniumLearn has been asked to appoint you as the administrator${orgLine}. Share this one-time code with the CogniumLearn team member who is setting up your organization:</p>` +
-                `<div style="font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 32px; font-weight: 600; letter-spacing: 8px; padding: 20px 24px; background-color: #f5f5f7; border-radius: 8px; text-align: center; color: #1a1a1a;">${sixDigitCode}</div>` +
-                `<p style="font-size: 13px; line-height: 1.5; margin: 24px 0 0 0; color: #6a6a6a;">This code expires in 60 minutes. If you weren't expecting this, you can safely ignore this email.</p>` +
-            `</div>`;
+        const htmlBody = EmailTemplate.buildCodeEmail
+        (
+            "Organization-admin verification code",
+            `CogniumLearn has been asked to appoint you as the administrator${orgLine}. Share this one-time code with the CogniumLearn team member who is setting up your organization:`,
+            sixDigitCode,
+            "This code expires in 60 minutes. If you weren't expecting this, you can safely ignore this email."
+        );
 
-        await EmailSender.#getTransporter().sendMail
-        ({
-            from: sourceEmail,
-            to: toEmailAddress,
-            subject: subject,
-            text: plainTextBody,
-            html: htmlBody
-        });
+        const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody);
+        await EmailSender.send(emailMessage);
     }
 }
 

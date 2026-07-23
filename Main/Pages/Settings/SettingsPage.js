@@ -18,6 +18,8 @@ import CreditPurchaseFlow from '../../Globals/Classes/Credits/CreditPurchaseFlow
 import StreakBadgeHelper from '../../Globals/Classes/Streak/StreakBadgeHelper.js';
 import BadgeGalleryDialog from '../../CommonComponents/BadgeGalleryDialog.js';
 import MetricBadgeHelper from '../../Globals/Classes/Metrics/MetricBadgeHelper.js';
+import StorageMeter from '../../CommonComponents/StorageMeter.js';
+import StorageManagerDialog from '../../CommonComponents/StorageManagerDialog.js';
 
 class SettingsPage extends HTMLElement
 {
@@ -154,6 +156,21 @@ class SettingsPage extends HTMLElement
             `;
         }).join('');
 
+        // Storage usage sits right below the credit balance on the Profile tab —
+        // both are server-owned account meters the user checks in one place. The
+        // <storage-meter> is self-reading (window["storageUsage"], refreshed via
+        // /GetUser), so re-rendering the rows after a server refresh repaints it.
+        const storageMeterHtml = this.#activeTab === settingsMenus.PROFILE
+            ? `
+                <div class="settings-storage-section">
+                    <${StorageMeter.tagName}></${StorageMeter.tagName}>
+                    <div class="settings-storage-actions">
+                        <button class="settings-storage-manage-button" type="button">Manage</button>
+                    </div>
+                </div>
+            `
+            : '';
+
         const streakAndBadgesHtml = this.#activeTab === settingsMenus.PROFILE
             ? this.#renderStreakAndBadgesHtml()
             : '';
@@ -197,7 +214,7 @@ class SettingsPage extends HTMLElement
             `
             : '';
 
-        this.querySelector('.settings-content').innerHTML = rowsHtml + promoRedeemHtml + streakAndBadgesHtml + achievementsHtml + dangerZoneHtml;
+        this.querySelector('.settings-content').innerHTML = rowsHtml + storageMeterHtml + promoRedeemHtml + streakAndBadgesHtml + achievementsHtml + dangerZoneHtml;
 
         const promoRedeemButton = this.querySelector('.settings-promo-redeem-button');
         if(promoRedeemButton)
@@ -229,6 +246,12 @@ class SettingsPage extends HTMLElement
         if(refreshButton)
         {
             refreshButton.addEventListener('click', () => this.#handleRefreshClick(refreshButton));
+        }
+
+        const storageManageButton = this.querySelector('.settings-storage-manage-button');
+        if(storageManageButton)
+        {
+            storageManageButton.addEventListener('click', () => StorageManagerDialog.show(() => this.#refreshStorageMeter()));
         }
 
         for (const callToActionButton of this.querySelectorAll('.settings-cta-button'))
@@ -484,6 +507,20 @@ class SettingsPage extends HTMLElement
             [ErrorCodes.INVALID_CODE]: "Enter a valid promo code."
         };
         return messages[errorCode] || "Could not redeem that code.";
+    }
+
+    // Re-pull the server-measured storage usage and repaint the meter after the
+    // manage dialog deletes something. Uploads free space immediately server-side;
+    // deck deletions land via the debounced sync, so the meter may lag a moment
+    // for decks while the sync completes — the tree itself updates instantly.
+    async #refreshStorageMeter()
+    {
+        await AuthenticationEvents.refreshUserFromServer();
+        const storageMeter = this.querySelector(StorageMeter.tagName);
+        if (storageMeter && typeof storageMeter.render === 'function')
+        {
+            storageMeter.render();
+        }
     }
 
     async #handleRefreshClick(refreshButton)

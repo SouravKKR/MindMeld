@@ -1,7 +1,6 @@
 const { storageTargets } = require("../Enumerations/StorageTargets");
 const fs = require("fs/promises");
 const path = require("path");
-const { Storage } = require('@google-cloud/storage');
 const
 {
     S3Client,
@@ -15,57 +14,14 @@ const
 
 class Persistence
 {
-    static #storage;
-    static #bucket;
-    static #GOOGLE_CLOUD_STORAGE_BUCKET_NAME = 'cogniumlearn-bucket';
-
     // Linode Object Storage is S3-compatible, so it is reached through the AWS S3
     // client pointed at the Linode regional endpoint. Credentials come from the
     // environment (LINODE_STORAGE_BUCKET_ACCESS_KEY / LINODE_STORAGE_BUCKET_SECRET),
-    // and the endpoint hostname from LINODE_S3_ENDPOINT_HOSTNAMES. The bucket name is
-    // kept identical to the legacy Google Cloud Storage bucket so object paths never
-    // change across providers.
+    // and the endpoint hostname from LINODE_S3_ENDPOINT_HOSTNAMES.
     static #linodeObjectStorageClient;
     static #LINODE_OBJECT_STORAGE_BUCKET_NAME = 'cogniumlearn-bucket';
 
     static #defaultStorageTarget = storageTargets.LINODE_OBJECT_STORAGE;
-
-    // The Google Cloud Storage service-account key is selected per environment, so
-    // every environment authenticates with its own credential. Each environment name
-    // maps to Common/Credentials/cogniumlearn-storage.<environment>.json, mirroring the
-    // Dock/.<environment>.env convention. The environment is resolved exactly the way
-    // Dock/index.js resolves it, so Dock and this store can never disagree.
-    static #CREDENTIALS_DIRECTORY = path.join(__dirname, "..", "..", "..", "Common", "Credentials");
-    static #STORAGE_CREDENTIAL_FILE_PREFIX = "cogniumlearn-storage.";
-    static #STORAGE_CREDENTIAL_FILE_SUFFIX = ".json";
-
-    static #resolveEnvironmentName()
-    {
-        const explicitEnvironmentFlag = process.argv.find(argument => argument.startsWith("--environment="));
-        if (explicitEnvironmentFlag)
-        {
-            return explicitEnvironmentFlag.slice("--environment=".length);
-        }
-        if (process.env.COGNIUMLEARN_ENVIRONMENT)
-        {
-            return process.env.COGNIUMLEARN_ENVIRONMENT;
-        }
-        if (process.argv.includes("--debug"))
-        {
-            return "local";
-        }
-        return "production";
-    }
-
-    static #resolveStorageCredentialFilePath()
-    {
-        const environmentName = Persistence.#resolveEnvironmentName();
-        return path.join
-        (
-            Persistence.#CREDENTIALS_DIRECTORY,
-            `${Persistence.#STORAGE_CREDENTIAL_FILE_PREFIX}${environmentName}${Persistence.#STORAGE_CREDENTIAL_FILE_SUFFIX}`
-        );
-    }
 
     // The Linode dashboard presents the endpoint as a labelled string such as
     // "IN, Chennai: in-maa-1.linodeobjects.com". Only the bare hostname is meaningful
@@ -80,9 +36,6 @@ class Persistence
 
     static
     {
-        Persistence.#storage = new Storage({ keyFilename: Persistence.#resolveStorageCredentialFilePath() });
-        Persistence.#bucket = Persistence.#storage.bucket(Persistence.#GOOGLE_CLOUD_STORAGE_BUCKET_NAME);
-
         const linodeEndpointHostname = Persistence.#resolveLinodeEndpointHostname();
         const linodeRegion = linodeEndpointHostname.split(".")[0];
         Persistence.#linodeObjectStorageClient = new S3Client
@@ -98,7 +51,7 @@ class Persistence
     }
 
     /**
-     * Saves a file to the given target (local file system, Google Cloud Storage, or Linode Object Storage).
+     * Saves a file to the given target (local file system or Linode Object Storage).
      * If the target is the local file system, it will create the directory if it doesn't exist.
      * @param {string} filePath - The path of the file to save.
      * @param { string | Buffer | Uint8Array } data - The data to be saved.
@@ -117,21 +70,6 @@ class Persistence
             }
             break;
 
-            case storageTargets.GOOGLE_CLOUD_STORAGE:
-            {
-                const file = Persistence.#bucket.file(filePath);
-                await file.save(data,
-                {
-                    resumable: false,
-                    gzip: true,
-                    metadata:
-                    {
-                        cacheControl: 'public, max-age=31536000',
-                    },
-                });
-            }
-            break;
-
             case storageTargets.LINODE_OBJECT_STORAGE:
             {
                 await Persistence.#linodeObjectStorageClient.send(new PutObjectCommand
@@ -147,7 +85,7 @@ class Persistence
     }
 
     /**
-     * Reads a file from the given target (local file system, Google Cloud Storage, or Linode Object Storage).
+     * Reads a file from the given target (local file system or Linode Object Storage).
      * If the target is the local file system, it will throw an error if the file doesn't exist.
      * @param {string} filePath - The path of the file to read.
      * @param {storageTargets} [target=Persistence.#defaultStorageTarget] - The target to read from.
@@ -169,14 +107,6 @@ class Persistence
             }
             break;
 
-            case storageTargets.GOOGLE_CLOUD_STORAGE:
-            {
-                const file = Persistence.#bucket.file(filePath);
-                const [content] = await file.download();
-                return content;
-            }
-            break;
-
             case storageTargets.LINODE_OBJECT_STORAGE:
             {
                 const response = await Persistence.#linodeObjectStorageClient.send(new GetObjectCommand
@@ -192,7 +122,7 @@ class Persistence
     }
 
     /**
-     * Checks if a file exists in the given target (local file system, Google Cloud Storage, or Linode Object Storage).
+     * Checks if a file exists in the given target (local file system or Linode Object Storage).
      * @param {string} filePath - The path of the file to check.
      * @param {storageTargets} [target=Persistence.#defaultStorageTarget] - The target to check in.
      * @returns {Promise<boolean>} - A promise that resolves with true if the file exists, false otherwise.
@@ -212,13 +142,6 @@ class Persistence
                 {
                     return false;
                 }
-            }
-            break;
-
-            case storageTargets.GOOGLE_CLOUD_STORAGE:
-            {
-                const [exists] = await Persistence.#bucket.file(filePath).exists();
-                return exists;
             }
             break;
 
@@ -247,7 +170,7 @@ class Persistence
     }
 
     /**
-     * Deletes a file from the given target (local file system, Google Cloud Storage, or Linode Object Storage).
+     * Deletes a file from the given target (local file system or Linode Object Storage).
      * @param {string} filePath - The path of the file to delete.
      * @param {storageTargets} [target=Persistence.#defaultStorageTarget] - The target to delete from.
      * @returns {Promise<void>} - A promise that resolves when the deletion is complete.
@@ -259,12 +182,6 @@ class Persistence
             case storageTargets.LOCAL_FILE_SYSTEM:
             {
                 await fs.unlink(filePath);
-            }
-            break;
-
-            case storageTargets.GOOGLE_CLOUD_STORAGE:
-            {
-                await Persistence.#bucket.file(filePath).delete();
             }
             break;
 
@@ -282,11 +199,7 @@ class Persistence
 
     static async move(source, sourceTarget = Persistence.#defaultStorageTarget, destination, destinationTarget = Persistence.#defaultStorageTarget)
     {
-        if (sourceTarget === storageTargets.GOOGLE_CLOUD_STORAGE && destinationTarget === storageTargets.GOOGLE_CLOUD_STORAGE)
-        {
-            await Persistence.#bucket.file(source).move(destination);
-        }
-        else if (sourceTarget === storageTargets.LINODE_OBJECT_STORAGE && destinationTarget === storageTargets.LINODE_OBJECT_STORAGE)
+        if (sourceTarget === storageTargets.LINODE_OBJECT_STORAGE && destinationTarget === storageTargets.LINODE_OBJECT_STORAGE)
         {
             await Persistence.#linodeObjectStorageClient.send(new CopyObjectCommand
             ({
@@ -349,12 +262,6 @@ class Persistence
                 };
 
                 return await collectFiles(normalizedPrefix);
-            }
-
-            case storageTargets.GOOGLE_CLOUD_STORAGE:
-            {
-                const [files] = await Persistence.#bucket.getFiles({ prefix });
-                return files.map(file => file.name);
             }
 
             case storageTargets.LINODE_OBJECT_STORAGE:

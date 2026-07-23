@@ -164,25 +164,8 @@ supply is missing, namely, per environment:
   token for streaming (see the AI / Agent note in §1.5).
 - `Dock/.<env>.env`: **`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`**, with redirect URI
   `https://<env-domain>/Login/Callback` added to the OAuth client.
-- `Common/Credentials/cogniumlearn-storage.<env>.json`: **Google Cloud Storage service-account key** —
-  the JSON key both Dock and the Agent use to read/write the `cogniumlearn-bucket` GCS bucket (task
-  payloads, mock-test grading payload staging, log archives). It is selected **by environment name**
-  the same way the env files are (`Persistence` in `Dock/Globals/Classes/` and
-  `Agent/Globals/Classes/Generic/`), so each environment maps to its own
-  `cogniumlearn-storage.<env>.json`. The whole `Common/Credentials/` directory is **gitignored**, so the
-  key rides neither git nor the Dock/Agent code tarballs — `provision-environment.sh` and
-  `deploy-environment.sh` **`scp` it to `<repo>/Common/Credentials/` on the base node** on every run.
-  If it is missing on the host, every Dock→GCS write returns **HTTP 500** (grading shows *"couldn't
-  reach the grading service"* and log archival fails hourly). Provisioning does **not** auto-generate
-  it — you supply one file per environment; for now they may all be copies of a single project key
-  (swap in a distinct per-project key later to isolate each environment's storage).
-  **Burst workers** run the Agent in a container with **no** repo `Common/` directory, so the key is
-  **never** baked into the burst image (see `Agent/.dockerignore`). Instead Dock forwards it to each
-  worker as base64 env — `COGNIUMLEARN_STORAGE_CREDENTIALS_BASE64` (alongside `COGNIUMLEARN_ENVIRONMENT`) in
-  the cloud-init `worker.env` — and the Agent's `Persistence` prefers that variable, falling back to
-  the on-disk file on the base node. Because the reader lives in the Agent image, changing this
-  behaviour requires **re-baking the burst image** (`deploy-environment.sh <env>` without
-  `--skip-bake`); rotating only the key value does not.
+
+Object storage credentials need no separate file — see the Storage note in §0.7.
 
 ## 0.4 Linode token scopes
 
@@ -247,13 +230,12 @@ workers ([BurstFleetSettings.js](../../Dock/Globals/Classes/Burst/BurstFleetSett
 All of that is untouched — the files are simply generated from Secret Manager instead of
 edited by hand.
 
-> **Storage note.** CogniumLearn stores objects in **Linode Object Storage**, whose credentials
-> are ordinary environment variables (`LINODE_STORAGE_BUCKET_ACCESS_KEY`,
+> **Storage note.** CogniumLearn stores objects exclusively in **Linode Object Storage**, whose
+> credentials are ordinary environment variables (`LINODE_STORAGE_BUCKET_ACCESS_KEY`,
 > `LINODE_STORAGE_BUCKET_SECRET`, `LINODE_S3_ENDPOINT_HOSTNAMES`) that already live in the
 > Dock and Agent env files — so they are captured automatically by the two bundled secrets
-> below, with **no separate credential file** to manage. (The legacy Google Cloud Storage
-> service-account JSON, `Common/Credentials/cogniumlearn-storage.<env>.json`, is used only by the
-> dormant GCS *fallback* path and is out of scope here.)
+> below, with **no separate credential file** to manage. (Google Cloud Storage support was
+> fully removed from `Persistence` — no fallback path exists anymore.)
 
 ### 0.7.1 Why render-to-file, not in-process injection
 
@@ -361,13 +343,12 @@ that project. These are the official Secret Manager / IAM `gcloud` commands.
    If you keep the deploy-time sync on the dev box instead of the node (the alternative in
    §0.7.8), grant only `roles/secretmanager.secretAccessor` here.
 5. **Download the reader's JSON key** — the base node's bootstrap credential (its
-   "secret-zero"). Store it gitignored alongside the existing storage credential:
+   "secret-zero"). Store it gitignored:
    ```bash
    gcloud iam service-accounts keys create Common/Credentials/gcp-accessor.production.json \
        --iam-account="cogniumlearn-secret-reader@PROJECT_ID.iam.gserviceaccount.com"
    ```
-   `Common/Credentials/` is gitignored, so the key never enters git or the code tarballs —
-   exactly like `cogniumlearn-storage.<env>.json`.
+   `Common/Credentials/` is gitignored, so the key never enters git or the code tarballs.
 
 Repeat for the development and testing projects, writing `gcp-accessor.development.json` /
 `gcp-accessor.testing.json`. The rest is on the base node.
@@ -524,11 +505,9 @@ GCP_PROJECT_ID_DEVELOPMENT=<development GCP project id>
 GCP_PROJECT_ID_TESTING=<testing GCP project id>
 ```
 
-The reader **service-account key** is a JSON *file*, not a line value, so it rides the same
-path the storage credential already uses: keep it at
+The reader **service-account key** is a JSON *file*, not a line value: keep it at
 `Common/Credentials/gcp-accessor.<env>.json` on your dev box (gitignored), and the deploy
-`scp`s it to the node — the provisioner already ships
-`Common/Credentials/cogniumlearn-storage.<env>.json` the identical way.
+`scp`s it to the node.
 
 For the deploy to push these to the node, two small hooks mirror how
 `CLOUDFLARE_TUNNEL_TOKEN_<ENV>` is already resolved and shipped:
@@ -556,7 +535,7 @@ on the node by hand (§0.7.5) — the rest of the flow is identical.
 > (`deployment.env` / `deployment.*.env`) and must **only ever exist on your dev box**: never
 > `scp` it to a node, never commit it, never paste its contents. The project ids are not
 > secret, but the reader **key** file (`Common/Credentials/gcp-accessor.<env>.json`) is —
-> guard it like `cogniumlearn-storage.<env>.json`. If a key is ever exposed, disable and delete it
+> guard it like any credential. If a key is ever exposed, disable and delete it
 > (`gcloud iam service-accounts keys delete <KEY_ID> --iam-account=…`) and create a new one.
 
 ### 0.7.8 Keeping Secret Manager in sync on every deploy (idempotent — mandatory)
@@ -620,7 +599,8 @@ means some are read at **runtime**, not just at boot. Per file:
 | File(s) | Delete after deploy? | Why |
 |---|---|---|
 | **Dev-box** `Dock/.<env>.env`, `Agent/.<env>.env` for cloud envs | **Yes — shred them** | Secret Manager is now the source; these are stale copies that can only drift. Back up `PAID_DECK_MASTER_KEY_BASE64` offline first. |
-| **Dev-box** `Common/Credentials/gcp-accessor.<env>.json` (reader key) + `cogniumlearn-storage.<env>.json` (GCS fallback) | **No — keep** | Bootstrap / fallback credential files the deploy still `scp`s to the node; gitignored. Guard them like any key. |
+| **Dev-box** `Common/Credentials/gcp-accessor.<env>.json` (reader key) | **No — keep** | Bootstrap credential file the deploy still `scp`s to the node; gitignored. Guard it like any key. |
+| **Dev-box** `Common/Credentials/cogniumlearn-storage.<env>.json` | **Yes — safe to delete** | Leftover from the removed Google Cloud Storage support; `Persistence` no longer references it and the deploy no longer ships it. |
 | **Dev-box** `Dock/.env`, `Agent/.env` (local) | **No — keep** | `local` stays off GSM; `npm run web` reads these. |
 | **Base-node** `Dock/.<env>.env`, `Agent/.<env>.env` on **persistent disk** | **Yes — shred them** | With `COGNIUMLEARN_SECRETS_DIRECTORY` set they are rendered to the tmpfs mount instead, so any copy left in the repo directory is redundant **and** a snapshot/backup exposure. Also shred stale backups (`.env`, `.<env>.env.bak*`). |
 | **Base-node** tmpfs `/run/cogniumlearn/{Dock,Agent}/.<env>.env` | **Leave — RAM only** | The live env files. In tmpfs (RAM, never persistent disk), `600`, wiped on reboot and re-rendered from Secret Manager by the `ExecStartPre` refresh at the next start. dotenv, the Agent (`EnvironmentLoader`) and burst forwarding (`BurstFleetSettings`) read them from here. |
@@ -635,8 +615,8 @@ renders correctly from Secret Manager (§0.7.6):
 
 ```bash
 # On the dev box, AFTER a verified deploy. Removes the now-redundant per-environment env
-# files; keeps the local .env, the committed .example templates, and the credential files
-# (gcp-accessor.<env>.json / cogniumlearn-storage.<env>.json) the deploy still ships.
+# files; keeps the local .env, the committed .example templates, and gcp-accessor.<env>.json
+# (the credential file the deploy still ships).
 for secretFile in Dock/.production.env Dock/.development.env Dock/.testing.env \
                   Agent/.production.env Agent/.development.env Agent/.testing.env; do
     [ -f "$secretFile" ] && { shred -u "$secretFile" 2>/dev/null || rm -f "$secretFile"; }
@@ -819,8 +799,7 @@ There's no image to move — you build it on the bake box in §1.10 and capture 
 ## 1.4 Base node — deploy the code and Python venv
 
 > ⚡ **Automated path.** Once the repo is cloned and `Dock/.production.env` +
-> `Agent/.production.env` + `Common/Credentials/cogniumlearn-storage.production.json` (the GCS
-> service-account key, §0.3 — gitignored, so copy it in manually) are in place,
+> `Agent/.production.env` (§0.3 — gitignored, so copy them in manually) are in place,
 > **[`Common/Scripts/setup-base-node.sh`](../Scripts/setup-base-node.sh)**
 > does all of §1.4–§1.7 in one shot: installs the OCR stack + Redis (bound to the VPC
 > IP) + Node, sets up Python 3.12 via `uv` and the Agent venv, runs `npm install`, and

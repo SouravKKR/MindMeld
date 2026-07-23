@@ -183,13 +183,27 @@ class OtpManager
                 const { creditTransactionTypes } = require("../../Enumerations/CreditTransactionTypes");
 
                 const creditConfiguration = await CreditConfigurationStore.load();
+                const signupGrantAmount = creditConfiguration.getSignupGrant();
                 await CreditLedger.grant(
                     user.getId(),
-                    creditConfiguration.getSignupGrant(),
+                    signupGrantAmount,
                     creditTransactionTypes.SIGNUP_GRANT,
                     `signup:${user.getId()}`,
                     {}
                 );
+
+                // Welcome the brand-new user with their starter credits. In-app
+                // only — they have no push token yet. Best-effort.
+                try
+                {
+                    const NotificationDispatcher = require("../Notifications/NotificationDispatcher");
+                    const NotificationContent = require("../Notifications/NotificationContent");
+                    await NotificationDispatcher.dispatch(user.getId(), NotificationContent.signupCreditsGranted(signupGrantAmount), NotificationDispatcher.IN_APP_ONLY);
+                }
+                catch (welcomeNotifyError)
+                {
+                    console.warn(`[OtpManager] signup welcome notification failed for ${user.getId()}: ${welcomeNotifyError.message}`);
+                }
             }
             catch (signupGrantError)
             {
