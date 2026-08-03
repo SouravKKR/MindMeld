@@ -47,6 +47,30 @@ class RateLimiter
     static DEFAULT_LOGIN_MAX_REQUESTS = RateLimiter.#resolvePositiveIntegerSetting("RATE_LIMIT_LOGIN_MAX_REQUESTS", 20);
     static DEFAULT_LOGIN_WINDOW_MILLISECONDS = RateLimiter.#resolvePositiveIntegerSetting("RATE_LIMIT_LOGIN_WINDOW_SECONDS", 300) * 1000;
 
+    // Dedicated, tight per-IP cap for the email-OTP handshake (/Auth/RequestOtp +
+    // /Auth/VerifyOtp). These are unauthenticated, and /Auth/RequestOtp sends an
+    // email on every call, so without a dedicated cap the loose per-user ceiling
+    // lets one IP trigger OTP emails to unlimited distinct addresses (email-bomb /
+    // delivery-cost abuse) and spread guessing across re-issued codes. A real flow
+    // is one request plus a few verify attempts, so a small allowance per IP over a
+    // few minutes is ample; shared-NAT deployments (e.g. a school) can raise it via
+    // env. Per-code brute force stays independently capped in OtpManager.
+    //   env: RATE_LIMIT_OTP_MAX_REQUESTS    (default 20)
+    //   env: RATE_LIMIT_OTP_WINDOW_SECONDS  (default 300)
+    static DEFAULT_OTP_MAX_REQUESTS = RateLimiter.#resolvePositiveIntegerSetting("RATE_LIMIT_OTP_MAX_REQUESTS", 20);
+    static DEFAULT_OTP_WINDOW_MILLISECONDS = RateLimiter.#resolvePositiveIntegerSetting("RATE_LIMIT_OTP_WINDOW_SECONDS", 300) * 1000;
+
+    // Dedicated per-user cap for the generation cost estimator
+    // (/Generate/EstimateCost). The button sits next to Start Generation and
+    // invites repeated pressing, while each press loads the credit config and
+    // walks the whole settings body. The answer only changes when the form does,
+    // so one estimate per window is ample and the loose general per-user ceiling
+    // is far too high to deter drumming on it.
+    //   env: RATE_LIMIT_ESTIMATE_MAX_REQUESTS    (default 1)
+    //   env: RATE_LIMIT_ESTIMATE_WINDOW_SECONDS  (default 30)
+    static DEFAULT_ESTIMATE_MAX_REQUESTS = RateLimiter.#resolvePositiveIntegerSetting("RATE_LIMIT_ESTIMATE_MAX_REQUESTS", 1);
+    static DEFAULT_ESTIMATE_WINDOW_MILLISECONDS = RateLimiter.#resolvePositiveIntegerSetting("RATE_LIMIT_ESTIMATE_WINDOW_SECONDS", 30) * 1000;
+
     static #SWEEP_INTERVAL_MILLISECONDS = 5 * 60 * 1000;
 
     /**

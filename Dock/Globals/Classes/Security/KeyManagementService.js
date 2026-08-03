@@ -8,6 +8,7 @@ const GrantSources = require("../../Constants/GrantSources");
 const DeckLicense = require("../../Model/DeckLicense");
 const PaidDeckUserContentCloner = require("../PaidDeck/PaidDeckUserContentCloner");
 const PaidDeckEntityTooLargeError = require("./PaidDeckEntityTooLargeError");
+const LicenseFieldPreserver = require("./LicenseFieldPreserver");
 const { deckLicenseStatuses } = require("../../Enumerations/DeckLicenseStatuses");
 
 class KeyManagementService
@@ -639,6 +640,14 @@ class KeyManagementService
                 writeResult.wrappedContentKeyBase64,
                 { expiresAt: preservedExpiresAt, grantSource: preservedGrantSource }
             );
+
+            // A master-key rotation rebuilds keyVersion + wrappedKeyBlob and
+            // nothing else. issueLicenseForUser returns a brand-new license, so
+            // every buyer-scoped field (the per-license content key and its
+            // wraps, the paid-deck password material, the seeded content
+            // version, the manage-copies registry) is at its default and would
+            // be blanked by persistLicense's whole-document $set.
+            LicenseFieldPreserver.carryForwardBuyerScopedFields(reissued, licenseDocument);
 
             await KeyManagementService.persistLicense(reissued);
         }

@@ -95,6 +95,20 @@ automatic-generation-page[page]
     align-items: center;
 }
 
+/* The rule above silently defeats the `hidden` attribute. `[hidden]{display:none}`
+   lives in the UA stylesheet, and ANY author rule beats the UA sheet regardless of
+   specificity — so `element.hidden = true` on a .field-container does nothing at
+   all, and the element stays on screen.
+   Several controls relied on that working: the admin-only paid-deck toggle (which
+   ships with `hidden` in the markup) and the image-source / enhance-images fields
+   that paid-deck mode hides. All of them stayed visible.
+   This restores the attribute's meaning for these containers. Class+attribute
+   (0,2,0) outranks the bare class (0,1,0), so no !important is needed. */
+.field-container[hidden]
+{
+    display: none;
+}
+
 .field-container > label:first-child
 {
     flex: 0 0 200px;

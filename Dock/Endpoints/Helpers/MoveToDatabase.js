@@ -8,6 +8,11 @@ const GeneratedFileLoader = require("../../Globals/Classes/Generation/GeneratedF
 const DeckHierarchyBuilder = require("../../Globals/Classes/Generation/DeckHierarchyBuilder");
 const GeneratedEntityUpserter = require("../../Globals/Classes/Generation/GeneratedEntityUpserter");
 const MockTestAssembler = require("../../Globals/Classes/Generation/MockTestAssembler");
+const GenerationProvenance = require("../../Globals/Classes/Generation/GenerationProvenance");
+const PaidDeckGenerationGate = require("../../Globals/Classes/Generation/PaidDeckGenerationGate");
+const PaidDeckProvenanceAssembler = require("../../Globals/Classes/Generation/PaidDeckProvenanceAssembler");
+const AiGeneratedTargetDeckStamper = require("../../Globals/Classes/Generation/AiGeneratedTargetDeckStamper");
+const { aiGeneratedStampResults } = require("../../Globals/Enumerations/AiGeneratedStampResults");
 
 /**
  * Moves a completed generation task's staged output (flashcards, study
@@ -19,8 +24,14 @@ const MockTestAssembler = require("../../Globals/Classes/Generation/MockTestAsse
  * under Globals/Classes/Generation/ — this function is the orchestrator
  * that sequences them.
  */
-async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashcardGenerationSettings, studyMaterialGenerationSettings, mockTestGenerationSettings, failureContext = null, bAllowRootMerge = false)
+async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashcardGenerationSettings, studyMaterialGenerationSettings, mockTestGenerationSettings, failureContext = null, bAllowRootMerge = false, generalGenerationSettings = null)
 {
+    // Provenance for complaint response: which uploaded documents fed this run.
+    // Stamped onto every entity the run produces so "what did we generate from
+    // this document" becomes an answerable question. See GenerationProvenance
+    // for why this is an investigation aid and not a deletion trigger.
+    const sourceContentHashes = GenerationProvenance.extractSourceContentHashes(generalGenerationSettings);
+
     const refreshedTask = await taskDescriptor;
 
     if (refreshedTask.getStatus() !== taskStatus.COMPLETED)
@@ -104,14 +115,14 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
     // ── 4. Upsert cards ────────────────────────────────────────────────────────
     if (orderedFlashcardFiles.length > 0)
     {
-        await GeneratedEntityUpserter.upsertCards(userId, orderedFlashcardFiles, resolveLeafDeckId, syllabusPositionIndex, now, reusedDeckIds);
+        await GeneratedEntityUpserter.upsertCards(userId, orderedFlashcardFiles, resolveLeafDeckId, syllabusPositionIndex, now, reusedDeckIds, sourceContentHashes);
         console.log(`[MoveToDatabase] Upserted cards for task ${mainTaskId}.`);
     }
 
     // ── 5. Upsert study materials using the shared hierarchy ───────────────────
     if (orderedStudyMaterialFiles.length > 0)
     {
-        await GeneratedEntityUpserter.upsertStudyMaterials(userId, orderedStudyMaterialFiles, resolveLeafDeckId, syllabusPositionIndex, now);
+        await GeneratedEntityUpserter.upsertStudyMaterials(userId, orderedStudyMaterialFiles, resolveLeafDeckId, syllabusPositionIndex, now, sourceContentHashes);
         console.log(`[MoveToDatabase] Upserted study materials for task ${mainTaskId}.`);
     }
 
@@ -121,10 +132,19 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
     //       recursive mode (Blueprint.recursive === true), questions are bucketed
     //       across every deck in the generated subtree, so resolveLeafDeckId +
     //       deckKeyToDataMap are forwarded to allow per-deck distribution.
+    let upsertedMockTestCount = 0;
     if (mockTestGenerationSettings !== null)
     {
-        await MockTestAssembler.upsertMockTests(userId, deckId, mainTaskId, now, mockTestGenerationSettings, resolveLeafDeckId, deckKeyToDataMap);
-        console.log(`[MoveToDatabase] Upserted mock tests for task ${mainTaskId}.`);
+        upsertedMockTestCount = await MockTestAssembler.upsertMockTests(userId, deckId, mainTaskId, now, mockTestGenerationSettings, resolveLeafDeckId, deckKeyToDataMap) || 0;
+
+        // Only claim an upsert when one happened. This used to print
+        // unconditionally, so a run that had just logged "Blueprint.json not
+        // found — mock test assembly skipped" immediately followed it with
+        // "Upserted mock tests", which is the opposite of what occurred.
+        if (upsertedMockTestCount > 0)
+        {
+            console.log(`[MoveToDatabase] Upserted ${upsertedMockTestCount} mock test(s) for task ${mainTaskId}.`);
+        }
     }
 
     // ── 7. Upsert all decks exactly once ───────────────────────────────────────
@@ -169,10 +189,26 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
         };
     }
 
+    // A paid-deck run marks the decks it produced so the admin panel can find
+    // them and so the publish gate can locate their provenance record. The
+    // decks themselves are ordinary synced decks — they become sellable only
+    // when an administrator uploads them through /Admin/PaidDecks/Upload, and
+    // the gate refuses to publish one whose verification is unresolved.
+    const bPaidDeckMode = PaidDeckGenerationGate.isRequested(generalGenerationSettings);
+
     let decksUpserted = 0;
 
     for (const deckData of deckKeyToDataMap.values())
     {
+        if (bPaidDeckMode && deckData.parent === deckId)
+        {
+            deckData.additionalData =
+            {
+                ...(deckData.additionalData || {}),
+                paidDeckGeneration: { mainTaskId: mainTaskId, generatedAt: now },
+            };
+        }
+
         if (deckData.parent === deckId)
         {
             if (partialCompletion !== null)
@@ -194,6 +230,63 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
     if (decksUpserted > 0)
     {
         console.log(`[MoveToDatabase] Upserted ${decksUpserted} deck(s) for task ${mainTaskId}.`);
+    }
+
+    // ── 7.5 Mark the deck the user launched generation from ────────────────────
+    // Everything this run CREATED was marked by DeckHierarchyBuilder, but the
+    // launch deck already existed and is not in deckKeyToDataMap, so nothing
+    // marked it. It is the tile the user actually looks at on the home grid, and
+    // in non-recursive mode it is where the whole mock-test bundle lands — so
+    // leaving it unmarked left a deck holding generated content with its Export
+    // button intact and no owner watermark.
+    //
+    // Gated on what this run actually persisted, NOT on bSomethingKept: that
+    // flag's mock-test term is only ever true when failureContext is non-null,
+    // so a fully successful mock-tests-only run would slip through unmarked —
+    // precisely the case this is here to cover.
+    if (decksUpserted > 0 || upsertedMockTestCount > 0)
+    {
+        const stampResult = await AiGeneratedTargetDeckStamper.markGenerationTargetDeck(userId, deckId);
+
+        if (stampResult === aiGeneratedStampResults.DECK_NOT_FOUND)
+        {
+            // The launch deck has not reached the server yet (created offline,
+            // generation started before the first sync). Everything this run
+            // created is still marked, so containsAiGeneratedContent() continues
+            // to block a recursive export of it.
+            console.warn(`[MoveToDatabase] Generation target deck ${deckId} not found server-side — AI-generated marker not applied.`);
+        }
+        else if (stampResult === aiGeneratedStampResults.MARKED)
+        {
+            console.log(`[MoveToDatabase] Marked generation target deck ${deckId} as AI-generated.`);
+        }
+    }
+
+    // ── Paid-deck provenance: assemble BEFORE the task folder is deleted ──────
+    // The action trail, verification report and coverage reconciliation all live
+    // in the task folder that step 9 wipes. This is the last moment the run's
+    // own record still exists AND the deck id it belongs to is known, so it is
+    // where the two are bound together and committed.
+    //
+    // One record per deck: the top-level deck the run produced. Best-effort —
+    // a failure here leaves the deck intact but unpublishable, which is the
+    // correct direction to fail in (the publish gate refuses a deck with no
+    // provenance record).
+    if (bPaidDeckMode && topLevelDeckIds.length > 0)
+    {
+        for (const topLevelDeckId of topLevelDeckIds)
+        {
+            const topLevelDeckData = Array.from(deckKeyToDataMap.values()).find(deckData => deckData.id === topLevelDeckId);
+
+            await PaidDeckProvenanceAssembler.assembleAndRecord(
+            {
+                mainTaskId: mainTaskId,
+                deckId: topLevelDeckId,
+                deckName: topLevelDeckData ? topLevelDeckData.name : null,
+                userId: userId,
+                generalGenerationSettings: generalGenerationSettings,
+            });
+        }
     }
 
     // ── 8. Read and print debug logs before deletion so they appear in Node.js console ──

@@ -6,6 +6,9 @@ class DatabaseConstants
     static PENDING_ORDERS_COLLECTION = 'pendingOrders';
     static PENDING_CREDIT_ORDERS_COLLECTION = 'pendingCreditOrders';
     static INFORMATION_SOURCES_COLLECTION = 'informationSources';
+    static CONTENT_TAKEDOWN_NOTICES_COLLECTION = 'contentTakedownNotices';
+    static TEMPORARY_SOURCE_RETENTION_DAYS = 7;
+    static SOURCE_RETENTION_GRACE_DAYS = 60;
     static TEXT_EMBEDDINGS_COLLECTION = 'textEmbeddings';
     static DECKS_COLLECTION = 'decks';
     static CARDS_COLLECTION = 'cards';
@@ -15,6 +18,7 @@ class DatabaseConstants
     static STUDY_MATERIALS_COLLECTION = 'studyMaterials';
     static MOCK_TESTS_COLLECTION = 'mockTests';
     static ASK_AI_POPUP_LINKS_COLLECTION = 'askAiPopupLinks';
+    static CONTENT_OVERLAYS_COLLECTION = 'contentOverlays';
     static FIGURES_COLLECTION = 'figures';
     static GENERATION_TEMPLATES_COLLECTION = 'generationTemplates';
     static LEGAL_DOCUMENTS_COLLECTION = 'legalDocuments';
@@ -29,6 +33,9 @@ class DatabaseConstants
     static UPLOAD_QUOTAS_COLLECTION = 'uploadQuotas';
     static BUNDLE_DISCOUNTS_COLLECTION = 'bundleDiscounts';
     static SCREENSHOT_EVENTS_COLLECTION = 'screenshotEvents';
+    static AI_GENERATED_EXPORT_EVENTS_COLLECTION = 'aiGeneratedExportEvents';
+    static AI_GENERATED_EXPORT_EVENTS_TTL_DAYS = 90;
+    static GENERATION_PROVENANCE_COLLECTION = 'generationProvenance';
     static TASK_HISTORY_COLLECTION = 'taskHistory';
     static ADMIN_EMAILS_COLLECTION = 'adminEmails';
     static ALLOWED_LOGIN_EMAILS_COLLECTION = 'allowedLoginEmails';
@@ -69,6 +76,13 @@ class DatabaseConstants
     static PUSH_TOKENS_COLLECTION = 'pushTokens';
     static NOTIFICATIONS_COLLECTION = 'notifications';
     static NOTIFICATIONS_TTL_DAYS = 30;
+    static SUPPORT_TICKETS_COLLECTION = 'supportTickets';
+    static SUPPORT_TICKET_REPORTS_COLLECTION = 'supportTicketReports';
+    static SUPPORT_TICKET_DEDUPLICATION_LOCKS_COLLECTION = 'supportTicketDeduplicationLocks';
+    static SUPPORT_ATTACHMENT_STORAGE_PREFIX = 'SupportAttachments';
+    static EPHEMERAL_UPLOADS_COLLECTION = 'ephemeralUploads';
+    static ANSWER_SHEET_RETENTION_DAYS = 60;
+    static SUPPORT_ATTACHMENT_RETENTION_DAYS = 60;
 }
 
 module.exports = DatabaseConstants;

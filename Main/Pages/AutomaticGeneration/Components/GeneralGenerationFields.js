@@ -5,6 +5,7 @@ import InformationSourceSelector from "./InformationSourceSelector.js";
 import GenerationFields from "./GenerationFields.js";
 import { taskTypes } from "../../../Globals/Enumerations/TaskTypes.js";
 import { informationSourceTypes } from "../../../Globals/Enumerations/InformationSourceTypes.js";
+import { userRoles } from "../../../Globals/Enumerations/UserRoles.js";
 import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
 import TemplatePickerDialog from "../../../CommonComponents/TemplatePickerDialog.js";
 
@@ -50,6 +51,53 @@ class GeneralGenerationFields extends GenerationFields
         }
 
         return true;
+    }
+
+    /**
+     * Reports the first reason paid-deck mode would refuse the current sources,
+     * so the page can say which row is wrong before the request is sent.
+     *
+     * Narrowing the "add source" dropdown does not cover this: a row added
+     * before the mode was ticked keeps whatever type it had, and the server then
+     * refuses the whole run with an index the user has to count out by hand.
+     * This is a UX mirror of PaidDeckGenerationGate, never a replacement — the
+     * gate stays authoritative, because a dropdown constrains nothing.
+     *
+     * @returns {string|null} a user-readable reason, or null when the sources are acceptable
+     */
+    findPaidDeckSourceProblem()
+    {
+        const settings = this.getSettings();
+        if (!(settings instanceof GeneralGenerationSettings) || settings.getPaidDeckMode() !== true)
+        {
+            return null;
+        }
+
+        const informationSources = settings.getInformationSources() || [];
+
+        if (informationSources.length === 0)
+        {
+            return "Paid deck mode needs at least one curriculum or syllabus source. "
+                + "Generating from a description alone would fall back to open web sources, "
+                + "which is exactly what this mode exists to prevent.";
+        }
+
+        for (const extractableSource of informationSources)
+        {
+            const informationSource = extractableSource?.getInformationSource?.();
+            if (!informationSource || informationSource.getSourceType() === informationSourceTypes.CURRICULUM_OR_SYLLABUS)
+            {
+                continue;
+            }
+
+            const sourceName = informationSource.getName?.() || "One of your sources";
+
+            return `"${sourceName}" is not set to Curriculum Or Syllabus. Paid deck mode accepts `
+                + "only curriculum/syllabus sources, so change that source's type using its dropdown, "
+                + "or remove it.";
+        }
+
+        return null;
     }
 
     #setupUi()
@@ -111,8 +159,119 @@ class GeneralGenerationFields extends GenerationFields
         this.querySelector(".capture-images-checkbox").checked = settings.getCaptureImagesEnabled();
         this.querySelector(".inherit-image-curriculum-checkbox").checked = settings.getInheritImageCurriculumFromInformationSources();
         this.querySelector(".good-quality-deck-short-names-checkbox").checked = settings.getGoodQualityDeckShortNames();
+        this.querySelector(".paid-deck-mode-checkbox").checked = settings.getPaidDeckMode() === true;
         this.querySelector(".additional-instructions-input").value = settings.getAdditionalInstructions();
         this.querySelector(".description-input").value = settings.getDescription();
+    }
+
+    /**
+     * Reveals and binds the admin-only "Paid deck" toggle.
+     *
+     * The row is hidden for everyone else, but hiding it is presentation only —
+     * Generate.js re-authorises the flag against the stored user record and
+     * ValidateGenerationSettings re-checks the source types, so a client that
+     * unhides the row or posts the flag directly is refused server-side. This
+     * exists so the option is discoverable by the people who may use it, not to
+     * keep anyone out.
+     *
+     * Checking it also narrows the source picker to CURRICULUM_OR_SYLLABUS. That
+     * is the same restriction the server enforces, applied early so the user is
+     * told what the mode requires while they are choosing, rather than after
+     * they submit.
+     */
+    #bindPaidDeckModeCheckbox()
+    {
+        const paidDeckModeContainer = this.querySelector(".paid-deck-mode-container");
+        const paidDeckModeCheckbox = this.querySelector(".paid-deck-mode-checkbox");
+
+        if (!paidDeckModeContainer || !paidDeckModeCheckbox)
+        {
+            return;
+        }
+
+        const currentUser = window["user"];
+        const bIsAdministrator = !!currentUser
+            && typeof currentUser.getRole === "function"
+            && currentUser.getRole() === userRoles.ADMIN;
+
+        paidDeckModeContainer.hidden = !bIsAdministrator;
+
+        if (!bIsAdministrator)
+        {
+            return;
+        }
+
+        paidDeckModeCheckbox.addEventListener("change", () =>
+        {
+            const bPaidDeckMode = paidDeckModeCheckbox.checked;
+            this.getSettings().setPaidDeckMode(bPaidDeckMode);
+            this.#applyPaidDeckSourceRestriction(bPaidDeckMode);
+            this.#flagTemplatedFieldChanged();
+        });
+
+        this.#applyPaidDeckSourceRestriction(paidDeckModeCheckbox.checked);
+    }
+
+    /**
+     * Narrows (or restores) the information-source picker for paid-deck mode and
+     * disables the image-source controls, which the mode does not accept.
+     */
+    #applyPaidDeckSourceRestriction(bPaidDeckMode)
+    {
+        const informationSourceSelector = this.querySelector(".information-sources-selector-container information-source-selector");
+
+        if (informationSourceSelector && typeof informationSourceSelector.setAllowedSourceTypes === "function")
+        {
+            informationSourceSelector.setAllowedSourceTypes(
+                bPaidDeckMode ? [informationSourceTypes.CURRICULUM_OR_SYLLABUS] : null
+            );
+        }
+
+        const imageSourcesContainer = this.querySelector(".image-sources-container");
+        const captureImagesContainer = this.querySelector(".capture-images-container");
+        const enhanceImagesContainer = this.querySelector(".enhance-images-container");
+        const inheritImageCurriculumContainer = this.querySelector(".inherit-image-curriculum-container");
+
+        // Image sources have no meaning in this mode — PrepareImages generates
+        // the visuals rather than extracting them — so the pickers go away.
+        for (const container of [imageSourcesContainer, enhanceImagesContainer, inheritImageCurriculumContainer])
+        {
+            if (container)
+            {
+                container.hidden = bPaidDeckMode;
+            }
+        }
+
+        if (bPaidDeckMode)
+        {
+            // Turn the inherit setting OFF and clear the list, rather than only
+            // hiding the controls. Inherit defaults to on, so leaving it set
+            // would keep mirroring the syllabus into the image sources on every
+            // subsequent edit and send a payload whose image sources the server
+            // then has to strip. Fixing it here means the request says what the
+            // mode actually means.
+            const inheritImageCurriculumCheckbox = this.querySelector(".inherit-image-curriculum-checkbox");
+            if (inheritImageCurriculumCheckbox)
+            {
+                inheritImageCurriculumCheckbox.checked = false;
+            }
+
+            this.getSettings().setInheritImageCurriculumFromInformationSources(false);
+            this.getSettings().setImageSources([]);
+
+            const imageSourceSelector = this.querySelector(".image-sources-selector-container information-source-selector");
+            if (imageSourceSelector && typeof imageSourceSelector.setSources === "function")
+            {
+                imageSourceSelector.setSources([]);
+            }
+        }
+
+        // "Capture Images / Diagrams" stays visible and meaningful — in this mode
+        // it is the switch that decides whether visuals are generated at all.
+        if (captureImagesContainer)
+        {
+            captureImagesContainer.hidden = false;
+        }
     }
 
     /**
@@ -388,6 +547,8 @@ class GeneralGenerationFields extends GenerationFields
             this.#flagTemplatedFieldChanged();
         });
 
+        this.#bindPaidDeckModeCheckbox();
+
         inheritImageCurriculumCheckbox.addEventListener("change", () =>
         {
             const inheritImageCurriculum = inheritImageCurriculumCheckbox.checked;
@@ -563,6 +724,11 @@ class GeneralGenerationFields extends GenerationFields
                     <span class="template-picker-button-label">${GeneralGenerationFields.TEMPLATE_PICKER_PLACEHOLDER_LABEL}</span>
                     <span class="template-picker-button-chevron">▾</span>
                 </button>
+            </div>
+            <div class="paid-deck-mode-container field-container" hidden>
+                <label title="Admin only. Generates first-party commercial content from the curriculum itself: only a curriculum/syllabus source is accepted, chunk content is written from model knowledge rather than retrieved from an upload, visuals are generated, and the deck lands unpublished behind a review gate.">Paid Deck (admin): </label>
+                <input type="checkbox" class="paid-deck-mode-checkbox">
+                <span class="credit-warning-note">⚠ Curriculum/syllabus source only</span>
             </div>
             <div class="information-source-container field-container information-sources-selector-container">
                 <label>Information Sources: </label>

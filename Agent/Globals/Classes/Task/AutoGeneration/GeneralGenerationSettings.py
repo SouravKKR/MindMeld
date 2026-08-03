@@ -6,12 +6,13 @@ from Globals.Classes.Decorators.ExtractableInformationSource import ExtractableI
 
 
 class GeneralGenerationSettings(AutoGenerationSettings):
-    def __init__(self, type: TaskTypes = None, additional_instructions: str = '', description: str = '', information_sources: List[ExtractableInformationSource] = [], enhance_images: bool = False, image_sources: List[ExtractableInformationSource] = [], subject_name: str = '', exam_name: str = '', generation_mode: AutomaticGenerationModes = AutomaticGenerationModes(0), inherit_image_curriculum_from_information_sources: bool = True, capture_images_enabled: bool = False, good_quality_deck_short_names: bool = False) -> None:
+    def __init__(self, type: TaskTypes = None, additional_instructions: str = '', description: str = '', information_sources: List[ExtractableInformationSource] = [], enhance_images: bool = False, image_sources: List[ExtractableInformationSource] = [], subject_name: str = '', exam_name: str = '', generation_mode: AutomaticGenerationModes = AutomaticGenerationModes(0), inherit_image_curriculum_from_information_sources: bool = True, capture_images_enabled: bool = False, good_quality_deck_short_names: bool = False, paid_deck_mode: bool = False) -> None:
         super().__init__(type=type, additional_instructions=additional_instructions, description=description, information_sources=information_sources, enhance_images=enhance_images, image_sources=image_sources, subject_name=subject_name, exam_name=exam_name)
         self.set_generation_mode(generation_mode)
         self.set_inherit_image_curriculum_from_information_sources(inherit_image_curriculum_from_information_sources)
         self.set_capture_images_enabled(capture_images_enabled)
         self.set_good_quality_deck_short_names(good_quality_deck_short_names)
+        self.set_paid_deck_mode(paid_deck_mode)
 
     def get_generation_mode(self) -> AutomaticGenerationModes:
         return self.__generation_mode
@@ -47,6 +48,14 @@ class GeneralGenerationSettings(AutoGenerationSettings):
             value = bool(value)
         self.__good_quality_deck_short_names = value
 
+    def get_paid_deck_mode(self) -> bool:
+        return self.__paid_deck_mode
+
+    def set_paid_deck_mode(self, value: bool) -> None:
+        if value is not None:
+            value = bool(value)
+        self.__paid_deck_mode = value
+
     def to_json(self) -> dict:
         return {
             **super().to_json(),
@@ -54,6 +63,7 @@ class GeneralGenerationSettings(AutoGenerationSettings):
             'inheritImageCurriculumFromInformationSources': self.get_inherit_image_curriculum_from_information_sources(),
             'captureImagesEnabled': self.get_capture_images_enabled(),
             'goodQualityDeckShortNames': self.get_good_quality_deck_short_names(),
+            'paidDeckMode': self.get_paid_deck_mode(),
         }
 
     @classmethod
@@ -70,7 +80,8 @@ class GeneralGenerationSettings(AutoGenerationSettings):
             generation_mode=AutomaticGenerationModes(data.get('generationMode')) if data.get('generationMode') is not None else None,
             inherit_image_curriculum_from_information_sources=data.get('inheritImageCurriculumFromInformationSources'),
             capture_images_enabled=data.get('captureImagesEnabled'),
-            good_quality_deck_short_names=data.get('goodQualityDeckShortNames')
+            good_quality_deck_short_names=data.get('goodQualityDeckShortNames'),
+            paid_deck_mode=data.get('paidDeckMode')
         )
         if data.get('id') is not None:
             instance._restore_id_id(data.get('id'))

@@ -14,6 +14,7 @@
  * is the edit path (used by PaidDeckContentClient before posting to
  * /PaidDecks/Entities/Update).
  */
+import ContentOverlayStore from "../Content/ContentOverlayStore.js";
 import EcdhTransport from "./EcdhTransport.js";
 import AuthenticationEvents from "../../Events/AuthenticationEvents.js";
 
@@ -109,12 +110,17 @@ class PaidDeckSession
     {
         PaidDeckSession.#unlockedContentKeysByDeckId.delete(deckId);
         PaidDeckSession.#contentKeyVersionByDeckId.delete(deckId);
+        // Decrypted overlay text is only ever held in memory, and it is only
+        // held legitimately while the key is. Dropping the key without dropping
+        // it would leave a locked deck's edits readable.
+        ContentOverlayStore.clearDecryptedCache();
     }
 
     static lockAll()
     {
         PaidDeckSession.#unlockedContentKeysByDeckId.clear();
         PaidDeckSession.#contentKeyVersionByDeckId.clear();
+        ContentOverlayStore.clearDecryptedCache();
     }
 
     static async decryptEntityEnvelope(deckId, envelope)

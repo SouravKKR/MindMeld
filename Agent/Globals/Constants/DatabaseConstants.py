@@ -5,6 +5,9 @@ class DatabaseConstants:
     PENDING_ORDERS_COLLECTION = 'pendingOrders'
     PENDING_CREDIT_ORDERS_COLLECTION = 'pendingCreditOrders'
     INFORMATION_SOURCES_COLLECTION = 'informationSources'
+    CONTENT_TAKEDOWN_NOTICES_COLLECTION = 'contentTakedownNotices'
+    TEMPORARY_SOURCE_RETENTION_DAYS = 7
+    SOURCE_RETENTION_GRACE_DAYS = 60
     TEXT_EMBEDDINGS_COLLECTION = 'textEmbeddings'
     DECKS_COLLECTION = 'decks'
     CARDS_COLLECTION = 'cards'
@@ -14,6 +17,7 @@ class DatabaseConstants:
     STUDY_MATERIALS_COLLECTION = 'studyMaterials'
     MOCK_TESTS_COLLECTION = 'mockTests'
     ASK_AI_POPUP_LINKS_COLLECTION = 'askAiPopupLinks'
+    CONTENT_OVERLAYS_COLLECTION = 'contentOverlays'
     FIGURES_COLLECTION = 'figures'
     GENERATION_TEMPLATES_COLLECTION = 'generationTemplates'
     LEGAL_DOCUMENTS_COLLECTION = 'legalDocuments'
@@ -28,6 +32,9 @@ class DatabaseConstants:
     UPLOAD_QUOTAS_COLLECTION = 'uploadQuotas'
     BUNDLE_DISCOUNTS_COLLECTION = 'bundleDiscounts'
     SCREENSHOT_EVENTS_COLLECTION = 'screenshotEvents'
+    AI_GENERATED_EXPORT_EVENTS_COLLECTION = 'aiGeneratedExportEvents'
+    AI_GENERATED_EXPORT_EVENTS_TTL_DAYS = 90
+    GENERATION_PROVENANCE_COLLECTION = 'generationProvenance'
     TASK_HISTORY_COLLECTION = 'taskHistory'
     ADMIN_EMAILS_COLLECTION = 'adminEmails'
     ALLOWED_LOGIN_EMAILS_COLLECTION = 'allowedLoginEmails'
@@ -68,3 +75,10 @@ class DatabaseConstants:
     PUSH_TOKENS_COLLECTION = 'pushTokens'
     NOTIFICATIONS_COLLECTION = 'notifications'
     NOTIFICATIONS_TTL_DAYS = 30
+    SUPPORT_TICKETS_COLLECTION = 'supportTickets'
+    SUPPORT_TICKET_REPORTS_COLLECTION = 'supportTicketReports'
+    SUPPORT_TICKET_DEDUPLICATION_LOCKS_COLLECTION = 'supportTicketDeduplicationLocks'
+    SUPPORT_ATTACHMENT_STORAGE_PREFIX = 'SupportAttachments'
+    EPHEMERAL_UPLOADS_COLLECTION = 'ephemeralUploads'
+    ANSWER_SHEET_RETENTION_DAYS = 60
+    SUPPORT_ATTACHMENT_RETENTION_DAYS = 60

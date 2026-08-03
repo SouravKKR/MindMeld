@@ -1,0 +1,7 @@
+Subject: {subject_name}
+{exam_context}
+
+Audit the following syllabus tree against the current examination pattern.
+
+SYLLABUS TREE ({topic_count} leaf topics):
+{topic_block}

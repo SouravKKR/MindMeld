@@ -181,6 +181,32 @@ class NotificationContent
             data: { target: "organization", organizationName: label }
         };
     }
+
+    // ── Support ──────────────────────────────────────────────────────────────
+    // Delivered only to reporters who ticked "notify me when this is resolved".
+    // Everyone else still finds the outcome in the Report Issue dialog's "Your
+    // reports" tab, which reads the same ticket status without needing a push.
+    static supportTicketResolved(ticketId, creditsGranted)
+    {
+        const credits = Number(creditsGranted) || 0;
+        const rewardSentence = credits > 0 ? ` We've added ${credits} credits to your account as a thank you.` : "";
+        return {
+            type: notificationTypes.SUPPORT,
+            title: "The issue you reported is fixed",
+            body: `Thanks for the report — it's been resolved.${rewardSentence}`,
+            data: { target: "support", ticketId: ticketId ?? "" }
+        };
+    }
+
+    static supportTicketDeclined(ticketId)
+    {
+        return {
+            type: notificationTypes.SUPPORT,
+            title: "Update on the issue you reported",
+            body: "We've finished reviewing your report. Open your reports to see what we found.",
+            data: { target: "support", ticketId: ticketId ?? "" }
+        };
+    }
 }
 
 module.exports = NotificationContent;

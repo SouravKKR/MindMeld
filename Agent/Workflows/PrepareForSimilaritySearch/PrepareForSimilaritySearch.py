@@ -9,6 +9,7 @@ from Globals.Utility.JoinPath import join_path
 from Globals.Utility.ExpandPageRanges import expand_page_ranges
 
 from Workflows.PrepareForSimilaritySearch.EmbedPages import load_model, embed_pages
+from Globals.Utility.RedactSourceName import redact_source_name
 
 
 class PrepareForSimilaritySearch(Workflow):
@@ -38,7 +39,7 @@ class PrepareForSimilaritySearch(Workflow):
         # ── Source-type guard: only upload-backed sources are embedded ─────────
         if source_type not in PrepareForSimilaritySearch.EMBEDDABLE_SOURCE_TYPES:
             print(
-                f"[PrepareForSimilaritySearch] Skipping source '{information_source.get_name()}' "
+                f"[PrepareForSimilaritySearch] Skipping source '{redact_source_name(information_source.get_name())}' "
                 f"(type={source_type}) — embeddings only stored for uploaded documents."
             )
             await self.__update_progress(1.0)
@@ -47,7 +48,7 @@ class PrepareForSimilaritySearch(Workflow):
         MuPdfBootstrap.silence_parser_warnings()
         import fitz
 
-        print(f"Preparing '{information_source.get_name()}' for similarity search...")
+        print(f"Preparing '{redact_source_name(information_source.get_name())}' for similarity search...")
 
         # ── 1. Load PDF from persistence ───────────────────────────────────────
         pdf_path  = join_path("/", information_source.get_directory_path(), information_source.get_hash())

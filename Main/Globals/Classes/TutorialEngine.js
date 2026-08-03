@@ -170,7 +170,7 @@ class TutorialEngine
 
         const tutorial = TutorialEngine.#activeTutorial;
         const currentStep = tutorial.steps[TutorialEngine.#activeStepIndex];
-        const nextStep    = tutorial.steps[TutorialEngine.#activeStepIndex + 1] || null;
+        const nextStep    = TutorialEngine.#findNextApplicableStep();
 
         const expectedTagNames = new Set();
         if (currentStep?.expectedPageTagName)
@@ -328,19 +328,138 @@ class TutorialEngine
 
     // ── Internals ─────────────────────────────────────────────────────
 
+    /**
+     * Advances #activeStepIndex past any step whose `bShouldSkipStep()`
+     * predicate says it does not apply to this user right now.
+     *
+     * Some real flows branch on state the tutorial author can't know when
+     * the registry is written — the Beginners tour's "pick Create a new
+     * deck" step, for instance, only exists for a signed-in, online user,
+     * because everyone else is taken straight to the deck editor. A
+     * WAIT_FOR_CLICK step pointing at a button that will never render has
+     * no Next button, so the tour would dead-end there.
+     *
+     * Returns false when every remaining step was skipped (the tutorial is
+     * over), true when #activeStepIndex now points at a step to render.
+     */
+    static #skipInapplicableSteps()
+    {
+        const tutorial = TutorialEngine.#activeTutorial;
+
+        while (TutorialEngine.#activeStepIndex < tutorial.steps.length)
+        {
+            if (!TutorialEngine.#bStepIsSkipped(TutorialEngine.#activeStepIndex))
+            {
+                return true;
+            }
+
+            TutorialEngine.#activeStepIndex++;
+        }
+
+        return false;
+    }
+
+    /**
+     * The next step that will actually be rendered after the current one,
+     * skipping any whose predicate excludes them. Null at the end of the
+     * tutorial. The navigation guard needs this (rather than the raw
+     * index + 1) so a page opened by the step AFTER a skipped one is still
+     * recognised as expected.
+     */
+    static #findNextApplicableStep()
+    {
+        const tutorial = TutorialEngine.#activeTutorial;
+
+        for (let stepIndex = TutorialEngine.#activeStepIndex + 1; stepIndex < tutorial.steps.length; stepIndex++)
+        {
+            if (!TutorialEngine.#bStepIsSkipped(stepIndex))
+            {
+                return tutorial.steps[stepIndex];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * True when the step at `stepIndex` does not apply to this user right
+     * now. A step with no predicate always applies; a predicate that throws
+     * is treated as "applies" so a broken check can never hide a step.
+     */
+    static #bStepIsSkipped(stepIndex)
+    {
+        const step = TutorialEngine.#activeTutorial.steps[stepIndex];
+
+        if (typeof step.bShouldSkipStep !== "function")
+        {
+            return false;
+        }
+
+        try
+        {
+            return step.bShouldSkipStep() === true;
+        }
+        catch (predicateError)
+        {
+            return false;
+        }
+    }
+
+    /**
+     * Progress counters that ignore skipped steps, so a user who never
+     * sees the chooser step reads "Step 6 of 19" rather than watching the
+     * label jump from 5 straight to 7 out of 20.
+     */
+    static #buildProgressCounters()
+    {
+        const tutorial = TutorialEngine.#activeTutorial;
+
+        let applicableCount = 0;
+        let displayIndex    = 0;
+
+        for (let stepIndex = 0; stepIndex < tutorial.steps.length; stepIndex++)
+        {
+            if (TutorialEngine.#bStepIsSkipped(stepIndex))
+            {
+                continue;
+            }
+
+            if (stepIndex <= TutorialEngine.#activeStepIndex)
+            {
+                displayIndex = applicableCount;
+            }
+
+            applicableCount++;
+        }
+
+        return {
+            displayIndex: displayIndex,
+            displayCount: applicableCount,
+            bIsLastStep:  displayIndex === applicableCount - 1
+        };
+    }
+
     static #renderCurrentStep()
     {
         const tutorial = TutorialEngine.#activeTutorial;
+
+        if (!TutorialEngine.#skipInapplicableSteps())
+        {
+            TutorialEngine.#requestExit({ bSkipped: false });
+            return;
+        }
+
         const stepIndex = TutorialEngine.#activeStepIndex;
         const step = tutorial.steps[stepIndex];
+        const progressCounters = TutorialEngine.#buildProgressCounters();
 
         const overlay = TutorialEngine.getOverlayElement();
 
         overlay.showStep(step,
         {
-            stepIndex:   stepIndex,
-            stepCount:   tutorial.steps.length,
-            bIsLastStep: stepIndex === tutorial.steps.length - 1,
+            stepIndex:   progressCounters.displayIndex,
+            stepCount:   progressCounters.displayCount,
+            bIsLastStep: progressCounters.bIsLastStep,
             callbacks:
             {
                 onStartOver: () => TutorialEngine.#requestStartOver(),

@@ -7,8 +7,11 @@ const PaidDeck = require("../../Globals/Model/PaidDeck");
 const PaidDeckPricing = require("../../Globals/Model/PaidDeckPricing");
 const PaidDeckContentSummarizer = require("../../Globals/Classes/PaidDeck/PaidDeckContentSummarizer");
 const RegionMetadata = require("../../Globals/Classes/Pricing/RegionMetadata");
+const BrandNameSanitizer = require("../../Globals/Classes/Content/BrandNameSanitizer");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const PaidDeckPublishGate = require("../../Globals/Classes/Generation/PaidDeckPublishGate");
+const GenerationProvenanceQueryEngine = require("../../Globals/Classes/Database/GenerationProvenanceQueryEngine");
 
 /**
  * Upserts the admin-supplied per-region price overrides into the
@@ -88,6 +91,28 @@ async function uploadPaidDeck(request, response)
     const paidDecksCollection = database.collection(DatabaseConstants.PAID_DECKS_COLLECTION);
 
     const incomingId = metadata.id || crypto.randomUUID();
+
+    // ── Phase 8 review gate ───────────────────────────────────────────────────
+    // Publishing a pipeline-generated deck with unresolved blocking verification
+    // flags is refused outright. Checked before anything is written, so a
+    // refused publish leaves no half-uploaded deck behind. Decks not produced by
+    // that pipeline have no provenance record and are unaffected.
+    if (metadata.isPublished === true)
+    {
+        const publishDecision = await PaidDeckPublishGate.evaluate(incomingId);
+        if (!publishDecision.allowed)
+        {
+            response.statusCode = httpStatus.CONFLICT;
+            response.sendJson
+            ({
+                error: publishDecision.reason,
+                detail: publishDecision.detail,
+                blockingFlags: publishDecision.blockingFlags,
+            });
+            return;
+        }
+    }
+
     const existingDocument = await paidDecksCollection.findOne({ id: incomingId });
     const initialKeyVersion = existingDocument?.keyVersion || 1;
     const nextKeyVersion = existingDocument ? initialKeyVersion + 1 : 1;
@@ -204,13 +229,49 @@ async function uploadPaidDeck(request, response)
     // "Regional prices" rows) into the pricing collection the engine reads.
     await upsertRegionalPriceOverrides(database, incomingId, metadata.regionalPrices);
 
+    // Advisory trademark check on the publicly listed fields. A paid deck is the
+    // one surface where authored text is shown to every user, so a third-party
+    // institute mark in its title, description or tags is published in a
+    // commercial context. Reported rather than enforced: naming an exam or
+    // institute to describe what the material covers is often legitimate
+    // nominative use, and only the operator can tell that from implied
+    // endorsement. Silently rewriting an admin's chosen title would be worse
+    // than surfacing it.
+    const registeredMarksFound = [...new Set([
+        ...BrandNameSanitizer.findRegisteredMarks(paidDeckSeed.title),
+        ...BrandNameSanitizer.findRegisteredMarks(paidDeckSeed.description),
+        ...BrandNameSanitizer.findRegisteredMarks((paidDeckSeed.tags || []).join(" "))
+    ])];
+
+    if (registeredMarksFound.length > 0)
+    {
+        console.warn(`[UploadPaidDeck] Deck ${incomingId} carries third-party mark(s) in publicly listed fields: ${registeredMarksFound.join(", ")}`);
+    }
+
+    // Stamp who published this deck and when into its provenance record. Written
+    // once and never overwritten, so the record shows the first publication
+    // rather than the most recent metadata edit. A deck with no provenance
+    // record (not pipeline-generated) is a no-op.
+    if (metadata.isPublished === true)
+    {
+        try
+        {
+            await GenerationProvenanceQueryEngine.recordPublication(incomingId, request.user?.getId() || null);
+        }
+        catch (publicationRecordError)
+        {
+            console.warn(`[UploadPaidDeck] Could not stamp publication into the provenance record: ${publicationRecordError.message}`);
+        }
+    }
+
     response.statusCode = httpStatus.OK;
     response.sendJson
     ({
         success: true,
         deckId: incomingId,
         keyVersion: nextKeyVersion,
-        contentVersion: documentToWrite.contentSummary.contentVersion
+        contentVersion: documentToWrite.contentSummary.contentVersion,
+        trademarkWarnings: registeredMarksFound
     });
 }
 

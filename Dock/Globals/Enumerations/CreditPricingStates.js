@@ -1,0 +1,9 @@
+const creditPricingStates =
+{
+  PRICED: 0,
+  UNPRICED: 1,
+  DENIED: 2,
+  FREE: 3,
+}
+
+module.exports = { creditPricingStates };

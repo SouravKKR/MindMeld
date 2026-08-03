@@ -5,6 +5,8 @@ import InformationSourceExistingSelector from "./InformationSourceExistingSelect
 import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
 import { informationSourceTypes } from "../../../Globals/Enumerations/InformationSourceTypes.js";
 import { contentRetentionModes } from "../../../Globals/Enumerations/ContentRetentionModes.js";
+import { ocrModes } from "../../../Globals/Enumerations/OcrModes.js";
+import IntellectualPropertyNotice from "../../../CommonComponents/IntellectualPropertyNotice.js";
 
 class InformationSourceUploader extends HTMLElement
 {
@@ -147,6 +149,27 @@ class InformationSourceUploader extends HTMLElement
                         margin: 15px 0;
                     }
 
+                    .upload-new-modal-option-row
+                    {
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                        margin: 4px 0;
+                        font-size: 13px;
+                        cursor: pointer;
+                    }
+
+                    /* Sits directly under the OCR checkbox it explains, indented to
+                       the checkbox's label so it reads as that row's footnote
+                       rather than as a second, unrelated option. */
+                    .upload-new-modal-option-hint
+                    {
+                        margin: 0 0 8px 26px;
+                        font-size: 11.5px;
+                        line-height: 1.45;
+                        color: #9a9a9a;
+                    }
+
                     .upload-new-modal-upload-button
                     {
                         width: 100%;
@@ -172,11 +195,20 @@ class InformationSourceUploader extends HTMLElement
                 </style>
 
                 <div class="upload-new-modal-header">Upload New Source</div>
+                <intellectual-property-notice context="upload"></intellectual-property-notice>
                 <div class="upload-new-modal-file-selector-container"></div>
-                <label class="upload-new-modal-retention-row" style="display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; font-size: 13px; cursor: pointer;">
+                <label class="upload-new-modal-option-row">
                     <input type="checkbox" class="upload-new-modal-keep-permanently" checked>
                     Keep this source permanently (stored sources count toward storage credits; uncheck to keep it temporary)
                 </label>
+                <label class="upload-new-modal-option-row">
+                    <input type="checkbox" class="upload-new-modal-run-ocr" checked>
+                    Run text recognition (OCR) on this document
+                </label>
+                <div class="upload-new-modal-option-hint">
+                    Leave this on for scanned books, photographed pages or slide images — it is what makes their text readable.
+                    Turn it off for documents that already have selectable text: the upload finishes noticeably faster and the file is stored exactly as you sent it.
+                </div>
                 <button class="upload-new-modal-upload-button">Upload</button>
             `
         );
@@ -198,13 +230,24 @@ class InformationSourceUploader extends HTMLElement
                 ? contentRetentionModes.PERMANENT
                 : contentRetentionModes.TEMPORARY;
 
+            // OCR is opt-OUT, not opt-in: a missing checkbox resolves to ENABLED,
+            // which is the behaviour every upload had before this control existed.
+            // Getting this backwards would silently stop OCRing scanned uploads,
+            // and the symptom (a generation that finds no text) would surface far
+            // from the cause.
+            const runOcrCheckbox = dialog.querySelector(".upload-new-modal-run-ocr");
+            const ocrMode = (runOcrCheckbox === null || runOcrCheckbox.checked)
+                ? ocrModes.ENABLED
+                : ocrModes.DISABLED;
+
             const informationSource = new InformationSource
             ({
                 name: name,
                 tags: tags,
                 sourceType: informationSourceTypes[sourceTypeKey],
                 mimeType: file !== null ? file.type : '',
-                retentionMode: retentionMode
+                retentionMode: retentionMode,
+                ocrMode: ocrMode
             });
 
             const xhr = new XMLHttpRequest();

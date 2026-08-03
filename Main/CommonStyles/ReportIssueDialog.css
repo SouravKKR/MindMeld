@@ -1,0 +1,382 @@
+/* ReportIssueDialog — the "Report an issue" modal that replaced the support
+   mailto: link. Two tabbed panels inside a dialog-box: the submission form and
+   the reporter's own status list. */
+
+.report-issue-dialog
+{
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: 540px;
+    max-width: 100%;
+}
+
+.report-issue-title
+{
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--primary-text-color);
+    margin: 0;
+}
+
+.report-issue-subtitle
+{
+    font-size: 0.85rem;
+    color: var(--secondary-text-color);
+    margin: 0;
+    line-height: 1.5;
+}
+
+.report-issue-tabs
+{
+    display: flex;
+    gap: 8px;
+    border-bottom: 1px solid var(--outline-color-subtle);
+}
+
+.report-issue-tab
+{
+    background: none;
+    border: none;
+    padding: 8px 14px;
+    font-size: 0.95rem;
+    color: var(--secondary-text-color);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+}
+
+.report-issue-tab-active
+{
+    color: var(--primary-text-color);
+    border-bottom-color: var(--accent-color, var(--primary-text-color));
+    font-weight: 600;
+}
+
+.report-issue-panel
+{
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.report-issue-field
+{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 0.9rem;
+    color: var(--primary-text-color);
+}
+
+.report-issue-field > span
+{
+    font-weight: 600;
+}
+
+.report-issue-field em
+{
+    font-weight: 400;
+    font-style: normal;
+    color: var(--secondary-text-color);
+}
+
+.report-issue-field select,
+.report-issue-field textarea
+{
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--outline-color-strong);
+    border-radius: 8px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-size: 0.9rem;
+    box-sizing: border-box;
+}
+
+.report-issue-field textarea
+{
+    resize: vertical;
+    line-height: 1.5;
+}
+
+.report-issue-counter
+{
+    align-self: flex-end;
+    font-size: 0.75rem;
+    color: var(--secondary-text-color);
+}
+
+/* ── Attachments ───────────────────────────────────────────────────────────── */
+
+.report-issue-drop-zone
+{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    border: 1px dashed var(--outline-color-strong);
+    border-radius: 8px;
+    color: var(--secondary-text-color);
+    font-size: 0.85rem;
+    cursor: pointer;
+    text-align: center;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.report-issue-drop-zone:hover,
+.report-issue-drop-zone-active
+{
+    border-color: var(--accent-color, var(--primary-text-color));
+    background-color: var(--tertiary-background-color);
+}
+
+/* At the attachment ceiling the zone stays clickable — the dialog explains the
+   limit through the error row rather than silently swallowing the click. */
+.report-issue-drop-zone-full
+{
+    opacity: 0.6;
+}
+
+.report-issue-attachments
+{
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.report-issue-attachment
+{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    font-size: 0.8rem;
+    color: var(--primary-text-color);
+}
+
+.report-issue-attachment-name
+{
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.report-issue-attachment-size
+{
+    color: var(--secondary-text-color);
+}
+
+.report-issue-attachment-remove
+{
+    background: none;
+    border: none;
+    color: var(--secondary-text-color);
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+}
+
+.report-issue-attachment-remove:hover
+{
+    color: var(--primary-text-color);
+}
+
+/* ── Checkbox, errors, actions ─────────────────────────────────────────────── */
+
+.report-issue-checkbox
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+    color: var(--primary-text-color);
+    cursor: pointer;
+}
+
+.report-issue-error
+{
+    padding: 10px 12px;
+    border-radius: 6px;
+    background-color: rgba(220, 70, 70, 0.12);
+    color: #d24444;
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+.report-issue-progress
+{
+    font-size: 0.8rem;
+    color: var(--secondary-text-color);
+}
+
+.report-issue-actions
+{
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.report-issue-cancel,
+.report-issue-submit
+{
+    padding: 9px 18px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    border: 1px solid var(--outline-color-strong);
+}
+
+.report-issue-cancel
+{
+    background: none;
+    color: var(--secondary-text-color);
+}
+
+.report-issue-submit
+{
+    background-color: var(--accent-color, var(--primary-text-color));
+    color: var(--secondary-background-color);
+    border-color: transparent;
+    font-weight: 600;
+}
+
+.report-issue-submit:disabled
+{
+    opacity: 0.55;
+    cursor: default;
+}
+
+.report-issue-submitted h3
+{
+    margin: 0 0 8px 0;
+    font-size: 1rem;
+    color: var(--primary-text-color);
+}
+
+.report-issue-submitted p
+{
+    margin: 0 0 8px 0;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    color: var(--secondary-text-color);
+}
+
+/* ── "Your reports" status list ────────────────────────────────────────────── */
+
+.report-issue-my-reports
+{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 380px;
+    overflow-y: auto;
+}
+
+.report-issue-card
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border: 1px solid var(--outline-color-subtle);
+    border-radius: 8px;
+    background-color: var(--tertiary-background-color);
+}
+
+.report-issue-card-header
+{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.report-issue-card-type
+{
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--secondary-text-color);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.report-issue-card-status
+{
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.report-issue-card-status-pending
+{
+    background-color: rgba(214, 158, 46, 0.16);
+    color: #b7791f;
+}
+
+.report-issue-card-status-resolved
+{
+    background-color: rgba(47, 133, 90, 0.16);
+    color: #2f855a;
+}
+
+.report-issue-card-status-declined
+{
+    background-color: rgba(120, 120, 130, 0.16);
+    color: var(--secondary-text-color);
+}
+
+.report-issue-card-description
+{
+    margin: 0;
+    font-size: 0.87rem;
+    line-height: 1.5;
+    color: var(--primary-text-color);
+}
+
+/* The admin's own words, quoted so they read as a reply rather than as more
+   automated copy. pre-wrap keeps the paragraphing they typed. */
+.report-issue-card-message
+{
+    margin: 0;
+    padding: 10px 12px;
+    border-left: 3px solid var(--accent-color, var(--primary-text-color));
+    border-radius: 4px;
+    background-color: var(--secondary-background-color);
+    font-size: 0.85rem;
+    line-height: 1.55;
+    color: var(--primary-text-color);
+    white-space: pre-wrap;
+}
+
+.report-issue-card-credit
+{
+    margin: 0;
+    font-size: 0.83rem;
+    font-weight: 600;
+    color: #2f855a;
+}
+
+.report-issue-card-footer
+{
+    font-size: 0.75rem;
+    color: var(--secondary-text-color);
+}
+
+@media (max-width: 600px)
+{
+    .report-issue-dialog
+    {
+        width: 100%;
+    }
+}

@@ -2,6 +2,8 @@ import TaskProgressTracker from "../../../Globals/Classes/Task/TaskProgressTrack
 import InformationSource from "../../../Globals/Model/InformationSource.js";
 import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
 import { taskStatus } from "../../../Globals/Enumerations/TaskStatus.js";
+import { ocrModes } from "../../../Globals/Enumerations/OcrModes.js";
+import InformationSourceUploadProgress from "../../../Globals/Constants/InformationSourceUploadProgress.js";
 
 class InformationSourceCard extends HTMLElement
 {
@@ -16,28 +18,13 @@ class InformationSourceCard extends HTMLElement
     // would save server-side but show as failed here). 15 min gives ~5 min headroom.
     static OCR_POLL_MAX_DURATION_MILLISECONDS = 15 * 60 * 1000;
 
-    // Fraction of the bar reserved for the byte-upload phase. The remainder
-    // is held back until the server response returns (which happens after
-    // the server-side OCR step). Without the cap the bar would hit 100%
-    // immediately on upload completion while OCR was still running.
-    static UPLOAD_PHASE_FRACTION = 0.5;
-
-    // Asymptotic ceiling for the OCR-phase animation. The bar approaches
-    // this value while the HTTP response is in flight but never reaches
-    // it — that final jump happens when the server actually responds.
-    static OCR_PHASE_CEILING = 0.95;
-
-    // Tunes how fast the OCR animation creeps. Higher = slower approach
-    // to the ceiling. At t = HALF_LIFE_MILLISECONDS, the animation is at
-    // half the remaining distance to the ceiling; at 2 × that, it's at
-    // three-quarters; etc. Picked so a typical sub-minute OCR pass looks
-    // visibly active without sprinting to the ceiling in 5 seconds.
-    static OCR_ANIMATION_HALF_LIFE_MILLISECONDS = 20 * 1000;
-
-    // Cadence for the OCR-phase animation tick. 200ms is the longest
-    // interval that still feels live to the user; anything shorter
-    // wastes redraws.
-    static OCR_ANIMATION_TICK_MILLISECONDS = 200;
+    // Fraction of the bar reserved for the byte-upload phase, which the XHR
+    // reports for real. The remainder belongs to the server phase and is driven
+    // entirely by completion values the server has written — see
+    // #renderServerPhaseProgress. Nothing on this card is time-based: a bar that
+    // advances on a timer tells the user a number the server never claimed, and
+    // it keeps climbing just as convincingly when the pipeline has stalled.
+    static UPLOAD_PHASE_FRACTION = InformationSourceUploadProgress.UPLOAD_PHASE_FRACTION;
 
     #informationSource = null;
     #xhr = null;
@@ -47,8 +34,6 @@ class InformationSourceCard extends HTMLElement
     #progressTrack = null;
     #tagsContainer = null;
     #errorMessage = null;
-
-    #ocrAnimationIntervalId = null;
 
     static create(informationSource, xhr)
     {
@@ -251,23 +236,20 @@ class InformationSourceCard extends HTMLElement
             }
         });
 
-        // Once the byte upload finishes the server starts OCR. We have
-        // no real progress channel from ocrmypdf back to the client
-        // during a single HTTP request, so animate an asymptotic creep
-        // from the upload ceiling toward (but never to) OCR_PHASE_CEILING.
-        // The bar visibly moves, the user sees a percentage, and the
-        // final jump to 100% happens when the response actually lands.
+        // The bytes are up; everything after this belongs to the server. Park the
+        // bar at the end of the upload phase and say what is happening, with no
+        // percentage yet — the first real number arrives on the first poll of the
+        // tracking task, a moment later.
         this.#xhr.upload.addEventListener("load", () =>
         {
-            this.#startOcrPhaseAnimation();
+            this.#progressFill.style.width = `${Math.round(InformationSourceCard.UPLOAD_PHASE_FRACTION * 100)}%`;
+            this.#statusLabel.textContent = `${this.#getProcessingPhaseLabel()}...`;
         });
 
         this.#xhr.addEventListener("load", () =>
         {
             if (this.#xhr.status !== 200)
             {
-                this.#stopOcrPhaseAnimation();
-
                 if (this.#xhr.status === 409)
                 {
                     this.#renderErrorState(this.#xhr.responseText || "You have already uploaded a source with the same content.");
@@ -305,85 +287,102 @@ class InformationSourceCard extends HTMLElement
             }
             catch (parseError)
             {
-                this.#stopOcrPhaseAnimation();
                 this.#renderErrorState("Upload succeeded but the server response was unreadable.");
                 return;
             }
 
             if (parsedResponse && parsedResponse.taskId)
             {
-                // Keep the OCR animation creeping while we poll for completion.
+                // Poll the tracking task; every bar update from here on comes from
+                // a completion value the server wrote.
                 this.#pollOcrTaskUntilReady(parsedResponse.taskId, parsedResponse.informationSource);
                 return;
             }
 
             // Fast path: the body is the ready server source.
-            this.#stopOcrPhaseAnimation();
             this.#finishReady(parsedResponse);
         });
 
         this.#xhr.addEventListener("error", () =>
         {
-            this.#stopOcrPhaseAnimation();
             this.#renderErrorState("Network error — upload could not complete");
         });
 
         this.#xhr.addEventListener("abort", () =>
         {
-            this.#stopOcrPhaseAnimation();
             this.#renderErrorState("Upload was cancelled");
         });
     }
 
-    #startOcrPhaseAnimation()
+    /**
+     * The server-phase fraction (0..1) reported by a polled task tree.
+     *
+     * Two nodes carry a completion value. The root is the tracking task Dock
+     * owns; it marks the coarse milestones around the worker (staged, processed).
+     * Its single child is the OcrPdf task, which reports its own finer progress
+     * as it reads the staged object, runs the syllabus gate, OCRs (or doesn't)
+     * and writes the content object — so the child is mapped into the band the
+     * root reserves for it.
+     *
+     * Taking the max of the two keeps the bar monotonic across the handover: the
+     * root jumps to PROCESSED the instant the worker returns, which is never
+     * behind where the child had reached.
+     */
+    #readServerPhaseFraction(taskTree)
     {
-        // Defensive: if a previous call already started the animation
-        // (e.g. xhr.upload "load" fired twice on a quirky browser),
-        // don't stack a second interval.
-        if (this.#ocrAnimationIntervalId !== null)
+        if (!taskTree)
         {
-            return;
+            return 0;
         }
 
-        const animationStartFraction  = InformationSourceCard.UPLOAD_PHASE_FRACTION;
-        const animationCeilingFraction = InformationSourceCard.OCR_PHASE_CEILING;
-        const animationStartTime       = Date.now();
-        const halfLifeMilliseconds     = InformationSourceCard.OCR_ANIMATION_HALF_LIFE_MILLISECONDS;
+        const rootCompletion = typeof taskTree.completion === "number" ? taskTree.completion : 0;
 
-        const tick = () =>
+        const workerNode = Array.isArray(taskTree.children) ? taskTree.children[0] : null;
+        if (!workerNode || typeof workerNode.completion !== "number")
         {
-            const elapsedMilliseconds = Date.now() - animationStartTime;
-            // Exponential approach: at elapsed == halfLife the bar is at
-            // half the remaining distance to the ceiling; at 2× halfLife,
-            // three-quarters; etc. Bounded above by the ceiling.
-            const approachProgress = 1 - Math.pow(0.5, elapsedMilliseconds / halfLifeMilliseconds);
-            const currentFraction  = animationStartFraction
-                + (animationCeilingFraction - animationStartFraction) * approachProgress;
-            const currentPercent   = Math.round(currentFraction * 100);
-
-            this.#progressFill.style.width = `${currentPercent}%`;
-            this.#statusLabel.textContent  = `OCR ${currentPercent}%`;
-        };
-
-        tick();
-        this.#ocrAnimationIntervalId = setInterval(tick, InformationSourceCard.OCR_ANIMATION_TICK_MILLISECONDS);
-    }
-
-    #stopOcrPhaseAnimation()
-    {
-        if (this.#ocrAnimationIntervalId === null)
-        {
-            return;
+            return rootCompletion;
         }
-        clearInterval(this.#ocrAnimationIntervalId);
-        this.#ocrAnimationIntervalId = null;
+
+        const bandStart = InformationSourceUploadProgress.WORKER_BAND_START;
+        const bandEnd = InformationSourceUploadProgress.WORKER_BAND_END;
+        const workerContribution = bandStart + workerNode.completion * (bandEnd - bandStart);
+
+        return Math.max(rootCompletion, workerContribution);
     }
 
     /**
-     * Polls the background OCR tracking task via /Generate/Progress until it is
-     * terminal, keeping the OCR-phase animation running meanwhile. On COMPLETED
-     * the card finishes and emits the ready event; on FAILED (or a poll timeout)
-     * it renders the error.
+     * Paints the bar for a polled task tree. The upload phase already owns the
+     * first UPLOAD_PHASE_FRACTION of the bar, so the server phase fills the rest.
+     */
+    #renderServerPhaseProgress(taskTree)
+    {
+        const uploadFraction = InformationSourceCard.UPLOAD_PHASE_FRACTION;
+        const serverFraction = this.#readServerPhaseFraction(taskTree);
+        const overallPercent = Math.round((uploadFraction + serverFraction * (1 - uploadFraction)) * 100);
+
+        this.#progressFill.style.width = `${overallPercent}%`;
+        this.#statusLabel.textContent = `${this.#getProcessingPhaseLabel()} ${overallPercent}%`;
+    }
+
+    /**
+     * What to call the server-side phase this card is waiting on. With OCR on it
+     * really is OCR and that is the slow part worth naming; with OCR off the
+     * server is only landing the file, so calling it "OCR" would be a plain lie
+     * to the user who just switched it off. Falls back to the OCR wording when
+     * the mode is unknown, matching the server's own default.
+     */
+    #getProcessingPhaseLabel()
+    {
+        return this.#informationSource?.getOcrMode() === ocrModes.DISABLED
+            ? "Processing"
+            : "OCR";
+    }
+
+    /**
+     * Polls the background tracking task via /Generate/Progress until it is
+     * terminal, repainting the bar from each poll's real completion values. On
+     * COMPLETED the card finishes and emits the ready event; on FAILED (or a
+     * poll timeout) it renders the error.
      */
     async #pollOcrTaskUntilReady(taskId, serverInformationSourceJson)
     {
@@ -393,18 +392,21 @@ class InformationSourceCard extends HTMLElement
         {
             finalTaskTree = await TaskProgressTracker.pollUntilTerminal(
                 taskId,
-                null,
+                (statusChange) =>
+                {
+                    if (statusChange.phase === "progress")
+                    {
+                        this.#renderServerPhaseProgress(statusChange.taskTree);
+                    }
+                },
                 InformationSourceCard.OCR_POLL_MAX_DURATION_MILLISECONDS
             );
         }
         catch (pollError)
         {
-            this.#stopOcrPhaseAnimation();
-            this.#renderErrorState("Timed out waiting for OCR to finish. Please try again.");
+            this.#renderErrorState(`Timed out waiting for ${this.#getProcessingPhaseLabel().toLowerCase()} to finish. Please try again.`);
             return;
         }
-
-        this.#stopOcrPhaseAnimation();
 
         const finalStatus = (finalTaskTree && typeof finalTaskTree.status === "number")
             ? finalTaskTree.status
@@ -418,7 +420,7 @@ class InformationSourceCard extends HTMLElement
         {
             const reason = (finalTaskTree && finalTaskTree.error)
                 ? finalTaskTree.error
-                : "OCR processing failed. Please try again.";
+                : `${this.#getProcessingPhaseLabel()} failed. Please try again.`;
             this.#renderErrorState(reason);
         }
     }

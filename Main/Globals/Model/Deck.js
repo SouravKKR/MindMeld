@@ -16,6 +16,7 @@ import Lifecycle from "./Lifecycle.js";
 import StudyMaterial from "./StudyMaterial.js";
 import MockTest from "./MockTest.js";
 import SyncEvents from "../Events/SyncEvents.js";
+import ContentOverlayStore from "../Classes/Content/ContentOverlayStore.js";
 import SyncTransport from "../Classes/Syncing/SyncTransport.js";
 import SyncOrchestrator from "../Classes/Syncing/SyncOrchestrator.js";
 import { entityTypes } from "../Enumerations/EntityTypes.js";
@@ -26,6 +27,7 @@ import CuratedFlashcardFields from "../Classes/Analysis/CuratedFlashcardFields.j
 import CuratedStudyMaterialFields from "../Classes/Analysis/CuratedStudyMaterialFields.js";
 import ChatStudyMaterialFields from "../Classes/Analysis/ChatStudyMaterialFields.js";
 import CuratedStudyMaterialMigration from "../Classes/Analysis/CuratedStudyMaterialMigration.js";
+import AiGeneratedDeckFields from "../Classes/Security/AiGeneratedDeckFields.js";
 import BrowserLlmDownloadConstants from "../Constants/BrowserLlmDownloadConstants.js";
 import SearchableDropdown from "../../CommonComponents/SearchableDropdown.js";
 import InitializationEvents from "../Events/InitializationEvents.js";
@@ -397,6 +399,52 @@ class Deck
     }
     
     /**
+     * True when this deck was produced by AI generation from uploaded source
+     * material. The server marks every node a generation run creates or folds
+     * into, plus the deck the run was launched from, so this reads the node
+     * itself only.
+     * @returns {boolean}
+     */
+    isAiGenerated()
+    {
+        return AiGeneratedDeckFields.isMarked(this.getAdditionalData());
+    }
+
+    /**
+     * True when this deck OR ANY DESCENDANT holds AI-generated content.
+     *
+     * Export is the reason this walks the subtree rather than checking the node.
+     * Exporting a deck exports everything beneath it, so a manually-created
+     * parent sitting above a generated subtree would carry that generated
+     * content straight out of the app while the parent itself looks clean.
+     * Checking only the node would leave every ancestor — up to and including
+     * the root deck, which contains everything — as an open door.
+     *
+     * The walk is depth-first with early exit, so the common case (a clean deck
+     * with no generated descendants) costs one pass and the marked case usually
+     * stops at the first hit.
+     *
+     * @returns {boolean}
+     */
+    containsAiGeneratedContent()
+    {
+        if (this.isAiGenerated())
+        {
+            return true;
+        }
+
+        for (const subDeck of this.#subDecks)
+        {
+            if (subDeck.containsAiGeneratedContent())
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Returns the subdecks that are part of the deck, sorted by their
      * syllabusPosition (set by the server when generating from a syllabus).
      * Sub-decks without a position fall to the end in insertion order.
@@ -448,8 +496,11 @@ class Deck
     addCard(card)
     {
         // Same re-stamp as addStudyMaterial — keeps card.getDeck() reliable
-        // even when the persisted JSON carried a stale deckId.
-        card.setDeckId(this.#id);
+        // even when the persisted JSON carried a stale deckId. Uses the
+        // unguarded ownership assignment on purpose: repairing a wrong deckId
+        // must be able to change the card's paid tag, whereas setDeckId (a
+        // caller-initiated move) must not.
+        card.assignOwningDeckId(this.#id);
         this.#cards.set(card.getId(), card);
     }
     
@@ -544,7 +595,7 @@ class Deck
         // incoming entity (e.g. loaded from an older persistence file
         // that predated a rename / merge) can't outlive this call. Keeps
         // StudyMaterial.getDeck() reliable for downstream save()/view().
-        studyMaterial.setDeckId(this.#id);
+        studyMaterial.assignOwningDeckId(this.#id);
         this.#studyMaterials.set(studyMaterial.getId(), studyMaterial);
     }
 
@@ -943,6 +994,17 @@ class Deck
             const hasTarget = Object.prototype.hasOwnProperty.call(targetData, fieldKey);
             const hasSource = Object.prototype.hasOwnProperty.call(sourceData, fieldKey);
 
+            // Entity-channel slots are maps of independent records keyed by
+            // record id, not single values — so "the target's value wins" would
+            // throw away the whole source map. Merge them per record instead.
+            // This is the difference between absorbing a deck's popup notes and
+            // silently deleting them.
+            if (Deck.#ENTITY_CHANNEL_ADDITIONAL_DATA_KEYS.includes(fieldKey))
+            {
+                mergedResult[fieldKey] = { ...(targetData[fieldKey] || {}), ...(sourceData[fieldKey] || {}) };
+                continue;
+            }
+
             // User explicitly chose this field via the resolutions modal.
             if (userResolutions && Object.prototype.hasOwnProperty.call(userResolutions, fieldKey))
             {
@@ -1126,6 +1188,22 @@ class Deck
             throw new Error("Paid-deck content cannot be exported.");
         }
 
+        // Same defence in depth for AI-generated content. Checked per node, so
+        // the recursion below propagates it: a recursive export aborts the
+        // moment the walk reaches a generated deck, while a non-recursive
+        // export of a genuinely clean deck never visits its generated children
+        // and stays allowed — which is the deliberate design.
+        //
+        // The one legitimate exception is the admin paid-deck upload path
+        // (PaidDeckUploadDialog.serialiseDeckForUpload). Paid decks are produced
+        // by this same generation pipeline, so every node in them is marked, and
+        // the administrator is publishing content the platform owns. It opts in
+        // via options.bAllowAiGeneratedContent.
+        if (!options.bAllowAiGeneratedContent && AiGeneratedDeckFields.isMarked(this.#additionalData))
+        {
+            throw new Error("AI-generated content cannot be exported.");
+        }
+
         const deckJson = this.toJson();
 
         // Curated study materials + curated flashcards are generated
@@ -1189,6 +1267,17 @@ class Deck
                     }
                 }
             }
+        }
+
+        // Content overlays are a learner's edits to THEIR copy, keyed by the
+        // ids of entities in that copy. Deck.import re-mints every id, so an
+        // exported overlay would arrive pointing at entities that no longer
+        // exist — dead weight at best. Popup notes are deliberately NOT
+        // stripped: their markers travel inside the exported card HTML, so the
+        // records have to travel with them.
+        if (deckJson.additionalData && typeof deckJson.additionalData === "object")
+        {
+            delete deckJson.additionalData[ContentOverlayStore.DECK_ADDITIONAL_DATA_KEY];
         }
 
         if (!options.bRetainAutoAnalysisSettings && deckJson.additionalData && typeof deckJson.additionalData === "object")
@@ -1259,6 +1348,20 @@ class Deck
         };
     }
     
+    /**
+     * True when this deck, any ancestor, or any descendant carries the
+     * paidDeckId tag — i.e. the subtree contains seller-owned content.
+     *
+     * Public because several flows outside the model need the same answer:
+     * export refuses on it, and so must anything that would relocate entities
+     * out of a paid subtree (deck merge, cross-deck moves). Keeping one
+     * predicate means those callers cannot drift apart from each other.
+     */
+    isPaidLicensedSubtree()
+    {
+        return this.#isAnyAncestorOrSelfPaidLicensed() || this.#hasAnyPaidDeckedDescendant();
+    }
+
     #isAnyAncestorOrSelfPaidLicensed()
     {
         let walker = this;
@@ -1300,12 +1403,31 @@ class Deck
         // freely-redistributable .emmd file. Block at the root and at
         // every descendant — covers the case where the user opens the
         // export from a deeper subdeck whose ancestor is paid.
-        if (this.#isAnyAncestorOrSelfPaidLicensed() || this.#hasAnyPaidDeckedDescendant())
+        if (this.isPaidLicensedSubtree())
         {
             await DialogBox.alert
             (
                 "Export blocked",
                 "Paid decks can't be exported. Edits to a paid deck are stored on the server only."
+            );
+            return;
+        }
+
+        // AI-generated study material must not leave the app as a shareable
+        // file. Refused here rather than relying on getExportData's throw: the
+        // try block below has no catch, so a throw would surface as an unhandled
+        // rejection with no explanation to the user. The subtree half only
+        // applies to a recursive export, which is the request that would
+        // actually carry generated descendants out through a clean ancestor.
+        const bAiGeneratedInExportScope = this.isAiGenerated()
+            || (options.bRecursive === true && this.containsAiGeneratedContent());
+
+        if (bAiGeneratedInExportScope)
+        {
+            await DialogBox.alert
+            (
+                "Export blocked",
+                "This deck contains AI-generated study material, which can't be exported."
             );
             return;
         }
@@ -1712,7 +1834,7 @@ class Deck
         for(let cardIndex = 0; cardIndex < cards.length; cardIndex++)
         {
             const card = cards[cardIndex];
-            card.setDeckId(deck.getId());
+            card.assignOwningDeckId(deck.getId());
         }
 
         return deck;
@@ -1991,7 +2113,7 @@ class Deck
      */
     toSyncJson()
     {
-        const filteredAdditionalData = Deck.#additionalDataWithoutPopupLinks(this.#additionalData);
+        const filteredAdditionalData = Deck.#additionalDataWithoutEntityChannels(this.#additionalData);
         return {
             id: this.#id,
             name: this.#name,
@@ -2004,20 +2126,29 @@ class Deck
         }
     }
 
+    // additionalData slots that hold records which sync as their OWN entity
+    // type. They live under the deck on disk (so they persist and load with it)
+    // but must never ride the deck's own sync payload, or every deck push would
+    // re-bloat with content the dedicated channel already carries.
+    static #ENTITY_CHANNEL_ADDITIONAL_DATA_KEYS = ["askAiPopupLinks", "contentOverlays"];
+
     /**
-     * Shallow copy of additionalData with the askAiPopupLinks slot
-     * removed. Lives next to toSyncJson so the stripping rule has one
-     * obvious home — extend this if more first-class-entity-shaped
-     * fields ever take up residence under additionalData.
+     * Shallow copy of additionalData with every entity-channel slot removed.
+     * Lives next to toSyncJson so the stripping rule has one obvious home — add
+     * to the key list above if more first-class-entity-shaped fields ever take
+     * up residence under additionalData.
      */
-    static #additionalDataWithoutPopupLinks(additionalData)
+    static #additionalDataWithoutEntityChannels(additionalData)
     {
         if (!additionalData || typeof additionalData !== "object")
         {
             return {};
         }
         const cloned = { ...additionalData };
-        delete cloned.askAiPopupLinks;
+        for (const entityChannelKey of Deck.#ENTITY_CHANNEL_ADDITIONAL_DATA_KEYS)
+        {
+            delete cloned[entityChannelKey];
+        }
         return cloned;
     }
 
@@ -2049,7 +2180,7 @@ class Deck
         for(let cardIndex = 0; cardIndex < cards.length; cardIndex++)
         {
             const card = cards[cardIndex];
-            card.setDeckId(this.#id);
+            card.assignOwningDeckId(this.#id);
             this.#cards.set(card.getId(), card);
         }
 
@@ -2060,7 +2191,7 @@ class Deck
         for(let materialIndex = 0; materialIndex < studyMaterials.length; materialIndex++)
         {
             const studyMaterial = studyMaterials[materialIndex];
-            studyMaterial.setDeckId(this.#id);
+            studyMaterial.assignOwningDeckId(this.#id);
             this.#studyMaterials.set(studyMaterial.getId(), studyMaterial);
         }
 

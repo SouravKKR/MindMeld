@@ -768,6 +768,19 @@ cogniumlearn-about-component
     transform: translateY(-3px);
 }
 
+/* The card became a <button> when the mailto: link was replaced by the in-app
+   Report Issue dialog. These reset the UA button defaults the anchor never had,
+   so the card keeps its original appearance. */
+.about-contact-report-button
+{
+    width: 100%;
+    font-family: inherit;
+    font-size: inherit;
+    text-align: left;
+    cursor: pointer;
+    appearance: none;
+}
+
 .about-contact-icon
 {
     width: 28px;

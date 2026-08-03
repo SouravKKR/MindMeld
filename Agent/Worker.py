@@ -14,8 +14,14 @@ initialize_agent_logger()
 
 from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Classes.Task.TaskRunner import TaskRunner
+from Globals.Utility.NetworkAddressPreference import NetworkAddressPreference
 
 EnvironmentLoader.load()
+
+# Must run before the first outbound connection — on networks whose IPv6 egress is
+# broken, an unpreferred resolver order costs ~20s per AAAA record on every storage
+# and API call. See NetworkAddressPreference for the full reasoning.
+NetworkAddressPreference.prefer_ipv4_addresses()
 
 
 def _resolve_positive_integer_setting(environment_variable_name: str, fallback_value: int) -> int:

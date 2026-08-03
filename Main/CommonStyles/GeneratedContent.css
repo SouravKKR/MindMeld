@@ -14,6 +14,11 @@
  *   .diagram-text-fallback          -- Stage-2 text-only fallback box
  *   .diagram-text-fallback-header   -- header line inside the fallback box
  *   .diagram-text-fallback-body     -- markdown body inside the fallback box
+ *   .generated-figure               -- a GENERATED symbolic visual (paid decks)
+ *   .generated-figure figcaption    -- caption text under a generated figure
+ *   .generated-visual-description   -- the "described figure" escape hatch
+ *   .smiles-structure               -- chemical structure drawn by SmilesDrawer
+ *   .mermaid                        -- flow / hierarchy diagram drawn by Mermaid
  *
  * Global selectors are deliberate: these class names are only emitted by
  * the Agent injection paths and only appear inside backend-generated HTML,
@@ -44,4 +49,103 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+}
+
+/*
+ * Generated symbolic visuals (paid-deck generation). Unlike .extracted-figure
+ * these are drawn as live markup -- inline SVG, a SmilesDrawer structure, or a
+ * Mermaid diagram -- so they inherit the page background rather than carrying
+ * pixels of their own. Constraining them here keeps a model-authored viewBox
+ * from overflowing the lesson column.
+ */
+.generated-figure
+{
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.generated-figure svg
+{
+    max-width: 100%;
+    height: auto;
+}
+
+.generated-figure figcaption
+{
+    color: var(--content-muted-text-color);
+}
+
+/*
+ * A composite plate: several related panels shown together, each keeping its own
+ * label. The panel caption is what makes the plate teach anything — which
+ * structure is the aldehyde, which projection is the Newman — so it is styled to
+ * read as a label rather than as body prose.
+ */
+.composite-panel-caption
+{
+    color: var(--content-muted-text-color);
+    line-height: 1.3;
+}
+
+/*
+ * A panel must be capped or the plate stops being a plate. A drawn structure
+ * carries its own natural width (SmilesDrawer writes explicit width/height onto
+ * the SVG), so an uncapped panel grows to it, only one panel fits per row, and a
+ * nine-molecule comparison becomes a nine-screen vertical list — the exact
+ * side-by-side reading the figure exists to support is lost.
+ */
+.composite-panel
+{
+    max-width: 200px;
+    flex: 0 1 auto;
+}
+
+.composite-panel svg
+{
+    max-width: 100%;
+    height: auto;
+}
+
+/*
+ * The escape hatch: the generator was asked for a diagram, declined to draw
+ * one, and supplied a labelled description instead. Retained for older decks —
+ * current generation escalates a decline to SVG and drops it rather than
+ * printing the description where a figure belongs.
+ */
+.generated-visual-description
+{
+    background-color: var(--content-callout-background-color);
+    border-left: 3px solid var(--content-callout-border-color);
+    border-radius: var(--content-callout-border-radius);
+    padding: 0.6em 0.8em;
+    text-align: left;
+}
+
+.smiles-structure
+{
+    display: inline-block;
+    max-width: 100%;
+}
+
+/*
+ * Until Mermaid draws it, this element still holds its raw diagram source, and
+ * if the render fails or the library never loads it holds that source forever.
+ * Hiding everything except a confirmed successful render means the student sees
+ * a diagram or nothing -- never a block of Mermaid syntax. GeneratedVisualRenderer
+ * sets data-visual-rendered="true" only on success ("failed" on error, which
+ * stops it retrying without revealing the source).
+ */
+.mermaid:not([data-visual-rendered="true"])
+{
+    display: none;
+}
+
+.mermaid[data-visual-rendered="true"]
+{
+    background: none;
+    text-align: center;
+    /* The source arrives inside a <pre>; the rendered SVG must not inherit
+       preformatted wrapping or the monospace stack from it. */
+    white-space: normal;
+    font-family: inherit;
 }

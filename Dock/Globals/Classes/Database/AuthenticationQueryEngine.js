@@ -346,22 +346,6 @@ class AuthenticationQueryEngine
             { upsert: true }
         );
 
-        // A genuinely first-seen device — the one clean "new sign-in" signal
-        // (resolveOrCreateDevice returns the same shape for a returning device).
-        // Security notice: in-app + push. Lazy-required so this boot-critical
-        // module never pulls the notification stack at load; best-effort.
-        try
-        {
-            const NotificationDispatcher = require("../Notifications/NotificationDispatcher");
-            const NotificationContent = require("../Notifications/NotificationContent");
-            const { notificationChannels } = require("../../Enumerations/NotificationChannels");
-            await NotificationDispatcher.dispatch(userId, NotificationContent.newDeviceSignIn(device.getDeviceName()), notificationChannels.IN_APP | notificationChannels.PUSH);
-        }
-        catch (notifyError)
-        {
-            console.warn(`[AuthenticationQueryEngine] Failed to dispatch new-device notification for ${userId}: ${notifyError.message}`);
-        }
-
         return device;
     }
 
@@ -393,6 +377,29 @@ class AuthenticationQueryEngine
             { $set: device.toJson() },
             { upsert: true }
         );
+
+        // A genuinely first-seen device — the one clean "new sign-in" signal.
+        // This belongs HERE and not in #refreshDeviceFromPayload: that method is
+        // the returning-device path, so firing from there would alert on every
+        // login from an already-known device (and it has no userId in scope,
+        // which is what made /Auth/Devices/Register throw a ReferenceError).
+        // Security notice: in-app + push. Lazy-required so this boot-critical
+        // module never pulls the notification stack at load; best-effort.
+        try
+        {
+            const NotificationDispatcher = require("../Notifications/NotificationDispatcher");
+            const NotificationContent = require("../Notifications/NotificationContent");
+            const { notificationChannels } = require("../../Enumerations/NotificationChannels");
+            await NotificationDispatcher.dispatch(userId, NotificationContent.newDeviceSignIn(device.getDeviceName()), notificationChannels.IN_APP | notificationChannels.PUSH);
+        }
+        catch (notifyError)
+        {
+            // Log the DEVICE id, never a value that may not be bound. A
+            // best-effort notice must not be able to fail device registration —
+            // and an error handler that can itself throw defeats the try/catch
+            // that was meant to guarantee exactly that.
+            console.warn(`[AuthenticationQueryEngine] Failed to dispatch new-device notification for device ${device.getId()}: ${notifyError.message}`);
+        }
 
         return device;
     }

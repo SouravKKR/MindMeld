@@ -64,6 +64,23 @@ class DocumentProcessingProvider(AutomationProvider):
             except (ValueError, TypeError):
                 end_page = None
 
+        # Page numbers are 1-based, so 0 is never a real page — callers use it as
+        # the "no bound on this end" sentinel. ProcessSyllabus.__compute_extraction_ranges
+        # returns (0, 0) for "extract the whole document", both when the source
+        # carries no page ranges and when its range covers everything.
+        #
+        # Mapping it to None here is what makes that sentinel mean what the caller
+        # intends. Read literally, end_page=0 clamped the slice to pdf.pages[0:0]
+        # — an empty page list — so a whole-document extraction returned an empty
+        # string. Downstream that surfaced as "Could not derive a syllabus.
+        # Provide at least one syllabus/textbook source", blaming the user's
+        # perfectly good upload for a range that was never applied.
+        if start_page == 0:
+            start_page = None
+
+        if end_page == 0:
+            end_page = None
+
         return start_page, end_page
 
     async def __extract_pages_from_pdf(self, file_path: str, start_page: int | None, end_page: int | None) -> tuple[list[str], int, int]:

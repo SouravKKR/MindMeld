@@ -17,6 +17,7 @@ const { fetchPaidDeckEntities } = require("./PaidDeck/FetchPaidDeckEntities");
 const { updatePaidDeckEntity } = require("./PaidDeck/UpdatePaidDeckEntity");
 const { addPaidDeckCopy } = require("./PaidDeck/AddPaidDeckCopy");
 const { deletePaidDeckCopy } = require("./PaidDeck/DeletePaidDeckCopy");
+const { updatePaidDeckCopyContent } = require("./PaidDeck/UpdatePaidDeckCopyContent");
 
 function handlePaidDeckEndpoints(server)
 {
@@ -156,6 +157,19 @@ function handlePaidDeckEndpoints(server)
     ({
         routePath: `/PaidDecks/Copies/Add`,
         handler: addPaidDeckCopy,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureLogin]
+    });
+
+    // Moves ONE copy onto the publisher's current content version, keeping
+    // progress and edits for every entity the publisher did not change.
+    // dryRun:true returns only the counts, so the confirm dialog can tell the
+    // buyer exactly what they are about to lose.
+    server.handle
+    ({
+        routePath: `/PaidDecks/Copies/UpdateContent`,
+        handler: updatePaidDeckCopyContent,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureLogin]

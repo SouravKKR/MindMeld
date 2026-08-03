@@ -16,6 +16,7 @@ albucore==0.0.24
 albumentations==2.0.8
 annotated-doc==0.0.4
 annotated-types==0.7.0
+anthropic==0.111.0
 anyio==4.12.1
 attrs==25.4.0
 beautifulsoup4==4.14.3

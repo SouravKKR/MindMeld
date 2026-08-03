@@ -368,6 +368,15 @@ class MockTestAssembler
         return testsUpserted;
     }
 
+    /**
+     * Assembles and upserts every mock test this run produced.
+     *
+     * @returns {Promise<number>} how many mock tests were upserted. The caller
+     *          needs a truthful count to know whether generated content landed
+     *          on the launch deck: in non-recursive mode every test is written
+     *          straight onto deckId and no deck rows are created at all, so the
+     *          deck-upsert count alone cannot tell that anything was generated.
+     */
     static async upsertMockTests(userId, deckId, mainTaskId, now, mockTestGenerationSettings = null, resolveLeafDeckId = null, deckKeyToDataMap = null)
     {
         // Load Blueprint.json written by GenerateMockTests.py — contains exam metadata,
@@ -384,7 +393,7 @@ class MockTestAssembler
         catch (error)
         {
             console.error(`[MoveToDatabase] Blueprint.json not found for task ${mainTaskId} — mock test assembly skipped. This usually means the GENERATE_MOCK_TESTS workflow did not complete successfully.`);
-            return;
+            return 0;
         }
 
         // Collect every question, but keep its source topicChain so recursive
@@ -418,7 +427,7 @@ class MockTestAssembler
         if (allQuestions.length === 0)
         {
             console.log(`[MoveToDatabase] No mock test questions found — skipping assembly.`);
-            return;
+            return 0;
         }
 
         // ── Marking scheme: frozen at generation time so scoring is stable even
@@ -438,16 +447,14 @@ class MockTestAssembler
 
         if (!recursive)
         {
-            await MockTestAssembler.#assembleAndUpsertTestsForDeck(userId, deckId, allQuestions, blueprint, markingScheme, typeKeyByValue, now, mockTestGenerationSettings);
-            return;
+            return await MockTestAssembler.#assembleAndUpsertTestsForDeck(userId, deckId, allQuestions, blueprint, markingScheme, typeKeyByValue, now, mockTestGenerationSettings);
         }
 
         // ── Recursive: bucket questions across every deck in the generated subtree ─
         if (typeof resolveLeafDeckId !== "function" || !(deckKeyToDataMap instanceof Map))
         {
             console.warn(`[MoveToDatabase] Recursive mock test mode requested but deck hierarchy was not provided — falling back to single-deck bundle on ${deckId}.`);
-            await MockTestAssembler.#assembleAndUpsertTestsForDeck(userId, deckId, allQuestions, blueprint, markingScheme, typeKeyByValue, now, mockTestGenerationSettings);
-            return;
+            return await MockTestAssembler.#assembleAndUpsertTestsForDeck(userId, deckId, allQuestions, blueprint, markingScheme, typeKeyByValue, now, mockTestGenerationSettings);
         }
 
         // Index decks by id so we can walk leaf → root via the `parent` link
@@ -513,6 +520,8 @@ class MockTestAssembler
         }
 
         console.log(`[MoveToDatabase] Recursive mock tests: upserted ${totalTestsUpserted} test(s) across ${bucketsByDeckId.size} deck(s) (skipRootDeck=${skipRootDeck}).`);
+
+        return totalTestsUpserted;
     }
 }
 

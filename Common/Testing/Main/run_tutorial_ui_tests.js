@@ -4,8 +4,9 @@
 //
 //   1. WALKS IT START TO FINISH — it plays each step the way a user would,
 //      clicking the real Next / Finish buttons and the real in-app elements
-//      each WAIT_FOR_CLICK / WAIT_FOR_EVENT step points at, filling any
-//      required fields, until the tutorial's finish dialog is dismissed.
+//      each WAIT_FOR_CLICK / WAIT_FOR_EVENT step points at, and TYPING (real
+//      key events, not assigned .value / .textContent) into any field a step
+//      gates on, until the tutorial's finish dialog is dismissed.
 //
 //   2. ASSERTS EVERY CLICK TARGET IS VISIBLE TO THE USER — for each step that
 //      asks the user to click a real element, it takes the centre of the
@@ -35,7 +36,10 @@
 // Env: BASE_URL (default http://127.0.0.1:3000),
 //      TEST_SESSION_COOKIE (REQUIRED — a valid sessionId for a seeded account
 //      that has already accepted the Terms; without it the home page / deck
-//      tree never load and the whole suite is SKIPPED, never FAILED).
+//      tree never load and the whole suite is SKIPPED, never FAILED),
+//      HEADFUL=1 to watch the walkthrough in a real visible Chromium window
+//      (useful when diagnosing a stuck step; SLOW_MO_MS paces it further),
+//      VERBOSE=1 to print a per-step trace to stdout as the walk proceeds.
 // Result JSON -> $RESULT_FILE or Common/Reports/.results/tutorial-ui.json.
 
 const fs = require("fs");
@@ -47,6 +51,17 @@ const RESULT_FILE = process.env.RESULT_FILE
 const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:3000";
 const SESSION_COOKIE = process.env.TEST_SESSION_COOKIE || "";
 const CATEGORY = "Tutorial Walkthrough (Puppeteer)";
+const RUN_HEADFUL = process.env.HEADFUL === "1";
+const SLOW_MO_MS = Number(process.env.SLOW_MO_MS || 0) || 0;
+const VERBOSE = process.env.VERBOSE === "1";
+
+function trace(message)
+{
+    if (VERBOSE)
+    {
+        console.log(message);
+    }
+}
 
 // Every page custom-element tag the app can mount. Used only to identify which
 // element is the "current page" when sampling for navigation, as a fallback to
@@ -69,7 +84,7 @@ const VIEWPORT = { width: 1280, height: 900 };
 const STEP_SETTLE_MS = 700;
 const ADVANCE_TIMEOUT_MS = 9000;
 const POLL_INTERVAL_MS = 150;
-const FIELD_VALUE = "Tutorial test value";
+const FIELD_VALUE = "Tutorial Deck";
 
 function writeResult(payload)
 {
@@ -159,6 +174,23 @@ function readOverlayStateInPage()
                 inViewport: rectangle.left >= 0 && rectangle.top >= 0
                     && rectangle.right <= window.innerWidth && rectangle.bottom <= window.innerHeight,
                 targetTag: elementAtCenter ? elementAtCenter.tagName.toLowerCase() : null,
+                // Ancestor chain of whatever is topmost at the spotlight
+                // centre. When a step fails the visibility assertion this is
+                // what identifies the element covering the target.
+                targetChain: (() =>
+                {
+                    const chain = [];
+                    let cursor = elementAtCenter;
+                    while (cursor && chain.length < 5)
+                    {
+                        const classNames = (typeof cursor.className === "string" && cursor.className)
+                            ? "." + cursor.className.trim().split(/\s+/).join(".")
+                            : "";
+                        chain.push(cursor.tagName.toLowerCase() + classNames);
+                        cursor = cursor.parentElement;
+                    }
+                    return chain.join(" < ");
+                })(),
                 targetInsideOverlay: insideOverlay,
                 targetIsEditable: elementAtCenter
                     ? (/^(input|textarea)$/i.test(elementAtCenter.tagName) || elementAtCenter.isContentEditable)
@@ -167,6 +199,16 @@ function readOverlayStateInPage()
         }
     }
 
+    // Transient surfaces a step may be pointing at. Reported so a failure can
+    // distinguish "the target is covered" from "the popup that holds the
+    // target is no longer open".
+    const transientSurfaces = Array.from(document.querySelectorAll("context-menu, deck-options-context-menu, home-page-context-menu, dialog-box"))
+        .map((element) =>
+        {
+            const rectangle = element.getBoundingClientRect();
+            return `${element.tagName.toLowerCase()}@${Math.round(rectangle.left)},${Math.round(rectangle.top)} ${Math.round(rectangle.width)}x${Math.round(rectangle.height)}`;
+        });
+
     return {
         visible: true,
         stepIndex, stepCount,
@@ -174,41 +216,68 @@ function readOverlayStateInPage()
         visibleNext, visibleFinish, nextDisabled,
         isModal, isHighlight, isFloating,
         spotlight,
+        transientSurfaces,
     };
 }
 
-// Fills the element currently exposed at the spotlight centre (used to satisfy a
-// step whose Next button is gated by a non-empty-field validator). Returns true
-// when a fillable element was found and populated.
-function fillSpotlightTargetInPage(value)
+// Reports whether the element exposed at the spotlight centre can be typed
+// into, so the driver knows to satisfy a validator-gated step by typing.
+function describeSpotlightFieldInPage()
 {
     const overlay = document.querySelector("tutorial-overlay");
     const spotlightElement = overlay ? overlay.querySelector(".tutorial-overlay-spotlight") : null;
     if (!spotlightElement)
     {
-        return false;
+        return { fillable: false };
     }
     const rectangle = spotlightElement.getBoundingClientRect();
     const element = document.elementFromPoint(rectangle.left + rectangle.width / 2, rectangle.top + rectangle.height / 2);
     if (!element)
     {
+        return { fillable: false };
+    }
+    const isPlainField = /^(input|textarea)$/i.test(element.tagName);
+    return {
+        fillable: isPlainField || element.isContentEditable,
+        // Respect the field's own maxlength — a real user cannot type past it,
+        // and an over-long value fails the app's save validation.
+        maximumLength: isPlainField ? (Number(element.getAttribute("maxlength")) || 0) : 0,
+        centerX: rectangle.left + rectangle.width / 2,
+        centerY: rectangle.top + rectangle.height / 2,
+    };
+}
+
+// Blurs whatever is focused. Editors commit their field values on `change`,
+// which only fires once focus leaves — exactly what happens when a real user
+// clicks Save.
+function blurActiveElementInPage()
+{
+    if (document.activeElement && typeof document.activeElement.blur === "function")
+    {
+        document.activeElement.blur();
+    }
+}
+
+// Satisfies a validator-gated step by clicking the highlighted field and
+// TYPING into it with real key events. Synthesising values by assigning
+// .value / .textContent is not equivalent: the rich-text editors keep their
+// content in an inner node, so a synthetic write can satisfy the tutorial's
+// own non-empty check while the editor still reports empty content to the
+// page's save handler.
+async function typeIntoSpotlightField(page, value)
+{
+    const field = await page.evaluate(describeSpotlightFieldInPage);
+    if (!field.fillable)
+    {
         return false;
     }
-    if (/^(input|textarea)$/i.test(element.tagName))
-    {
-        element.focus();
-        element.value = value;
-        element.dispatchEvent(new Event("input", { bubbles: true }));
-        return true;
-    }
-    if (element.isContentEditable)
-    {
-        element.focus();
-        element.textContent = value;
-        element.dispatchEvent(new InputEvent("input", { bubbles: true }));
-        return true;
-    }
-    return false;
+
+    const text = field.maximumLength > 0 ? value.slice(0, field.maximumLength) : value;
+
+    await page.mouse.click(field.centerX, field.centerY);
+    await page.keyboard.type(text, { delay: 10 });
+    await page.evaluate(blurActiveElementInPage);
+    return true;
 }
 
 function currentPageTagInPage(knownTags)
@@ -258,7 +327,12 @@ function currentPageTagInPage(knownTags)
     let browser;
     try
     {
-        browser = await puppeteer.launch({ headless: "new", args: ["--no-sandbox", "--disable-setuid-sandbox"] });
+        browser = await puppeteer.launch({
+            headless: RUN_HEADFUL ? false : "new",
+            slowMo: SLOW_MO_MS,
+            defaultViewport: VIEWPORT,
+            args: ["--no-sandbox", "--disable-setuid-sandbox", `--window-size=${VIEWPORT.width},${VIEWPORT.height + 120}`]
+        });
     }
     catch (error)
     {
@@ -276,7 +350,10 @@ function currentPageTagInPage(knownTags)
 
         try
         {
-            await page.goto(BASE_URL + "/?tutorialE2E=1", { waitUntil: "networkidle2", timeout: 30000 });
+            // "/index.html?..." rather than "/?..." — the server's route
+            // normalisation drops the root path when a query string is
+            // present, so "/?tutorialE2E=1" 404s.
+            await page.goto(BASE_URL + "/index.html?tutorialE2E=1", { waitUntil: "networkidle2", timeout: 30000 });
         }
         catch (error)
         {
@@ -319,6 +396,10 @@ function currentPageTagInPage(knownTags)
             // -- Return to a clean Home, then start this tutorial. --
             await page.evaluate(() => window.__tutorialE2E.goHome());
             await sleep(STEP_SETTLE_MS);
+
+            // The previous tour may have earned a badge whose celebration is now
+            // holding the blocking-overlay slot this tutorial's overlay needs.
+            await dismissBadgeCelebrationIfPresent(page);
 
             const started = await page.evaluate((tutorialId) => window.__tutorialE2E.play(tutorialId), tutorial.id);
             if (!started)
@@ -437,6 +518,10 @@ async function walkTutorial(page, label, firstState, record, recordSkip)
         const isAcknowledgeStep = state.visibleNext || state.visibleFinish;
         const isUserActionStep = !state.visibleNext && !state.visibleFinish;
 
+        trace(`  [${label}] ${stepLabel} on <${pageBefore || "?"}> `
+            + `mode=${state.isModal ? "modal" : state.isFloating ? "FLOATING" : state.isHighlight ? "highlight" : "?"} `
+            + `${isUserActionStep ? "action" : "acknowledge"} :: ${describeTarget(state)}`);
+
         if (isUserActionStep)
         {
             // The user must click a real in-app element. Assert it is exposed
@@ -469,8 +554,8 @@ async function walkTutorial(page, label, firstState, record, recordSkip)
             // Satisfy a validator-gated Next by filling the highlighted field.
             if (state.visibleNext && state.nextDisabled)
             {
-                await page.evaluate(fillSpotlightTargetInPage, FIELD_VALUE);
-                await sleep(150);
+                await typeIntoSpotlightField(page, FIELD_VALUE);
+                await sleep(200);
                 state = await page.evaluate(readOverlayStateInPage);
             }
 
@@ -553,7 +638,7 @@ function describeTarget(state)
     {
         return "no spotlight rendered for this step";
     }
-    const parts = [`landed on <${state.spotlight.targetTag || "nothing"}>`];
+    const parts = [`landed on ${state.spotlight.targetChain || "<nothing>"}`];
     if (state.spotlight.targetInsideOverlay)
     {
         parts.push("which is the overlay/mask (target covered, not clickable)");
@@ -563,6 +648,7 @@ function describeTarget(state)
         parts.push("spotlight partly outside viewport");
     }
     parts.push(`spotlight ${state.spotlight.width}x${state.spotlight.height}`);
+    parts.push(`open popups: ${(state.transientSurfaces || []).join(", ") || "none"}`);
     return parts.join("; ");
 }
 
@@ -642,6 +728,36 @@ async function dismissFinishDialog(page)
     return false;
 }
 
+// A badge celebration is modal and holds the exclusive blocking-overlay slot
+// until it is DISMISSED. Removing its DOM (as the stray-dialog sweep below does)
+// drops the element but leaks the slot, so every later tutorial's overlay waits
+// forever on a celebration nothing will ever close — reported as "Overlay never
+// rendered the first step", which looks like a UI bug and is not one.
+//
+// This suite drives a real account, and finishing a tour earns a streak badge;
+// an unacknowledged badge re-presents on every load. So dismiss it the way a
+// user does — clicking lets BadgeCelebrationDialog's own handler release the
+// slot — before starting each tutorial.
+async function dismissBadgeCelebrationIfPresent(page)
+{
+    const dismissedCount = await page.evaluate(() =>
+    {
+        const continueButtons = Array.from(document.querySelectorAll(".badge-celebration-continue"));
+        for (const continueButton of continueButtons)
+        {
+            continueButton.click();
+        }
+        return continueButtons.length;
+    });
+
+    if (dismissedCount > 0)
+    {
+        await sleep(STEP_SETTLE_MS);
+    }
+
+    return dismissedCount;
+}
+
 // Best-effort exit so the next tutorial starts from a clean slate: if a
 // tutorial is still running (we got stuck, or it exited oddly), click Skip to
 // trigger the engine's normal cleanup, dismiss any finish dialog, and go Home.
@@ -662,6 +778,10 @@ async function recoverFromTutorial(page)
         });
         await dismissFinishDialog(page);
     }
+    // Dismiss a badge celebration properly BEFORE the blunt sweep below, so its
+    // coordinator slot is released rather than orphaned with the element.
+    await dismissBadgeCelebrationIfPresent(page);
+
     // Clear any stray dialogs and return Home.
     await page.evaluate(() =>
     {

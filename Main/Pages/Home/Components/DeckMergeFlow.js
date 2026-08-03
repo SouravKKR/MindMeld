@@ -24,6 +24,23 @@ class DeckMergeFlow
             return;
         }
 
+        // ── Reject anything that would move paid content out of its own
+        //    subtree. mergeFrom relocates every card, material, mock test and
+        //    sub-deck from the source into the target and then deletes the
+        //    source, so merging a paid deck into a normal one would carry
+        //    seller-owned content into a deck that is freely exportable. The
+        //    reverse direction is refused too: absorbing a normal deck into a
+        //    paid one would leave the learner's own content stranded inside a
+        //    subtree they can never export.
+        if (sourceDeck.isPaidLicensedSubtree() || targetDeck.isPaidLicensedSubtree())
+        {
+            await DialogBox.alert(
+                "Cannot merge",
+                "Purchased decks can't be merged. Their content belongs to the seller and has to stay in its own deck."
+            );
+            return;
+        }
+
         // ── Reject cycles up front so the user gets a clear explanation
         //    instead of a thrown error mid-flow.
         if (targetDeck.isDescendantOf(sourceDeck))
@@ -254,6 +271,15 @@ class DeckMergeFlow
 
         for (const fieldKey of allKeys)
         {
+            // Entity-channel slots (popup notes, content overlays) are maps of
+            // independent records, merged per record by Deck.#mergeAdditionalData.
+            // Prompting about them would show the learner a wall of raw JSON and
+            // make them choose one side's whole map over the other's.
+            if (DeckMergeFlow.#ENTITY_CHANNEL_ADDITIONAL_DATA_KEYS.includes(fieldKey))
+            {
+                continue;
+            }
+
             const hasSource = Object.prototype.hasOwnProperty.call(sourceData, fieldKey);
             const hasTarget = Object.prototype.hasOwnProperty.call(targetData, fieldKey);
 
@@ -287,6 +313,10 @@ class DeckMergeFlow
     }
 
     static #CANCEL_SENTINEL = Symbol("DeckMergeFlow.cancel");
+
+    // Kept in step with Deck's own list of additionalData slots that hold
+    // records syncing as their own entity type.
+    static #ENTITY_CHANNEL_ADDITIONAL_DATA_KEYS = ["askAiPopupLinks", "contentOverlays"];
 
     static #resolveAdditionalDataKeyConflict(fieldKey, sourceValue, targetValue)
     {

@@ -122,12 +122,17 @@ def _build_attached_image_parts(attached_images: list[dict]) -> list:
     return image_parts
 
 
-async def _retrieve_grounding_chunks(selected_text: str, user_query: str | None, information_sources: list[dict]) -> list[dict]:
+async def _retrieve_grounding_chunks(selected_text: str, user_query: str | None, information_sources: list[dict], owner_user_id: str) -> list[dict]:
     """
     Run a single nomic-embed-text-v1 query, then a cosine top-k against
     the chunks Mongo already has for the supplied source hashes. Only
     invoked when useInformationSources is on AND the list is non-empty
     — keeps the no-grounding path off the sentence-transformers import.
+
+    owner_user_id is threaded down to the query engine, which re-derives
+    which of the requested hashes this user actually owns. The hashes reach
+    us from a client payload and the chunk documents carry no tenant column,
+    so the retrieval must not be scoped by hash alone.
     """
     from Workflows.PrepareForSimilaritySearch.EmbedPages import load_model
     from Globals.Classes.Database.EmbeddingsQueryEngine import EmbeddingsQueryEngine
@@ -159,6 +164,7 @@ async def _retrieve_grounding_chunks(selected_text: str, user_query: str | None,
     retrieved_chunks = await EmbeddingsQueryEngine.vector_search(
         query_embedding = query_embedding,
         information_source_hashes = information_source_hashes,
+        owner_user_id = owner_user_id,
         top_k = 5,
     )
 
@@ -242,7 +248,7 @@ async def run() -> int:
     if b_use_information_sources and information_sources:
         _timing("grounding (embedding-model load + vector search) START")
         try:
-            retrieved_chunks = await _retrieve_grounding_chunks(selected_text, user_query, information_sources)
+            retrieved_chunks = await _retrieve_grounding_chunks(selected_text, user_query, information_sources, user_id)
         except Exception as grounding_error:
             # Grounding failure should not abort the whole reply — log
             # it and continue without the grounded excerpts.

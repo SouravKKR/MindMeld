@@ -1,0 +1,5 @@
+{
+  "UNKNOWN": 0,
+  "PLAUSIBLE": 1,
+  "IMPLAUSIBLE": 2
+}

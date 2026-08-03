@@ -87,6 +87,7 @@ const { handleAdminEndpoints } = require("./Endpoints/HandleAdminEndpoints");
 const { handleLegalEndpoints } = require("./Endpoints/HandleLegalEndpoints");
 const { handleReleaseNotesEndpoints } = require("./Endpoints/HandleReleaseNotesEndpoints");
 const { handleNotificationEndpoints } = require("./Endpoints/HandleNotificationEndpoints");
+const { handleSupportEndpoints } = require("./Endpoints/HandleSupportEndpoints");
 const { handlePaidDeckEndpoints } = require("./Endpoints/HandlePaidDeckEndpoints");
 const { handleActivityEndpoints } = require("./Endpoints/HandleActivityEndpoints");
 const { handleAnalysisEndpoints } = require("./Endpoints/HandleAnalysisEndpoints");
@@ -104,9 +105,11 @@ const { handleStreakEndpoints } = require("./Endpoints/HandleStreakEndpoints");
 const { handleMetricsEndpoints } = require("./Endpoints/HandleMetricsEndpoints");
 const { handleDesktopUpdateEndpoints } = require("./Endpoints/DesktopUpdates/HandleDesktopUpdateEndpoints");
 const { handleLogIngestEndpoints } = require("./Endpoints/Logs/HandleLogIngestEndpoints");
+const { handleSecurityEndpoints } = require("./Endpoints/HandleSecurityEndpoints");
 const Logger = require("./Globals/Classes/Logger");
 const LogIngester = require("./Globals/Classes/Logging/LogIngester");
 const LogArchivalScheduler = require("./Globals/Classes/Logging/LogArchivalScheduler");
+const ExpiredInformationSourceReaper = require("./Globals/Classes/Content/ExpiredInformationSourceReaper");
 const KeyManagementService = require("./Globals/Classes/Security/KeyManagementService");
 const KeyRotationScheduler = require("./Globals/Classes/Security/KeyRotationScheduler");
 const ExpiredLicenseSweeper = require("./Globals/Classes/PaidDeck/ExpiredLicenseSweeper");
@@ -124,6 +127,7 @@ const TaskQueueMode = require("./Globals/Classes/Task/TaskQueueMode");
 const LocalWorkerSupervisor = require("./Globals/Classes/Task/LocalWorkerSupervisor");
 const BurstAutoscaler = require("./Globals/Classes/Burst/BurstAutoscaler");
 const OrphanedGenerationReconciler = require("./Globals/Classes/Task/OrphanedGenerationReconciler");
+const SupportTicketDispatchReconciler = require("./Globals/Classes/Support/SupportTicketDispatchReconciler");
 
 
 Logger.initialize();
@@ -143,6 +147,13 @@ TaskManager.initialize()
     {
         console.error("[OrphanedGenerationReconciler] Boot reconciliation failed:", reconcileError);
     });
+// Finishes any support-ticket resolution fan-out that a restart interrupted. The
+// dispatcher runs in the ephemeral background of the admin's resolve request, so
+// without this a redeploy mid-fan-out would leave some reporters credited and
+// notified and the rest silently skipped. Safe to replay: credit grants are keyed
+// on (ticketId, userId) and only reports with a null notifiedAt are re-read.
+SupportTicketDispatchReconciler.startOnBoot();
+
 KeyManagementService.initialize();
 KeyRotationScheduler.start();
 
@@ -200,6 +211,11 @@ if (!process.argv.includes("--debug"))
 {
     LogArchivalScheduler.start();
 }
+
+// Expiry sweep for TEMPORARY-retention uploads. Runs in every mode (including
+// --debug) because leaving it off would silently retain documents the user was
+// told are temporary — the retention promise must not depend on a launch flag.
+ExpiredInformationSourceReaper.start();
 
 if (process.argv.includes("--logout"))
 {
@@ -316,6 +332,7 @@ handleAdminEndpoints(server);
 handleLegalEndpoints(server);
 handleReleaseNotesEndpoints(server);
 handleNotificationEndpoints(server);
+handleSupportEndpoints(server);
 handlePaidDeckEndpoints(server);
 handleActivityEndpoints(server);
 handleAnalysisEndpoints(server);
@@ -333,3 +350,4 @@ handleStreakEndpoints(server);
 handleMetricsEndpoints(server);
 handleDesktopUpdateEndpoints(server);
 handleLogIngestEndpoints(server);
+handleSecurityEndpoints(server);

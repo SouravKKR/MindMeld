@@ -1,0 +1,8 @@
+const supportTicketReportStatus =
+{
+  PENDING_GROUPING: 0,
+  GROUPED: 1,
+  GROUPING_FAILED: 2,
+}
+
+module.exports = { supportTicketReportStatus };

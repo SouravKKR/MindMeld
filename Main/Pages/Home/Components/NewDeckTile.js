@@ -2,7 +2,7 @@ import Deck from "../../../Globals/Model/Deck.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import DeckTile from "./DeckTile.js";
 import CreateDeckChoiceModal from "../../../CommonComponents/CreateDeckChoiceModal.js";
-import UserIdentityManager from "../../../Globals/Classes/UserIdentityManager.js";
+import DeckCreationChoiceAvailability from "../../../Globals/Classes/DeckCreationChoiceAvailability.js";
 import { deckCreationOptions } from "../../../Globals/Enumerations/DeckCreationOptions.js";
 
 class NewDeckTile extends DeckTile
@@ -21,10 +21,7 @@ class NewDeckTile extends DeckTile
 
     async #handleClick()
     {
-        const bLoggedIn = Boolean(window["user"]) && !UserIdentityManager.isAnonymous();
-        const bOnline = typeof navigator !== "undefined" ? navigator.onLine !== false : true;
-
-        if (!bLoggedIn || !bOnline)
+        if (!DeckCreationChoiceAvailability.bShouldShowChoiceModal())
         {
             this.#openDeckEditor();
             return;

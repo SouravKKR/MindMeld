@@ -38,8 +38,8 @@ deck-tile > .deck-name-container
 
 /* Purchased paid-deck tile: the storefront thumbnail sits behind the name
    as subtle cover art (kept faint so the white name stays readable over the
-   gradient). The buyer profile watermark renders on top via the existing
-   .paid-deck-owner-watermark rule. */
+   gradient). The owner profile watermark renders on top via the existing
+   .deck-owner-watermark rule. */
 .deck-tile-paid-art
 {
     position: absolute;
@@ -350,10 +350,11 @@ deck-tile.deck-tile-drag-ghost
     background-color: var(--accent-color-hover);
 }
 
-/* The watermark border is a static ring around the buyer's profile
-   picture and is never replaced on hover, so a plain border is fine
-   here — there's no interactive state that would strip it. */
-.paid-deck-owner-watermark
+/* Owner mark on a deck the user owns but did not freely author — a purchased
+   paid deck or an AI-generated one. The border is a static ring around the
+   owner's profile picture and is never replaced on hover, so a plain border is
+   fine here: there's no interactive state that would strip it. */
+.deck-owner-watermark
 {
     position: absolute;
     top: 6px;
@@ -365,6 +366,30 @@ deck-tile.deck-tile-drag-ghost
     opacity: 0.85;
     box-shadow: 0 1px 3px var(--shadow-color-strong);
     border: 2px solid var(--primary-text-color);
+}
+
+/* "Update available" on a paid copy whose publisher has released newer content.
+   Sits opposite the owner watermark so the two never overlap. Deliberately
+   understated: accepting an update resets progress on every changed card, so it
+   is an offer the learner opts into, not a prompt demanding attention. */
+.paid-deck-update-badge
+{
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    max-width: calc(100% - 52px);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.68em;
+    font-weight: 600;
+    line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+    color: var(--primary-text-color);
+    background: var(--accent-color, #1f7a6c);
+    box-shadow: 0 1px 3px var(--shadow-color-strong);
 }
 
 /* Provision for seller-side branding (creator marketplace, future phase).

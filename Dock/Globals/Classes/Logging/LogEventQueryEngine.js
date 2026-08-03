@@ -61,7 +61,7 @@ class LogEventQueryEngine
         }
     }
 
-    static #buildRangeFilter({ fromDate = null, toDate = null, levels = null, categories = null })
+    static #buildRangeFilter({ fromDate = null, toDate = null, levels = null, categories = null, accountIds = null })
     {
         const filter = {};
         const timestampFilter = {};
@@ -86,6 +86,17 @@ class LogEventQueryEngine
         {
             filter.category = { $in: categories.map(category => Number(category)) };
         }
+
+        // Restricts the export to specific accounts. The support-ticket log export
+        // passes the reporter's id plus the empty string, which is what unattributed
+        // system and server entries carry — that combination yields the errors
+        // around a reported problem without exposing any other identifiable user's
+        // activity. Omitted entirely by the unrestricted admin download.
+        if (Array.isArray(accountIds) && accountIds.length > 0)
+        {
+            filter.accountId = { $in: accountIds.map(accountId => String(accountId ?? "")) };
+        }
+
         return filter;
     }
 
@@ -94,7 +105,7 @@ class LogEventQueryEngine
      * download endpoint. Bounded by an absolute cap so a huge range cannot exhaust
      * memory — the caller streams cold archives for anything older than the window.
      */
-    static async queryRange({ fromDate = null, toDate = null, levels = null, categories = null, limit = LogEventQueryEngine.#MAXIMUM_QUERY_LIMIT })
+    static async queryRange({ fromDate = null, toDate = null, levels = null, categories = null, accountIds = null, limit = LogEventQueryEngine.#MAXIMUM_QUERY_LIMIT })
     {
         const collection = await LogEventQueryEngine.#getCollection();
         if (!collection)
@@ -102,7 +113,7 @@ class LogEventQueryEngine
             return [];
         }
 
-        const filter = LogEventQueryEngine.#buildRangeFilter({ fromDate, toDate, levels, categories });
+        const filter = LogEventQueryEngine.#buildRangeFilter({ fromDate, toDate, levels, categories, accountIds });
         const effectiveLimit = Math.min(Math.max(Number(limit) || 0, 1), LogEventQueryEngine.#MAXIMUM_QUERY_LIMIT);
 
         return await collection

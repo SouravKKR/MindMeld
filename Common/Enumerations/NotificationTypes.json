@@ -7,5 +7,6 @@
     "CREDITS": 5,
     "SECURITY": 6,
     "SUBSCRIPTION": 7,
-    "ORGANIZATION": 8
+    "ORGANIZATION": 8,
+    "SUPPORT": 9
 }

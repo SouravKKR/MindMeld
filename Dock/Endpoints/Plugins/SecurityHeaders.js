@@ -30,10 +30,44 @@ const { PacketronPlugin, PacketronPluginPriority } = require("@gamiumgamers/pack
  * without breaking any existing functionality. Every part is overridable from
  * the environment for operators who want to tighten it later.
  *
+ * ── The strict policy and its staged rollout ──────────────────────────────
+ *
+ * A second, STRICT policy is defined alongside the compatible one. It drops
+ * 'unsafe-inline' and 'unsafe-eval' from script-src and replaces the blanket
+ * https: source with an explicit allow-list of the origins the app actually
+ * loads scripts from. Both removals are believed safe for first-party code:
+ * neither app shell contains a single inline <script> or inline event handler
+ * (every script is an external src), and the only Function-constructor call in
+ * the bundled stack is a `typeof globalThis === "object" ? … : Function("return
+ * this")()` fallback that no browser capable of running this app ever reaches.
+ * style-src deliberately KEEPS 'unsafe-inline' — the Web Components genuinely
+ * render inline styles, and inline style is a far smaller risk than inline
+ * script.
+ *
+ * What cannot be verified from the source alone is whether the remote third
+ * parties (AdSense in particular) inject inline scripts at runtime. So the
+ * strict policy is NOT enforced by default. In the default "compatible" mode
+ * the compatible policy is enforced exactly as before and the strict policy
+ * rides along as Content-Security-Policy-Report-Only, pointed at
+ * /Security/CspReport. Browsers then report what the strict policy WOULD have
+ * blocked without blocking anything, the reports land in the admin Alerts tab,
+ * and once they come back clean an operator promotes the strict policy to
+ * enforcing with a single environment variable. That is the whole point of the
+ * mode switch: the tightening ships observable and reversible rather than as a
+ * flag day.
+ *
  * Environment overrides (all optional):
  *   SECURITY_HEADERS_DISABLED            "true" disables the plugin entirely.
- *   CONTENT_SECURITY_POLICY              full verbatim policy string (replaces the default).
- *   CONTENT_SECURITY_POLICY_REPORT_ONLY  "true" sends the policy in report-only mode.
+ *   CONTENT_SECURITY_POLICY              full verbatim policy string (replaces the default,
+ *                                        and suppresses the report-only companion — an
+ *                                        operator supplying a policy owns it entirely).
+ *   CONTENT_SECURITY_POLICY_MODE         "compatible" (default) or "strict". "strict"
+ *                                        promotes the strict policy to the enforced one.
+ *   CONTENT_SECURITY_POLICY_REPORT_ONLY  "true" sends the enforced policy in report-only
+ *                                        mode instead (and suppresses the companion).
+ *   CONTENT_SECURITY_POLICY_REPORTING_DISABLED
+ *                                        "true" drops the report-only companion header.
+ *   CONTENT_SECURITY_POLICY_REPORT_URI   default "/Security/CspReport".
  *   REFERRER_POLICY                      default "strict-origin-when-cross-origin".
  *   X_FRAME_OPTIONS                      default "SAMEORIGIN".
  *   HSTS_MAX_AGE_SECONDS                 default 15552000 (180 days). "0" disables HSTS.
@@ -68,7 +102,75 @@ class SecurityHeaders
         "frame-ancestors": ["'self'"]
     };
 
+    // The origins the app genuinely loads scripts from, replacing the blanket
+    // https: source in the strict policy. Keep in step with the <script src>
+    // tags in Main/index.html and Main/login.html.
+    //   • googlesyndication / googletagservices / doubleclick / gstatic —
+    //     AdSense's loader and the further scripts it pulls in.
+    //   • *.adtrafficquality.google — SODAR, Google's ad traffic-quality probe.
+    //     show_ads_impl pulls sodar2.js from ep1/ep2.adtrafficquality.google at
+    //     runtime, so it appears in no markup and is easy to miss when reading
+    //     the <script> tags. Same failure shape as the Cloudflare beacon below:
+    //     without this entry the strict candidate reports it on every ad-bearing
+    //     page load, and promoting strict to enforcing would break AdSense's
+    //     invalid-traffic detection. The wildcard is deliberate — Google picks
+    //     the ep* subdomain per request. The apex is NOT included because CSP
+    //     wildcards do not match it and nothing is served from it.
+    //   • static.zohocdn.com — the Zoho Payments checkout widget
+    //     (ZohoPaymentsCheckout expects zpay-js to be present).
+    //   • checkout.razorpay.com — the dormant Razorpay checkout, still shipped.
+    //   • static.cloudflareinsights.com — the Cloudflare RUM/Web-Analytics beacon.
+    //     It is not in any page's markup: Cloudflare injects the <script> into
+    //     every proxied HTML response at the edge, so it is present in production
+    //     (behind the tunnel) and absent locally. Without this entry the strict
+    //     candidate reports it on every single page load, which both buries the
+    //     genuine findings in the admin Alerts tab and would break the beacon the
+    //     moment strict mode is promoted to enforcing.
+    // Google OAuth needs no entry: the login is a server-side redirect flow,
+    // not a client-side Google script. The beacon's own reporting call needs no
+    // connect-src entry either — that directive allows https: in both policies.
+    static STRICT_SCRIPT_ORIGINS =
+    [
+        "https://pagead2.googlesyndication.com",
+        "https://*.googlesyndication.com",
+        "https://*.googletagservices.com",
+        "https://*.doubleclick.net",
+        "https://*.adtrafficquality.google",
+        "https://*.gstatic.com",
+        "https://static.zohocdn.com",
+        "https://checkout.razorpay.com",
+        "https://static.cloudflareinsights.com"
+    ];
+
+    // The tightened candidate. Differs from the compatible policy ONLY in
+    // script-src: no 'unsafe-inline', no 'unsafe-eval', and named origins in
+    // place of blanket https:. 'wasm-unsafe-eval' and blob: stay — the
+    // in-browser LLM compiles WebAssembly and spawns blob-URL workers.
+    static STRICT_CONTENT_SECURITY_POLICY_DIRECTIVES =
+    {
+        ...SecurityHeaders.CONTENT_SECURITY_POLICY_DIRECTIVES,
+        "script-src": ["'self'", "'wasm-unsafe-eval'", "blob:", ...SecurityHeaders.STRICT_SCRIPT_ORIGINS]
+    };
+
+    static DEFAULT_REPORT_URI = "/Security/CspReport";
+
+    static STRICT_MODE = "strict";
+
+    // Subresource extensions the report-only companion is skipped for. Only the
+    // DOCUMENT's policy governs what a page may load, so a second CSP header on
+    // a script, stylesheet, font or image response is inert — and at roughly
+    // half a kilobyte on every asset of every cold page load, not free. ".html"
+    // is deliberately absent: that IS a document.
+    static SUBRESOURCE_EXTENSIONS = new Set
+    ([
+        "js", "mjs", "css", "map", "wasm",
+        "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp",
+        "woff", "woff2", "ttf", "otf", "eot",
+        "mp3", "mp4", "webm", "wav", "ogg", "bin", "data", "pdf", "csv"
+    ]);
+
     static __cachedContentSecurityPolicy = null;
+    static __cachedStrictContentSecurityPolicy = null;
 
     static isDisabled()
     {
@@ -80,6 +182,45 @@ class SecurityHeaders
         return String(process.env.CONTENT_SECURITY_POLICY_REPORT_ONLY || "").toLowerCase() === "true";
     }
 
+    static isStrictMode()
+    {
+        return String(process.env.CONTENT_SECURITY_POLICY_MODE || "").trim().toLowerCase() === SecurityHeaders.STRICT_MODE;
+    }
+
+    static isReportingDisabled()
+    {
+        return String(process.env.CONTENT_SECURITY_POLICY_REPORTING_DISABLED || "").toLowerCase() === "true";
+    }
+
+    static getReportUri()
+    {
+        const configured = String(process.env.CONTENT_SECURITY_POLICY_REPORT_URI || "").trim();
+        return configured.length > 0 ? configured : SecurityHeaders.DEFAULT_REPORT_URI;
+    }
+
+    static hasVerbatimOverride()
+    {
+        const override = process.env.CONTENT_SECURITY_POLICY;
+        return Boolean(override && override.trim().length > 0);
+    }
+
+    static serializeDirectives(directives)
+    {
+        const serializedDirectives = [];
+        for (const [directiveName, sources] of Object.entries(directives))
+        {
+            serializedDirectives.push(`${directiveName} ${sources.join(" ")}`);
+        }
+
+        return serializedDirectives.join("; ");
+    }
+
+    /**
+     * The policy that is actually ENFORCED (or, when the report-only flag is
+     * set, the one sent report-only). A verbatim override always wins; failing
+     * that, strict mode selects the strict policy and the default selects the
+     * compatible one.
+     */
     static buildContentSecurityPolicy()
     {
         if (SecurityHeaders.__cachedContentSecurityPolicy !== null)
@@ -87,21 +228,60 @@ class SecurityHeaders
             return SecurityHeaders.__cachedContentSecurityPolicy;
         }
 
-        const override = process.env.CONTENT_SECURITY_POLICY;
-        if (override && override.trim().length > 0)
+        if (SecurityHeaders.hasVerbatimOverride())
         {
-            SecurityHeaders.__cachedContentSecurityPolicy = override.trim();
+            SecurityHeaders.__cachedContentSecurityPolicy = process.env.CONTENT_SECURITY_POLICY.trim();
             return SecurityHeaders.__cachedContentSecurityPolicy;
         }
 
-        const serializedDirectives = [];
-        for (const [directiveName, sources] of Object.entries(SecurityHeaders.CONTENT_SECURITY_POLICY_DIRECTIVES))
+        if (SecurityHeaders.isStrictMode())
         {
-            serializedDirectives.push(`${directiveName} ${sources.join(" ")}`);
+            SecurityHeaders.__cachedContentSecurityPolicy = SecurityHeaders.buildStrictContentSecurityPolicy();
+            return SecurityHeaders.__cachedContentSecurityPolicy;
         }
 
-        SecurityHeaders.__cachedContentSecurityPolicy = serializedDirectives.join("; ");
+        SecurityHeaders.__cachedContentSecurityPolicy =
+            SecurityHeaders.serializeDirectives(SecurityHeaders.CONTENT_SECURITY_POLICY_DIRECTIVES);
         return SecurityHeaders.__cachedContentSecurityPolicy;
+    }
+
+    /**
+     * The strict candidate, carrying the report-uri so a browser evaluating it
+     * report-only tells us what it would have blocked.
+     */
+    static buildStrictContentSecurityPolicy()
+    {
+        if (SecurityHeaders.__cachedStrictContentSecurityPolicy !== null)
+        {
+            return SecurityHeaders.__cachedStrictContentSecurityPolicy;
+        }
+
+        const serialized = SecurityHeaders.serializeDirectives(SecurityHeaders.STRICT_CONTENT_SECURITY_POLICY_DIRECTIVES);
+        SecurityHeaders.__cachedStrictContentSecurityPolicy = `${serialized}; report-uri ${SecurityHeaders.getReportUri()}`;
+        return SecurityHeaders.__cachedStrictContentSecurityPolicy;
+    }
+
+    /**
+     * The strict policy to ship as a report-only companion beside the enforced
+     * compatible one, or null when no companion should be sent.
+     *
+     * Suppressed when reporting is switched off, when strict mode is already
+     * enforcing it, when the operator supplied a verbatim policy (they own the
+     * policy entirely), and when the legacy report-only flag is set (that flag
+     * already turns the enforced header into a report-only one, and a second
+     * report-only header would simply replace it).
+     */
+    static buildReportOnlyCompanionPolicy()
+    {
+        if (SecurityHeaders.isReportingDisabled()
+            || SecurityHeaders.isStrictMode()
+            || SecurityHeaders.isReportOnly()
+            || SecurityHeaders.hasVerbatimOverride())
+        {
+            return null;
+        }
+
+        return SecurityHeaders.buildStrictContentSecurityPolicy();
     }
 
     static buildStrictTransportSecurity()
@@ -132,6 +312,28 @@ class SecurityHeaders
         return value;
     }
 
+    /**
+     * Whether this request is for a subresource rather than a document.
+     *
+     * @param {object} request the incoming request
+     *
+     * @returns {boolean} true when the report-only companion can be skipped
+     */
+    static isSubresourceRequest(request)
+    {
+        const rawUrl = typeof request.url === "string" ? request.url : "";
+        const endpointPath = (rawUrl.split("?")[0] || "/").toLowerCase();
+
+        const lastSegment = endpointPath.substring(endpointPath.lastIndexOf("/") + 1);
+        const dotIndex = lastSegment.lastIndexOf(".");
+        if (dotIndex === -1)
+        {
+            return false;
+        }
+
+        return SecurityHeaders.SUBRESOURCE_EXTENSIONS.has(lastSegment.substring(dotIndex + 1));
+    }
+
     static isSecureRequest(request)
     {
         const forwardedProtocol = String((request.headers && request.headers["x-forwarded-proto"]) || "").split(",")[0].trim().toLowerCase();
@@ -155,6 +357,20 @@ class SecurityHeaders
             : "Content-Security-Policy";
 
         response.setHeader(contentSecurityPolicyHeaderName, SecurityHeaders.buildContentSecurityPolicy());
+
+        // The strict candidate rides along report-only so browsers tell us what
+        // it WOULD block. Report-only never blocks anything, so this cannot
+        // affect functionality — it only produces the evidence needed before
+        // promoting it to enforcing. Skipped on subresources, whose CSP header
+        // no browser consults.
+        if (!SecurityHeaders.isSubresourceRequest(request))
+        {
+            const reportOnlyCompanionPolicy = SecurityHeaders.buildReportOnlyCompanionPolicy();
+            if (reportOnlyCompanionPolicy !== null)
+            {
+                response.setHeader("Content-Security-Policy-Report-Only", reportOnlyCompanionPolicy);
+            }
+        }
         response.setHeader("X-Frame-Options", process.env.X_FRAME_OPTIONS || SecurityHeaders.DEFAULT_X_FRAME_OPTIONS);
         response.setHeader("X-Content-Type-Options", "nosniff");
         response.setHeader("Referrer-Policy", process.env.REFERRER_POLICY || SecurityHeaders.DEFAULT_REFERRER_POLICY);

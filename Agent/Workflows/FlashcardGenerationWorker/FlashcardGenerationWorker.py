@@ -14,6 +14,7 @@ from Workflows.FlashcardGenerationWorker.BuildPrompts import (
     build_cell_difficulty_instruction,
 )
 from Workflows.FlashcardGenerationWorker.ConvertCards import convert_raw_cards
+from Globals.Classes.Compliance.SourceSimilarityScorer import SourceSimilarityScorer
 from Globals.Classes.Automation.AutomationCaller import AutomationCaller
 from Globals.Classes.Automation.AutomationContent import AutomationContent
 from Globals.Classes.Automation.AutomationRequest import AutomationRequest
@@ -278,7 +279,10 @@ class FlashcardGenerationWorker(Workflow):
             topic["model_groups"] = model_groups
 
         # ── 8. Build the shared system prompt ─────────────────────────────────
-        system_prompt = PromptPool.FLASHCARD_GENERATION_SYSTEM.replace(
+        # The shared expression rules are prepended so this prompt inherits the
+        # same copyright/accuracy posture as every other generation prompt —
+        # verbatim for formulae and terms of art, own words for prose.
+        system_prompt = PromptPool.SOURCE_EXPRESSION_RULES + "\n" + PromptPool.FLASHCARD_GENERATION_SYSTEM.replace(
             "{mark_for_review_guidance}", FlashcardGenerationWorker.MARK_FOR_REVIEW_GUIDANCE
         )
 
@@ -405,6 +409,32 @@ class FlashcardGenerationWorker(Workflow):
             raw_cards = [card for card_list in raw_card_lists for card in card_list]
 
             converted_cards = convert_raw_cards(raw_cards)
+
+            # Containment telemetry against the source chunks these cards were
+            # grounded on, with formulae, notation and terms of art masked out
+            # first so content that MUST be reproduced exactly is never counted
+            # as copied.
+            #
+            # Study material has been scored since the scorer was introduced;
+            # flashcards were not, despite being generated from the same chunks.
+            # Enforcement stays off here exactly as it is there — the point is to
+            # gather the distribution a threshold would have to be set from, and
+            # a threshold guessed without it either fires constantly or never.
+            #
+            # Scored as one document per topic rather than per card: a single
+            # card is often shorter than the scorer's minimum prose length, so
+            # per-card scoring would report "not scored" for most of a deck and
+            # produce no usable distribution at all.
+            if converted_cards:
+                combined_card_prose = "\n".join(
+                    f"{card.get('question') or ''}\n{card.get('answer') or ''}"
+                    for card in converted_cards
+                )
+                SourceSimilarityScorer.evaluate_gate(
+                    f"flashcards topic='{' -> '.join(topic['topic_chain'])}'",
+                    combined_card_prose,
+                    [topic["content"]],
+                )
 
             # Deduplicate by normalised question text — no API calls needed
             seen_questions: set[str] = set()

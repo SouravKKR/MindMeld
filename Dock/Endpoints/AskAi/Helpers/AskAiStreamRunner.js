@@ -15,6 +15,7 @@ const CreditConfigurationStore = require("../../../Globals/Classes/Credits/Credi
 const MaintenanceGate = require("../../../Globals/Classes/Maintenance/MaintenanceGate");
 const MetricBadgeManager = require("../../../Globals/Classes/Metrics/MetricBadgeManager");
 const PlanEntitlementGate = require("../../../Globals/Classes/Plans/PlanEntitlementGate");
+const InformationSourceQueryEngine = require("../../../Globals/Classes/Database/InformationSourceQueryEngine");
 const { planFeatures } = require("../../../Globals/Enumerations/PlanFeatures");
 
 /**
@@ -152,6 +153,7 @@ class AskAiStreamRunner
         const stdinPayload =
         {
             ...requestBody,
+            informationSources: await AskAiStreamRunner.#filterInformationSourcesToOwned(userId, requestBody.informationSources, askAiRequestTag),
             modelId: modelId,
             bEnableGoogleSearch: bEnableGoogleSearch,
             userId: userId,
@@ -347,6 +349,61 @@ class AskAiStreamRunner
      * human-readable reason. Caps are deliberately generous — we want
      * to catch obvious abuse, not police every legitimate workflow.
      */
+    /**
+     * Drops any information source the caller does not actually own before the
+     * payload is handed to the grounding worker.
+     *
+     * The grounding chunk store is content-addressed and shared between every
+     * user who uploaded the same bytes, so a chunk carries no tenant of its own
+     * — filtering the retrieval by hash alone means possession of a hash yields
+     * the document text and the original uploader's filename. The hash is a
+     * SHA-512 of the file, which is not a secret: anyone holding the same
+     * widely-circulated PDF can compute it offline. So ownership is re-derived
+     * here from the stored rows rather than trusted from the request.
+     *
+     * Validation only bounds the array's LENGTH; this is the authorisation step.
+     * The Agent repeats the check independently (EmbeddingsQueryEngine takes an
+     * owner user id and re-intersects), so neither layer depends on the other.
+     *
+     * @param {string} userId - The authenticated user.
+     * @param {Array|undefined} requestedInformationSources - Client-supplied entries.
+     * @param {string} askAiRequestTag - Correlation tag for the timing log.
+     * @return {Promise<Array>} Only the entries whose hash the user owns.
+     */
+    static async #filterInformationSourcesToOwned(userId, requestedInformationSources, askAiRequestTag)
+    {
+        const informationSources = Array.isArray(requestedInformationSources) ? requestedInformationSources : [];
+        if (informationSources.length === 0)
+        {
+            return [];
+        }
+
+        const requestedHashes = informationSources.map(entry =>
+        {
+            const nestedInformationSource = (entry && entry.informationSource) || {};
+            return nestedInformationSource.hash;
+        });
+
+        const ownedHashes = new Set(await InformationSourceQueryEngine.filterHashesOwnedByUser(userId, requestedHashes));
+
+        const ownedInformationSources = informationSources.filter(entry =>
+        {
+            const nestedInformationSource = (entry && entry.informationSource) || {};
+            return ownedHashes.has(nestedInformationSource.hash);
+        });
+
+        const droppedCount = informationSources.length - ownedInformationSources.length;
+        if (droppedCount > 0)
+        {
+            Logger.log(
+                `[ASKAI_TIMING tag=${askAiRequestTag}] dropped ${droppedCount} information source(s) not owned by user ${userId}`,
+                "DOCK",
+            );
+        }
+
+        return ownedInformationSources;
+    }
+
     static #validate(requestBody)
     {
         if (typeof requestBody !== "object" || requestBody === null)

@@ -97,6 +97,54 @@ class CreditMeter:
         return {"inputTokens": int(input_tokens), "outputTokens": int(output_tokens)}
 
     @staticmethod
+    def record_from_anthropic_response(response, model: str = None, fallback_input_text: str = None, fallback_output_text: str = None) -> dict:
+        """
+        Anthropic-shaped sibling of record_from_response. The two providers
+        report usage under different names, so the extraction differs, but both
+        land in the same meter and return the same {inputTokens, outputTokens}
+        dict — billing therefore stays provider-agnostic.
+
+        Anthropic reports usage on `response.usage` as input_tokens /
+        output_tokens, with cache_creation_input_tokens and
+        cache_read_input_tokens broken out separately. Cached reads are BILLED
+        (at a reduced rate) and cache writes at a premium, but the meter's job is
+        to count tokens, not to price them — ModelPricing applies the per-model
+        weight afterwards. Both cache dimensions are therefore folded into the
+        input total so a cached call is never metered as free.
+
+        Unlike Gemini, thinking tokens are already included in output_tokens, so
+        there is no separate reasoning dimension to add.
+        """
+        usage = getattr(response, "usage", None)
+
+        input_tokens = 0
+        output_tokens = 0
+        if usage is not None:
+            input_tokens = getattr(usage, "input_tokens", 0) or 0
+            input_tokens += getattr(usage, "cache_creation_input_tokens", 0) or 0
+            input_tokens += getattr(usage, "cache_read_input_tokens", 0) or 0
+            output_tokens = getattr(usage, "output_tokens", 0) or 0
+
+        if input_tokens == 0 and fallback_input_text:
+            input_tokens = TokenSafeContent.estimate_token_count(fallback_input_text)
+        if output_tokens == 0 and fallback_output_text:
+            output_tokens = TokenSafeContent.estimate_token_count(fallback_output_text)
+
+        if usage is None and input_tokens == 0 and output_tokens == 0:
+            return None
+
+        if usage is None and (input_tokens > 0 or output_tokens > 0) and not CreditMeter.__fallback_notice_emitted:
+            CreditMeter.__fallback_notice_emitted = True
+            print(
+                "[CreditMeter] Provider returned no usage — billing this task "
+                "from chars/4 token estimates. (Logged once per process.)"
+            )
+
+        CreditMeter.record(input_tokens, output_tokens, model)
+
+        return {"inputTokens": int(input_tokens), "outputTokens": int(output_tokens)}
+
+    @staticmethod
     def snapshot() -> dict:
         # Keyed by CreditCostDimensions name so the values drop straight into a
         # rule's metrics object. These are the COST-NORMALIZED totals — the

@@ -24,14 +24,18 @@ class StudyMaterialDetailDirectives:
         "Produce a balanced explanation suitable for a student preparing for an exam. "
         "Include core theory, worked examples, and clear definitions. Aim for "
         "sufficiency over completeness — enough depth to study from, without the "
-        "exhaustive coverage of a comprehensive treatment."
+        "exhaustive coverage of a comprehensive treatment. "
+        "Sufficiency governs WHICH topics you cover, never how a derivation is presented "
+        "— condensing one is not a valid way to stay concise; omitting an optional one is."
     )
 
     COMPREHENSIVE_DIRECTIVE = (
         "Produce an in-depth treatment with full background, advanced examples, edge "
         "cases, derivations where relevant, and cross-references between related "
         "concepts. The reader should come away with a deep understanding suitable "
-        "for the most demanding written exams."
+        "for the most demanding written exams. "
+        "Derive results in full rather than asserting them, and number the ones worth "
+        "citing so the cross-references between concepts can point at them."
     )
 
     __DIRECTIVE_BY_LEVEL = {

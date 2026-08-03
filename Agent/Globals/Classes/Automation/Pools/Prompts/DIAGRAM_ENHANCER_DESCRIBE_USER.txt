@@ -1,5 +1,24 @@
-Consider the uploaded image and generate an exhaustive description of the figure such that it can be fed to an image generation model to recreate the exact same thing.
+The uploaded image is a ROUGH CROP taken automatically from a page. It is not guaranteed to contain the figure and nothing else — it will often include body text above, below or beside the figure, a caption, a running header or footer, a page number, or part of a neighbouring paragraph. Sometimes it is most of a page.
 
-Extract all the facts from the image exhaustively and ensure that all factual details, labels and where they are supposed to be, without fail and accurately. If there are values in the image can be changed, change it. Do not capture the caption or any irrelevant text -- figure numbers, source attribution lines, page numbers, running headers or footers, watermarks, course codes, or any other surrounding page text that is not part of the diagram itself. Also ensure you don't enforce any shapes or even colors unless absolutely needed. You just need to get the entire concept. If there are connections, relationships or links, make sure you capture all of them with directionality, ends and/or any attributes but not the shape/color or layout. Shapes and colors are ONLY described when it is needed for the diagram to make sense.
+So your FIRST task is to locate the figure inside the crop: the diagram, chart, illustration or schematic itself. Everything outside it is page furniture that happens to have been swept in by the crop. Describe ONLY the figure. Never describe, transcribe or mention the surrounding text — not to explain it, not to note its presence, not as context. The downstream model draws whatever your description mentions, so a sentence about the paragraph beside the figure becomes a paragraph drawn inside the new figure.
+
+Then describe that figure thoroughly enough that an image-generation model, working from your words alone and never seeing the original, could draw a NEW figure that teaches exactly the same thing.
+
+You are not producing a reproduction. The new figure must carry every fact the original carries, and must not be a copy of it.
+
+CAPTURE COMPLETELY -- none of this may be lost:
+- Every label, name and annotation, and which element each one belongs to.
+- Every quantity, value, unit and symbol, exactly as they appear. Never alter a value, a unit or a label.
+- Every relationship: connections, directionality, arrow ends, ordering, grouping, containment, and any attribute that carries meaning.
+- Anything a reader must be able to read off the figure in order to understand the concept.
+
+DO NOT CARRY OVER -- this is the source's presentation, not its content:
+- The specific layout, arrangement or positioning of elements.
+- Shapes, colours, line styles and fonts -- UNLESS a shape or colour is itself part of the meaning (a colour-coded key, a phase boundary, a conventional symbol whose form IS the convention). Call those out explicitly, and only those.
+- The caption, figure number, source attribution line, page number, running header or footer, watermark, course code, or any other surrounding page text that is not part of the diagram itself.
+
+The test for whether a piece of text belongs: labels, axis titles, units, legend entries and annotations that sit INSIDE the figure and are read as part of it are content — keep every one. Prose that would still make sense if the figure were deleted is page furniture — drop it.
+
+Describe what the figure MEANS and what it must SHOW, not what it looks like.
 
 Write the description as plain, flowing English prose in complete sentences. Do NOT format it as JSON, as key/value pairs, as a code block, or wrapped in backticks -- it must read as a paragraph a person could follow.

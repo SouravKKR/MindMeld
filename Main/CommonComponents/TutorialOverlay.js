@@ -1,5 +1,6 @@
 import { tutorialStepTypes } from "../Globals/Enumerations/TutorialStepTypes.js";
 import FullscreenImageViewer from "./FullscreenImageViewer.js";
+import TutorialTargetResolver from "../Globals/Classes/TutorialTargetResolver.js";
 
 /**
  * TutorialOverlay
@@ -291,7 +292,7 @@ class TutorialOverlay extends HTMLElement
         this.classList.remove("tutorial-overlay--modal", "tutorial-overlay--iframe", "tutorial-overlay--floating");
         this.#hideIframe();
 
-        let target = step.selector ? document.querySelector(step.selector) : null;
+        let target = step.selector ? TutorialTargetResolver.resolve(step.selector) : null;
 
         // Page transitions (e.g. WAIT_FOR_CLICK advances → next page mounts)
         // mean the next step's selector may not be present for a few frames.
@@ -371,7 +372,7 @@ class TutorialOverlay extends HTMLElement
                 return;
             }
 
-            const current = document.querySelector(selector);
+            const current = TutorialTargetResolver.resolve(selector);
             if (current)
             {
                 const rect = current.getBoundingClientRect();
@@ -458,7 +459,7 @@ class TutorialOverlay extends HTMLElement
                     return;
                 }
 
-                const matched = document.querySelector(selector);
+                const matched = TutorialTargetResolver.resolve(selector);
 
                 if (matched)
                 {
@@ -758,7 +759,7 @@ class TutorialOverlay extends HTMLElement
                 return;
             }
 
-            const targetElement = step.selector ? document.querySelector(step.selector) : null;
+            const targetElement = step.selector ? TutorialTargetResolver.resolve(step.selector) : null;
             if (targetElement)
             {
                 this.#validatorPollFrameId = null;

@@ -33,10 +33,6 @@ class GenerationProgressComponent extends HTMLElement
 {
     #taskTree = null;
     #overallCompletionHighWaterMark = 0;
-    // Wall-clock (ms) the synthetic GENERATION_FINALIZATION node was first seen,
-    // so its bar can creep over time instead of sitting at a fixed value. Reset
-    // when the node is absent.
-    #finalizationFirstSeenAtMilliseconds = null;
 
     // Canonical pipeline phases → cumulative bands of the overall bar. The bar
     // advances as each phase's effective completion rises; a finished phase keeps
@@ -51,10 +47,19 @@ class GenerationProgressComponent extends HTMLElement
         { types: [taskTypes.GENERATION_FINALIZATION, taskTypes.PREPARE_IMAGES, taskTypes.ENHANCE_IMAGES, taskTypes.BEAUTIFY_DECK_SHORT_NAMES], weight: 0.10 },
     ];
 
-    // Finalization-node creep tuning: it climbs asymptotically from its server
-    // start toward this ceiling so "Finalizing…" reads as progressing.
-    static #FINALIZATION_CREEP_CEILING = 0.95;
-    static #FINALIZATION_CREEP_HALF_LIFE_MILLISECONDS = 15 * 1000;
+    // Task types that report no sub-progress of their own. GENERATION_FINALIZATION
+    // is synthetic — the server mints it to represent the marker-only
+    // moveToDatabase tail, which has no steps to count — so its completion is a
+    // fixed placeholder, not a measurement.
+    //
+    // Such a row is rendered as indeterminate: a pulsing bar and no percentage.
+    // It used to be animated from a fixed server value toward a 0.95 ceiling on a
+    // 15-second half-life, which made "Finalizing…" the fastest-moving row on the
+    // page while every real task sat at 0 — the bar advanced on a clock, so it
+    // looked healthiest exactly when the pipeline had died and fallen straight
+    // through to its tail. A row that cannot measure itself must say so rather
+    // than invent a number.
+    static #INDETERMINATE_TASK_TYPES = [taskTypes.GENERATION_FINALIZATION];
 
     // ─────────────────────────────────────────────
     //  Public API
@@ -67,46 +72,18 @@ class GenerationProgressComponent extends HTMLElement
     update(taskTree)
     {
         this.#taskTree = taskTree;
-        this.#applyFinalizationCreep();
         this.#render();
     }
 
     /**
-     * Creeps the synthetic GENERATION_FINALIZATION node's completion upward over
-     * time so the "Finalizing…" row reads as progressing — moveToDatabase has no
-     * real sub-progress to report, and the server emits a deliberately low start.
-     * Asymptotic approach toward a ceiling, mirroring the upload card's OCR-phase
-     * animation. Each poll delivers a fresh tree (low server value again), so the
-     * creep is derived purely from elapsed time and never compounds. No-op when
-     * the node is absent (resets the timer for the next run).
+     * True when a node has no real sub-progress to report, so its percentage
+     * would be a placeholder rather than a measurement.
+     * @param {object} taskNode
+     * @returns {boolean}
      */
-    #applyFinalizationCreep()
+    #isIndeterminateNode(taskNode)
     {
-        if (!this.#taskTree)
-        {
-            this.#finalizationFirstSeenAtMilliseconds = null;
-            return;
-        }
-
-        const finalizationNode = this.#flattenTree(this.#taskTree)
-            .find(taskNode => taskNode.type === taskTypes.GENERATION_FINALIZATION);
-
-        if (!finalizationNode)
-        {
-            this.#finalizationFirstSeenAtMilliseconds = null;
-            return;
-        }
-
-        if (this.#finalizationFirstSeenAtMilliseconds === null)
-        {
-            this.#finalizationFirstSeenAtMilliseconds = Date.now();
-        }
-
-        const elapsedMilliseconds = Date.now() - this.#finalizationFirstSeenAtMilliseconds;
-        const serverStart = finalizationNode.completion ?? 0;
-        const approachProgress = 1 - Math.pow(0.5, elapsedMilliseconds / GenerationProgressComponent.#FINALIZATION_CREEP_HALF_LIFE_MILLISECONDS);
-        const creepedCompletion = serverStart + (GenerationProgressComponent.#FINALIZATION_CREEP_CEILING - serverStart) * approachProgress;
-        finalizationNode.completion = Math.max(serverStart, creepedCompletion);
+        return GenerationProgressComponent.#INDETERMINATE_TASK_TYPES.includes(taskNode.type);
     }
 
     /**
@@ -464,6 +441,14 @@ class GenerationProgressComponent extends HTMLElement
             ? "var(--status-failed)"
             : "linear-gradient(90deg, var(--gradient-start-color), var(--gradient-end-color))";
 
+        // An indeterminate node still shows a filled bar once it is terminal —
+        // "done" and "failed" are real, measured outcomes. It is only while the
+        // node is running that there is nothing truthful to put a number on.
+        const bIsStillRunning      = effectiveStatus !== taskStatus.COMPLETED && effectiveStatus !== taskStatus.FAILED;
+        const bIsIndeterminate     = this.#isIndeterminateNode(taskNode) && bIsStillRunning;
+        const displayedPercentage  = bIsIndeterminate ? "" : `${completionPct}%`;
+        const progressBarWidthPct  = bIsIndeterminate ? 100 : completionPct;
+
         const childrenHtml = (taskNode.children || [])
             .map(childNode => this.#buildTaskNodeHtml(childNode, depth + 1))
             .join("");
@@ -474,10 +459,10 @@ class GenerationProgressComponent extends HTMLElement
                     <div class="task-node-status-dot" style="background: ${statusMetadata.color};"></div>
                     <span class="task-node-label">${label}</span>
                     <span class="task-node-status-label" style="color: ${statusMetadata.color};">${statusMetadata.label}</span>
-                    <span class="task-node-completion-percentage">${completionPct}%</span>
+                    <span class="task-node-completion-percentage">${displayedPercentage}</span>
                 </div>
                 <div class="task-node-progress-track">
-                    <div class="task-node-progress-fill" style="width: ${completionPct}%; background: ${progressBarColor};"></div>
+                    <div class="task-node-progress-fill ${bIsIndeterminate ? "task-node-progress-fill-indeterminate" : ""}" style="width: ${progressBarWidthPct}%; background: ${progressBarColor};"></div>
                 </div>
                 ${childrenHtml ? `<div class="task-node-children">${childrenHtml}</div>` : ""}
             </div>

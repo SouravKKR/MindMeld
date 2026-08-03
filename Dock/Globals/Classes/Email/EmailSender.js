@@ -88,6 +88,86 @@ class EmailSender
         const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody);
         await EmailSender.send(emailMessage);
     }
+
+    /**
+     * Tells a reporter that the issue they raised has been fixed, quoting what the
+     * admin wrote and naming any credit reward that came with it.
+     *
+     * Only sent to reporters who asked to be notified. Everyone who reported the
+     * problem is still granted the credits — the checkbox governs being written
+     * to, not being compensated.
+     *
+     * @param {string} toEmailAddress
+     * @param {string} ticketTitle
+     * @param {string} resolutionMessage
+     * @param {number} creditsGranted
+     * @returns {Promise<void>}
+     */
+    static async sendSupportTicketResolvedEmail(toEmailAddress, ticketTitle, resolutionMessage, creditsGranted)
+    {
+        const subject = "Resolved: the issue you reported on CogniumLearn";
+        const rewardLine = creditsGranted > 0
+            ? `As a thank you for taking the time to report it, we've added ${creditsGranted} credits to your account.`
+            : "";
+
+        const plainTextBody =
+            `Good news — the issue you reported has been resolved.\n\n` +
+            `Issue: ${ticketTitle}\n\n` +
+            `${resolutionMessage}\n\n` +
+            (rewardLine ? `${rewardLine}\n\n` : "") +
+            `Thank you for helping us make CogniumLearn better.`;
+
+        const htmlBody = EmailTemplate.buildSupportTicketEmail
+        (
+            "The issue you reported is fixed",
+            `Good news — the issue you reported ("${ticketTitle}") has been resolved. Here's what changed:`,
+            resolutionMessage,
+            rewardLine,
+            "Thank you for helping us make CogniumLearn better. You're receiving this because you asked to be notified when this issue was resolved."
+        );
+
+        const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody);
+        await EmailSender.send(emailMessage);
+    }
+
+    /**
+     * Tells a reporter that their issue will not be actioned. The admin's note is
+     * optional — when they leave it blank the generic explanation below stands on
+     * its own, so a decline is never a silent dead end.
+     *
+     * @param {string} toEmailAddress
+     * @param {string} ticketTitle
+     * @param {string} declineMessage may be empty
+     * @returns {Promise<void>}
+     */
+    static async sendSupportTicketDeclinedEmail(toEmailAddress, ticketTitle, declineMessage)
+    {
+        const subject = "Update on the issue you reported on CogniumLearn";
+        const genericExplanation =
+            "After reviewing it, we've decided not to make a change for this one right now — it may be working as intended, " +
+            "already covered elsewhere, or outside what we can support at the moment.";
+        const introText = String(declineMessage ?? "").trim().length > 0
+            ? `We've finished reviewing the issue you reported ("${ticketTitle}"). Here's what we found:`
+            : `We've finished reviewing the issue you reported ("${ticketTitle}"). ${genericExplanation}`;
+
+        const plainTextBody =
+            `We've finished reviewing the issue you reported.\n\n` +
+            `Issue: ${ticketTitle}\n\n` +
+            `${String(declineMessage ?? "").trim().length > 0 ? declineMessage : genericExplanation}\n\n` +
+            `We're still grateful you took the time to tell us — please keep the reports coming.`;
+
+        const htmlBody = EmailTemplate.buildSupportTicketEmail
+        (
+            "Update on the issue you reported",
+            introText,
+            declineMessage,
+            "",
+            "We're still grateful you took the time to tell us. You're receiving this because you asked to be notified about this issue."
+        );
+
+        const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody);
+        await EmailSender.send(emailMessage);
+    }
 }
 
 module.exports = EmailSender;

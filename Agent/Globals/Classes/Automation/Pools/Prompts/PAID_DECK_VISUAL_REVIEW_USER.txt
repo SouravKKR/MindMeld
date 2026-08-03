@@ -1,0 +1,6 @@
+Topic: {topic_chain}
+
+The diagram above was generated to show:
+{visual_description}
+
+Review it.

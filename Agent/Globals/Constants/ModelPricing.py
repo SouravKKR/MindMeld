@@ -18,6 +18,10 @@ class ModelPricing:
         "gemini-2.5-flash-lite": (0.10, 0.40),
         "gemini-3.1-flash-lite": (0.25, 1.50),
         "gemini-3.1-pro-preview": (2.00, 12.00),
+        # Anthropic. Used only by the admin-only paid-deck generation mode
+        # (syllabus coverage summaries, symbolic diagram generation, and
+        # verification). Priced from Anthropic's published Claude Opus 5 rate.
+        "claude-opus-5": (5.00, 25.00),
     }
 
     # Tokens of the reference model count 1:1; every other model's tokens are

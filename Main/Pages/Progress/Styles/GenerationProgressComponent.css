@@ -180,3 +180,38 @@ generation-progress-component
     border-radius: 4px;
     transition: width 0.4s ease-out;
 }
+
+/* Indeterminate fill for a step that reports no sub-progress (the synthetic
+   finalization tail). A band sweeps across a full-width track, which reads as
+   "working" without asserting a position. Deliberately NOT a bar that grows:
+   a growing bar is a claim about how much is left, and this step cannot make
+   one. The sweep is decoration and carries no data, so it is dropped entirely
+   for users who ask for reduced motion. */
+.task-node-progress-fill-indeterminate
+{
+    transition: none;
+    animation: task-node-indeterminate-sweep-animation 1.4s ease-in-out infinite;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000000 35%, #000000 65%, transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0%, #000000 35%, #000000 65%, transparent 100%);
+    -webkit-mask-size: 45% 100%;
+    mask-size: 45% 100%;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+}
+
+@keyframes task-node-indeterminate-sweep-animation
+{
+    0%   { mask-position: -45% 0; -webkit-mask-position: -45% 0; }
+    100% { mask-position: 100% 0; -webkit-mask-position: 100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce)
+{
+    .task-node-progress-fill-indeterminate
+    {
+        animation: none;
+        -webkit-mask-image: none;
+        mask-image: none;
+        opacity: 0.45;
+    }
+}

@@ -17,6 +17,8 @@ const adminListTypes =
   COUPONS: 14,
   COUPON_REDEEMERS: 15,
   SUBSCRIPTIONS: 16,
+  SUPPORT_TICKETS: 17,
+  SUPPORT_UNGROUPED_REPORTS: 18,
 }
 
 module.exports = { adminListTypes };

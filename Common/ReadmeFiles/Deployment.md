@@ -693,6 +693,206 @@ Do these in order. Step 1.1 is on your dev workstation; 1.3 onward are on Linode
      and confirm it blocks new work but not running work. Then revert
      `DOCK_USE_TASK_QUEUE`/`BURST_DRY_RUN` for normal dev.
 
+## 1.1.1 The browser test gates (run before every deploy)
+
+Every `deploy-environment.sh` run drives the real UI in a real Chromium against
+the freshly-built bundle **before anything is baked or shipped**, and aborts the
+deployment if it does not come back clean. Two suites, gated differently:
+
+| Suite | Runs on | What it proves |
+|---|---|---|
+| **Tutorial walkthrough** — `Common/Testing/Main/run_tutorial_ui_tests.js` | **every** environment (development, testing, production) | All seven guided tours walk start to finish; every step's spotlight exposes a real, clickable element; no step teleports the user between pages. |
+| **Critical user flows** — `Common/Testing/Main/run_critical_flow_tests.js` | **production only** | 25 everyday operations still work by hand (below). |
+
+Both are gated by the same `--skip-tutorial-tests` flag and the same
+`TUTORIAL_TEST_SESSION_COOKIE` prerequisite.
+
+### The 25 critical user flows
+
+Run in order against one throwaway fixture deck the suite creates and deletes
+itself (every fixture is prefixed `ZZTest`, and a run sweeps up anything an
+interrupted previous run left behind):
+
+| # | Flow |
+|---|---|
+| 1 | App boots to the authenticated Home page with the deck grid |
+| 2 | Create a deck from the + tile (chooser → editor → save) |
+| 3 | Saving a deck with no name is rejected; nothing is created |
+| 4 | Rename a deck via the options menu → Edit → Save |
+| 5 | Drill into a deck — contents shown, climb-out control appears |
+| 6 | Create a sub-deck inside the open deck, then climb back out |
+| 7 | Add a flashcard (menu → Add → Card → question + answer → Save) |
+| 8 | Saving a card with no question is rejected |
+| 9 | Add a second flashcard so the study queue has depth |
+| 10 | Browse the deck's cards — both are listed |
+| 11 | Search inside Browse filters the card list, clearing restores it |
+| 12 | Edit an existing card from Browse; the change shows in the list |
+| 13 | Add a study material and see it under Browse → Study Materials |
+| 14 | Everything created survives a full page reload |
+| 15 | Spaced Repetition — Show Answer reveals the back of the card |
+| 16 | Study — the Assistant panel opens and closes on demand |
+| 17 | Study — Mark for Review toggles the card's review state |
+| 18 | Study — zoom controls scale the card and reset to 100% |
+| 19 | Spaced Repetition — rating a card advances to the next one |
+| 20 | Leaving a study session returns to Home with the grid intact |
+| 21 | Revise mode plays back only the cards marked for review |
+| 22 | Revise — Next / Previous page through the queue |
+| 23 | Content Study renders the deck's study material |
+| 24 | Deck Insights opens from the deck menu and renders |
+| 25 | Delete a deck (menu → Edit → Delete Deck → confirm) |
+
+Mock-test authoring and grading are deliberately **not** repeated here — the
+tutorial suite already takes the sample deck's mock test end to end (launch →
+answer → finish → graded answer key) on every deploy.
+
+> **A SKIPPED case fails the gate.** Both suites mark a case SKIPPED when the
+> environment could not exercise it — most often because the sync backend never
+> settles and leaves the app behind the non-dismissible "Restoring sync state"
+> modal. That is not a pass, so the gate stops the deploy and names the reason.
+> If you hit it, check that Dock's MongoDB and Redis are reachable **and
+> responsive** from the machine you are deploying from.
+
+### Why these run at all
+
+**Why this is a deployment gate and not an optional check.** These suites drive
+the real UI — they click real deck tiles, three-dot menus, popups, pickers and
+editors, and they assert that each highlighted control is genuinely on screen and
+clickable. That makes them the first thing an unrelated frontend change breaks,
+and the breakage is invisible in code review: a renamed CSS class, a newly
+introduced intermediate popup, a panel that now mounts collapsed, or a page that
+leaves an extra element in the DOM is enough to strand a new user mid-tour. A
+broken tour is also the *first* thing a brand-new user sees, since the Beginners
+tour auto-plays on first launch.
+
+**What a run does:**
+
+1. Builds the production frontend (so the suites test the exact bundle that will
+   ship, and `update_base_node` does not rebuild it).
+2. Starts a local Dock if one isn't already answering (installing Puppeteer into
+   `Common/Testing/Main` on first use).
+3. Runs the tutorial walkthrough; on production, then runs the critical-flow
+   suite. Both load the app with `?tutorialE2E=1` — for the tours that is the
+   control seam, for the flow suite it only suppresses first-launch autoplay so
+   the tour overlay does not swallow the suite's clicks.
+4. Stops the Dock it started and fails the deploy unless every suite reports
+   `PASS`. A `SKIPPED` result **also fails the gate** — a skipped run proves
+   nothing.
+
+**Prerequisites (one-time):**
+
+- **Redis + MongoDB reachable per `Dock/.env`** — the same local stack
+  `npm run web` uses.
+- **`TUTORIAL_TEST_SESSION_COOKIE`** in `deployment.env`: a `sessionId` for a
+  seeded, **terms-accepted local test account**. Create one and print the id
+  with:
+  ```bash
+  node Common/Testing/Main/seed_browser_test_account.js
+  ```
+  Then confirm the machine can actually host the suites — reachable **and
+  responsive** Mongo/Redis, Dock serving the current build, session reaching the
+  authenticated shell:
+  ```bash
+  TEST_SESSION_COOKIE=<sessionId> node Common/Testing/Main/check_browser_gate_environment.js
+  ```
+  Use a dedicated throwaway account, never a real or production session — the
+  suites create and delete decks, cards and study materials on whatever account
+  they run as (tutorial-created entities are flagged and cleaned up on
+  finish/skip, and the flow suite deletes its own fixture, but they are still
+  real writes). Optionally set `TUTORIAL_TEST_BASE_URL` (default
+  `http://127.0.0.1:3000`) to point at a server you manage yourself.
+
+> **Running and repairing these interactively** — bringing the environment up in
+> the right order, driving the suites in a visible browser, and the
+> symptom → cause → fix table for everything they commonly trip over — is
+> packaged as the **`run-browser-gates`** skill
+> ([.claude/skills/run-browser-gates/SKILL.md](../../.claude/skills/run-browser-gates/SKILL.md)).
+> Reach for it whenever a deploy is blocked here or a tour misbehaves.
+
+**Reading a failure.** The console prints a per-step / per-case trace; the full
+structured result is written to `Common/Reports/.results/tutorial-ui.json` and
+`Common/Reports/.results/critical-flow-ui.json` — for the tours, what the
+spotlight landed on and which popups were open at each step; for the flows, what
+each case observed. To reproduce and watch it happen in a visible window:
+
+```bash
+HEADFUL=1 SLOW_MO_MS=120 VERBOSE=1 \
+TEST_SESSION_COOKIE=<local-session-id> \
+    node Common/Testing/Main/run_tutorial_ui_tests.js
+
+HEADFUL=1 VERBOSE=1 TEST_SESSION_COOKIE=<local-session-id> \
+    node Common/Testing/Main/run_critical_flow_tests.js
+```
+
+> **Restart Dock after any rebuild.** Dock indexes `Dock/Static/` **once at
+> boot**, so a server started before a `npm run setup` keeps serving the previous
+> build's bundle-chunk filenames and every chunk 404s — the app then never boots
+> and the suite reports "seam not found". The gate starts its own Dock after
+> building for exactly this reason.
+
+`--skip-tutorial-tests` bypasses both gates. It exists for infrastructure-only
+roll-outs (a config or scaling change with no frontend delta); do not use it to
+push past a red suite.
+
+## 1.1.2 Node reachability — power state + firewall allow-list (automatic)
+
+Before it spends a minute on anything else, `deploy-environment.sh` checks that
+the environment's Linode is actually **on** and that **this machine** can SSH to
+it, and fixes both if not — using the `LINODE_API_TOKEN` already in
+`deployment.env`. Everything it changes is reverted when the run ends.
+
+This runs first on purpose. Both failure modes otherwise surface as an SSH
+timeout *after* a bakebox has been created and an image captured — expensive,
+slow, and misleading.
+
+**What it checks, in order:**
+
+1. **Does the base node exist?** Looks up the Linode labelled
+   `CogniumLearn-<Env>-Server`. If there isn't one, the environment was never
+   provisioned — it stops and tells you to run `provision-environment.sh`.
+2. **Is it powered on?** Development and testing get parked to save money. If
+   the node is `offline` it is **booted** and the run waits for `running`.
+3. **Is this machine's IP allowed to SSH in?** Your public address is detected
+   (`api.ipify.org`, falling back to `checkip.amazonaws.com`) and checked
+   against the inbound rules of `CogniumLearn-<Env>-SrvFW`. The check
+   understands CIDR containment and port ranges, so a rule covering
+   `203.0.113.0/24` or ports `20-30` correctly counts as already allowing you.
+4. **If not allowed**, the firewall's **exact current rules are snapshotted to a
+   temp file** and a temporary `temp-deploy-ssh` ACCEPT rule for TCP/22 from
+   your `/32` is **prepended** to inbound (prepended, not appended — Linode
+   evaluates inbound rules in order).
+5. **Then it proves it** by actually SSHing in, rather than assuming steps 2–4
+   worked.
+
+**What is reverted, on every exit path** — success, failure and Ctrl-C alike
+(it hangs off the same `trap ... EXIT` as the rest of the cleanup):
+
+| Change | Revert |
+|---|---|
+| Temporary firewall rule | The snapshotted rules are written back **verbatim** — a restore, not an attempted undo of a diff. If that API call fails, the snapshot file is **kept** and its path plus the exact `PUT /networking/firewalls/<id>/rules` to run is printed. |
+| Node booted from `offline` | Powered back off, returning it to the state it was found in. The deployed code is already on disk and goes live the next time it boots. |
+
+> **The shutdown retries on "Linode busy".** A node that has just booted refuses
+> power commands for a while (`HTTP 400 — Linode busy.`), so `linode_power_off`
+> waits for the instance to leave its transitional state and retries up to five
+> times. Without that the very node the run had promised to put back was left
+> running — observed on the first live run against development.
+
+> **Production is never powered back off.** If production was somehow found
+> offline and booted to deploy, shutting it down again would take the site down,
+> so the run leaves it **running** and says so loudly. That asymmetry is
+> deliberate.
+
+> **`--keep-node-running`** leaves a node that was booted for the deploy up
+> afterwards — use it when you are about to deploy again, or want to poke at the
+> environment.
+
+> **If your public IP cannot be determined, the deploy stops.** It will not fall
+> back to opening SSH to `0.0.0.0/0`. Set `ADMIN_SSH_CIDR` in `deployment.env`
+> or fix outbound access to the IP-echo services.
+
+Skipped entirely when `--skip-base-update` is passed — that run never touches
+the node, so it needs neither power nor access.
+
 ## 1.2 The worker Docker image — built on the bake box, not on Windows
 
 Burst VMs run the Agent as a Docker container, built from the `Agent/` directory with:
@@ -1421,6 +1621,16 @@ bash Common/Deployment/deploy.sh
 
 It performs every step of §1.10 + §2.2 automatically:
 
+0. **Checks the node is reachable (§1.1.2)** — boots the environment's Linode if
+   it is powered off, and grants this machine temporary SSH access if its public
+   IP is not on the firewall's allow-list. Both are reverted when the run ends.
+0. **Gates on the browser test suites (§1.1.1)** — builds the production
+   frontend, then drives it in a real Chromium: the seven interactive tutorials
+   on **every** environment, plus the 25 critical user flows on **production**.
+   Nothing is created or shipped until they pass; a failure aborts before a
+   single Linode is spun up. Needs `TUTORIAL_TEST_SESSION_COOKIE` in
+   `deployment.env` plus a local Redis + MongoDB. Bypass with
+   `--skip-tutorial-tests` only for infrastructure-only roll-outs.
 1. Creates a throwaway Debian 12 **bakebox** Linode (tagged `cogniumlearn-bakebox`).
 2. Uploads the `Agent/` build context (the venv, caches and `*.env` secrets are
    excluded — they never leave your dev box).
@@ -1457,8 +1667,10 @@ field is documented inline in that file.
 
 | Flag | Effect |
 |------|--------|
-| *(none)* | Full bake → roll-out → cleanup. |
+| *(none)* | Tutorial gate → full bake → roll-out → cleanup. |
 | `--skip-base-update` | Bake + capture only; don't touch the base node or delete old images. |
+| `--skip-tutorial-tests` | Skip the §1.1.1 browser gates. Infrastructure-only roll-outs; never to push past a red suite. |
+| `--keep-node-running` | Leave a base node that was booted for this deploy (§1.1.2) running afterwards instead of returning it to `offline`. |
 | `--cleanup-bakeboxes` | Delete stray `cogniumlearn-bakebox` Linodes from a failed run, then exit. |
 
 > **The Dock systemd service is created automatically.** On every base-node update
@@ -1491,6 +1703,15 @@ does not cover (frontend-only, config-only, schema, rollback).
 
 Most changes (endpoints, frontend, Dock classes) only need a redeploy of the base
 node. The frontend has to be **bundled + obfuscated** into `Dock/Static/` first.
+
+> **Run the tutorial walkthrough suite (§1.1.1) before shipping a frontend
+> change this way.** The automated roll-out in §2.0 gates on it for you; this
+> manual path does not, and a frontend change is exactly what breaks the guided
+> tours. After `npm run setup`, restart your local Dock (it indexes
+> `Dock/Static/` at boot) and run:
+> ```bash
+> TEST_SESSION_COOKIE=<local-session-id> node Common/Testing/Main/run_tutorial_ui_tests.js
+> ```
 
 > ⚡ **Recommended for a Windows-dev workflow — build on Windows, ship the artifacts.**
 > The base node only needs `Dock/`'s own deps (what `setup-base-node.sh` installs); it

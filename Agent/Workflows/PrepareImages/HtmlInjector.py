@@ -103,6 +103,96 @@ class HtmlInjector:
         return max(120, min(css_pixel_width, HtmlInjector._ABSOLUTE_MAX_WIDTH_PIXELS))
 
     @staticmethod
+    def build_markup_figure_html(markup_html: str, caption_text: str, figure_number: int) -> str:
+        """
+        Builds the figure snippet for a GENERATED symbolic visual — inline SVG, a
+        Mermaid block, a KaTeX expression, a SMILES structure, or the labelled
+        description the generator falls back to when it declines to draw.
+
+        The markup is inlined as markup rather than rasterised into an <img>,
+        which is the entire reason the symbolic route exists: labels stay real
+        selectable text, geometry stays exact, and the figure scales without
+        blurring. Rasterising it here would throw away everything the route was
+        chosen for.
+
+        The markup arrives already screened by PaidDeckVisualGenerator (no
+        script, no foreignObject, no external references) and is screened again
+        by HtmlSanitizer in the client before it is ever assigned to innerHTML.
+        This function is a layout wrapper, not a security boundary.
+        """
+        display_caption = caption_text.strip() if caption_text and caption_text.strip() else f"Fig. {figure_number}"
+
+        return (
+            f'<figure class="generated-figure" style="margin: 1em 0; text-align: center;">'
+            f'{markup_html}'
+            f'<figcaption style="font-size: 0.85em;'
+            f' margin-top: 0.4em; word-wrap: break-word;">'
+            f'{display_caption}'
+            f'</figcaption>'
+            f'</figure>'
+        )
+
+    @staticmethod
+    def build_composite_figure_html(parts: list, caption_text: str, figure_number: int) -> str:
+        """
+        Builds a COMPOSITE figure: several related visuals shown together as one
+        labelled plate, each panel keeping its own caption.
+
+        This is what a "comparison plate" actually is — nine functional groups
+        each named, or one molecule drawn four ways with each representation
+        titled. Concatenating the panels' markup and dropping their captions
+        produces a row of anonymous structures that teaches nothing: the whole
+        instructional content of such a figure is which drawing goes with which
+        name.
+
+        Panels flow in a wrapping grid so a nine-panel plate reads as a plate on
+        a wide screen and a column on a phone, without a fixed column count that
+        would strand a lone panel on the last row.
+        """
+        panel_html_fragments = []
+
+        for part in parts:
+            panel_markup = part.get("markup") or ""
+
+            if not panel_markup:
+                continue
+
+            panel_caption = (part.get("caption") or "").strip()
+            panel_caption_html = (
+                f'<div class="composite-panel-caption" style="font-size: 0.8em; margin-top: 0.25em;">'
+                f'{html_escape(panel_caption)}'
+                f'</div>'
+                if panel_caption
+                else ""
+            )
+
+            panel_html_fragments.append(
+                f'<div class="composite-panel" style="display: flex; flex-direction: column;'
+                f' align-items: center; padding: 0.4em; min-width: 120px;">'
+                f'{panel_markup}'
+                f'{panel_caption_html}'
+                f'</div>'
+            )
+
+        if not panel_html_fragments:
+            return ""
+
+        display_caption = caption_text.strip() if caption_text and caption_text.strip() else f"Fig. {figure_number}"
+
+        return (
+            f'<figure class="generated-figure composite-figure" style="margin: 1em 0; text-align: center;">'
+            f'<div class="composite-panel-grid" style="display: flex; flex-wrap: wrap;'
+            f' justify-content: center; align-items: flex-end; gap: 0.5em;">'
+            f'{"".join(panel_html_fragments)}'
+            f'</div>'
+            f'<figcaption style="font-size: 0.85em;'
+            f' margin-top: 0.4em; word-wrap: break-word;">'
+            f'{display_caption}'
+            f'</figcaption>'
+            f'</figure>'
+        )
+
+    @staticmethod
     def build_figure_html(
         image_bytes:    bytes,
         caption_text:   str,

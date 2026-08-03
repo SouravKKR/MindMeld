@@ -13,6 +13,7 @@ import SetUserStreakPanel from "./Components/SetUserStreakPanel.js";
 import AdminLogsPanel from "./Components/AdminLogsPanel.js";
 import CouponsPanel from "./Components/CouponsPanel.js";
 import PlanFeaturesPanel from "./Components/PlanFeaturesPanel.js";
+import SupportTicketDetailsDialog from "./Components/SupportTicketDetailsDialog.js";
 import { userRoles } from "../../Globals/Enumerations/UserRoles.js";
 import { adminPanelTabs } from "../../Globals/Enumerations/AdminPanelTabs.js";
 import { adminListTypes } from "../../Globals/Enumerations/AdminListTypes.js";
@@ -97,7 +98,8 @@ class AdminPanelPage extends HTMLElement
             { tab: adminPanelTabs.COUPONS, label: "Coupons" },
             { tab: adminPanelTabs.MAINTENANCE, label: "Maintenance" },
             { tab: adminPanelTabs.STREAKS, label: "Streaks" },
-            { tab: adminPanelTabs.LOGS, label: "Logs" }
+            { tab: adminPanelTabs.LOGS, label: "Logs" },
+            { tab: adminPanelTabs.SUPPORT_TICKETS, label: "Support" }
         ];
         const organizationAdminTabs =
         [
@@ -137,7 +139,7 @@ class AdminPanelPage extends HTMLElement
         const currentUser = window["user"];
         const isSuperAdmin = currentUser && currentUser.getRole() === userRoles.ADMIN;
         const allowedTabs = isSuperAdmin
-            ? new Set([adminPanelTabs.DECKS, adminPanelTabs.STATS, adminPanelTabs.ADMINS, adminPanelTabs.ALLOWED_EMAILS, adminPanelTabs.RELEASE_NOTES, adminPanelTabs.ORGANIZATIONS, adminPanelTabs.ALERTS, adminPanelTabs.RATE_LIMITS, adminPanelTabs.AUDIT_LOG, adminPanelTabs.CREDITS, adminPanelTabs.SUBSCRIPTIONS, adminPanelTabs.COUPONS, adminPanelTabs.MAINTENANCE, adminPanelTabs.STREAKS, adminPanelTabs.LOGS])
+            ? new Set([adminPanelTabs.DECKS, adminPanelTabs.STATS, adminPanelTabs.ADMINS, adminPanelTabs.ALLOWED_EMAILS, adminPanelTabs.RELEASE_NOTES, adminPanelTabs.ORGANIZATIONS, adminPanelTabs.ALERTS, adminPanelTabs.RATE_LIMITS, adminPanelTabs.AUDIT_LOG, adminPanelTabs.CREDITS, adminPanelTabs.SUBSCRIPTIONS, adminPanelTabs.COUPONS, adminPanelTabs.MAINTENANCE, adminPanelTabs.STREAKS, adminPanelTabs.LOGS, adminPanelTabs.SUPPORT_TICKETS])
             : new Set([adminPanelTabs.ORGANIZATION_MEMBERS]);
 
         if (!allowedTabs.has(this.#activeTab))
@@ -200,6 +202,9 @@ class AdminPanelPage extends HTMLElement
                 break;
             case adminPanelTabs.LOGS:
                 this.#renderLogsTab(content);
+                break;
+            case adminPanelTabs.SUPPORT_TICKETS:
+                this.#renderSupportTicketsTab(content);
                 break;
             case adminPanelTabs.ORGANIZATION_MEMBERS:
                 await this.#renderOrganizationMembersTab(content);
@@ -495,7 +500,12 @@ class AdminPanelPage extends HTMLElement
                 [
                     { actionKey: "edit", label: "Edit" },
                     { actionKey: "publish", label: row.isPublished ? "Unpublish" : "Publish" },
-                    { actionKey: "rotate", label: "Rotate key" }
+                    { actionKey: "rotate", label: "Rotate key" },
+                    // Offered on every deck. A deck the generation pipeline did
+                    // not produce has no provenance record, and the handler says
+                    // so plainly rather than the option being hidden — "there is
+                    // no record" is the useful answer, not a missing button.
+                    { actionKey: "auditTrail", label: "Download Audit Trail" }
                 ];
                 if (subdeckCount > 0)
                 {
@@ -514,6 +524,53 @@ class AdminPanelPage extends HTMLElement
         });
 
         this.querySelector('[data-role="list-host"]').appendChild(listView);
+    }
+
+    /**
+     * Downloads the generation audit trail PDF for one paid deck.
+     *
+     * The server renders the report strictly from the stored provenance record,
+     * so this is a plain download — there is deliberately no filter, date range
+     * or section selection to pass. An audit trail the requester can narrow is
+     * not one.
+     */
+    async #downloadAuditTrail(deck)
+    {
+        try
+        {
+            const response = await fetch(`/Admin/PaidDecks/AuditTrail?deckId=${encodeURIComponent(deck.id)}`);
+
+            if (response.status === 404)
+            {
+                await DialogBox.alert(
+                    "No audit trail for this deck",
+                    "This deck has no generation-provenance record, which means it was not produced by the "
+                    + "paid-deck generation pipeline. There is no audit trail to download.",
+                );
+                return;
+            }
+
+            if (!response.ok)
+            {
+                const failure = await response.json().catch(() => ({}));
+                await DialogBox.alert("Couldn't build the audit trail", failure.detail || "The report could not be rendered.");
+                return;
+            }
+
+            const pdfBlob = await response.blob();
+            const objectUrl = URL.createObjectURL(pdfBlob);
+            const downloadLink = document.createElement("a");
+            downloadLink.href = objectUrl;
+            downloadLink.download = `CogniumLearn-AuditTrail-${(deck.title || deck.id).replace(/[^a-zA-Z0-9._-]+/g, "_")}.pdf`;
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            downloadLink.remove();
+            URL.revokeObjectURL(objectUrl);
+        }
+        catch (downloadError)
+        {
+            await DialogBox.alert("Couldn't build the audit trail", downloadError.message);
+        }
     }
 
     async #handleDeckRowAction(action, deck)
@@ -536,6 +593,11 @@ class AdminPanelPage extends HTMLElement
             case "rotate":
             {
                 await this.#rotateKey(deck.id);
+                break;
+            }
+            case "auditTrail":
+            {
+                await this.#downloadAuditTrail(deck);
                 break;
             }
             case "apply-to-subdecks":
@@ -721,6 +783,57 @@ class AdminPanelPage extends HTMLElement
         (
             this.#createListView({ listKey: adminListTypes.RATE_LIMIT_EVENTS })
         );
+    }
+
+    #renderSupportTicketsTab(content)
+    {
+        // Reports are deduplicated into tickets server-side, so a row here is a
+        // distinct problem and its Reporters column is how many people hit it. The
+        // list defaults to sorting by that count, which puts the issue worth fixing
+        // first at the top.
+        content.innerHTML = `
+            <p class="admin-panel-stats-note">
+                Reports describing the same problem are grouped into one ticket. Open a ticket to read every
+                report, download the reporter's logs, and resolve or decline it.
+            </p>
+            <div data-role="list-host"></div>
+            <p class="admin-panel-stats-note admin-panel-support-ungrouped-note">
+                Reports that never reached a ticket — the deduplication task failed or could not run. They are
+                stored and visible to their reporter, but no resolution will ever reach them until they are
+                grouped, so this list should normally be empty.
+            </p>
+            <div data-role="ungrouped-list-host"></div>
+        `;
+
+        this.querySelector('[data-role="list-host"]').appendChild
+        (
+            this.#createListView
+            ({
+                listKey: adminListTypes.SUPPORT_TICKETS,
+                rowActions: [ { actionKey: "open", label: "Open" } ],
+                onRowAction: async (actionKey, rowId) =>
+                {
+                    if (actionKey !== "open")
+                    {
+                        return;
+                    }
+
+                    const bChanged = await SupportTicketDetailsDialog.show({ ticketId: rowId });
+
+                    if (bChanged)
+                    {
+                        this.#refreshCurrentList();
+                    }
+                }
+            })
+        );
+
+        // Appended directly rather than through #createListView so it does not
+        // steal #currentListView from the tickets table above — the row action
+        // there refreshes whichever list that field points at.
+        const ungroupedListView = document.createElement("admin-list-view");
+        ungroupedListView.configure({ listKey: adminListTypes.SUPPORT_UNGROUPED_REPORTS });
+        this.querySelector('[data-role="ungrouped-list-host"]').appendChild(ungroupedListView);
     }
 
     #renderAuditLogTab(content)

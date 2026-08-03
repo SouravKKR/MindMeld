@@ -53,7 +53,8 @@ class StorageQuotaEnforcer
         DatabaseConstants.CARDS_COLLECTION,
         DatabaseConstants.STUDY_MATERIALS_COLLECTION,
         DatabaseConstants.MOCK_TESTS_COLLECTION,
-        DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION
+        DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION,
+        DatabaseConstants.CONTENT_OVERLAYS_COLLECTION
     ];
 
     /**

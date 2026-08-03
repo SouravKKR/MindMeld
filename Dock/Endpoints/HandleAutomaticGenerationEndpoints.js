@@ -14,6 +14,7 @@ const { handleTemplatesGet } = require("./AutomaticGeneration/TemplatesGet");
 const { beautifyDeckShortNames } = require("./AutomaticGeneration/BeautifyDeckShortNames");
 const { getBeautifiedShortNames } = require("./AutomaticGeneration/GetBeautifiedShortNames");
 const { ensureLogin } = require("./Plugins/EnsureLogin");
+const { ensureEstimateCostRateLimit } = require("./Plugins/EnsureEstimateCostRateLimit");
 
 /**
  * Registers authentication-related endpoints on the server.
@@ -43,7 +44,8 @@ function handleAutomaticGenerationEndpoints(server)
         handler: handleEstimateCost,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
-        plugins: [ ensureLogin ]
+        // The limiter must follow ensureLogin: it keys on the resolved user.
+        plugins: [ ensureLogin, ensureEstimateCostRateLimit ]
     });
 
     // "Auto Fill Other Options" helper — recommends generation option values from

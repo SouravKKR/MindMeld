@@ -22,6 +22,11 @@
         {
             "datatype": "boolean",
             "defaultValue": false
+        },
+        "paidDeckMode":
+        {
+            "datatype": "boolean",
+            "defaultValue": false
         }
     },
     "extends":

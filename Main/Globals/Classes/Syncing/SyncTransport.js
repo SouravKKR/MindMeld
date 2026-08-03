@@ -317,7 +317,7 @@ class SyncTransport
      * V8 ~512 MB string cap and crashes the Chrome tab.
      *
      * Returns
-     *   { decks, cards, studyMaterials, mockTests, popupLinks, serverTime, totalCount }
+     *   { decks, cards, studyMaterials, mockTests, popupLinks, contentOverlays, serverTime, totalCount }
      * or `null` on transport failure.
      *
      * `onProgress(processedCount, totalCount)` is invoked when the
@@ -359,6 +359,7 @@ class SyncTransport
             const studyMaterials = [];
             const mockTests      = [];
             const popupLinks     = [];
+            const contentOverlays = [];
             let serverTime       = Date.now();
             let totalCount       = 0;
             let processedCount   = 0;
@@ -404,6 +405,11 @@ class SyncTransport
                     case entityTypes.MOCK_TEST:
                     {
                         mockTests.push(parsedRecord.data);
+                        break;
+                    }
+                    case entityTypes.CONTENT_OVERLAY:
+                    {
+                        contentOverlays.push(parsedRecord.data);
                         break;
                     }
                     case entityTypes.ASK_AI_POPUP_LINK:
@@ -477,7 +483,7 @@ class SyncTransport
                 onProgress(finalCount, finalCount);
             }
 
-            return { decks, cards, studyMaterials, mockTests, popupLinks, serverTime, totalCount };
+            return { decks, cards, studyMaterials, mockTests, popupLinks, contentOverlays, serverTime, totalCount };
         }
         catch (bulkSnapshotError)
         {

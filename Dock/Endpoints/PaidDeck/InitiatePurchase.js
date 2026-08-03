@@ -11,18 +11,50 @@ const { purchaseStatuses } = require("../../Globals/Enumerations/PurchaseStatuse
 const { grantAndSeedDeck, checkUserHasPaidDeckPassword } = require("./PaidDeckGrantHelpers");
 const LicenseClientView = require("../../Globals/Classes/Security/LicenseClientView");
 const LicenseExpiryResolver = require("../../Globals/Classes/Pricing/LicenseExpiryResolver");
+const LicenseDurationConfigurationResolver = require("../../Globals/Classes/Pricing/LicenseDurationConfigurationResolver");
 const GrantSources = require("../../Globals/Constants/GrantSources");
 const PlanDeckPerkService = require("../../Globals/Classes/Plans/PlanDeckPerkService");
 const PlanTierResolver = require("../../Globals/Classes/Plans/PlanTierResolver");
 const { planTiers } = require("../../Globals/Enumerations/PlanTiers");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
+const Logger = require("../../Globals/Classes/Logger");
+const LogTitles = require("../../Globals/Classes/Logging/LogTitles");
+const { logCategory } = require("../../Globals/Enumerations/LogCategory");
 
 // Reasons that describe a deck the caller cannot / need not be granted — an
 // already-owned deck (a live license exists) or one that no longer resolves to
 // a paid-deck document. Both are skipped by the grant loop and are exempt from
 // the explicit-duration requirement.
 const NON_GRANTABLE_BREAKDOWN_REASONS = new Set([ErrorCodes.ALREADY_OWNED, ErrorCodes.DECK_NOT_FOUND]);
+
+/**
+ * Records the decks whose license term came from an implicit fallback rather
+ * than from a configured duration. The acquisition still goes through — a buyer
+ * is never blocked by an admin's blank field — but the misconfiguration is
+ * logged so the catalogue can be corrected. Priced decks are the interesting
+ * case; a free deck has no term to configure, so it is not worth reporting.
+ *
+ * @param {string} userId the acquiring user
+ * @param {Array<object>} breakdownEntries the pricing breakdown entries being granted
+ */
+function reportImplicitLicenseDurations(userId, breakdownEntries)
+{
+    const implicitlyPricedDeckIds = breakdownEntries
+        .filter(breakdownEntry => breakdownEntry.durationSource === LicenseDurationConfigurationResolver.SOURCE_LEGACY_IMPLICIT_PERPETUAL)
+        .map(breakdownEntry => breakdownEntry.deckId);
+
+    if (implicitlyPricedDeckIds.length === 0)
+    {
+        return;
+    }
+
+    Logger.warning(logCategory.PURCHASE, LogTitles.PURCHASE_DECK, "Granting perpetual access to a priced deck with no configured license duration",
+    {
+        accountId: userId,
+        additionalData: { deckIds: implicitlyPricedDeckIds }
+    });
+}
 
 async function initiatePurchase(request, response)
 {
@@ -176,9 +208,11 @@ async function initiatePurchase(request, response)
         }
 
         // Explicit-duration gate: a grant may only proceed when every grantable
-        // deck resolves to a finite rental or an explicit perpetual flag. A deck
-        // whose pricing declares neither is a misconfiguration — refuse the whole
-        // grant rather than silently minting a forever license.
+        // deck resolves to a finite rental or perpetual access. The resolver
+        // already supplies perpetual access for a free deck (nothing is being
+        // sold, so there is no term to declare), so this can only fire when an
+        // operator has opted into PAID_DECK_REQUIRE_EXPLICIT_LICENSE_DURATION for
+        // a priced deck — a free acquisition is never refused for it.
         const misconfiguredDeckIds = deckIds.filter((deckId) =>
         {
             const breakdownEntry = breakdownByDeckId.get(deckId);
@@ -195,6 +229,8 @@ async function initiatePurchase(request, response)
             response.sendJson({ error: ErrorCodes.PRICING_DURATION_NOT_CONFIGURED, deckIds: misconfiguredDeckIds });
             return;
         }
+
+        reportImplicitLicenseDurations(session.getUserId(), pricing.breakdown || []);
 
         const issuedLicenses = [];
         for (const deckId of deckIds)
@@ -268,9 +304,10 @@ async function initiatePurchase(request, response)
     }
 
     // Explicit-duration gate for the PAID path: validate every deck resolves to
-    // a finite or explicit-perpetual license BEFORE creating a payment order, so
-    // a buyer is never charged for a deck we would then refuse to grant in
-    // VerifyPurchase. Mirrors the free-path gate above.
+    // a finite or perpetual license BEFORE creating a payment order, so a buyer
+    // is never charged for a deck we would then refuse to grant in
+    // VerifyPurchase. Mirrors the free-path gate above, and likewise only fires
+    // under PAID_DECK_REQUIRE_EXPLICIT_LICENSE_DURATION.
     const paidBreakdownByDeckId = new Map();
     for (const breakdownEntry of (pricing.breakdown || []))
     {
@@ -292,6 +329,8 @@ async function initiatePurchase(request, response)
         response.sendJson({ error: ErrorCodes.PRICING_DURATION_NOT_CONFIGURED, deckIds: paidMisconfiguredDeckIds });
         return;
     }
+
+    reportImplicitLicenseDurations(session.getUserId(), pricing.breakdown || []);
 
     const provider = providerEnum !== undefined
         ? PaymentProviderFactory.getProvider(providerEnum)

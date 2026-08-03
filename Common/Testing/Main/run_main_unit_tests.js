@@ -19,6 +19,7 @@ const { Harness, writeSkipped, assert, assertEqual } = require("../Dock/_harness
 
 const REPOSITORY_ROOT = path.resolve(__dirname, "..", "..", "..");
 const UTILITY_DIRECTORY = path.join(REPOSITORY_ROOT, "Main", "Globals", "UtilityFunctions");
+const CLASSES_DIRECTORY = path.join(REPOSITORY_ROOT, "Main", "Globals", "Classes");
 const RESULT_FILE = process.env.RESULT_FILE
     || path.join(REPOSITORY_ROOT, "Common", "Reports", ".results", "main-unit.json");
 
@@ -26,12 +27,20 @@ const CATEGORY = "Utility Functions (Main)";
 const CATALOGUED = [
     "formatCredits", "enumerationToTitleCase", "titleCaseToEnumeration",
     "pascalCaseToTitleCase", "rgbToHex", "sanitizeForJsPdf", "sha256",
-    "smoothCurve", "createPromiseMutex",
+    "smoothCurve", "createPromiseMutex", "buildContentOverlayId",
+    "PaidDeckMoveGuard.canMove",
 ];
 
 function moduleUrl(fileName)
 {
     return pathToFileURL(path.join(UTILITY_DIRECTORY, fileName)).href;
+}
+
+// Only classes with NO browser-dependent imports can be loaded here; anything
+// reaching Deck / DialogBox pulls in HTMLElement and fails under Node.
+function classModuleUrl(relativePath)
+{
+    return pathToFileURL(path.join(CLASSES_DIRECTORY, relativePath)).href;
 }
 
 function approximately(actual, expected, tolerance, message)
@@ -46,6 +55,8 @@ async function main()
 {
     let formatCredits, enumerationToTitleCase, titleCaseToEnumeration, pascalCaseToTitleCase;
     let rgbToHex, sanitizeForJsPdf, sha256, smoothCurve, createPromiseMutex;
+    let buildContentOverlayId;
+    let PaidDeckMoveGuard;
     let mutexOrder;
     try
     {
@@ -57,6 +68,8 @@ async function main()
         ({ sha256 } = await import(moduleUrl("Sha256.js")));
         ({ smoothCurve } = await import(moduleUrl("SmoothCurve.js")));
         ({ createPromiseMutex } = await import(moduleUrl("CreatePromiseMutex.js")));
+        ({ buildContentOverlayId } = await import(moduleUrl("BuildContentOverlayId.js")));
+        PaidDeckMoveGuard = (await import(classModuleUrl("PaidDeckMoveGuard.js"))).default;
 
         // The mutex is async, but the harness test bodies are synchronous, so we
         // run the mutual-exclusion scenario up front and assert the captured order.
@@ -219,6 +232,98 @@ async function main()
     {
         // mutexOrder was captured up front from a real acquire/release scenario.
         assertEqual(mutexOrder.join(" > "), "first-acquired > before-first-release > second-acquired");
+    });
+
+    // -- buildContentOverlayId: the record identity edits converge on --------
+
+    harness.test("buildContentOverlayId: same target and field always yield the same id", "buildContentOverlayId", () =>
+    {
+        const firstId = buildContentOverlayId("3f2a9c1e-0000-4000-8000-000000000001", 1);
+        const secondId = buildContentOverlayId("3f2a9c1e-0000-4000-8000-000000000001", 1);
+        assertEqual(firstId, secondId, "two devices editing the same field must converge on one record");
+    });
+
+    harness.test("buildContentOverlayId: each field of an entity gets its own id", "buildContentOverlayId", () =>
+    {
+        const questionId = buildContentOverlayId("3f2a9c1e-0000-4000-8000-000000000001", 0);
+        const answerId = buildContentOverlayId("3f2a9c1e-0000-4000-8000-000000000001", 1);
+        assert(questionId !== answerId, "editing the question must not overwrite the answer's overlay");
+    });
+
+    harness.test("buildContentOverlayId: distinct entities never collide", "buildContentOverlayId", () =>
+    {
+        const firstEntityId = buildContentOverlayId("3f2a9c1e-0000-4000-8000-000000000001", 1);
+        const secondEntityId = buildContentOverlayId("3f2a9c1e-0000-4000-8000-000000000002", 1);
+        assert(firstEntityId !== secondEntityId);
+    });
+
+    harness.test("buildContentOverlayId: cannot collide with a bare entity id", "buildContentOverlayId", () =>
+    {
+        // The server's deletions collection is keyed on (userId, entityId) with
+        // no entityType, so an overlay id equal to some other entity's id would
+        // make one tombstone delete the other. UUIDs contain no "::".
+        const overlayId = buildContentOverlayId("3f2a9c1e-0000-4000-8000-000000000001", 1);
+        assert(overlayId.includes("::"), "the separator is what guarantees no collision with a UUID");
+        assert(overlayId !== "3f2a9c1e-0000-4000-8000-000000000001");
+    });
+
+    harness.test("buildContentOverlayId: stays inside the sync id length cap", "buildContentOverlayId", () =>
+    {
+        // SyncPayloadValidator.isValidId rejects ids longer than 512 chars, and
+        // a rejected id silently drops the change from the push.
+        const overlayId = buildContentOverlayId("3f2a9c1e-0000-4000-8000-000000000001", 2);
+        assert(overlayId.length < 512, `overlay id must stay under 512 chars, got ${overlayId.length}`);
+    });
+
+    // -- PaidDeckMoveGuard: paid content cannot leave its own deck -----------
+
+    const buildDeck = (paidDeckId) => ({ getAdditionalData: () => (paidDeckId ? { paidDeckId: paidDeckId } : {}) });
+
+    harness.test("PaidDeckMoveGuard.canMove: a same-deck re-stamp is allowed", "PaidDeckMoveGuard.canMove", () =>
+    {
+        // Deck.addCard / addStudyMaterial re-stamp deckId on every insertion,
+        // including while loading from disk. Refusing that would break loading
+        // outright, so this is the single most important case here.
+        const paidDeck = buildDeck("paid-deck-1");
+        assertEqual(PaidDeckMoveGuard.canMove(paidDeck, paidDeck), true);
+    });
+
+    harness.test("PaidDeckMoveGuard.canMove: moving between two decks of the same purchase is allowed", "PaidDeckMoveGuard.canMove", () =>
+    {
+        assertEqual(PaidDeckMoveGuard.canMove(buildDeck("paid-deck-1"), buildDeck("paid-deck-1")), true, "sub-decks of one purchase share a tag");
+    });
+
+    harness.test("PaidDeckMoveGuard.canMove: paid content cannot move into a normal deck", "PaidDeckMoveGuard.canMove", () =>
+    {
+        // This is the laundering path: once a paid card sits in a normal deck,
+        // the deck-level export block and the overlay routing both stop
+        // applying to it, because both are decided by the OWNING deck's tag.
+        assertEqual(PaidDeckMoveGuard.canMove(buildDeck("paid-deck-1"), buildDeck(null)), false);
+    });
+
+    harness.test("PaidDeckMoveGuard.canMove: normal content cannot move into a paid deck", "PaidDeckMoveGuard.canMove", () =>
+    {
+        // The reverse direction would strand the learner's own content inside a
+        // subtree they can never export.
+        assertEqual(PaidDeckMoveGuard.canMove(buildDeck(null), buildDeck("paid-deck-1")), false);
+    });
+
+    harness.test("PaidDeckMoveGuard.canMove: content cannot move between two different purchases", "PaidDeckMoveGuard.canMove", () =>
+    {
+        assertEqual(PaidDeckMoveGuard.canMove(buildDeck("paid-deck-1"), buildDeck("paid-deck-2")), false);
+    });
+
+    harness.test("PaidDeckMoveGuard.canMove: normal deck to normal deck is unaffected", "PaidDeckMoveGuard.canMove", () =>
+    {
+        assertEqual(PaidDeckMoveGuard.canMove(buildDeck(null), buildDeck(null)), true, "the guard must not touch ordinary decks");
+    });
+
+    harness.test("PaidDeckMoveGuard.canMove: an entity with no current deck is always allowed", "PaidDeckMoveGuard.canMove", () =>
+    {
+        // A brand-new entity, or one whose deckId does not resolve yet during
+        // load. Failing open here is what keeps the tree building.
+        assertEqual(PaidDeckMoveGuard.canMove(null, buildDeck("paid-deck-1")), true);
+        assertEqual(PaidDeckMoveGuard.canMove(undefined, buildDeck(null)), true);
     });
 
     harness.runAndWrite(RESULT_FILE);

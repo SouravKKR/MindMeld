@@ -386,6 +386,16 @@ class AskAiPopupLink
         const currentMap = additionalData[AskAiPopupLink.DECK_ADDITIONAL_DATA_KEY] || {};
         const bRecordExists = Object.prototype.hasOwnProperty.call(currentMap, popupId);
 
+        // Strip the marker BEFORE dropping the record. On a locked paid deck
+        // the write is refused, and deleting the record first would leave a
+        // marker on screen pointing at content that no longer exists.
+        const owningEntity = AskAiPopupLink.#findEntityContainingPopupMarker(owningDeck, popupId);
+        if (owningEntity && !AskAiPopupLink.#stripMarkerFromEntity(owningEntity, popupId))
+        {
+            await DialogBox.alert("Deck is locked", "Unlock this deck with its password to remove this note.");
+            return false;
+        }
+
         if (bRecordExists)
         {
             const updatedMap = { ...currentMap };
@@ -393,10 +403,8 @@ class AskAiPopupLink
             owningDeck.setAdditionalDataField(AskAiPopupLink.DECK_ADDITIONAL_DATA_KEY, updatedMap);
         }
 
-        const owningEntity = AskAiPopupLink.#findEntityContainingPopupMarker(owningDeck, popupId);
         if (owningEntity)
         {
-            AskAiPopupLink.#stripMarkerFromEntity(owningEntity, popupId);
             await owningEntity.save();
             // owningEntity.save() routes through deck.save(false), so
             // the deck additionalData change above is committed in the
@@ -471,6 +479,13 @@ class AskAiPopupLink
         return null;
     }
 
+    /**
+     * Removes the marker button from the entity's HTML.
+     *
+     * @returns {boolean} false when the write was refused (paid deck currently
+     *   locked), so the caller can leave the record in place rather than
+     *   deleting a record whose marker is still on screen.
+     */
     static #stripMarkerFromEntity(entity, popupId)
     {
         const currentHtml = AskAiPopupLink.#getEntityHtml(entity);
@@ -478,12 +493,13 @@ class AskAiPopupLink
 
         if (entity instanceof Card)
         {
-            entity.setAnswer(newHtml);
+            return entity.setAnswer(newHtml);
         }
-        else if (entity instanceof StudyMaterial)
+        if (entity instanceof StudyMaterial)
         {
-            entity.setContent(newHtml);
+            return entity.setContent(newHtml);
         }
+        return false;
     }
 
     static #removeMarkerFromHtml(rawHtml, popupId)

@@ -21,8 +21,16 @@ Formatting rules:
 - Use <sub> and <sup> for subscripts and superscripts in formulas or chemical notation.
 - Use \( \) for inline LaTeX and \[ \] for block LaTeX where mathematical/scientific expressions are needed. (KaTex will be used to render this)
 - DO NOT wrap LaTeX expressions inside <pre> or <code>. LaTeX must be placed directly inside block or inline delimiters.
-- Use <blockquote> for important definitions or statements worth quoting precisely.
+- Use <blockquote> to set apart a canonical definition or a key statement of a law or principle. Use it for the standard statement of the idea, NOT to lift a passage of explanation out of the supplied content. At most 3 blockquotes in the whole document, and never two in a row — if a section needs more than that, the material belongs in prose or a table.
 - Apply inline style where needed for clarity (e.g. margin-top on sections). Do not use inline style for colours or decorative purposes.
+
+Derivations, proofs, and worked problems (CRITICAL):
+- Work these the way a good school or college textbook does: step by step, each step its own displayed equation, with the reason for it stated alongside.
+- The defect to avoid is the opposite of that — collapsing the argument into one line or one paragraph and asserting the result. Write the steps out however routine the algebra looks to you.
+
+Numbering and cross-referencing:
+- Number equations and key intermediate results as a textbook does, and refer back to them in prose by number ("substituting into (2)").
+- Mechanically: put \tag inside the block equation — \[ ... \tag{1} \] — numbered sequentially from 1 through the document. Only cite a number you have actually assigned.
 
 Quality rules:
 - Write as a knowledgeable teacher would — precise, clear, and student-focused.
@@ -44,4 +52,5 @@ Math and science notation (CRITICAL):
 - Math symbols: ° ± × ÷ · ≤ ≥ ≠ ≈ → ↔ ∞ √ ∑ ∫ — never "deg", "<=", "->", "sqrt(...)"
 - Chemical equations use Unicode arrows + charges: "Zn(s) → Zn²⁺(aq) + 2e⁻"
 - Units use middle dots: "S·cm²/mol", "kg·m/s²" — never "S cm^2 mol^-1"
-- If you do need richer math (multi-line equations, fractions, integrals over limits), wrap it in <span class="math">…</span> using Unicode characters inside. Do NOT use LaTeX delimiters ($…$ or \(…\)) — the renderer does not process them.
+- The division of labour between Unicode and LaTeX is: Unicode characters for symbols that appear INSIDE a sentence of prose, and LaTeX for anything that is a displayed equation in its own right.
+- So: richer math — fractions, integrals with limits, summations, multi-line or derivation steps, and anything you are numbering with \tag — goes in a block LaTeX \[ ... \] as described in the formatting rules. Do NOT render those as Unicode inside <span class="math">, and do NOT use $…$ (only \( \) and \[ \] are processed).

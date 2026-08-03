@@ -63,9 +63,62 @@ class HtmlSanitizer
         "script", "style", "iframe", "object", "embed", "applet",
         "base", "link", "meta", "form", "input", "textarea",
         "select", "option", "optgroup", "label", "fieldset", "legend",
-        "noscript", "template", "svg", "math", "frame", "frameset",
+        "noscript", "template", "math", "frame", "frameset",
         "audio", "video", "source", "track", "picture", "canvas", "map", "area",
         "title", "head", "html", "body",
+        // SVG elements that re-enter the HTML namespace, pull in external
+        // content, or carry timing/animation behaviour. These are the classic
+        // mutation-XSS pivots, so they are dropped WITH their subtree rather
+        // than unwrapped — `foreignObject` in particular is the one that turns
+        // an SVG into an HTML injection point.
+        "foreignobject", "use", "image", "animate", "animatetransform",
+        "animatemotion", "set", "mpath", "handler", "listener",
+    ]);
+
+    // Inline SVG is permitted, but only this element set, and only with the
+    // attributes below.
+    //
+    // Why it is allowed at all: the paid-deck pipeline generates technical
+    // diagrams (ray diagrams, circuits, graphs, free-body diagrams) as SVG
+    // precisely because SVG keeps labels as real text and coordinates exact,
+    // where an image model garbles both. Dropping `<svg>` with its subtree — the
+    // previous behaviour — meant those diagrams silently vanished at render
+    // time, leaving blank gaps in a lesson with nothing to debug from.
+    //
+    // Why it is still restricted: `<svg>` is a foreign-content namespace, and
+    // the elements that make it dangerous (script, style, foreignObject, use,
+    // animation timing) are exactly the ones NOT in this list — they are on the
+    // remove-with-subtree list above. What remains is geometry and text, which
+    // carry no execution capability once `on*` handlers and URL-bearing
+    // attributes are stripped by the shared attribute pass.
+    static #ALLOWED_SVG_TAG_NAMES = new Set([
+        "svg", "g", "defs", "symbol", "marker", "clippath", "mask",
+        "path", "line", "polyline", "polygon", "rect", "circle", "ellipse",
+        "text", "tspan", "textpath",
+        "lineargradient", "radialgradient", "stop", "pattern",
+    ]);
+
+    // Presentation and geometry attributes only. Note these are matched
+    // lowercased, because the HTML parser preserves SVG's camelCase names
+    // (`viewBox`) while this sanitiser compares in lower case — hence
+    // "viewbox", "gradientunits" and friends appearing in this form.
+    static #ALLOWED_SVG_ATTRIBUTE_NAMES = new Set([
+        "class", "id", "d", "points", "transform",
+        "x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry",
+        "dx", "dy", "width", "height", "viewbox", "preserveaspectratio",
+        "fill", "fill-opacity", "fill-rule", "stroke", "stroke-width",
+        "stroke-dasharray", "stroke-dashoffset", "stroke-linecap",
+        "stroke-linejoin", "stroke-opacity", "stroke-miterlimit",
+        "opacity", "visibility", "display", "clip-path", "mask",
+        "font-family", "font-size", "font-style", "font-weight",
+        "text-anchor", "dominant-baseline", "alignment-baseline",
+        "letter-spacing", "word-spacing", "writing-mode",
+        "marker-start", "marker-mid", "marker-end", "orient",
+        "refx", "refy", "markerwidth", "markerheight", "markerunits",
+        "offset", "stop-color", "stop-opacity",
+        "gradientunits", "gradienttransform", "spreadmethod",
+        "patternunits", "patterncontentunits", "clippathunits", "maskunits",
+        "xmlns", "version", "role", "aria-label",
     ]);
 
     // Attributes kept on any allowed element. `id` is deliberately excluded
@@ -79,6 +132,12 @@ class HtmlSanitizer
         "href", "target", "rel", "download", "name", "cite", "datetime",
         "color", "face", "size",
         "src", "style",
+        // Chemical structure notation carried by generated paid-deck visuals and
+        // drawn by GeneratedVisualRenderer. Inert data, not a URL and not a
+        // handler: it is read by SmilesDrawer and never interpreted as markup,
+        // so it needs no scheme validation. Without it the attribute is stripped
+        // and every generated structure renders as an empty span.
+        "data-smiles",
     ]);
 
     // Attributes whose value is a URL — these get scheme-validated so a
@@ -107,7 +166,7 @@ class HtmlSanitizer
             "<!doctype html><body>" + String(rawHtml) + "</body>",
             "text/html"
         );
-        HtmlSanitizer.#sanitizeSubtree(parsedDocument.body);
+        HtmlSanitizer.#sanitizeSubtree(parsedDocument.body, false);
         return parsedDocument.body.innerHTML;
     }
 
@@ -129,7 +188,7 @@ class HtmlSanitizer
      * subtree removal mutate childNodes mid-iteration, which would otherwise
      * skip siblings.
      */
-    static #sanitizeSubtree(rootElement)
+    static #sanitizeSubtree(rootElement, bInsideSvg)
     {
         const childNodeSnapshot = Array.from(rootElement.childNodes);
         for (const childNode of childNodeSnapshot)
@@ -156,9 +215,28 @@ class HtmlSanitizer
                 continue;
             }
 
+            // Once inside an <svg>, stay inside: the SVG allow-lists apply to
+            // the whole subtree, not just the root element.
+            const bChildIsInsideSvg = bInsideSvg || tagName === "svg";
+
             // Clean the subtree before acting on the element itself, so an
             // unwrap lifts an already-clean set of children into the parent.
-            HtmlSanitizer.#sanitizeSubtree(childNode);
+            HtmlSanitizer.#sanitizeSubtree(childNode, bChildIsInsideSvg);
+
+            if (bChildIsInsideSvg)
+            {
+                if (!HtmlSanitizer.#ALLOWED_SVG_TAG_NAMES.has(tagName))
+                {
+                    // An unknown element inside SVG is unwrapped rather than
+                    // dropped, matching the HTML side: its children have already
+                    // been cleaned, so keeping them loses nothing dangerous.
+                    HtmlSanitizer.#unwrapElement(childNode);
+                    continue;
+                }
+
+                HtmlSanitizer.#sanitizeSvgAttributes(childNode);
+                continue;
+            }
 
             if (!HtmlSanitizer.#ALLOWED_TAG_NAMES.has(tagName))
             {
@@ -168,6 +246,74 @@ class HtmlSanitizer
 
             HtmlSanitizer.#sanitizeAttributes(childNode, tagName);
         }
+    }
+
+    /**
+     * Attribute pass for elements inside an `<svg>`. Same two guarantees as the
+     * HTML pass — every `on*` handler is dropped and everything outside the
+     * allow-list is dropped — but against the SVG attribute surface.
+     *
+     * Namespaced attributes (`xlink:href`, `xml:*`) are not on the allow-list
+     * and are therefore removed; `xlink:href` in particular is how an SVG would
+     * otherwise reference external or `javascript:` content.
+     */
+    static #sanitizeSvgAttributes(elementNode)
+    {
+        const attributeNames = Array.from(elementNode.attributes).map((attribute) => attribute.name);
+        for (const attributeName of attributeNames)
+        {
+            const lowered = attributeName.toLowerCase();
+
+            if (lowered.startsWith("on"))
+            {
+                elementNode.removeAttribute(attributeName);
+                continue;
+            }
+
+            if (lowered.startsWith("data-") || lowered.startsWith("aria-"))
+            {
+                continue;
+            }
+
+            if (!HtmlSanitizer.#ALLOWED_SVG_ATTRIBUTE_NAMES.has(lowered))
+            {
+                elementNode.removeAttribute(attributeName);
+                continue;
+            }
+
+            // A handful of allowed SVG attributes take a functional IRI —
+            // `fill="url(#gradient)"`, `clip-path="url(#mask)"`. Only same-
+            // document fragment references are kept; anything resolving
+            // elsewhere (or to a scheme) is dropped.
+            const attributeValue = elementNode.getAttribute(attributeName) || "";
+            if (attributeValue.includes("url(") && !HtmlSanitizer.#isSafeFunctionalIri(attributeValue))
+            {
+                elementNode.removeAttribute(attributeName);
+            }
+        }
+    }
+
+    /**
+     * True only when every `url(...)` in the value is a local fragment
+     * reference such as `url(#arrowhead)`.
+     */
+    static #isSafeFunctionalIri(attributeValue)
+    {
+        const urlReferenceMatches = String(attributeValue).match(/url\s*\(([^)]*)\)/gi) || [];
+        for (const urlReference of urlReferenceMatches)
+        {
+            const innerReference = urlReference
+                .replace(/^url\s*\(/i, "")
+                .replace(/\)$/, "")
+                .replace(/['"]/g, "")
+                .trim();
+
+            if (!innerReference.startsWith("#"))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     static #sanitizeAttributes(elementNode, tagName)

@@ -32,6 +32,12 @@ Catalogued deterministic functions (coverage denominator):
   18) Globals/Model/CreditDealPayment.js                :: setter coercion (money/enum)
   19) Globals/Model/PeriodicCreditAssignment.js         :: fromJson/toJson round-trip
   20) Globals/Model/PeriodicCreditAssignment.js         :: setter coercion (amount/day/enum)
+  21) Globals/Classes/Security/LicenseFieldPreserver.js :: carryForwardBuyerScopedFields
+  22) Endpoints/Sync/Sync.js                            :: PAID_PROTECTED_TYPE_COLLECTIONS
+  23) Globals/Classes/PaidDeck/PaidDeckContentFingerprint.js :: compute
+  24) Globals/Classes/PaidDeck/PaidDeckContentUpdatePlanner.js :: plan
+  25) Globals/Classes/PaidDeck/LicenseContentVersionResolver.js :: resolveDownloadedVersion
+  26) Globals/Classes/PaidDeck/LicenseContentVersionResolver.js :: isUpdateAvailable
 
 Test cases:
   - PBKDF2 password KEK derivation is deterministic (same password+salt ->
@@ -74,6 +80,46 @@ Test cases:
     clamps negatives/NaN to 0; an empty name becomes null and a long name
     truncates at 256; dayOfWeek clamps to [0,6], dayOfMonth to [1,31],
     intervalDays to >= 0; an invalid status coerces to the first enum member.
+  - LicenseFieldPreserver.carryForwardBuyerScopedFields keeps a MASTER-key
+    rotation from destroying buyer-scoped state: the per-license content key and
+    both its wraps (server + password) and contentKeyVersion survive; the
+    paid-deck password hash/salt survive; downloadedContentVersion survives;
+    additionalData.instances (the manage-copies registry) survives; issuedAt
+    stays at the acquisition date. The freshly rotated keyVersion and
+    wrappedKeyBlob are NOT reverted. A legacy document with none of these fields
+    yields model defaults rather than undefined, and a malformed additionalData
+    (string or array) becomes an empty object. One case asserts the premise that
+    makes the class load-bearing: DeckLicense.toJson emits every one of those
+    fields, so persistLicense's whole-document $set would otherwise blank them.
+  - Sync.PAID_PROTECTED_TYPE_COLLECTIONS lists the entity types whose content the
+    server overlays back onto every incoming push. CONTENT_OVERLAY must be ABSENT
+    (an overlay is a learner's own edit to their own copy; protecting it would
+    silently revert every edit on the next sync) while DECK / CARD /
+    STUDY_MATERIAL / MOCK_TEST must all stay present.
+  - encryptEntityContent returns a CONTENT_OVERLAY unmodified: its `value` is
+    already a ciphertext envelope written by the client, so a branch there would
+    double-encrypt it beyond recovery.
+  - PaidDeckContentFingerprint.compute hashes only the SELLER-authored content of
+    an entity, so a content update can tell per entity whether the publisher
+    actually changed it. Ids and progress are excluded (they differ between the
+    master and a buyer's copy); whitespace reflow and buyer-authored Ask AI markup
+    are normalised away, so neither costs the buyer their progress. An entity type
+    with no fingerprintable content returns "".
+  - PaidDeckContentUpdatePlanner.plan classifies every entity on an update:
+    same id + same fingerprint -> CARRIED (progress, history and the buyer's own
+    edit kept), same id + changed fingerprint -> RESET, id only in the new version
+    -> ADDED, id only in the old -> REMOVED (tombstoned, cascading its overlays).
+    A missing fingerprint on either side RESETS rather than carries — an unproven
+    match would attach scheduling state to unverified text. Null/undefined inputs
+    yield an empty plan.
+  - LicenseContentVersionResolver decides whether to offer a copy an update.
+    A downloadedContentVersion of 0 means "unknown, assume current" and is never
+    offered an update (every licence predating content versioning reads 0, so a
+    naive comparison would tell EVERY existing buyer to update and reset their
+    progress for nothing) — needsBackfill flags it for a lazy write-on-read
+    instead. A genuinely older version IS offered one. Per-copy versions win over
+    the license-level value, since copies update independently; junk and negative
+    values normalise to 0.
 
 Notes:
   - Pure Security classes and the hand-written MaintenanceWindow model are

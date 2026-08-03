@@ -53,7 +53,11 @@ const ALLOWLISTED_PATHS = new Set
     "/logout",
     "/getuser",
     "/legaldocuments",
-    "/legal/accept"
+    "/legal/accept",
+    // A browser posts CSP violation reports with no app context and carries the
+    // session cookie along automatically. 403-ing them would blind the strict-
+    // policy rollout for exactly the users who have not accepted yet.
+    "/security/cspreport"
 ]);
 
 function getEndpointPath(request)

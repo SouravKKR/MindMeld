@@ -5,7 +5,10 @@ import Lifecycle from "./Lifecycle.js";
 import Progress from "./Progress.js";
 import SyncEvents from "../Events/SyncEvents.js";
 import PaidDeckFieldCipher from "../Classes/Crypto/PaidDeckFieldCipher.js";
+import ContentOverlayStore from "../Classes/Content/ContentOverlayStore.js";
+import PaidDeckMoveGuard from "../Classes/PaidDeckMoveGuard.js";
 import { entityTypes } from "../Enumerations/EntityTypes.js";
+import { contentOverlayFields } from "../Enumerations/ContentOverlayFields.js";
 
 class Card
 {
@@ -89,11 +92,21 @@ class Card
 
     getQuestion()
     {
+        const overlayResolution = ContentOverlayStore.resolve(this, contentOverlayFields.CARD_QUESTION);
+        if (overlayResolution.hasOverlay)
+        {
+            return overlayResolution.value;
+        }
         return Card.#readContentField(this.#question, this.#decryptedQuestion);
     }
 
     getAnswer()
     {
+        const overlayResolution = ContentOverlayStore.resolve(this, contentOverlayFields.CARD_ANSWER);
+        if (overlayResolution.hasOverlay)
+        {
+            return overlayResolution.value;
+        }
         return Card.#readContentField(this.#answer, this.#decryptedAnswer);
     }
 
@@ -156,6 +169,11 @@ class Card
                 this.#decryptedAnswer = null;
             }
         }
+
+        // The learner's own edits are encrypted under the same key, so they are
+        // part of the same unlock — decrypting only the seller's fields would
+        // show an edited card as locked.
+        await ContentOverlayStore.decryptForStudy(this);
     }
 
     /**
@@ -166,7 +184,8 @@ class Card
     needsDecryption()
     {
         return (this.#decryptedQuestion === null && PaidDeckFieldCipher.isEncryptedField(this.#question))
-            || (this.#decryptedAnswer === null && PaidDeckFieldCipher.isEncryptedField(this.#answer));
+            || (this.#decryptedAnswer === null && PaidDeckFieldCipher.isEncryptedField(this.#answer))
+            || ContentOverlayStore.needsDecryption(this);
     }
 
     getTags()
@@ -233,27 +252,42 @@ class Card
         }
     }
 
+    /**
+     * Sets the question text.
+     *
+     * On a paid deck the seller's field is never overwritten — the edit is
+     * staged as an encrypted overlay instead, so the ciphertext envelope stays
+     * intact and a lapsed license still takes the content away. save() commits
+     * the staged edit.
+     *
+     * @returns {boolean} false only when the deck is paid AND locked, so the
+     *   caller can tell the learner rather than silently discarding their work.
+     */
     setQuestion(question)
     {
-        // Paid-deck content is server-authored and read-only on the device —
-        // refuse to overwrite it so no edit path can ever write plaintext into
-        // a paid card at rest (the encrypted envelope must stay intact).
-        if (this.getDeck()?.getAdditionalData?.()?.paidDeckId)
+        if (ContentOverlayStore.isOverlayBacked(this))
         {
-            return;
+            return ContentOverlayStore.stage(this, contentOverlayFields.CARD_QUESTION, question);
         }
         this.#question = question;
         this.#lifecycle?.touch();
+        return true;
     }
 
+    /**
+     * Sets the answer text. See setQuestion for the paid-deck behaviour.
+     *
+     * @returns {boolean} false only when the deck is paid AND locked.
+     */
     setAnswer(answer)
     {
-        if (this.getDeck()?.getAdditionalData?.()?.paidDeckId)
+        if (ContentOverlayStore.isOverlayBacked(this))
         {
-            return;
+            return ContentOverlayStore.stage(this, contentOverlayFields.CARD_ANSWER, answer);
         }
         this.#answer = answer;
         this.#lifecycle?.touch();
+        return true;
     }
 
     setTags(tags)
@@ -272,30 +306,80 @@ class Card
         this.#baseDifficulty = baseDifficulty;
     }
     
-    setDeckId(deckId)
+    /**
+     * The structural re-stamp Deck.addCard performs when a deck takes ownership
+     * of a card. Deliberately UNGUARDED: its whole purpose is to repair a stale
+     * or wrong deckId on load and on a bulk-snapshot apply, so it must be able
+     * to change the card's paid tag. It is not reachable from any user action —
+     * a deck can only claim a card it already physically contains.
+     */
+    assignOwningDeckId(deckId)
     {
         this.#deckId = deckId;
     }
 
+    /**
+     * Re-homes this card to a different deck at a caller's request. Refused
+     * when it would move the card across a paid boundary — the deck's
+     * paidDeckId tag is what makes export refuse and what routes edits into
+     * encrypted overlays, so a move into a normal deck would strip both.
+     *
+     * @returns {boolean} false when the move was refused.
+     */
+    setDeckId(deckId)
+    {
+        if (!PaidDeckMoveGuard.canMove(this.getDeck(), Deck.getById(deckId)))
+        {
+            return false;
+        }
+        this.#deckId = deckId;
+        return true;
+    }
+
+    /**
+     * @returns {boolean} false when the move was refused (see setDeckId).
+     */
     move(oldDeck, newDeck)
     {
+        if (!PaidDeckMoveGuard.canMove(oldDeck, newDeck))
+        {
+            return false;
+        }
         newDeck.addCard(this);
         oldDeck.removeCard(this);
+        return true;
     }
 
     async delete()
     {
+        // Drop this card's overlays first, while the deck link still resolves.
+        // The server cascades them too, but emitting the tombstones here is
+        // what stops another device re-pushing a record whose target is gone.
+        const removedOverlayIds = ContentOverlayStore.removeAllForEntity(this);
+
         this.getDeck().removeCard(this);
         await this.getDeck().save(false);
 
-        window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_DELETED, 
-        { 
-            detail: 
-            { 
-                entityId: this.getId(), 
-                entityType: entityTypes.CARD 
-            } 
+        window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_DELETED,
+        {
+            detail:
+            {
+                entityId: this.getId(),
+                entityType: entityTypes.CARD
+            }
         }));
+
+        for (const removedOverlayId of removedOverlayIds)
+        {
+            window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_DELETED,
+            {
+                detail:
+                {
+                    entityId: removedOverlayId,
+                    entityType: entityTypes.CONTENT_OVERLAY
+                }
+            }));
+        }
     }
     
     isDue()
@@ -338,6 +422,11 @@ class Card
 
     async save()
     {
+        // Encrypt and store any edit a setter staged. Must run BEFORE the deck
+        // is written, because it mutates the deck's overlay map in place and
+        // relies on this same deck.save() to persist it.
+        await ContentOverlayStore.commitPending(this);
+
         // Paid decks now persist + sync exactly like normal decks: the content
         // fields are already ciphertext envelopes (#question / #answer), so
         // toJson() emits ciphertext and progress rides the normal pipeline. The

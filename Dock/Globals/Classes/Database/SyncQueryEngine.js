@@ -281,6 +281,11 @@ class SyncQueryEngine
             const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION);
             await collection.deleteOne({ userId: userId, "data.id": entityId });
         }
+        else if (entityType === entityTypes.CONTENT_OVERLAY)
+        {
+            const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.CONTENT_OVERLAYS_COLLECTION);
+            await collection.deleteOne({ userId: userId, "data.id": entityId });
+        }
     }
 
     /**
@@ -616,6 +621,7 @@ class SyncQueryEngine
             [entityTypes.STUDY_MATERIAL]: DatabaseConstants.STUDY_MATERIALS_COLLECTION,
             [entityTypes.MOCK_TEST]: DatabaseConstants.MOCK_TESTS_COLLECTION,
             [entityTypes.ASK_AI_POPUP_LINK]: DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION,
+            [entityTypes.CONTENT_OVERLAY]: DatabaseConstants.CONTENT_OVERLAYS_COLLECTION,
         };
 
         const buildDeletionKey = (entityId, entityType) => `${entityType}::${entityId}`;
@@ -653,7 +659,7 @@ class SyncQueryEngine
 
         while (frontierDeckIds.length > 0)
         {
-            const [childDecks, childCards, childStudyMaterials, childMockTests, childPopupLinks] = await Promise.all(
+            const [childDecks, childCards, childStudyMaterials, childMockTests, childPopupLinks, childContentOverlays] = await Promise.all(
             [
                 db.collection(DatabaseConstants.DECKS_COLLECTION)
                     .find({ userId: userId, "data.parent": { $in: frontierDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
@@ -668,6 +674,9 @@ class SyncQueryEngine
                     .find({ userId: userId, "data.deckId": { $in: frontierDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
                     .toArray(),
                 db.collection(DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION)
+                    .find({ userId: userId, "data.deckId": { $in: frontierDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
+                    .toArray(),
+                db.collection(DatabaseConstants.CONTENT_OVERLAYS_COLLECTION)
                     .find({ userId: userId, "data.deckId": { $in: frontierDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
                     .toArray()
             ]);
@@ -736,7 +745,48 @@ class SyncQueryEngine
                 fullDeletionSet.push({ entityId: document.data.id, entityType: entityTypes.ASK_AI_POPUP_LINK });
             }
 
+            for (const document of childContentOverlays)
+            {
+                const deletionKey = buildDeletionKey(document.data.id, entityTypes.CONTENT_OVERLAY);
+                if (seenDeletionKeys.has(deletionKey))
+                {
+                    continue;
+                }
+                seenDeletionKeys.add(deletionKey);
+                fullDeletionSet.push({ entityId: document.data.id, entityType: entityTypes.CONTENT_OVERLAY });
+            }
+
             frontierDeckIds = nextFrontier;
+        }
+
+        // Second cascade dimension, unique to content overlays. Every other
+        // child type hangs off a DECK, so walking the deck frontier above finds
+        // all of them. An overlay hangs off a single CARD or STUDY MATERIAL, so
+        // deleting one entity out of a deck that survives is not covered by that
+        // walk at all — its overlays would linger forever, invisible and
+        // unreachable. Runs after the walk so it also sees the cards and
+        // materials the walk itself just cascaded.
+        const deletedOverlayTargetIds = fullDeletionSet
+            .filter((deletion) => deletion.entityType === entityTypes.CARD || deletion.entityType === entityTypes.STUDY_MATERIAL)
+            .map((deletion) => deletion.entityId);
+
+        if (deletedOverlayTargetIds.length > 0)
+        {
+            const orphanedOverlays = await db
+                .collection(DatabaseConstants.CONTENT_OVERLAYS_COLLECTION)
+                .find({ userId: userId, "data.targetEntityId": { $in: deletedOverlayTargetIds } }, { projection: { "data.id": 1, _id: 0 } })
+                .toArray();
+
+            for (const document of orphanedOverlays)
+            {
+                const deletionKey = buildDeletionKey(document.data.id, entityTypes.CONTENT_OVERLAY);
+                if (seenDeletionKeys.has(deletionKey))
+                {
+                    continue;
+                }
+                seenDeletionKeys.add(deletionKey);
+                fullDeletionSet.push({ entityId: document.data.id, entityType: entityTypes.CONTENT_OVERLAY });
+            }
         }
 
         const deletionOps = fullDeletionSet.map(({ entityId, entityType }) => (

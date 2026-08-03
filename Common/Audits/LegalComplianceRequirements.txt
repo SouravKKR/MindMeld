@@ -1,0 +1,84 @@
+Report: Common/Reports/LegalComplianceAuditReport.pdf
+
+Role: Act as a Senior Software Architect and Legal-Tech Compliance Auditor.
+
+Objective: Scan this codebase to evaluate legal and compliance exposure regarding
+user-uploaded documents (such as coaching institute textbooks, PDFs, and notes)
+and AI-generated outputs (flashcards, notes, summaries, study material, mock tests).
+
+Conduct a systematic audit across the following specific architectural risk areas:
+
+1) File Lifecycle & Retention (Ephemeral Processing Check)
+   - Locate ALL handlers processing file uploads (PDFs, images, docs, scans, attachments).
+     Do not stop at the primary document-upload path; support attachments, answer-sheet
+     scans, invoices and any other upload surface count.
+   - Check where files are stored (S3/Linode Object Storage, GCS, local disk, vector
+     databases, Redis, temp directories).
+   - Flag any code path where original uploaded documents are retained permanently or
+     indefinitely rather than cleaned up immediately post-extraction.
+   - For every storage location, establish whether a deletion path, TTL or reaper
+     actually exists. An enum value or a field that nothing consumes is not a lifecycle.
+   - Verify whether source documents can be directly accessed or downloaded by other
+     users via unauthenticated or public URLs.
+
+2) System Prompts & Content Transformation (Derivative Work Risk)
+   - Inspect all system prompts, LLM API calls, and generation pipelines.
+   - Flag prompts that request verbatim text extraction, direct block quotes, or
+     retaining original phrasing from source documents.
+   - Propose refactored system prompts that enforce conceptual rephrasing, summarization
+     and original sentence structures.
+   - CONSTRAINT (mandatory): definitions, formulae, constants, chemical species,
+     statutory/standard definitions, technical terms of art and numerical values MUST
+     remain factually accurate and MUST NOT be paraphrased or fabricated by an LLM.
+     Copyright does not protect facts, and merger doctrine covers statements with only
+     one accurate expression — so reproducing those exactly is both legally safe and
+     required for correctness. Only prose, where alternative phrasings exist, must be
+     re-authored. Never propose a fix that trades accuracy for originality.
+
+3) Tenant Isolation & Database Leakage (Data Segregation)
+   - Check database schemas and queries for user-uploaded source data and generated
+     flashcards/notes/study material/mock tests.
+   - Verify generated content is strictly scoped to the uploading user (userId / tenant
+     boundary).
+   - Flag any global search indices, shared vector collections, or public library queries
+     that pool user-generated materials across accounts without authorization checks.
+   - Check EVERY retrieval path, not just the shared query engine. A workflow that builds
+     its own aggregation pipeline bypasses whatever the query engine enforces.
+
+4) Model Training & Data Logging (Third-Party API Hygiene)
+   - Check LLM client configurations (OpenAI, Anthropic, Gemini/Vertex, etc.) and payload
+     loggers.
+   - Flag any logic logging raw uploaded document content, or brand-bearing identifiers
+     such as original filenames, to application logs or external analytics.
+   - Confirm whether API parameters adhere to zero-data-retention / non-training options.
+     A favourable posture inherited from a platform default is weaker than one asserted
+     in code — flag silent fallbacks that change the posture.
+
+5) Legal Intermediary Provisions (Safe Harbour Safeguards)
+   - Check for sanitization filters or blocklists removing registered brand/coaching
+     institute names (e.g. Narayana, Allen, FIITJEE) from user-facing public titles or tags.
+   - Check whether export or share handlers expose central server links rather than
+     exporting pure local payload files.
+   - Check whether a takedown capability exists AND whether it is complete: removing a
+     source document is not a takedown if the flashcards, study material and mock tests
+     generated from it survive. Check whether generated entities record provenance back
+     to their source at all.
+   - Check for contractual safeguards (UGC rights warranty, indemnity, infringing-content
+     prohibition, named Grievance Officer with contact details and statutory timelines).
+
+Output requirements:
+- Executive Risk Summary table rating each architectural component High / Medium / Low.
+- Flagged findings with exact File Path and Line Numbers.
+- Proposed Code Fixes & Prompt Refactor Specifications.
+- Every table (the executive summary and every findings table) MUST carry an "Action"
+  column whose value is exactly one of:
+      "Needs immediate action"  /  "Change recommended"  /  "No action needed"
+  This column is NOT derived from the severity rating. Severity says how bad the exposure
+  is; the action column says what to do about it, and the two legitimately diverge — an
+  accepted trade-off can be Medium and still need no action, while a trivial Low defect is
+  still worth fixing. Set it per finding.
+- Record verified controls as findings too (rated PASS / No action needed), so the report
+  states what is working, not only what is broken.
+- Include an Operational Notes section for anything that changes deployment behaviour
+  (env vars that now gate boot, defaults that changed, features left disabled pending
+  calibration).

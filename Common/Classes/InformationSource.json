@@ -58,6 +58,28 @@
         {
             "datatype": "enum:ContentRetentionModes",
             "defaultValue": 1
+        },
+        "expiresAt":
+        {
+            "datatype": "int",
+            "min": 0,
+            "defaultValue": 0
+        },
+        "uploadedAt":
+        {
+            "datatype": "int",
+            "min": 0,
+            "defaultValue": 0
+        },
+        "curriculumPlausibility":
+        {
+            "datatype": "enum:CurriculumPlausibility",
+            "defaultValue": 0
+        },
+        "curriculumPlausibilityReason":
+        {
+            "datatype": "string",
+            "defaultValue": ""
         }
     }
 }

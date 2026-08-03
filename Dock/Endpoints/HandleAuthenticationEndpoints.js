@@ -14,6 +14,7 @@ const { handleRequestOtp } = require("./Authentication/HandleRequestOtp");
 const { handleVerifyOtp } = require("./Authentication/HandleVerifyOtp");
 const { ensureLogin } = require("./Plugins/EnsureLogin");
 const { ensureLoginRateLimit } = require("./Plugins/EnsureLoginRateLimit");
+const { ensureOtpRateLimit } = require("./Plugins/EnsureOtpRateLimit");
 
 function handleAuthenticationEndpoints(server)
 {
@@ -115,7 +116,8 @@ function handleAuthenticationEndpoints(server)
         routePath: `/Auth/RequestOtp`,
         handler: wrap(handleRequestOtp),
         flags: PacketronHandlerFlags.JSON_BODY,
-        method: PacketronRequestMethod.POST
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureOtpRateLimit]
     });
 
     server.handle
@@ -123,7 +125,8 @@ function handleAuthenticationEndpoints(server)
         routePath: `/Auth/VerifyOtp`,
         handler: wrap(handleVerifyOtp),
         flags: PacketronHandlerFlags.JSON_BODY,
-        method: PacketronRequestMethod.POST
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureOtpRateLimit]
     });
 }
 

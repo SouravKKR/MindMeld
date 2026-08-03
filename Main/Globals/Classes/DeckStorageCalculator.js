@@ -38,6 +38,32 @@ class DeckStorageCalculator
         }
     }
 
+    // additionalData slots holding records that sync as their own entity type
+    // and are therefore absent from toSyncJson. Kept in step with Deck's list.
+    static #ENTITY_CHANNEL_ADDITIONAL_DATA_KEYS = ["askAiPopupLinks", "contentOverlays"];
+
+    /**
+     * The on-disk size of the entity-channel record maps hanging off a deck.
+     * @param {Deck} deck
+     * @returns {number}
+     */
+    static #entityChannelByteLength(deck)
+    {
+        const additionalData = deck.getAdditionalData?.() || {};
+        let totalBytes = 0;
+
+        for (const entityChannelKey of DeckStorageCalculator.#ENTITY_CHANNEL_ADDITIONAL_DATA_KEYS)
+        {
+            const recordMap = additionalData[entityChannelKey];
+            if (recordMap && typeof recordMap === "object")
+            {
+                totalBytes += DeckStorageCalculator.#serializedByteLength(recordMap);
+            }
+        }
+
+        return totalBytes;
+    }
+
     /**
      * The byte footprint of a single deck node plus the entities it directly
      * owns (its own cards, study materials and mock tests) — NOT its subdecks.
@@ -52,6 +78,13 @@ class DeckStorageCalculator
         }
 
         let totalBytes = DeckStorageCalculator.#serializedByteLength(deck.toSyncJson());
+
+        // toSyncJson strips the entity-channel maps (popup notes, content
+        // overlays) because they ride their own sync channels — but they DO
+        // occupy space on disk, inside this deck's file. Sizing them separately
+        // is what stops a deck full of saved AI notes and edits reporting as
+        // tiny in the storage manager.
+        totalBytes += DeckStorageCalculator.#entityChannelByteLength(deck);
 
         for (const card of deck.getCards(false, true))
         {

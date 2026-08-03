@@ -1,7 +1,6 @@
 import math
 import os
 import json
-import httpx
 
 from Globals.Classes.Automation.AutomationCaller import AutomationCaller
 from Globals.Classes.Automation.AutomationContent import AutomationContent
@@ -13,6 +12,7 @@ from Globals.Classes.Generic.Persistence import Persistence
 from Globals.Classes.Task.AutoGeneration.MockTestGenerationSettings import MockTestGenerationSettings
 from Globals.Classes.Task.TaskDescriptor import TaskDescriptor
 from Globals.Classes.Task.TaskManager import TaskManager
+from Globals.Classes.WebScraping.WebContentFetcher import WebContentFetcher
 from Globals.Classes.WebScraping.WebScraper import WebScraper
 from Globals.Classes.WebScraping.ScrapeFilter import ScrapeFilter
 from Globals.Constants.PersistenceConstants import PersistenceConstants
@@ -27,6 +27,7 @@ from Globals.Utility.SanitizeFilename import sanitize_filename
 from Globals.Utility.StripJsonMarkdown import strip_json_markdown
 from Workflows.MapTopicsWithContent.ChunkUtils import extract_leaves
 from Workflows.Workflow import Workflow
+from Globals.Utility.RedactSourceName import redact_source_name
 
 
 # PYQ harvest is capped to bound LLM cost. ~50 questions across 5 PDFs is
@@ -52,6 +53,20 @@ class GenerateMockTests(Workflow):
     # the worker's repeat-fill logic; we just stop generating endless
     # *unique* extras nobody will see.
     MAX_POOL_TO_PER_TEST_RATIO = 2
+
+    # Reference-material content gating. A question paper is a PDF; anything
+    # else the PDF search returns is a landing or error page. Some servers
+    # mislabel a real PDF (octet-stream, or even text/html), so the magic
+    # prefix is checked alongside the declared type.
+    PDF_CONTENT_TYPES = ("application/pdf", "application/x-pdf")
+    PDF_MAGIC_PREFIX = b"%PDF-"
+    WEB_PAGE_CONTENT_TYPES = ("text/html", "application/xhtml+xml", "text/plain")
+
+    # A failed fetch yields no content part, so counting only successes would let
+    # a list of dead URLs drive one request each. Attempts are capped per leg,
+    # independently of whatever the server-side source cap happens to be.
+    REFERENCE_ATTEMPT_MULTIPLIER = 2
+    REFERENCE_ATTEMPT_BASE_OVERHEAD = 3
 
     def __init__(self, payload={}):
         super().__init__(payload)
@@ -183,60 +198,130 @@ class GenerateMockTests(Workflow):
 
         return specific_urls
 
-    async def __procure_pdf_baselines(self, max_pdfs: int) -> list[bytes]:
-        pdf_bytes_list = []
+    @staticmethod
+    def __is_pdf(body_bytes: bytes, content_type: str) -> bool:
+        if content_type in GenerateMockTests.PDF_CONTENT_TYPES:
+            return True
+
+        return body_bytes[: len(GenerateMockTests.PDF_MAGIC_PREFIX)] == GenerateMockTests.PDF_MAGIC_PREFIX
+
+    @staticmethod
+    def __count_documents(content_parts: list) -> int:
+        """Number of DOCUMENT (PDF) parts — what the prompts report as pdf_count."""
+        return sum(1 for part in content_parts if part.get_content_type() == AutomationContentTypes.DOCUMENT)
+
+    @staticmethod
+    async def __build_reference_part(url: str, allow_web_pages: bool) -> AutomationContent | None:
+        """
+        Fetches one reference URL and turns it into an LLM content part, or
+        returns None when it is unreachable, refused as unsafe, or of a type
+        that cannot seed exam questions.
+
+        A PDF becomes a DOCUMENT part. When allow_web_pages is True an HTML
+        page becomes a TEXT part carrying its extracted readable text — HTML
+        bytes handed over as a DOCUMENT part are unreadable to the model, so
+        the conversion is what makes a pinned web page useful at all. When
+        allow_web_pages is False, only PDFs survive.
+        """
+        fetched = await WebContentFetcher.fetch_document_bytes(url)
+        if fetched is None:
+            print(f"[GenerateMockTests] Skipping '{url}' — not fetched (unreachable, or refused as unsafe).")
+            return None
+
+        body_bytes, content_type = fetched
+
+        if GenerateMockTests.__is_pdf(body_bytes, content_type):
+            return AutomationContent(AutomationContentTypes.DOCUMENT, body_bytes)
+
+        if not allow_web_pages:
+            print(f"[GenerateMockTests] Skipping '{url}' — '{content_type}' is not a question-paper PDF.")
+            return None
+
+        if content_type not in GenerateMockTests.WEB_PAGE_CONTENT_TYPES:
+            print(f"[GenerateMockTests] Skipping '{url}' — unusable content type '{content_type}'.")
+            return None
+
+        readable_text = WebContentFetcher.extract_readable_text(body_bytes)
+        if not readable_text.strip():
+            print(f"[GenerateMockTests] Skipping '{url}' — page carried no readable text.")
+            return None
+
+        return AutomationContent(
+            AutomationContentTypes.TEXT,
+            f"--- START REFERENCE PAGE: {url} ---\n{readable_text}\n--- END REFERENCE PAGE ---",
+        )
+
+    async def __procure_reference_material(self, max_documents: int) -> list[AutomationContent]:
+        """
+        Builds the LLM content parts that seed the exam blueprint and the PYQ
+        pool. Two legs, deliberately treated differently:
+
+          1. User-pinned SPECIFIC_URL_ON_THE_INTERNET sources — the user told us
+             exactly where to look, and plenty of previous-year material lives
+             on ordinary web pages, so PDFs AND HTML pages are both accepted.
+          2. The `filetype:pdf` search for previous-year papers — anything
+             non-PDF coming back from that search is a landing or error page
+             rather than a question paper, so it is dropped as noise.
+
+        Every fetch goes through WebContentFetcher.fetch_document_bytes, which
+        validates the URL and each redirect hop with SafeUrlValidator, pins the
+        connection to the address it validated, and caps the download. That is
+        what stops a pasted URL from aiming the worker at an internal address.
+        """
+        content_parts: list[AutomationContent] = []
+        attempt_cap = (max_documents * GenerateMockTests.REFERENCE_ATTEMPT_MULTIPLIER) + GenerateMockTests.REFERENCE_ATTEMPT_BASE_OVERHEAD
 
         # ── 1. Honour user-pinned URLs first ──────────────────────────────────
-        # A user who pasted a SPECIFIC_URL_ON_THE_INTERNET source has told us
-        # exactly where to look — fetch those URLs verbatim before falling
-        # back to search. Stops the search from drowning out the user's intent.
-        specific_urls = self.__collect_specific_urls()
+        # Fetched before falling back to search so the search cannot drown out
+        # the user's explicit intent.
+        attempts_made = 0
+        for url in self.__collect_specific_urls():
+            if len(content_parts) >= max_documents:
+                break
+            if attempts_made >= attempt_cap:
+                print(f"[GenerateMockTests] Pinned-URL attempt cap ({attempt_cap}) reached — stopping.")
+                break
 
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            for url in specific_urls:
-                if len(pdf_bytes_list) >= max_pdfs:
-                    break
-                try:
-                    print(f"[GenerateMockTests] Downloading user-pinned URL: {url}")
-                    response = await client.get(url, timeout=15.0)
-                    if response.status_code == 200:
-                        pdf_bytes_list.append(response.content)
-                except Exception as fetch_error:
-                    print(f"[GenerateMockTests] Failed to download '{url}': {fetch_error}")
-                    continue
+            attempts_made += 1
+            print(f"[GenerateMockTests] Downloading user-pinned URL: {url}")
+            reference_part = await GenerateMockTests.__build_reference_part(url, allow_web_pages=True)
+            if reference_part is not None:
+                content_parts.append(reference_part)
 
-            if len(pdf_bytes_list) >= max_pdfs:
-                return pdf_bytes_list
+        if len(content_parts) >= max_documents:
+            return content_parts
 
-            # ── 2. Search for additional PDFs ─────────────────────────────────
-            scraper = WebScraper()
-            query = f"{self.__exam_name} {self.__subject_name} previous year question papers"
+        # ── 2. Search for additional question-paper PDFs ──────────────────────
+        scraper = WebScraper()
+        query = f"{self.__exam_name} {self.__subject_name} previous year question papers"
 
-            filters = [
-                ScrapeFilter(ScrapeFilterTypes.EXTENSION, "pdf"),
-                ScrapeFilter(ScrapeFilterTypes.RESULT_COUNT, str(max_pdfs * 3))
-            ]
+        filters = [
+            ScrapeFilter(ScrapeFilterTypes.EXTENSION, "pdf"),
+            ScrapeFilter(ScrapeFilterTypes.RESULT_COUNT, str(max_documents * 3))
+        ]
 
-            print(f"[GenerateMockTests] Searching web for baseline PDFs: '{query}'")
-            links = await scraper.search(query, filters)
+        print(f"[GenerateMockTests] Searching web for baseline PDFs: '{query}'")
+        links = await scraper.search(query, filters)
 
-            if not links:
-                print("[GenerateMockTests] No PDF links found during scraping.")
-                return pdf_bytes_list
+        if not links:
+            print("[GenerateMockTests] No PDF links found during scraping.")
+            return content_parts
 
-            for link in links:
-                if len(pdf_bytes_list) >= max_pdfs:
-                    break
-                try:
-                    print(f"  -> Downloading: {link}")
-                    response = await client.get(link, timeout=15.0)
-                    if response.status_code == 200:
-                        pdf_bytes_list.append(response.content)
-                except Exception as fetch_error:
-                    print(f"  -> Failed to download {link}: {fetch_error}")
-                    continue
+        attempts_made = 0
+        for link in links:
+            if len(content_parts) >= max_documents:
+                break
+            if attempts_made >= attempt_cap:
+                print(f"[GenerateMockTests] Search-result attempt cap ({attempt_cap}) reached — stopping.")
+                break
 
-        return pdf_bytes_list
+            attempts_made += 1
+            print(f"  -> Downloading: {link}")
+            reference_part = await GenerateMockTests.__build_reference_part(link, allow_web_pages=False)
+            if reference_part is not None:
+                content_parts.append(reference_part)
+
+        return content_parts
 
     def __has_web_information_source(self) -> bool:
         """
@@ -275,7 +360,8 @@ class GenerateMockTests(Workflow):
         Reads the uploaded bytes of every QUESTION_PAPER information source so
         their questions can seed the PYQ pool directly — no exam name or web
         source required (covers courses whose papers aren't online). The bytes
-        feed the same __extract_pyq_from_pdfs path the web harvest uses.
+        feed the same __extract_pyq_from_reference_material path the web
+        harvest uses, wrapped as DOCUMENT parts by the caller.
         """
         pdf_bytes_list = []
         sources = self.__settings.get_information_sources() or []
@@ -292,7 +378,7 @@ class GenerateMockTests(Workflow):
                 if pdf_bytes:
                     pdf_bytes_list.append(pdf_bytes)
             except Exception as read_error:
-                print(f"[GenerateMockTests] Failed to read question paper '{information_source.get_name()}': {read_error}")
+                print(f"[GenerateMockTests] Failed to read question paper '{redact_source_name(information_source.get_name())}': {read_error}")
                 continue
 
         return pdf_bytes_list
@@ -315,21 +401,22 @@ class GenerateMockTests(Workflow):
 
         Gated by run() on examName + at least one WEB info source.
         """
-        pdf_bytes_list = await self.__procure_pdf_baselines(PYQ_HARVEST_MAX_PDFS)
-        if not pdf_bytes_list:
-            print("[GenerateMockTests] PYQ harvest: no PDFs downloaded — pool will be empty.")
+        reference_parts = await self.__procure_reference_material(PYQ_HARVEST_MAX_PDFS)
+        if not reference_parts:
+            print("[GenerateMockTests] PYQ harvest: no reference material downloaded — pool will be empty.")
             return []
 
-        return await self.__extract_pyq_from_pdfs(pdf_bytes_list)
+        return await self.__extract_pyq_from_reference_material(reference_parts)
 
-    async def __extract_pyq_from_pdfs(self, pdf_bytes_list: list[bytes]) -> list[dict]:
+    async def __extract_pyq_from_reference_material(self, reference_parts: list[AutomationContent]) -> list[dict]:
         """
         Extracts up to PYQ_POOL_MAX_QUESTIONS structured question objects from
-        the given PDF bytes via the LLM. Shared by the web-harvest path and the
-        user-uploaded QUESTION_PAPER path. Entries:
+        the given reference parts (PDF documents and/or extracted page text)
+        via the LLM. Shared by the web-harvest path and the user-uploaded
+        QUESTION_PAPER path. Entries:
             {question, answer, type, difficulty, topicHint}
         """
-        if not pdf_bytes_list:
+        if not reference_parts:
             return []
 
         model_string, provider_class = ModelPool.EXAM_QUESTION_TYPE_DETERMINER_MODEL
@@ -338,7 +425,7 @@ class GenerateMockTests(Workflow):
         user_prompt = PromptPool.PYQ_EXTRACTION_USER.format(
             exam_name = self.__exam_name,
             subject_name = self.__subject_name,
-            pdf_count = len(pdf_bytes_list),
+            pdf_count = GenerateMockTests.__count_documents(reference_parts),
             max_questions = PYQ_POOL_MAX_QUESTIONS,
         )
 
@@ -346,10 +433,9 @@ class GenerateMockTests(Workflow):
             AutomationContent(AutomationContentTypes.SYSTEM, PromptPool.PYQ_EXTRACTION_SYSTEM),
             AutomationContent(AutomationContentTypes.TEXT, user_prompt),
         ]
-        for pdf_bytes in pdf_bytes_list:
-            request_contents.append(AutomationContent(AutomationContentTypes.DOCUMENT, pdf_bytes))
+        request_contents.extend(reference_parts)
 
-        print(f"[GenerateMockTests] PYQ harvest: extracting questions from {len(pdf_bytes_list)} PDF(s) via LLM...")
+        print(f"[GenerateMockTests] PYQ harvest: extracting questions from {len(reference_parts)} source(s) via LLM...")
         response = await caller.call(
             AutomationRequest(model_string, request_contents),
             self.__pyq_validator,
@@ -508,10 +594,10 @@ class GenerateMockTests(Workflow):
         return blueprint
 
     async def __call_blueprint_llm(self):
-        pdf_bytes_list = []
+        reference_parts = []
         if self.__exam_name and self.__exam_name.strip():
-            max_pdfs = min(15, 3 * self.__settings.get_number_of_tests())
-            pdf_bytes_list = await self.__procure_pdf_baselines(max_pdfs)
+            max_documents = min(15, 3 * self.__settings.get_number_of_tests())
+            reference_parts = await self.__procure_reference_material(max_documents)
 
         model_string, provider_class = ModelPool.EXAM_QUESTION_TYPE_DETERMINER_MODEL
         provider = provider_class()
@@ -520,7 +606,7 @@ class GenerateMockTests(Workflow):
         user_prompt = PromptPool.MOCK_TEST_BLUEPRINT_USER.format(
             exam_name    = self.__exam_name if self.__exam_name else "Unknown Exam",
             subject_name = self.__subject_name,
-            pdf_count    = len(pdf_bytes_list)
+            pdf_count    = GenerateMockTests.__count_documents(reference_parts)
         )
 
         request_contents = [
@@ -528,8 +614,7 @@ class GenerateMockTests(Workflow):
             AutomationContent(AutomationContentTypes.TEXT,   user_prompt, metadata={"google_search": True})
         ]
 
-        for pdf_bytes in pdf_bytes_list:
-            request_contents.append(AutomationContent(AutomationContentTypes.DOCUMENT, pdf_bytes))
+        request_contents.extend(reference_parts)
 
         print("[GenerateMockTests] Calling LLM to extract Exam Blueprint...")
         response = await caller.call(
@@ -637,7 +722,11 @@ class GenerateMockTests(Workflow):
             question_paper_pdfs = await self.__extract_question_paper_pdf_bytes()
             if question_paper_pdfs:
                 log(f"[GenerateMockTests] Extracting PYQ seeds from {len(question_paper_pdfs)} uploaded question paper(s)...")
-                pyq_pool.extend(await self.__extract_pyq_from_pdfs(question_paper_pdfs))
+                question_paper_parts = [
+                    AutomationContent(AutomationContentTypes.DOCUMENT, pdf_bytes)
+                    for pdf_bytes in question_paper_pdfs
+                ]
+                pyq_pool.extend(await self.__extract_pyq_from_reference_material(question_paper_parts))
                 log(f"[GenerateMockTests] Question-paper PYQ seeds: {len(pyq_pool)}")
         except Exception as paper_error:
             log(f"[GenerateMockTests] Question-paper extraction failed (continuing): {paper_error}")

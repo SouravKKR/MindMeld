@@ -89,12 +89,17 @@ class LoginPage extends HTMLElement
     {
         const providers = LoginProviderRegistry.getAll();
 
-        for (const providerButton of this.querySelectorAll(".login-provider-button"))
+        // Scoped to the provider row on purpose. The email-OTP form reuses the
+        // .login-provider-button class for visual consistency, so an unscoped
+        // query also matched its submit button — and because that button has no
+        // data-provider-index, Number(null) resolved to 0 and every "Continue
+        // with email" click started the FIRST provider's flow (Google) instead.
+        for (const providerButton of this.querySelectorAll(".login-page-providers .login-provider-button[data-provider-index]"))
         {
             providerButton.addEventListener("click", () =>
             {
                 const providerIndex = Number(providerButton.getAttribute("data-provider-index"));
-                const provider = providers[providerIndex];
+                const provider = Number.isInteger(providerIndex) ? providers[providerIndex] : null;
 
                 if (provider)
                 {

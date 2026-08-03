@@ -24,6 +24,14 @@ class DatabaseConnector
     static TEXT_EMBEDDINGS_VECTOR_INDEX_NAME = "textEmbeddingsVectorSearch";
     static TEXT_EMBEDDINGS_VECTOR_DIMENSIONS = 768;
 
+    // Atlas Vector Search index on the supportTickets collection, used by the
+    // Agent's DeduplicateSupportTicket workflow to find the tickets a new report
+    // might be a duplicate of. Same model, so the same dimensionality; the name is
+    // shared with Agent/Globals/Classes/Database/SupportTicketQueryEngine.py and
+    // must stay byte-identical there.
+    static SUPPORT_TICKETS_VECTOR_INDEX_NAME = "supportTicketsVectorSearch";
+    static SUPPORT_TICKETS_VECTOR_DIMENSIONS = 768;
+
     // Raised from the Node driver's default (100) so a concurrent burst
     // across many users (e.g. simultaneous uploads) queues less at the
     // connection-pool layer before ever reaching Mongo.
@@ -187,6 +195,19 @@ class DatabaseConnector
         await informationSourcesCollection.createIndex({ hash: 1 });
         await informationSourcesCollection.createIndex({ userId: 1 });
 
+        // Expiry sweep for TEMPORARY-retention uploads. Sparse-by-value rather
+        // than a TTL index on purpose: a TTL would drop the row and orphan both
+        // the object-storage blob and the derived chunks/figures, which only the
+        // row knows the location of. ExpiredInformationSourceReaper walks this
+        // index and runs the full cascade instead. See that class for why.
+        await informationSourcesCollection.createIndex({ expiresAt: 1 });
+
+        // ── Content takedown notices (append-only infringement register) ───────
+        const contentTakedownNoticesCollection = database.collection(DatabaseConstants.CONTENT_TAKEDOWN_NOTICES_COLLECTION);
+        await contentTakedownNoticesCollection.createIndex({ id: 1 }, { unique: true });
+        await contentTakedownNoticesCollection.createIndex({ contentHash: 1 });
+        await contentTakedownNoticesCollection.createIndex({ actionedAt: -1 });
+
         // ── Decks ──────────────────────────────────────────────────────────────
         await decksCollection.createIndex({ userId: 1, "data.id": 1 }, { unique: true });
         await decksCollection.createIndex({ userId: 1, serverUpdatedAt: 1 });
@@ -265,6 +286,19 @@ class DatabaseConnector
         await askAiPopupLinksCollection.createIndex({ userId: 1, serverUpdatedAt: 1 });
         await askAiPopupLinksCollection.createIndex({ userId: 1, "data.deckId": 1 });
 
+        // ── Content overlays (a learner's own edits to a card / study material) ─
+        // Standalone sync entity. The first three indexes mirror the popup-link
+        // set (upsert by id, pull cursor, deletion cascade from a deck). The
+        // fourth has no parallel there and is required: an overlay is owned by a
+        // single card / study material, so deleting ONE entity out of a surviving
+        // deck must tombstone that entity's overlays. Cascading by deckId alone
+        // would leave them orphaned and permanently invisible.
+        const contentOverlaysCollection = database.collection(DatabaseConstants.CONTENT_OVERLAYS_COLLECTION);
+        await contentOverlaysCollection.createIndex({ userId: 1, "data.id": 1 }, { unique: true });
+        await contentOverlaysCollection.createIndex({ userId: 1, serverUpdatedAt: 1 });
+        await contentOverlaysCollection.createIndex({ userId: 1, "data.deckId": 1 });
+        await contentOverlaysCollection.createIndex({ userId: 1, "data.targetEntityId": 1 });
+
         // ── Text embeddings (RAG chunk store — written by the Agent) ────────────
         // The AskAi grounding retrieval (EmbeddingsQueryEngine.vector_search), the
         // embed-coverage check (get_pages_without_embeddings), and the chunk
@@ -276,14 +310,14 @@ class DatabaseConnector
         // matched chunks — that is inherent to not using an Atlas $vectorSearch
         // index and is acceptable at this candidate-set size.)
         const textEmbeddingsCollection = database.collection(DatabaseConstants.TEXT_EMBEDDINGS_COLLECTION);
-        await textEmbeddingsCollection.createIndex({ informationSourceHash: 1, pageNumber: 1 });
+        await textEmbeddingsCollection.createIndex({ userId: 1, informationSourceHash: 1, pageNumber: 1 });
 
         // Atlas Vector Search index for the semantic retrieval path. The Agent's
-        // EmbeddingsQueryEngine.vector_search (AskAi grounding) and the curated-
-        // study textbook search issue $vectorSearch aggregations against this
-        // instead of pulling every chunk and scoring cosine in Python. The
-        // informationSourceHash filter field lets AskAi scope the search to the
-        // active sources inside the index (a pre-filter, not a post-filter).
+        // EmbeddingsQueryEngine.vector_search (AskAi grounding) is the ONLY
+        // consumer — it issues $vectorSearch aggregations here instead of
+        // pulling every chunk and scoring cosine in Python. Both filter fields
+        // are pre-filters: userId enforces the tenant boundary inside the index,
+        // informationSourceHash narrows to the sources the request named.
         //
         // Search-index management only exists on Atlas / the mongodb-atlas-local
         // image (the bundled mongot). On a plain mongod this command throws — we
@@ -307,7 +341,8 @@ class DatabaseConnector
                         fields:
                         [
                             { type: "vector", path: "embedding", numDimensions: DatabaseConnector.TEXT_EMBEDDINGS_VECTOR_DIMENSIONS, similarity: "cosine" },
-                            { type: "filter", path: "informationSourceHash" }
+                            { type: "filter", path: "informationSourceHash" },
+                            { type: "filter", path: "userId" }
                         ]
                     }
                 });
@@ -325,7 +360,7 @@ class DatabaseConnector
         // informationSourceHash to reuse cached perceptual hashes + embeddings
         // instead of re-processing unchanged images on every run.
         const figuresCollection = database.collection(DatabaseConstants.FIGURES_COLLECTION);
-        await figuresCollection.createIndex({ informationSourceHash: 1 });
+        await figuresCollection.createIndex({ userId: 1, informationSourceHash: 1 });
 
         // ── Generation templates ───────────────────────────────────────────────
         // Curated exam-prep blueprints (JEE Mains, NEET UG, CBSE, etc.) the
@@ -492,6 +527,26 @@ class DatabaseConnector
         const screenshotEventsCollection = database.collection(DatabaseConstants.SCREENSHOT_EVENTS_COLLECTION);
         await screenshotEventsCollection.createIndex({ userId: 1, timestamp: -1 });
         await screenshotEventsCollection.createIndex({ timestamp: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 });
+
+        // ── Ephemeral uploads (answer sheets, support attachments) ─────────────
+        // The deletion record for user files that are not information sources.
+        // The sweep queries by expiry; the purge and the erasure path query by
+        // prefix and by owner. NO TTL index here on purpose — dropping the row
+        // would orphan the blobs it is the only pointer to, which is the same
+        // reason ExpiredInformationSourceReaper is a sweep rather than a TTL.
+        const ephemeralUploadsCollection = database.collection(DatabaseConstants.EPHEMERAL_UPLOADS_COLLECTION);
+        await ephemeralUploadsCollection.createIndex({ storagePrefix: 1 }, { unique: true });
+        await ephemeralUploadsCollection.createIndex({ expiresAt: 1 });
+        await ephemeralUploadsCollection.createIndex({ userId: 1 });
+
+        // ── AI-generated deck export attempts ──────────────────────────────────
+        // Same shape and rationale as screenshot events: a telemetry log an
+        // admin reviews per user, bounded by the same 90-day TTL. Recorded
+        // because the export gate on AI-generated decks is client-side only,
+        // so observation is the only signal that it is being bypassed.
+        const aiGeneratedExportEventsCollection = database.collection(DatabaseConstants.AI_GENERATED_EXPORT_EVENTS_COLLECTION);
+        await aiGeneratedExportEventsCollection.createIndex({ userId: 1, timestamp: -1 });
+        await aiGeneratedExportEventsCollection.createIndex({ timestamp: 1 }, { expireAfterSeconds: DatabaseConstants.AI_GENERATED_EXPORT_EVENTS_TTL_DAYS * 24 * 60 * 60 });
 
         // ── Task history ───────────────────────────────────────────────────────
         // Long-term archive of generation tasks once they leave Redis.
@@ -739,6 +794,81 @@ class DatabaseConnector
         await logArchivesCollection.createIndex({ id: 1 }, { unique: true });
         await logArchivesCollection.createIndex({ coveredFrom: 1, coveredTo: 1 });
         await logArchivesCollection.createIndex({ createdAt: -1 });
+
+        // ── Support tickets (deduplicated problems) ─────────────────────────────
+        // One row per distinct problem, not per report. Every query the system
+        // makes is scoped by status: the Agent only ever searches ACTIVE tickets
+        // for a duplicate match, and the admin list sorts the ACTIVE ones by
+        // reportCount to surface the most-reported problem first. Hence status
+        // leads every compound index. NO TTL — the support history is the audit
+        // trail of what was reported, when it was fixed, and who was compensated.
+        const supportTicketsCollection = database.collection(DatabaseConstants.SUPPORT_TICKETS_COLLECTION);
+        await supportTicketsCollection.createIndex({ id: 1 }, { unique: true });
+        await supportTicketsCollection.createIndex({ status: 1, lastReportedAt: -1 });
+        await supportTicketsCollection.createIndex({ status: 1, reportCount: -1 });
+        await supportTicketsCollection.createIndex({ status: 1, issueType: 1 });
+
+        // Atlas Vector Search index backing the duplicate-detection step. The
+        // status filter field lets the Agent restrict the candidate set to ACTIVE
+        // tickets inside the index rather than post-filtering the results.
+        //
+        // As with the text-embeddings index above, search-index management only
+        // exists on Atlas / the mongodb-atlas-local image. Production runs a plain
+        // self-hosted mongod, so this command throws there and is swallowed; the
+        // Agent's SupportTicketQueryEngine falls back to brute-force cosine over
+        // the ACTIVE tickets, which is inexpensive at support-ticket scale.
+        try
+        {
+            const existingSupportSearchIndexes = await supportTicketsCollection.listSearchIndexes().toArray();
+            const bSupportVectorIndexExists = existingSupportSearchIndexes.some(searchIndex => searchIndex.name === DatabaseConnector.SUPPORT_TICKETS_VECTOR_INDEX_NAME);
+
+            if (!bSupportVectorIndexExists)
+            {
+                await supportTicketsCollection.createSearchIndex
+                ({
+                    name: DatabaseConnector.SUPPORT_TICKETS_VECTOR_INDEX_NAME,
+                    type: "vectorSearch",
+                    definition:
+                    {
+                        fields:
+                        [
+                            { type: "vector", path: "embedding", numDimensions: DatabaseConnector.SUPPORT_TICKETS_VECTOR_DIMENSIONS, similarity: "cosine" },
+                            { type: "filter", path: "status" }
+                        ]
+                    }
+                });
+
+                console.log(`[DatabaseConnector] Creating vector search index '${DatabaseConnector.SUPPORT_TICKETS_VECTOR_INDEX_NAME}' on ${DatabaseConstants.SUPPORT_TICKETS_COLLECTION} (builds asynchronously)`);
+            }
+        }
+        catch (supportSearchIndexError)
+        {
+            console.warn(`[DatabaseConnector] Could not ensure the support-tickets vector search index (not an Atlas / atlas-local deployment?): ${supportSearchIndexError?.message || supportSearchIndexError}`);
+        }
+
+        // ── Support ticket reports (one per user submission) ────────────────────
+        // (ticketId, createdAt) drives the admin detail view and the resolution
+        // fan-out; (userId, createdAt) backs BOTH the durable 2-per-day submission
+        // quota and the reporter's own "Your reports" status list. The
+        // (ticketId, notifiedAt) index is what lets the resolution dispatcher find
+        // exactly the reports it has not reached yet, so a restart mid-dispatch
+        // resumes instead of re-notifying everyone.
+        const supportTicketReportsCollection = database.collection(DatabaseConstants.SUPPORT_TICKET_REPORTS_COLLECTION);
+        await supportTicketReportsCollection.createIndex({ id: 1 }, { unique: true });
+        await supportTicketReportsCollection.createIndex({ ticketId: 1, createdAt: -1 });
+        await supportTicketReportsCollection.createIndex({ userId: 1, createdAt: -1 });
+        await supportTicketReportsCollection.createIndex({ ticketId: 1, notifiedAt: 1 });
+        await supportTicketReportsCollection.createIndex({ groupingStatus: 1, createdAt: -1 });
+
+        // ── Support ticket deduplication locks ──────────────────────────────────
+        // A single-document lease mutex serialising the Agent's deduplication runs.
+        // Without it two reports of the same problem arriving simultaneously would
+        // each fail to see the other's ticket and create a duplicate. The TTL is a
+        // backstop only — the workflow releases the lease in a finally block; this
+        // just guarantees a crashed worker cannot wedge the queue permanently.
+        const supportTicketDeduplicationLocksCollection = database.collection(DatabaseConstants.SUPPORT_TICKET_DEDUPLICATION_LOCKS_COLLECTION);
+        await supportTicketDeduplicationLocksCollection.createIndex({ id: 1 }, { unique: true });
+        await supportTicketDeduplicationLocksCollection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
     }
 }
 

@@ -14,10 +14,12 @@ import AutomaticGenerationEvents from "../../Globals/Events/AutomaticGenerationE
 import PageNavigator from "../../Globals/Classes/PageNavigator.js";
 import GenerationTemplate from "../../Globals/Classes/GenerationTemplate.js";
 import AiFeatureGate from "../../Globals/Classes/AiFeatureGate.js";
+import ErrorCodes from "../../Globals/Constants/ErrorCodes.js";
 import CreditNotice from "../../Globals/Classes/Credits/CreditNotice.js";
 import MaintenanceNotice from "../../Globals/Classes/MaintenanceNotice.js";
 import GenerationNotifier from "../../Globals/Classes/Notifications/GenerationNotifier.js";
 import TutorialEngine from "../../Globals/Classes/TutorialEngine.js";
+import { creditPricingStates } from "../../Globals/Enumerations/CreditPricingStates.js";
 
 class AutomaticGenerationPage extends HTMLElement
 {
@@ -816,6 +818,20 @@ class AutomaticGenerationPage extends HTMLElement
         return Math.min(Math.max(numericValue, minimum), maximum);
     }
 
+    /**
+     * True while any information-source card is still uploading or being
+     * processed server-side. Such a source has no resolved server record yet, so
+     * getSources() silently omits it — acting now would either generate from
+     * fewer sources than the user chose (the "only 4 of my 5 sources were used"
+     * bug) or misreport the in-flight upload as an unfilled form. Every entry
+     * point that reads the chosen sources checks this FIRST.
+     */
+    #hasPendingUploads()
+    {
+        return Array.from(this.querySelectorAll("information-source-selector"))
+            .some(selector => typeof selector.hasPendingUploads === "function" && selector.hasPendingUploads());
+    }
+
     #handleActionButtonEvents()
     {
         const deckLibraryLink = this.querySelector(".automatic-generation-deck-library-link");
@@ -844,20 +860,13 @@ class AutomaticGenerationPage extends HTMLElement
                 return;
             }
 
-            if (!this.#validate())
-            {
-                await DialogBox.alert("Error", "Please fill out all the fields and make sure the values are valid.");
-                return;
-            }
-
-            // Block while any uploaded document is still uploading or being OCR'd.
-            // Such a source has no resolved server record yet, so getSources()
-            // silently omits it — starting now would generate from fewer sources
-            // than the user chose (the "only 4 of my 5 sources were used" bug).
-            // Surface it instead of quietly dropping the in-flight uploads.
-            const hasPendingUploads = Array.from(this.querySelectorAll("information-source-selector"))
-                .some(selector => typeof selector.hasPendingUploads === "function" && selector.hasPendingUploads());
-            if (hasPendingUploads)
+            // This check MUST come before #validate(). A source that is still
+            // uploading or processing has no resolved server record yet, so
+            // getSources() omits it and the form reads as though no source was
+            // ever chosen — #validate() then fails and reports "fill out all the
+            // fields", which is both wrong and unactionable when the only real
+            // problem is that the upload has not landed yet.
+            if (this.#hasPendingUploads())
             {
                 await DialogBox.alert(
                     "Uploads still in progress",
@@ -866,9 +875,35 @@ class AutomaticGenerationPage extends HTMLElement
                 return;
             }
 
+            if (!this.#validate())
+            {
+                await DialogBox.alert("Error", "Please fill out all the fields and make sure the values are valid.");
+                return;
+            }
+
+            // Paid-deck mode refuses anything that is not a curriculum. Say which
+            // source is wrong here rather than letting the server answer with an
+            // index the user has to count out against their own list.
+            const generalFields = this.querySelector("general-generation-fields");
+            const paidDeckSourceProblem = generalFields?.findPaidDeckSourceProblem?.() ?? null;
+            if (paidDeckSourceProblem)
+            {
+                await DialogBox.alert("Can't start generation", paidDeckSourceProblem);
+                return;
+            }
+
             console.log("Settings are valid.");
 
             const generationSettingsMap = this.#buildGenerationSettingsMap();
+
+            // Losing Export is permanent and it reaches content the user wrote
+            // themselves, so it is acknowledged rather than discovered. Asked
+            // BEFORE the button is disabled: cancelling here must leave the page
+            // exactly as it was found.
+            if (!await this.#confirmGeneratedContentIsNotExportable())
+            {
+                return;
+            }
 
             // Prompt for notification permission inside the click handler — the
             // browser only shows the permission prompt from a user gesture.
@@ -889,8 +924,6 @@ class AutomaticGenerationPage extends HTMLElement
 
                 if (await MaintenanceNotice.handleIfMaintenance(response))
                 {
-                    generateButton.disabled = false;
-                    generateButton.textContent = "Start Generation";
                     return;
                 }
 
@@ -898,16 +931,51 @@ class AutomaticGenerationPage extends HTMLElement
                 {
                     const insufficientDetail = await response.json().catch(() => ({}));
                     await CreditNotice.showInsufficientCredits(insufficientDetail);
-                    generateButton.disabled = false;
-                    generateButton.textContent = "Start Generation";
+                    return;
+                }
+
+                // A tier that does not include AUTOMATIC_GENERATION is refused with
+                // FEATURE_NOT_IN_PLAN (403) by PlanEntitlementGate. Without this
+                // branch it fell through to the generic handler below and the user
+                // was told "Failed to start generation. Please try again." — advice
+                // that can only ever fail again, because retrying does not change
+                // the plan. Key the copy off the server's own requiredTier rather
+                // than the client's cached plan, which may be stale.
+                if (response.status === 403)
+                {
+                    const refusalDetail = await response.json().catch(() => ({}));
+                    if (refusalDetail?.error === ErrorCodes.FEATURE_NOT_IN_PLAN)
+                    {
+                        await AiFeatureGate.showFeatureNotInPlanAlert(refusalDetail, "AI generation");
+                    }
+                    else
+                    {
+                        await DialogBox.alert("Error", "You are not allowed to start this generation.");
+                    }
+                    return;
+                }
+
+                // A 400 is a settings-validation refusal, and the server already
+                // wrote a precise, user-readable reason into the body (see the
+                // catch in Generate.js). Showing the generic retry message instead
+                // threw that away and told the user to repeat an action that
+                // cannot succeed — the paid-deck source-type refusal, for one,
+                // names the offending source and what the mode accepts.
+                if (response.status === 400)
+                {
+                    const validationMessage = (await response.text().catch(() => "")).trim();
+                    await DialogBox.alert(
+                        "Can't start generation",
+                        validationMessage.length > 0
+                            ? validationMessage
+                            : "Some of the generation settings are invalid. Please review them and try again."
+                    );
                     return;
                 }
 
                 if (!response.ok)
                 {
                     await DialogBox.alert("Error", "Failed to start generation. Please try again.");
-                    generateButton.disabled = false;
-                    generateButton.textContent = "Start Generation";
                     return;
                 }
 
@@ -924,6 +992,15 @@ class AutomaticGenerationPage extends HTMLElement
             {
                 console.error("[AutomaticGenerationPage] Generation request failed:", error);
                 await DialogBox.alert("Error", "Failed to start generation. Please check your connection.");
+            }
+            finally
+            {
+                // Restored on EVERY path, including success. PageNavigator.open
+                // only sets display:none on this page — the element is never
+                // removed, so connectedCallback (the one place that writes the
+                // pristine label) does not run again when the user comes back
+                // from the progress page. Leaving the success path unrestored is
+                // what wedged the button on "Starting..." with no way to retry.
                 generateButton.disabled = false;
                 generateButton.textContent = "Start Generation";
             }
@@ -933,6 +1010,18 @@ class AutomaticGenerationPage extends HTMLElement
 
         computeCostButton?.addEventListener("click", async () =>
         {
+            // Same ordering rule as the generate button: an in-flight upload is
+            // missing from getSources(), so validating first would blame the form.
+            // An estimate computed without it would also under-count the cost.
+            if (this.#hasPendingUploads())
+            {
+                await DialogBox.alert(
+                    "Uploads still in progress",
+                    "Some of your uploaded documents are still uploading or being processed. Please wait until every source shows a green tick before estimating the cost."
+                );
+                return;
+            }
+
             if (!this.#validate())
             {
                 await DialogBox.alert("Error", "Please fill out all the fields and make sure the values are valid.");
@@ -951,6 +1040,22 @@ class AutomaticGenerationPage extends HTMLElement
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(this.#buildGenerationSettingsMap())
                 });
+
+                // Estimating is rate-limited per user. "Please try again" would be
+                // actively wrong here — trying again immediately is the one thing
+                // that cannot work — so say how long the wait is.
+                if (response.status === 429)
+                {
+                    const throttleDetail = await response.json().catch(() => ({}));
+                    const retryAfterSeconds = Number(throttleDetail?.retryAfterSeconds);
+                    await DialogBox.alert(
+                        "Just a moment",
+                        Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+                            ? `You can compute the cost again in ${retryAfterSeconds}s.`
+                            : "You're computing the cost too often. Please wait a moment and try again."
+                    );
+                    return;
+                }
 
                 if (!response.ok)
                 {
@@ -1043,14 +1148,41 @@ class AutomaticGenerationPage extends HTMLElement
             ? ` (≈ ${estimate.currency} ${(credits * estimate.pricePerCredit).toFixed(2)})`
             : "";
 
+        // A line reading "0 cr" says nothing about WHY. Label the three reasons a
+        // line can be zero so an unpriced task is never mistaken for a free one.
+        const stateLabelByValue =
+        {
+            [creditPricingStates.UNPRICED]: "not priced",
+            [creditPricingStates.DENIED]: "unavailable",
+            [creditPricingStates.FREE]: "free",
+        };
+
         const breakdownHtml = (Array.isArray(estimate.breakdown) ? estimate.breakdown : [])
-            .map(item => `<div style="display:flex;justify-content:space-between;gap:16px;"><span>${item.label}</span><span>${item.credits} cr</span></div>`)
+            .map(item =>
+            {
+                const stateLabel = stateLabelByValue[item.state];
+                const amountLabel = stateLabel ? stateLabel : `${item.credits} cr`;
+                return `<div style="display:flex;justify-content:space-between;gap:16px;"><span>${item.label}</span><span>${amountLabel}</span></div>`;
+            })
             .join("");
+
+        const unpricedLabels = Array.isArray(estimate.unpricedLabels) ? estimate.unpricedLabels : [];
+        const deniedLabels = Array.isArray(estimate.deniedLabels) ? estimate.deniedLabels : [];
+
+        const noticeHtml = [
+            deniedLabels.length > 0
+                ? `<div style="font-size:12px;margin-bottom:8px;">Currently unavailable: ${deniedLabels.join(", ")}. This generation can't run until that changes.</div>`
+                : "",
+            unpricedLabels.length > 0
+                ? `<div style="font-size:12px;margin-bottom:8px;">No credit pricing is configured for: ${unpricedLabels.join(", ")}. Those parts won't be charged, so the total above is lower than the real cost of the run.</div>`
+                : "",
+        ].join("");
 
         return `
             <div style="font-size:16px;font-weight:700;margin-bottom:6px;">≈ ${credits} credits${moneySuffix}</div>
             <div style="font-size:13px;opacity:0.8;margin-bottom:12px;">Estimated range: ${estimate.low}–${estimate.high} credits</div>
             ${breakdownHtml ? `<div style="font-size:13px;display:flex;flex-direction:column;gap:4px;margin-bottom:12px;">${breakdownHtml}</div>` : ""}
+            ${noticeHtml}
             <div style="font-size:12px;opacity:0.7;">This is an estimate (±10%). Your actual credits are charged from real usage during generation.</div>
         `;
     }
@@ -1192,6 +1324,78 @@ class AutomaticGenerationPage extends HTMLElement
         this.#setupUi();
         this.#syncSharedSettings();
         this.#handleEvents();
+    }
+
+    /**
+     * Re-arms the Start button whenever the user returns to this page.
+     *
+     * PageNavigator.back() reuses the page it pops back to — the element was
+     * only hidden, never removed — so connectedCallback does not run again and
+     * nothing else would ever repaint the button. The click handler's finally
+     * already covers every path forward from here; this is the backstop that
+     * also recovers a page left disabled by an older build or by a reload that
+     * raced the navigation.
+     */
+    onPageResumed()
+    {
+        const generateButton = this.querySelector(".automatic-generation-start-button");
+        if (!generateButton)
+        {
+            return;
+        }
+
+        generateButton.disabled = false;
+        generateButton.textContent = "Start Generation";
+    }
+
+    /**
+     * Asks the user to accept that generating here permanently removes Export.
+     *
+     * The server marks every deck a run creates AND the deck it was launched
+     * from, and that marker is a one-way ratchet — it cannot be cleared from a
+     * device. When the run targets an existing deck, the loss reaches cards the
+     * user wrote by hand, which is the part worth stopping for.
+     *
+     * @returns {Promise<boolean>} true when the user chose to continue
+     */
+    async #confirmGeneratedContentIsNotExportable()
+    {
+        // Generating at the top level creates new decks rather than absorbing an
+        // existing one, so there is no hand-made content to lose — the warning
+        // is about what is being created. A missing parent means the same thing:
+        // #buildGenerationSettingsMap falls back to the root deck id.
+        const bTargetsRootDeck = !this.#parentDeck || this.#parentDeck.isRoot?.() === true;
+
+        if (bTargetsRootDeck)
+        {
+            return await DialogBox.confirm(
+                "Generated decks can't be exported",
+                "The decks this creates will hold AI-generated study material, so they can't be exported to a file."
+                + "<br><br>Continue?"
+            );
+        }
+
+        const deckName = AutomaticGenerationPage.#escapeHtml(this.#parentDeck?.getName?.() ?? "this deck");
+
+        return await DialogBox.confirm(
+            "This deck will no longer be exportable",
+            `Generating into "${deckName}" marks it as holding AI-generated study material. `
+            + "It — and everything already inside it, including cards you wrote yourself — "
+            + "will no longer be exportable to a file, on any of your devices."
+            + "<br><br>This can't be undone. Continue?"
+        );
+    }
+
+    /**
+     * DialogBox renders its message as innerHTML, so a deck name has to be
+     * escaped before it is interpolated into one.
+     */
+    static #escapeHtml(rawValue)
+    {
+        return String(rawValue ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
     }
 }
 

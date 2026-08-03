@@ -26,6 +26,10 @@ from Workflows.Workflow import Workflow
 from Workflows.PrepareImages.HtmlInjector import HtmlInjector
 from Workflows.PrepareImages.ImageExtractor import ImageExtractor
 from Workflows.PrepareImages.ReferenceNormalizer import ReferenceNormalizer
+from Workflows.PrepareImages.PaidDeckVisualGenerator import PaidDeckVisualGenerator
+from Workflows.PrepareImages.VisualNeedInferrer import VisualNeedInferrer
+from Globals.Classes.Generation.PaidDeckActionLog import PaidDeckActionLog
+from Globals.Utility.RedactSourceName import redact_source_name
 
 
 _FIGURES_GCS_PREFIX = "figures"
@@ -96,6 +100,17 @@ class PrepareImages(Workflow):
         # bytes directly, so intermediate JSONs never carry source
         # artwork.
         self._enhance_images_enabled = bool(payload.get("enhanceImagesEnabled", False))
+        # Paid-deck mode: figures are GENERATED from the Phase 1 coverage
+        # summaries instead of extracted from source PDFs. Everything after
+        # figure acquisition — vision validation, embedding, page-less
+        # placement, injection — is the same code path either way.
+        self._paid_deck_mode = bool(payload.get("paidDeckMode", False))
+        # Grounds generated visuals in the right discipline — "cell" means
+        # something different in Biology and in Electronics.
+        self._subject_name = payload.get("subjectName") or ""
+        # Scopes inferred visuals to what the target exam actually expects a
+        # student to read and draw, rather than to the subject in general.
+        self._exam_name = payload.get("examName") or ""
 
     async def _load_json_files_from_prefix(self, gcs_prefix: str) -> list[dict]:
         file_paths = await Persistence.list(gcs_prefix)
@@ -202,6 +217,91 @@ class PrepareImages(Workflow):
         print(f"[PrepareImages] Loaded {len(web_figures)} web figure(s) from {len(topic_cache_files)} cache file(s).")
         return web_figures
 
+    @staticmethod
+    def _build_figure_html_for(figure: dict, figure_number: int) -> str:
+        """
+        Picks the figure renderer for one figure.
+
+        A decomposed visual carries `compositeParts` and becomes one captioned
+        plate — the pairing of each panel with its own label is the whole point
+        of a comparison figure.
+
+        A single generated symbolic visual carries `markupHtml` and is inlined as
+        markup — that is what keeps its labels as real text and its geometry
+        exact, which is the entire reason it was produced symbolically. Anything
+        else (a PDF-extracted figure, a web image, a generated raster
+        illustration) has bytes and goes through the base64 <img> path, with web
+        figures keeping their source attribution.
+        """
+        composite_parts = figure.get("compositeParts")
+
+        if composite_parts:
+            composite_html = HtmlInjector.build_composite_figure_html(
+                composite_parts,
+                figure.get("captionText") or "",
+                figure_number,
+            )
+
+            if composite_html:
+                return composite_html
+
+        markup_html = figure.get("markupHtml")
+
+        if markup_html:
+            return HtmlInjector.build_markup_figure_html(
+                markup_html,
+                figure.get("captionText") or "",
+                figure_number,
+            )
+
+        return HtmlInjector.build_figure_html(
+            figure["imageBytes"],
+            figure["captionText"],
+            figure_number,
+            source_url      = figure.get("_sourceUrl") if figure.get("_isWebFigure") else None,
+            source_page_url = figure.get("_sourcePageUrl") if figure.get("_isWebFigure") else None,
+            bounding_box    = figure.get("boundingBoxCoordinates"),
+        )
+
+    async def _generate_paid_deck_visuals(self) -> list:
+        """
+        Produces the visuals the Phase 1 coverage summaries declared, routed by
+        the kind each one was recorded with (VisualMethodRouter).
+
+        Returned in the same figure shape the PDF extractor produces, so from
+        here on the stage cannot tell them apart — with two deliberate
+        differences carried on the dict: `markupHtml` (present for symbolic
+        visuals, so the injector inlines markup instead of an <img>) and
+        `_isGeneratedVisual` (so vision validation knows it is reviewing our own
+        output rather than screening someone else's).
+        """
+        coverage_summaries_path = join_path(
+            "/",
+            PersistenceConstants.TASKS_DIRECTORY,
+            self._generation_task_id,
+            PersistenceConstants.COVERAGE_SUMMARIES_FILE_NAME,
+        )
+
+        try:
+            summaries_bytes = await Persistence.read(coverage_summaries_path)
+            coverage_summaries = json.loads(summaries_bytes.decode("utf-8"))
+        except Exception as read_error:
+            print(
+                f"[PrepareImages] Paid-deck mode but no coverage summaries could be read "
+                f"({read_error}) — no visuals will be generated."
+            )
+            return []
+
+        action_log = PaidDeckActionLog(self._generation_task_id, "PrepareImages")
+
+        generator = PaidDeckVisualGenerator(
+            subject_name = self._subject_name,
+            coverage_summaries = coverage_summaries,
+            exam_name = self._exam_name,
+            action_log = action_log,
+        )
+        return await generator.generate_all()
+
     def _build_reference_assignments(
         self,
         all_extracted_figures: list[dict],
@@ -250,9 +350,121 @@ class PrepareImages(Workflow):
 
         return sm_assignments, card_assignments
 
+    # A generated visual and the study material it belongs to are named by two
+    # different model calls, so their chains drift ("Physical And Chemical
+    # Properties" against "Physical Properties"). Matching on the deepest shared
+    # prefix absorbs that. One shared level is only the root deck name, which
+    # every material shares and which therefore says nothing — two is the
+    # shallowest match that actually locates a visual.
+    _MINIMUM_SHARED_TOPIC_CHAIN_DEPTH = 2
+
+    @staticmethod
+    def _find_topic_chain_candidates(topic_chain, study_material_indices_by_topic_chain) -> list:
+        """
+        Finds the study materials a generated visual was requested for.
+
+        Exact chain first; failing that, the materials sharing the deepest topic
+        prefix with it. Without the prefix step an exact-match miss drops the
+        visual onto the page-less similarity floor, where a perfectly good
+        diagram is discarded for scoring 0.57 — which is how the EAS mechanism
+        diagram vanished from a run that generated it successfully.
+        """
+        chain_key = PrepareImages._build_topic_chain_key(topic_chain)
+
+        if not chain_key:
+            return []
+
+        exact_candidates = study_material_indices_by_topic_chain.get(chain_key)
+
+        if exact_candidates:
+            return exact_candidates
+
+        deepest_shared_depth = 0
+        deepest_candidates = []
+
+        for candidate_key, candidate_indices in study_material_indices_by_topic_chain.items():
+            shared_depth = 0
+
+            for visual_topic_name, material_topic_name in zip(chain_key, candidate_key):
+                if visual_topic_name != material_topic_name:
+                    break
+                shared_depth += 1
+
+            if shared_depth > deepest_shared_depth:
+                deepest_shared_depth = shared_depth
+                deepest_candidates = candidate_indices
+
+        if deepest_shared_depth >= PrepareImages._MINIMUM_SHARED_TOPIC_CHAIN_DEPTH:
+            return deepest_candidates
+
+        return []
+
+    @staticmethod
+    def _build_topic_chain_key(topic_chain) -> tuple:
+        """
+        Normalises a topic chain into a comparable key so a generated visual's
+        chain and a study material's chain match despite incidental casing or
+        whitespace differences between the two generators that wrote them.
+
+        Returns an empty tuple for a missing or malformed chain, which never
+        matches anything — a visual with no usable chain falls through to the
+        similarity path rather than landing on an arbitrary material.
+        """
+        if not isinstance(topic_chain, (list, tuple)):
+            return ()
+
+        return tuple(
+            str(topic_name).strip().casefold()
+            for topic_name in topic_chain
+            if str(topic_name or "").strip()
+        )
+
+    def _embed_generated_visuals(
+        self,
+        generated_visuals: list[dict],
+        embedding_model: SentenceTransformer,
+    ) -> list[dict]:
+        """
+        Prepares generated paid-deck visuals for placement without a vision screen.
+
+        Their descriptions were written by the model that drew them and already
+        survived PAID_DECK_VISUAL_REVIEW, so the description text is embedded
+        directly. The embedding is what placement scores against, and it is the
+        only thing FIGURE_VALIDATION would have contributed for a figure we
+        produced ourselves.
+
+        `informationSourceHash` is deliberately left as PaidDeckVisualGenerator
+        set it: it marks the visual page-less for placement and records that it
+        came from generation rather than from any user document.
+        """
+        if not generated_visuals:
+            return []
+
+        combined_texts = [
+            f"{figure.get('captionText') or ''} {figure.get('_visualDescription') or ''}".strip()
+            for figure in generated_visuals
+        ]
+
+        embeddings = embedding_model.encode(
+            combined_texts,
+            batch_size=PrepareImages._SENTENCE_EMBED_BATCH_SIZE,
+            show_progress_bar=False,
+        )
+
+        for figure_index, figure in enumerate(generated_visuals):
+            figure["textEmbedding"] = embeddings[figure_index].tolist()
+
+        print(
+            f"[PrepareImages] {len(generated_visuals)} generated visual(s) embedded directly "
+            f"— already reviewed at generation time, so not re-screened."
+        )
+
+        return list(generated_visuals)
+
     async def _validate_figures_with_vision(
         self,
         extracted_figures: list[dict],
+        owner_user_id: str,
         source_hash: str,
         embedding_model: SentenceTransformer,
         persist_to_database: bool = True,
@@ -271,7 +483,7 @@ class PrepareImages(Workflow):
             figures_collection = db[DatabaseConstants.FIGURES_COLLECTION]
 
             existing_records = list(figures_collection.find(
-                {"informationSourceHash": source_hash},
+                {"userId": owner_user_id, "informationSourceHash": source_hash},
                 {"perceptualImageHash": 1, "textEmbedding": 1, "captionText": 1, "_id": 0}
             ))
             cached_hashes = {rec["perceptualImageHash"]: rec for rec in existing_records}
@@ -300,13 +512,44 @@ class PrepareImages(Workflow):
         if not uncached_figures:
             return cached_figures
 
+        # Generated paid-deck visuals are our own output: PaidDeckVisualGenerator
+        # already put every one of them through PAID_DECK_VISUAL_REVIEW and
+        # discarded whatever failed. FIGURE_VALIDATION is the wrong second judge —
+        # it is written to reject decorative scrapes out of someone else's PDF —
+        # and several generated kinds (SMILES, MERMAID, KATEX,
+        # LABELLED_DESCRIPTION) carry no raster bytes to show it in the first
+        # place.
+        generated_visuals = [figure for figure in uncached_figures if figure.get("_isGeneratedVisual")]
+        screenable_figures = [figure for figure in uncached_figures if not figure.get("_isGeneratedVisual")]
+
+        validated_new_figures = self._embed_generated_visuals(generated_visuals, embedding_model)
+
+        # A figure carrying no raster bytes cannot be screened by a vision model,
+        # and letting one into a batch is silently destructive rather than merely
+        # useless: the provider drops non-bytes image parts, so the model is asked
+        # about batch_size images while receiving fewer, its correspondingly
+        # shorter reply fails the length check below, and the WHOLE batch — every
+        # good figure in it — is thrown away.
+        byte_carrying_figures = [
+            figure for figure in screenable_figures
+            if isinstance(figure.get("imageBytes"), bytes)
+        ]
+        unscreenable_count = len(screenable_figures) - len(byte_carrying_figures)
+
+        if unscreenable_count:
+            print(
+                f"[PrepareImages] {unscreenable_count} figure(s) carried no raster bytes — "
+                f"excluded from vision validation so the rest of their batch survives."
+            )
+
+        if not byte_carrying_figures:
+            return cached_figures + validated_new_figures
+
         model_name, provider_class = ModelPool.IMAGE_VALIDATION_MODEL
         caller = AutomationCaller(provider_class())
 
-        validated_new_figures = []
-
-        for batch_start in range(0, len(uncached_figures), _VISION_BATCH_SIZE):
-            batch = uncached_figures[batch_start: batch_start + _VISION_BATCH_SIZE]
+        for batch_start in range(0, len(byte_carrying_figures), _VISION_BATCH_SIZE):
+            batch = byte_carrying_figures[batch_start: batch_start + _VISION_BATCH_SIZE]
             batch_size = len(batch)
 
             inputs = [
@@ -371,10 +614,11 @@ class PrepareImages(Workflow):
                 text_embedding = embeddings[embed_offset].tolist()
 
                 if persist_to_database:
-                    gcs_path = f"{_FIGURES_GCS_PREFIX}/{figure['perceptualImageHash']}.png"
+                    gcs_path = f"{_FIGURES_GCS_PREFIX}/{owner_user_id}/{figure['perceptualImageHash']}.png"
                     await Persistence.write(gcs_path, figure["imageBytes"])
 
                     document = {
+                        "userId": owner_user_id,
                         "informationSourceHash": source_hash,
                         "perceptualImageHash": figure["perceptualImageHash"],
                         "pageNumber": figure["pageNumber"],
@@ -385,7 +629,7 @@ class PrepareImages(Workflow):
                         "gcsPath": gcs_path,
                     }
                     figures_collection.update_one(
-                        {"perceptualImageHash": figure["perceptualImageHash"]},
+                        {"userId": owner_user_id, "informationSourceHash": source_hash, "perceptualImageHash": figure["perceptualImageHash"]},
                         {"$set": document},
                         upsert=True,
                     )
@@ -395,7 +639,8 @@ class PrepareImages(Workflow):
                 validated_new_figures.append(figure)
 
         print(
-            f"[PrepareImages] {len(validated_new_figures)} new educational figure(s) validated and persisted."
+            f"[PrepareImages] {len(validated_new_figures)} new figure(s) approved for placement "
+            f"({len(generated_visuals)} generated, {len(validated_new_figures) - len(generated_visuals)} screened)."
         )
         return cached_figures + validated_new_figures
 
@@ -504,13 +749,9 @@ class PrepareImages(Workflow):
             for figure_assignment in reversed(sorted_ascending):
                 figure = all_validated_figures[figure_assignment["figure_index"]]
                 target_block_index = min(figure_assignment["block_index"], len(block_elements) - 1)
-                figure_html = HtmlInjector.build_figure_html(
-                    figure["imageBytes"],
-                    figure["captionText"],
+                figure_html = PrepareImages._build_figure_html_for(
+                    figure,
                     figure_number_map[figure_assignment["figure_index"]],
-                    source_url      = figure.get("_sourceUrl") if figure.get("_isWebFigure") else None,
-                    source_page_url = figure.get("_sourcePageUrl") if figure.get("_isWebFigure") else None,
-                    bounding_box    = figure.get("boundingBoxCoordinates"),
                 )
                 insertion_position = block_elements[target_block_index]["end"]
                 content_html = HtmlInjector.inject_figure_after_block(
@@ -568,13 +809,9 @@ class PrepareImages(Workflow):
             for figure_assignment in reversed(sorted_ascending):
                 figure = all_validated_figures[figure_assignment["figure_index"]]
                 target_block_index = min(figure_assignment["block_index"], len(block_elements) - 1)
-                figure_html = HtmlInjector.build_figure_html(
-                    figure["imageBytes"],
-                    figure["captionText"],
+                figure_html = PrepareImages._build_figure_html_for(
+                    figure,
                     figure_number_map[figure_assignment["figure_index"]],
-                    source_url      = figure.get("_sourceUrl") if figure.get("_isWebFigure") else None,
-                    source_page_url = figure.get("_sourcePageUrl") if figure.get("_isWebFigure") else None,
-                    bounding_box    = figure.get("boundingBoxCoordinates"),
                 )
                 insertion_position = block_elements[target_block_index]["end"]
                 field_html = HtmlInjector.inject_figure_after_block(
@@ -787,7 +1024,7 @@ class PrepareImages(Workflow):
             # Skip non-document sources — figure extraction only applies to uploaded PDFs.
             if information_source.get_source_type() not in _DOCUMENT_SOURCE_TYPES:
                 print(
-                    f"[PrepareImages] Skipping source '{information_source.get_name()}' "
+                    f"[PrepareImages] Skipping source '{redact_source_name(information_source.get_name())}' "
                     f"(type={information_source.get_source_type()}) — figure extraction only applies to uploaded documents."
                 )
                 continue
@@ -801,7 +1038,7 @@ class PrepareImages(Workflow):
             try:
                 pdf_bytes = await Persistence.read(source_pdf_path)
             except Exception as read_error:
-                print(f"[PrepareImages] Could not read PDF '{information_source.get_name()}': {read_error}")
+                print(f"[PrepareImages] Could not read PDF '{redact_source_name(information_source.get_name())}': {read_error}")
                 continue
 
             import fitz
@@ -815,8 +1052,8 @@ class PrepareImages(Workflow):
                 pdf_bytes,
                 allowed_pages=allowed_pages if len(allowed_pages) != total_pages else None,
             )
-            figures_by_source.append((information_source.get_hash(), extracted_figures))
-            print(f"[PrepareImages] Extracted {len(extracted_figures)} figure(s) from '{information_source.get_name()}' (pages: {len(allowed_pages)}).")
+            figures_by_source.append((information_source.get_user_id(), information_source.get_hash(), extracted_figures))
+            print(f"[PrepareImages] Extracted {len(extracted_figures)} figure(s) from '{redact_source_name(information_source.get_name())}' (pages: {len(allowed_pages)}).")
 
             processed_image_source_count += 1
             if image_source_count > 0:
@@ -824,6 +1061,15 @@ class PrepareImages(Workflow):
 
         # ── 1b. Load web-sourced images from per-task cache (no MongoDB writes) ─
         web_figures = await self._load_web_figures()
+
+        # ── 1c. Paid-deck mode: generate the declared visuals ──────────────────
+        # These join web_figures rather than getting their own list: both are
+        # page-less, neither is persisted to the shared figures collection, and
+        # both are placed through the same similarity-gated path. One code path,
+        # two origins.
+        if self._paid_deck_mode:
+            generated_visuals = await self._generate_paid_deck_visuals()
+            web_figures.extend(generated_visuals)
 
         if not figures_by_source and not web_figures:
             print("[PrepareImages] No figures extracted from PDFs or web cache — skipping injection.")
@@ -875,9 +1121,9 @@ class PrepareImages(Workflow):
         vision_source_count = len(figures_by_source) + (1 if web_figures else 0)
         processed_vision_source_count = 0
 
-        for source_hash, extracted_figures in figures_by_source:
+        for owner_user_id, source_hash, extracted_figures in figures_by_source:
             validated = await self._validate_figures_with_vision(
-                extracted_figures, source_hash, embedding_model, persist_to_database=True
+                extracted_figures, owner_user_id, source_hash, embedding_model, persist_to_database=True
             )
             all_validated_figures.extend(validated)
 
@@ -886,8 +1132,11 @@ class PrepareImages(Workflow):
                 await self.__update_progress(0.48 + 0.17 * (processed_vision_source_count / vision_source_count))
 
         if web_figures:
+            # owner_user_id AND source_hash are both the web marker here. Passing
+            # only one left embedding_model unbound and raised a TypeError the
+            # moment any web-sourced (or, now, generated) figure existed.
             validated_web = await self._validate_figures_with_vision(
-                web_figures, _WEB_SOURCE_HASH_MARKER, embedding_model, persist_to_database=False
+                web_figures, _WEB_SOURCE_HASH_MARKER, _WEB_SOURCE_HASH_MARKER, embedding_model, persist_to_database=False
             )
             all_validated_figures.extend(validated_web)
 
@@ -1000,6 +1249,18 @@ class PrepareImages(Workflow):
                 page_key = (source_page.get("sourceHash"), source_page.get("page"))
                 flashcard_file_indices_by_page.setdefault(page_key, set()).add(flashcard_file_index)
 
+        # Generated paid-deck visuals have no source page, so the page gate above
+        # can never match them. Their topic chain is the equivalent anchor: a
+        # DECLARED visual was requested by the coverage summary for exactly one
+        # topic, which is a stronger statement about where it belongs than any
+        # cosine score. Without this they fall to the page-less similarity floor
+        # and a correct diagram can be dropped for scoring 0.57.
+        study_material_indices_by_topic_chain: dict[tuple, list] = {}
+        for study_material_index, study_material_file in enumerate(study_material_files):
+            topic_chain_key = PrepareImages._build_topic_chain_key(study_material_file.get("topicChain"))
+            if topic_chain_key:
+                study_material_indices_by_topic_chain.setdefault(topic_chain_key, []).append(study_material_index)
+
         # ── 8a. Study materials — page selects the material, semantic the block ─
         page_based_sm_assignments: dict = {}
 
@@ -1029,6 +1290,20 @@ class PrepareImages(Workflow):
             figure_page_key = (figure.get("informationSourceHash"), figure.get("pageNumber"))
             candidate_sm_indices = study_material_indices_by_page.get(figure_page_key, [])
 
+            # A generated visual is anchored by its topic chain the same way a
+            # PDF figure is anchored by its page: the anchor selects the material,
+            # similarity only picks the block.
+            b_is_declared_generated_visual = bool(
+                figure.get("_isGeneratedVisual")
+                and (figure.get("_visualOrigin") or VisualNeedInferrer.ORIGIN_DECLARED) == VisualNeedInferrer.ORIGIN_DECLARED
+            )
+
+            if not candidate_sm_indices and figure.get("_isGeneratedVisual"):
+                candidate_sm_indices = PrepareImages._find_topic_chain_candidates(
+                    figure.get("_topicChain"),
+                    study_material_indices_by_topic_chain,
+                )
+
             chosen_sm_index = None
             chosen_block_index = 0
             chosen_score = 0.0
@@ -1057,9 +1332,19 @@ class PrepareImages(Workflow):
                 chosen_sm_index, fallback_data = best_overall
                 chosen_score = fallback_data["score"]
                 chosen_block_index = fallback_data["block_index"]
+            elif b_is_declared_generated_visual and best_overall is not None:
+                # A declared generated visual was commissioned FOR a topic in this
+                # very deck — it is not supplementary material that has to earn
+                # its place. If neither its chain nor a shared prefix matched, the
+                # topic naming drifted; the figure still belongs in this deck, so
+                # it goes to the best semantic match rather than being discarded.
+                chosen_sm_index, fallback_data = best_overall
+                chosen_score = fallback_data["score"]
+                chosen_block_index = fallback_data["block_index"]
             elif best_overall is not None and best_overall[1]["score"] >= PrepareImages._PAGELESS_STUDY_MATERIAL_SIMILARITY_THRESHOLD:
-                # Page-less figure (web-sourced): no page to anchor it, so keep a
-                # relevance floor to avoid flooding the lesson with loosely
+                # Page-less figure (web-sourced, or an INFERRED visual that was
+                # guessed rather than commissioned): no page to anchor it, so keep
+                # a relevance floor to avoid flooding the lesson with loosely
                 # related supplementary images.
                 chosen_sm_index, fallback_data = best_overall
                 chosen_score = fallback_data["score"]

@@ -1,6 +1,7 @@
 const { getRandomUuid } = require("../../UtilityFunctions.js/GetRandomUuid");
 const DatabaseConnector = require("../Database/DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
+const AiGeneratedDeckFields = require("../Security/AiGeneratedDeckFields");
 
 /**
  * Builds the shared deck-hierarchy map from generated topic chains and
@@ -111,7 +112,7 @@ class DeckHierarchyBuilder
                         subDecks: [],
                         cards: [],
                         studyMaterials: [],
-                        additionalData: { protected: true, syllabusPosition: resolvedSyllabusPosition },
+                        additionalData: { [AiGeneratedDeckFields.AI_GENERATED]: true, syllabusPosition: resolvedSyllabusPosition },
                         lifecycle:
                         {
                             creationDate: now,

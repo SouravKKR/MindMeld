@@ -1414,3 +1414,360 @@ dialog-box:has(.paid-deck-replace-form)
     background-color: var(--accent-background-color);
     color: var(--accent-color);
 }
+
+/* ── Support ticket details dialog ────────────────────────────────────────────
+   The deduplicated ticket, every report grouped onto it, and the resolve /
+   decline actions. */
+
+.support-ticket-dialog
+{
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 620px;
+    max-width: 100%;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.support-ticket-header
+{
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.support-ticket-title
+{
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--primary-text-color);
+}
+
+.support-ticket-status
+{
+    flex-shrink: 0;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.support-ticket-status-active
+{
+    background-color: rgba(214, 158, 46, 0.16);
+    color: #b7791f;
+}
+
+.support-ticket-status-resolved
+{
+    background-color: rgba(47, 133, 90, 0.16);
+    color: #2f855a;
+}
+
+.support-ticket-status-declined
+{
+    background-color: rgba(120, 120, 130, 0.16);
+    color: var(--secondary-text-color);
+}
+
+/* The reporter count is the number the incentive is sized against, so it gets
+   headline treatment rather than sitting in a row of metadata. */
+.support-ticket-counts
+{
+    display: flex;
+    gap: 10px;
+}
+
+.support-ticket-count
+{
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background-color: var(--tertiary-background-color);
+}
+
+.support-ticket-count strong
+{
+    font-size: 1.15rem;
+    color: var(--primary-text-color);
+}
+
+.support-ticket-count span
+{
+    font-size: 0.75rem;
+    color: var(--secondary-text-color);
+}
+
+.support-ticket-warning
+{
+    padding: 10px 14px;
+    border-radius: 8px;
+    background-color: rgba(214, 158, 46, 0.14);
+    color: #b7791f;
+    font-size: 0.83rem;
+    line-height: 1.5;
+}
+
+.support-ticket-section
+{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.support-ticket-section h3
+{
+    margin: 0;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--secondary-text-color);
+}
+
+.support-ticket-description,
+.support-ticket-note
+{
+    margin: 0;
+    font-size: 0.88rem;
+    line-height: 1.55;
+    color: var(--primary-text-color);
+}
+
+.support-ticket-note-pending
+{
+    color: #b7791f;
+}
+
+.support-ticket-aspects
+{
+    margin: 0;
+    padding-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--primary-text-color);
+}
+
+.support-ticket-message
+{
+    margin: 0;
+    padding: 10px 14px;
+    border-left: 3px solid var(--accent-color, var(--primary-text-color));
+    border-radius: 4px;
+    background-color: var(--tertiary-background-color);
+    font-size: 0.86rem;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    color: var(--primary-text-color);
+}
+
+/* ── Individual reports ───────────────────────────────────────────────────── */
+
+.support-ticket-reports
+{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.support-ticket-report
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border: 1px solid var(--outline-color-subtle);
+    border-radius: 8px;
+    background-color: var(--tertiary-background-color);
+}
+
+.support-ticket-report-header
+{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 0.78rem;
+}
+
+.support-ticket-report-email
+{
+    font-weight: 600;
+    color: var(--primary-text-color);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.support-ticket-report-date
+{
+    flex-shrink: 0;
+    color: var(--secondary-text-color);
+}
+
+.support-ticket-report-description
+{
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--primary-text-color);
+    white-space: pre-wrap;
+}
+
+.support-ticket-report-attachments,
+.support-ticket-report-footer,
+.support-ticket-report-tools
+{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    font-size: 0.78rem;
+}
+
+.support-ticket-link
+{
+    color: var(--accent-color, #0098c4);
+    text-decoration: none;
+}
+
+.support-ticket-link:hover
+{
+    text-decoration: underline;
+}
+
+.support-ticket-badge
+{
+    padding: 2px 8px;
+    border-radius: 999px;
+    background-color: rgba(47, 133, 90, 0.16);
+    color: #2f855a;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+/* ── Resolve / decline ────────────────────────────────────────────────────── */
+
+.support-ticket-field
+{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--primary-text-color);
+}
+
+.support-ticket-field > span
+{
+    font-weight: 600;
+}
+
+.support-ticket-field em
+{
+    font-weight: 400;
+    font-style: normal;
+    color: var(--secondary-text-color);
+}
+
+.support-ticket-field textarea,
+.support-ticket-field input
+{
+    padding: 9px 12px;
+    border: 1px solid var(--outline-color-strong);
+    border-radius: 8px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-size: 0.87rem;
+    box-sizing: border-box;
+}
+
+.support-ticket-field textarea
+{
+    resize: vertical;
+    line-height: 1.5;
+    width: 100%;
+}
+
+.support-ticket-credit-field input
+{
+    width: 120px;
+}
+
+.support-ticket-credit-total
+{
+    font-size: 0.8rem;
+    color: var(--secondary-text-color);
+}
+
+.support-ticket-actions
+{
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.support-ticket-resolve,
+.support-ticket-decline
+{
+    padding: 9px 18px;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    cursor: pointer;
+    border: 1px solid var(--outline-color-strong);
+}
+
+.support-ticket-resolve
+{
+    background-color: var(--accent-color, var(--primary-text-color));
+    color: var(--secondary-background-color);
+    border-color: transparent;
+    font-weight: 600;
+}
+
+.support-ticket-decline
+{
+    background: none;
+    color: var(--secondary-text-color);
+}
+
+.support-ticket-resolve:disabled,
+.support-ticket-decline:disabled
+{
+    opacity: 0.55;
+    cursor: default;
+}
+
+.support-ticket-error
+{
+    padding: 10px 12px;
+    border-radius: 6px;
+    background-color: rgba(220, 70, 70, 0.12);
+    color: #d24444;
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+@media (max-width: 700px)
+{
+    .support-ticket-dialog
+    {
+        width: 100%;
+    }
+
+    .support-ticket-counts
+    {
+        flex-direction: column;
+    }
+}

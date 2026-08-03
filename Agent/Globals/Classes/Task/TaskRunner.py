@@ -189,6 +189,16 @@ class TaskRunner:
                 from Workflows.TranscribeMockTestAttempt.TranscribeMockTestAttempt import TranscribeMockTestAttempt
                 return TranscribeMockTestAttempt(payload)
 
+            case TaskTypes.DEDUPLICATE_SUPPORT_TICKET:
+                print("DEDUPLICATE_SUPPORT_TICKET")
+                from Workflows.DeduplicateSupportTicket.DeduplicateSupportTicket import DeduplicateSupportTicket
+                return DeduplicateSupportTicket(payload)
+
+            case TaskTypes.PAID_DECK_VERIFICATION:
+                print("PAID_DECK_VERIFICATION")
+                from Workflows.PaidDeckVerification.PaidDeckVerification import PaidDeckVerification
+                return PaidDeckVerification(payload)
+
             case _:
                 print("Invalid workflow")
                 return None

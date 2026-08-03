@@ -1,0 +1,4 @@
+# Shell scripts must keep LF endings. Several of them are shipped to (and executed on)
+# Linux hosts by the deployment automation — a CRLF checkout makes Debian's bash reject
+# `set -o pipefail` with "invalid option name" and the deploy dies on the bake box.
+*.sh text eol=lf

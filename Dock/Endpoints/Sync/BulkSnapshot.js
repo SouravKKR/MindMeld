@@ -53,6 +53,7 @@ class BulkSnapshotEndpoint
         const studyMaterialsCollection = database.collection(DatabaseConstants.STUDY_MATERIALS_COLLECTION);
         const mockTestsCollection      = database.collection(DatabaseConstants.MOCK_TESTS_COLLECTION);
         const popupLinksCollection     = database.collection(DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION);
+        const contentOverlaysCollection = database.collection(DatabaseConstants.CONTENT_OVERLAYS_COLLECTION);
 
         // Snapshot the server clock at request start. Both countDocuments
         // and the streaming cursor are gated on serverUpdatedAt <= this
@@ -72,9 +73,10 @@ class BulkSnapshotEndpoint
         const studyMaterialCount = await studyMaterialsCollection.countDocuments(userFilter);
         const mockTestCount      = await mockTestsCollection.countDocuments(userFilter);
         const popupLinkCount     = await popupLinksCollection.countDocuments(userFilter);
-        const totalCount         = deckCount + cardCount + studyMaterialCount + mockTestCount + popupLinkCount;
+        const contentOverlayCount = await contentOverlaysCollection.countDocuments(userFilter);
+        const totalCount         = deckCount + cardCount + studyMaterialCount + mockTestCount + popupLinkCount + contentOverlayCount;
 
-        console.log(`[Sync/BulkSnapshot] user=${userId} — streaming decks:${deckCount} cards:${cardCount} studyMaterials:${studyMaterialCount} mockTests:${mockTestCount} popupLinks:${popupLinkCount} totalCount:${totalCount} ceiling:${snapshotCeiling.toISOString()}`);
+        console.log(`[Sync/BulkSnapshot] user=${userId} — streaming decks:${deckCount} cards:${cardCount} studyMaterials:${studyMaterialCount} mockTests:${mockTestCount} popupLinks:${popupLinkCount} contentOverlays:${contentOverlayCount} totalCount:${totalCount} ceiling:${snapshotCeiling.toISOString()}`);
 
         // Per-request cache of unwrapped paid-deck content keys, identical to the
         // incremental /Sync pull: paid content MUST be encrypted in transit on
@@ -106,6 +108,7 @@ class BulkSnapshotEndpoint
                 studyMaterialCount: studyMaterialCount,
                 mockTestCount:      mockTestCount,
                 popupLinkCount:     popupLinkCount,
+                contentOverlayCount: contentOverlayCount,
                 serverTime:         snapshotCeiling.getTime(),
             });
 
@@ -114,6 +117,10 @@ class BulkSnapshotEndpoint
             await BulkSnapshotEndpoint.#streamCollection(response, studyMaterialsCollection, userFilter, entityTypes.STUDY_MATERIAL,    resolvePaidContentKey);
             await BulkSnapshotEndpoint.#streamCollection(response, mockTestsCollection,      userFilter, entityTypes.MOCK_TEST,         resolvePaidContentKey);
             await BulkSnapshotEndpoint.#streamCollection(response, popupLinksCollection,     userFilter, entityTypes.ASK_AI_POPUP_LINK, resolvePaidContentKey);
+            // Overlays stream LAST: each one targets a card or study material,
+            // so the entity it overlays has already arrived by the time the
+            // client applies it.
+            await BulkSnapshotEndpoint.#streamCollection(response, contentOverlaysCollection, userFilter, entityTypes.CONTENT_OVERLAY,   resolvePaidContentKey);
 
             response.end();
 
@@ -165,6 +172,7 @@ class BulkSnapshotEndpoint
             studyMaterialCount: counts.studyMaterialCount,
             mockTestCount:      counts.mockTestCount,
             popupLinkCount:     counts.popupLinkCount,
+            contentOverlayCount: counts.contentOverlayCount,
             serverTime:         counts.serverTime,
         };
         await BulkSnapshotEndpoint.#writeLine(response, JSON.stringify(headerObject));

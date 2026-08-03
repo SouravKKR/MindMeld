@@ -1,6 +1,7 @@
 import DialogBox from "./DialogBox.js";
 import StreakBadgeHelper from "../Globals/Classes/Streak/StreakBadgeHelper.js";
 import SoundEffects from "../Globals/Classes/SoundEffects.js";
+import BlockingOverlayCoordinator from "../Globals/Classes/BlockingOverlayCoordinator.js";
 
 /**
  * The celebratory popup shown when a badge is earned — shared by streak badges
@@ -10,6 +11,8 @@ import SoundEffects from "../Globals/Classes/SoundEffects.js";
  */
 class BadgeCelebrationDialog
 {
+    static #COORDINATOR_OWNER_ID = "BadgeCelebrationDialog";
+
     /**
      * Generic celebration. `imagePath` may be empty (milestone art not yet
      * supplied) — the 🏅 fallback glyph shows and no broken <img> is rendered.
@@ -22,7 +25,24 @@ class BadgeCelebrationDialog
         // until the first user gesture). This keeps the achievement jingle in sync
         // with the popup appearing, instead of it being deferred to a later click —
         // for streak and milestone badges alike, since both come through here.
+        //
+        // This MUST come before claiming the coordinator slot. whenReady() has no
+        // timeout: at app bootstrap there has been no gesture yet, so waiting on it
+        // while HOLDING the slot pinned it indefinitely with nothing on screen — the
+        // badge never mounted, and every overlay queued behind it (the first-launch
+        // tutorial, the force-pull sync dialog) waited forever on a celebration that
+        // could not appear. Awaiting audio first means the slot is only ever claimed
+        // when this dialog can actually present.
         await SoundEffects.whenReady();
+
+        // Wait for the blocking-overlay slot before celebrating. A badge is
+        // earned on first login — exactly when the first-launch tutorial is
+        // also starting — and the tutorial overlay sits far above the dialog
+        // stacking range, so an uncoordinated celebration renders dimmed and
+        // unclickable underneath it and dead-ends the tour. Queueing here
+        // holds the badge until the tutorial (or sync dialog, or boot overlay)
+        // is done, then shows it in the clear.
+        await BlockingOverlayCoordinator.request(BadgeCelebrationDialog.#COORDINATOR_OWNER_ID);
 
         const sparkles = ["✨", "⭐", "✨", "🌟", "✨", "⭐"]
             .map((glyph, index) => `<span class="badge-celebration-sparkle sparkle-${index}">${glyph}</span>`)
@@ -62,8 +82,21 @@ class BadgeCelebrationDialog
                     return;
                 }
                 settled = true;
+                // Release before resolving so the next queued overlay — or the
+                // next badge in the caller's loop — can take the slot.
+                BlockingOverlayCoordinator.release(BadgeCelebrationDialog.#COORDINATOR_OWNER_ID);
                 resolve();
             };
+
+            // Escape has no .close-button / .ok-button to fall back to on this
+            // dialog, so without an explicit handler it would call close()
+            // directly — resolving nothing and leaking the coordinator slot,
+            // which would then block every queued overlay behind it.
+            dialog.setDismissHandler(() =>
+            {
+                dialog.close();
+                finish();
+            });
 
             const continueButton = dialog.querySelector(".badge-celebration-continue");
             continueButton.addEventListener("click", () =>

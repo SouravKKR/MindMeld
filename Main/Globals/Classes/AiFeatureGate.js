@@ -136,6 +136,27 @@ class AiFeatureGate
     }
 
     /**
+     * Presentation for a server-side FEATURE_NOT_IN_PLAN (403) refusal, keyed
+     * off the authoritative requiredTier the server returned rather than the
+     * client's possibly-stale cached plan. Call this when a fetch to an
+     * endpoint gated by PlanEntitlementGate.requireFeature comes back 403, so
+     * the user sees an upgrade prompt instead of a generic connection-error
+     * message from a catch-all handler further down.
+     * @param {{ requiredTier?: number }} detail — parsed 403 response body
+     * @param {string} featureLabel — human name for the dialog copy
+     */
+    static async showFeatureNotInPlanAlert(detail = {}, featureLabel = "This feature")
+    {
+        const requiredTier = typeof detail.requiredTier === "number" ? detail.requiredTier : null;
+        const metadata = requiredTier !== null ? PlanMetadataConstants[AiFeatureGate.#tierName(requiredTier)] : null;
+        const upgradeTarget = metadata ? `${metadata.label} plan` : "a higher plan";
+        await DialogBox.alert(
+            AiFeatureGate.UPGRADE_TITLE,
+            `${featureLabel} is available on the ${upgradeTarget}. Upgrade your plan to unlock it.`
+        );
+    }
+
+    /**
      * Returns true when the current user may use AI features. Otherwise pops
      * a standard dialog and returns false. Use this in user-initiated entry
      * points (button clicks, page loads, toggle changes). Do NOT use it in

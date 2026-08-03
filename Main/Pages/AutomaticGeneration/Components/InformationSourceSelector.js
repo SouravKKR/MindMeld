@@ -59,6 +59,40 @@ class InformationSourceSelector extends HTMLElement
         this.#addSelect.addEventListener("change", () => this.#handleAddSource());
     }
 
+    /**
+     * Narrows the "Add Source..." dropdown to a specific set of source types, or
+     * restores the full list when passed null.
+     *
+     * Used by paid-deck mode, which accepts CURRICULUM_OR_SYLLABUS and nothing
+     * else. This is a convenience so the user is shown what the mode allows
+     * while they are choosing — the restriction is enforced server-side in
+     * PaidDeckGenerationGate, and removing an option from a dropdown constrains
+     * nothing on its own.
+     *
+     * @param {number[]|null} allowedSourceTypeValues informationSourceTypes values, or null for no restriction.
+     */
+    setAllowedSourceTypes(allowedSourceTypeValues)
+    {
+        if (!this.#addSelect)
+        {
+            return;
+        }
+
+        const allowedValueSet = Array.isArray(allowedSourceTypeValues) ? new Set(allowedSourceTypeValues) : null;
+
+        for (const option of Array.from(this.#addSelect.options))
+        {
+            if (option.value === "")
+            {
+                continue;
+            }
+
+            const sourceTypeValue = informationSourceTypes[option.value];
+            option.hidden = allowedValueSet !== null && !allowedValueSet.has(sourceTypeValue);
+            option.disabled = option.hidden;
+        }
+    }
+
     getSources()
     {
         const informationSourceItems = this.#informationSourcesList.querySelectorAll(".information-source-item");
@@ -155,6 +189,24 @@ class InformationSourceSelector extends HTMLElement
             const pageRangeEditor = informationSourceItem.querySelector("page-range-list-editor");
             const pageRanges = pageRangeEditor ? pageRangeEditor.getPageRanges() : [];
 
+            // The ROW's dropdown decides what this source is for THIS run.
+            //
+            // What a file was uploaded as says nothing useful: everything lands
+            // in storage as a provided document, and the same PDF is legitimately
+            // a curriculum in one run and reference material in the next. The
+            // stored type is a record of which slot happened to be open at upload
+            // time, not a property of the bytes — so treating it as authoritative
+            // meant a row the user had explicitly set to "Curriculum Or Syllabus"
+            // still submitted as PROVIDED_DOCUMENTS and was refused outright by
+            // PaidDeckGenerationGate, with nothing on screen explaining why.
+            //
+            // This only sets the type on the copy this page holds; the stored row
+            // in Mongo is untouched, so the choice stays scoped to this run.
+            //
+            // Declaring a role is not the same as proving one. The curriculum
+            // claim is verified independently, against the document's own
+            // structure, by the plausibility verdict OcrPdf records at upload and
+            // PaidDeckGenerationGate re-reads here.
             informationSourceItem._serverInformationSource.setSourceType(informationSourceTypes[selectedKey]);
 
             return new ExtractableInformationSource({

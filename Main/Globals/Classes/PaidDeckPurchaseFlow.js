@@ -7,6 +7,7 @@ import SyncManager from "./SyncManager.js";
 import PaymentCheckout from "./Payments/PaymentCheckout.js";
 import TutorialEngine from "./TutorialEngine.js";
 import TutorialSampleDeckBuilder from "./Tutorials/TutorialSampleDeckBuilder.js";
+import ErrorCodes from "../Constants/ErrorCodes.js";
 
 /**
  * PaidDeckPurchaseFlow
@@ -21,6 +22,16 @@ import TutorialSampleDeckBuilder from "./Tutorials/TutorialSampleDeckBuilder.js"
  */
 class PaidDeckPurchaseFlow
 {
+    // Server error codes that deserve a sentence a buyer can act on instead of
+    // the raw token. Anything not listed still falls back to the code itself,
+    // which is what support needs for the rarer failures.
+    static BUYER_FACING_ERROR_MESSAGES =
+    {
+        [ErrorCodes.PRICING_DURATION_NOT_CONFIGURED]: "This deck isn't available to acquire just yet — its access terms haven't been published. Please try again later.",
+        [ErrorCodes.PAYMENT_PROVIDER_NOT_CONFIGURED]: "Payments are temporarily unavailable. Please try again later.",
+        [ErrorCodes.ALREADY_OWNED]: "You already own this deck — it's on your home page."
+    };
+
     static async run(deck, region)
     {
         if (!deck)
@@ -69,7 +80,7 @@ class PaidDeckPurchaseFlow
         if (!initiateResponse.ok)
         {
             const responseJson = await initiateResponse.json().catch(() => ({}));
-            await DialogBox.alert("Purchase failed", responseJson.error || `HTTP ${initiateResponse.status}`);
+            await DialogBox.alert("Purchase failed", PaidDeckPurchaseFlow.#describeError(responseJson.error, initiateResponse.status));
             return false;
         }
 
@@ -156,8 +167,23 @@ class PaidDeckPurchaseFlow
         }
 
         const verifyJson = await verifyResponse.json().catch(() => ({}));
-        await DialogBox.alert("Verification failed", verifyJson.error || `HTTP ${verifyResponse.status}`);
+        await DialogBox.alert("Verification failed", PaidDeckPurchaseFlow.#describeError(verifyJson.error, verifyResponse.status));
         return false;
+    }
+
+    /**
+     * Turns a server error code into the sentence shown in the failure dialog.
+     * Known codes get buyer-facing copy; anything else keeps the raw code (or the
+     * HTTP status when the body carried none) so support can still identify it.
+     */
+    static #describeError(errorCode, statusCode)
+    {
+        if (typeof errorCode === "string" && PaidDeckPurchaseFlow.BUYER_FACING_ERROR_MESSAGES[errorCode])
+        {
+            return PaidDeckPurchaseFlow.BUYER_FACING_ERROR_MESSAGES[errorCode];
+        }
+
+        return errorCode || `HTTP ${statusCode}`;
     }
 
     /**

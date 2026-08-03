@@ -53,6 +53,50 @@ class CreditConfiguration
     // the store backfills this on load. Cheap single call; admin-tunable later.
     static AUTO_FILL_GENERATION_OPTIONS_DEFAULT_FLAT_COST = 0.3;
 
+    // ── Generation pipeline defaults ──────────────────────────────────────────
+    //
+    // The queued generation workers shipped with NO rule at all, which meant two
+    // things at once: every run was free, and Compute Cost reported 0 for every
+    // configuration because CreditEstimator has nothing to multiply by. These
+    // seeds fix both, and because TaskCreditCharger evaluates the SAME rules, the
+    // estimate and the actual charge cannot drift apart by construction.
+    //
+    // Deriving the divisors. A term costs `credits × (metric ÷ divisor)`, so a
+    // divisor reads as "per this many units". The token metrics are NORMALIZED to
+    // the reference model gemini-2.5-flash-lite (CreditMeter multiplies by the
+    // ModelPricing weight, so a pro-model token already arrives pre-scaled),
+    // whose list price is $0.10 / 1M input and $0.40 / 1M output.
+    //
+    // Anchored on a representative run — the estimator's own 25-page assumption
+    // with all three output types enabled, which works out at roughly 780k
+    // normalized input and 156k normalized output tokens, about $0.14 of raw
+    // model cost. Targeting ~10 credits for that run and splitting it in
+    // proportion to raw cost gives ≈150k input tokens and ≈35k output tokens per
+    // credit. Note the 4.3:1 ratio between those divisors tracks the model's own
+    // 4:1 price ratio — the seeds follow the real cost structure rather than
+    // being picked out of the air.
+    //
+    // These are STARTING POINTS, not settled pricing. Every one of them is
+    // editable in the Credit Config admin editor, and the honest way to tune them
+    // is from creditTransactions.metadata.usage once real runs have accumulated.
+    static GENERATION_DEFAULT_INPUT_TOKENS_PER_CREDIT = 150000;
+    static GENERATION_DEFAULT_OUTPUT_TOKENS_PER_CREDIT = 35000;
+
+    // Document preparation is CPU/embedding work, not model output — cheap, and
+    // billed on wall-clock. The same representative run spends ~175s across the
+    // three preparation tasks, so this lands it under a credit.
+    static GENERATION_DEFAULT_DURATION_SECONDS_PER_CREDIT = 200;
+
+    // Image enhancement is charged flat, matching the estimator's own flat
+    // calibration for it, because its cost tracks the number of diagrams rather
+    // than tokens or time.
+    static GENERATION_DEFAULT_IMAGE_ENHANCEMENT_FLAT_COST = 2;
+
+    // A generation is metered on tokens, so its cost is unknowable at preflight.
+    // Requiring a small balance to START keeps a zero-balance account from
+    // running a full pipeline whose charge then lands against nothing.
+    static GENERATION_DEFAULT_MINIMUM_BALANCE_TO_RUN = 1;
+
     constructor({ taskRules = {}, storageRules = {}, rewardMilestones = [], creditPricing = [], creditPacks = [], minimumPurchaseCredits = CreditConfiguration.DEFAULT_MINIMUM_PURCHASE_CREDITS, defaultEnforcementMode = creditEnforcementModes.ALLOW_NEGATIVE, signupGrant = CreditConfiguration.DEFAULT_SIGNUP_GRANT, promoGrantAmount = CreditConfiguration.DEFAULT_PROMO_GRANT_AMOUNT, version = 1, updatedAt = null, updatedBy = '' } = {})
     {
         this.setTaskRules(taskRules);
@@ -370,6 +414,96 @@ class CreditConfiguration
             terms: [new CreditSpendTerm({ credits: flatCost, divisors: {} })],
         });
         return true;
+    }
+
+    /**
+     * Ensures the queued generation pipeline has configured spend rules, adding
+     * the defaults above for any task that is missing one. Existing rules —
+     * including admin-disabled ones and ones an admin deliberately left with no
+     * terms — are never overwritten, matching ensureAskAiTaskRules.
+     *
+     * Without these, generation ran free AND Compute Cost reported 0 for every
+     * configuration, because an absent rule gives CreditEstimator nothing to
+     * multiply by. That reads as "this run is free" rather than "nobody has
+     * priced this yet", which is the more damaging of the two failures.
+     *
+     * @returns {boolean} true when at least one rule was added
+     */
+    ensureGenerationTaskRules()
+    {
+        const tokenMeteredTaskTypeNames =
+        [
+            "FLASHCARD_GENERATION_WORKER",
+            "STUDY_MATERIAL_GENERATION_WORKER",
+            "MOCK_TEST_GENERATION_WORKER",
+        ];
+
+        const durationMeteredTaskTypeNames =
+        [
+            "PREPARE_FOR_SIMILARITY_SEARCH",
+            "MAP_TOPICS_WITH_CONTENT",
+            "PROCESS_SYLLABUS",
+        ];
+
+        let bAddedAnyRule = false;
+
+        for (const taskTypeName of tokenMeteredTaskTypeNames)
+        {
+            if (this.#taskRules[taskTypeName])
+            {
+                continue;
+            }
+
+            // Two single-dimension terms rather than one two-dimension term:
+            // CreditSpendTerm multiplies its dimensions together, so a combined
+            // term would compute input × output instead of input + output.
+            this.#taskRules[taskTypeName] = new CreditSpendRule
+            ({
+                enabled: true,
+                deductionTiming: creditDeductionTimings.ON_SUCCESS,
+                minimumBalanceToRun: CreditConfiguration.GENERATION_DEFAULT_MINIMUM_BALANCE_TO_RUN,
+                minimumBalanceFloor: 0,
+                terms:
+                [
+                    new CreditSpendTerm({ credits: 1, divisors: { INPUT_TOKENS: CreditConfiguration.GENERATION_DEFAULT_INPUT_TOKENS_PER_CREDIT } }),
+                    new CreditSpendTerm({ credits: 1, divisors: { OUTPUT_TOKENS: CreditConfiguration.GENERATION_DEFAULT_OUTPUT_TOKENS_PER_CREDIT } }),
+                ],
+            });
+            bAddedAnyRule = true;
+        }
+
+        for (const taskTypeName of durationMeteredTaskTypeNames)
+        {
+            if (this.#taskRules[taskTypeName])
+            {
+                continue;
+            }
+
+            this.#taskRules[taskTypeName] = new CreditSpendRule
+            ({
+                enabled: true,
+                deductionTiming: creditDeductionTimings.ON_SUCCESS,
+                minimumBalanceToRun: 0,
+                minimumBalanceFloor: 0,
+                terms: [new CreditSpendTerm({ credits: 1, divisors: { DURATION_SECONDS: CreditConfiguration.GENERATION_DEFAULT_DURATION_SECONDS_PER_CREDIT } })],
+            });
+            bAddedAnyRule = true;
+        }
+
+        if (!this.#taskRules["ENHANCE_IMAGES"])
+        {
+            this.#taskRules["ENHANCE_IMAGES"] = new CreditSpendRule
+            ({
+                enabled: true,
+                deductionTiming: creditDeductionTimings.ON_SUCCESS,
+                minimumBalanceToRun: CreditConfiguration.GENERATION_DEFAULT_IMAGE_ENHANCEMENT_FLAT_COST,
+                minimumBalanceFloor: 0,
+                terms: [new CreditSpendTerm({ credits: CreditConfiguration.GENERATION_DEFAULT_IMAGE_ENHANCEMENT_FLAT_COST, divisors: {} })],
+            });
+            bAddedAnyRule = true;
+        }
+
+        return bAddedAnyRule;
     }
 
     /**

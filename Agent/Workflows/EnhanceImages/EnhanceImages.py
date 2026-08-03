@@ -76,7 +76,13 @@ class EnhanceImages(Workflow):
     # ~ceil(figures / _ENHANCE_CONCURRENCY) waves (~10 min) without overwhelming
     # the image API. Gemini describe calls are additionally capped cluster-wide by
     # the provider's RedisSemaphore; this constant bounds the GPT-Image fan-out.
-    _ENHANCE_CONCURRENCY = 6
+    #
+    # It is the FAN-OUT bound, not the rate-limit defence — that is
+    # DiagramImageEnhancer's transient-retry loop, which honours Retry-After and
+    # backs off up to MAX_TRANSIENT_RETRIES. Lowering this alone would not have
+    # fixed the 429s (a sustained per-minute cap is reached at any concurrency);
+    # it only reduces how hard the window is hit before the backoff engages.
+    _ENHANCE_CONCURRENCY = 5
 
     def __init__(self, payload = {}):
         super().__init__(payload)

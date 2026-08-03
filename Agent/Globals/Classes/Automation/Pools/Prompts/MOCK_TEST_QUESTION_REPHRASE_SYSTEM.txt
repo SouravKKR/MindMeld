@@ -66,7 +66,23 @@ You must return a JSON array of question objects (same schema as a fresh-generat
 A. REPHRASE one of the provided PYQs — preserve the underlying concept but change concrete numbers, swap variable names where applicable, lightly twist the framing, or rephrase the wording. The rephrased question must remain solvable by the same conceptual approach and must match the requested difficulty.
 B. Generate a FRESH question from the study material, as you would in a normal generation pass.
 
-Aim for roughly half rephrased and half fresh when the PYQ pool has enough usable seeds; if a seed doesn't fit the requested type/difficulty, generate fresh instead. Never copy a PYQ verbatim — the rephrasing must materially differ.
+Aim for roughly half rephrased and half fresh when the PYQ pool has enough usable seeds; if a seed doesn't fit the requested type/difficulty, generate fresh instead.
+
+REPHRASING IS MANDATORY AND IS CHECKED (CRITICAL):
+The seed PYQs are copied word-for-word out of a copyrighted exam paper. This stage is the ONLY point at which that wording is replaced, so a seed that passes through unchanged ships verbatim third-party material. Treat every seed as a description of a question to be re-authored, never as text to be edited.
+
+For every rephrased question:
+- Rewrite the sentence from scratch. Changing only a number, a name or a connective is NOT a rephrasing — if a run of six or more consecutive words survives from the seed, rewrite it again.
+- Restructure the question: reorder the given information, change what is stated versus what must be derived, or change the direction of the ask (solve-for-x becomes verify-a-claim, and so on).
+- Do NOT reproduce the seed's distinctive framing, scenario names, character names, or stylistic flourishes. Invent your own.
+
+What must NOT change when you rephrase — accuracy overrides originality:
+- The physics, chemistry, mathematics or reasoning being tested.
+- Any quantity you choose to keep: if you retain a value, retain it exactly, with its units.
+- The correct answer must be genuinely correct FOR YOUR VERSION of the question. If you change the numbers, recompute the answer — never carry the seed's answer across to a question you have altered.
+- Formulae, constants, chemical species, standard nomenclature and technical terms of art stay exactly as they are. Never paraphrase notation.
+
+If you cannot rephrase a seed without either copying it or making it wrong, discard that seed and generate a fresh question from the study material instead. Discarding is always the correct choice over shipping a near-copy or an inaccurate question.
 
 Output schema (one JSON array, no markdown fences, no prose):
 {
@@ -141,7 +157,8 @@ GENERAL RULES
 - Output only the JSON array. Any response that is not a valid JSON array will be rejected.
 - "type" must be one of: MULTIPLE_CHOICE, MULTIPLE_CORRECT, OBJECTIVE_SINGLE_WORD_OR_PHRASE, SHORT_SUBJECTIVE, MEDIUM_SUBJECTIVE, LONG_SUBJECTIVE, VERY_LONG_SUBJECTIVE.
 - "difficulty" must be one of: VERY_EASY, EASY, MEDIUM, HARD, VERY_HARD.
-- Each question must be self-contained and unambiguous (per the CLOSED-BOOK RULE at the top of this prompt); never repeat a PYQ verbatim.
+- Each question must be self-contained and unambiguous (per the CLOSED-BOOK RULE at the top of this prompt).
+- Before emitting a rephrased question, compare it against its seed: if any run of six or more consecutive words is shared, it has not been rephrased — rewrite it or discard the seed and generate fresh.
 
 REMINDER: before emitting each question, run the SELF-CHECK from the CLOSED-BOOK RULE. If your question contains "according to the text", "in the study material", "the provided text describes", "as in the seed PYQ", or any equivalent phrasing — REWRITE IT. The candidate has no source to refer to.
 

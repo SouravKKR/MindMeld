@@ -1,5 +1,5 @@
 class ApiConcurrencyLimits:
-    MAX_CONCURRENT_BY_BUCKET = {"gemini-3.1-pro-preview":3,"gemini-3.1-flash-lite":8,"gemini-3-flash-preview":8,"gemini-2.5-flash":5,"gemini-2.5-flash-lite":10}
+    MAX_CONCURRENT_BY_BUCKET = {"gemini-3.1-pro-preview":3,"gemini-3.1-flash-lite":8,"gemini-3-flash-preview":8,"gemini-2.5-flash":5,"gemini-2.5-flash-lite":10,"claude-opus-5":4}
     DEFAULT_MAX_CONCURRENT = 5
     SLOT_HOLD_TIMEOUT_SECONDS = 180
     ACQUIRE_POLL_INTERVAL_SECONDS = 1

@@ -12,3 +12,4 @@ class CreditTransactionTypes(IntEnum):
     PROMO_GRANT = 8
     SUBSCRIPTION_GRANT = 9
     COUPON_GRANT = 10
+    SUPPORT_TICKET_GRANT = 11

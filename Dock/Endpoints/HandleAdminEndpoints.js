@@ -8,6 +8,9 @@ const { rotatePaidDeckKey } = require("./Admin/RotatePaidDeckKey");
 const { rotatePaidDeckContentKey } = require("./Admin/RotatePaidDeckContentKey");
 const { getRevenueStats } = require("./Admin/GetRevenueStats");
 const { listPaidDecks } = require("./Admin/ListPaidDecks");
+const { downloadAuditTrail } = require("./Admin/PaidDecks/DownloadAuditTrail");
+const { getGenerationProvenance } = require("./Admin/PaidDecks/GetGenerationProvenance");
+const { resolveVerificationFlag } = require("./Admin/PaidDecks/ResolveVerificationFlag");
 const { setUserRole } = require("./Admin/SetUserRole");
 const { setUserStreak } = require("./Admin/Streak/SetUserStreak");
 const { bulkUpdatePaidDecks } = require("./Admin/BulkUpdatePaidDecks");
@@ -27,6 +30,11 @@ const { addMaintenanceWindow } = require("./Admin/Maintenance/AddMaintenanceWind
 const { updateMaintenanceWindow } = require("./Admin/Maintenance/UpdateMaintenanceWindow");
 const { removeMaintenanceWindow } = require("./Admin/Maintenance/RemoveMaintenanceWindow");
 const { downloadLogs } = require("./Admin/Logs/DownloadLogs");
+const { getSupportTicket } = require("./Admin/Support/GetSupportTicket");
+const { resolveSupportTicket } = require("./Admin/Support/ResolveSupportTicket");
+const { declineSupportTicket } = require("./Admin/Support/DeclineSupportTicket");
+const { downloadSupportAttachment } = require("./Admin/Support/DownloadSupportAttachment");
+const { downloadSupportReportLogs } = require("./Admin/Support/DownloadSupportReportLogs");
 const { streamLogs } = require("./Admin/Logs/StreamLogs");
 const { getLogConfiguration } = require("./Admin/Logs/GetLogConfiguration");
 const { setLogConfiguration } = require("./Admin/Logs/SetLogConfiguration");
@@ -45,6 +53,8 @@ const { acknowledgeAlert } = require("./Admin/Alerts/AcknowledgeAlert");
 const { deleteAlert } = require("./Admin/Alerts/DeleteAlert");
 const { listRateLimitEvents } = require("./Admin/RateLimits/ListRateLimitEvents");
 const { listAdminAuditEvents } = require("./Admin/Audit/ListAdminAuditEvents");
+const { takedownContent } = require("./Admin/Content/TakedownContent");
+const { listContentTakedownNotices } = require("./Admin/Content/ListContentTakedownNotices");
 const { getCreditConfig } = require("./Admin/GetCreditConfig");
 const { setCreditConfig } = require("./Admin/SetCreditConfig");
 const { previewCreditGrant } = require("./Admin/PreviewCreditGrant");
@@ -98,6 +108,62 @@ function handleAdminEndpoints(server)
     ({
         routePath: `/Admin/PaidDecks/List`,
         handler: listPaidDecks,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    // Content takedown — actions a rightsholder infringement notice against one
+    // content-addressed upload, removing it for every tenant that shares it.
+    server.handle
+    ({
+        routePath: `/Admin/Content/Takedown`,
+        handler: takedownContent,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Content/TakedownNotices`,
+        handler: listContentTakedownNotices,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Paid-deck generation provenance (review gate + audit trail) ────────
+    //
+    // These three sit behind ensureAdmin, so AdminActionAuditor already records
+    // every call — including the audit-trail download itself, which is exactly
+    // the kind of access that should leave a trace.
+
+    // The review gate's data source: the provenance record plus the current
+    // publish decision, so the panel never re-implements the gate's rule.
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/Provenance`,
+        handler: getGenerationProvenance,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    // The only way a blocking verification flag stops blocking. Appends a named,
+    // timestamped decision beside the flag; never edits or removes the flag.
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/ResolveVerificationFlag`,
+        handler: resolveVerificationFlag,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // The audit-trail PDF. No filter parameter by design — the report is
+    // all-or-nothing, because a selectively-filtered audit trail is not one.
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/AuditTrail`,
+        handler: downloadAuditTrail,
         method: PacketronRequestMethod.GET,
         plugins: [ensureAdmin]
     });
@@ -737,6 +803,52 @@ function handleAdminEndpoints(server)
         handler: queryAdminList,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Support tickets (deduplicated issue reports) ───────────────────────
+    // Registered here rather than in HandleSupportEndpoints.js so these routes
+    // inherit ensureAdmin AND the AdminActionAuditor coverage it attaches —
+    // resolving a ticket grants credits and emails users, which must be audited.
+    server.handle
+    ({
+        routePath: `/Admin/Support/Ticket`,
+        handler: getSupportTicket,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Support/Ticket/Resolve`,
+        handler: resolveSupportTicket,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Support/Ticket/Decline`,
+        handler: declineSupportTicket,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Support/Report/Attachment`,
+        handler: downloadSupportAttachment,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Support/Report/Logs`,
+        handler: downloadSupportReportLogs,
+        method: PacketronRequestMethod.GET,
         plugins: [ensureAdmin]
     });
 }

@@ -16,6 +16,7 @@ const adminPanelTabs =
   LOGS: 13,
   SUBSCRIPTIONS: 14,
   COUPONS: 15,
+  SUPPORT_TICKETS: 16,
 }
 
 module.exports = { adminPanelTabs };

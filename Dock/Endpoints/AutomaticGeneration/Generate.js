@@ -28,6 +28,7 @@ const { planFeatures } = require("../../Globals/Enumerations/PlanFeatures");
 const NotificationDispatcher = require("../../Globals/Classes/Notifications/NotificationDispatcher");
 const NotificationContent = require("../../Globals/Classes/Notifications/NotificationContent");
 const { notificationChannels } = require("../../Globals/Enumerations/NotificationChannels");
+const PaidDeckGenerationGate = require("../../Globals/Classes/Generation/PaidDeckGenerationGate");
 
 
 const VIRTUAL_WEB_SOURCE_TYPES = [
@@ -178,6 +179,25 @@ async function handleGenerate(request, response)
         return;
     }
 
+    // ── Phase 0: paid-deck mode admission ─────────────────────────────────────
+    // Re-authorised here against the STORED user record, the same way /Admin/*
+    // routes are gated. Runs BEFORE validateGenerationSettings so a non-admin
+    // gets "you can't use this mode" rather than a confusing message about
+    // source types. The source restriction itself is enforced inside
+    // validateGenerationSettings, so it also covers any other caller of it.
+    const bPaidDeckMode = PaidDeckGenerationGate.isRequested(generalGenerationSettings);
+
+    if (bPaidDeckMode)
+    {
+        const paidDeckAuthorization = PaidDeckGenerationGate.authorize(user);
+        if (!paidDeckAuthorization.allowed)
+        {
+            response.statusCode = httpStatus.FORBIDDEN;
+            response.sendJson({ error: paidDeckAuthorization.reason });
+            return;
+        }
+    }
+
     try
     {
         validateGenerationSettings(
@@ -209,11 +229,37 @@ async function handleGenerate(request, response)
 
     // ── Normalize: merge duplicate-hash entries, union overlapping page ranges ────
     const normalizedInformationSources = normalizeInformationSources(generalGenerationSettings.getInformationSources() || []);
-    const normalizedImageSources = normalizeInformationSources(generalGenerationSettings.getImageSources() || []);
+    let normalizedImageSources = normalizeInformationSources(generalGenerationSettings.getImageSources() || []);
+
+    // Paid-deck mode generates its own visuals and must never extract figures
+    // from an uploaded document. Image sources are stripped here rather than
+    // refused, because the generation page mirrors the information sources into
+    // them whenever "inherit image sources" is on — the default — so refusing
+    // would fail the request over a value the admin never chose. Clearing the
+    // list is what actually guarantees PrepareImages has nothing to extract
+    // from; the log records what was dropped.
+    if (bPaidDeckMode)
+    {
+        const strippedImageSources = PaidDeckGenerationGate.stripImageSources(normalizedImageSources);
+        if (strippedImageSources.droppedCount > 0)
+        {
+            console.log(
+                `[Generate] Paid-deck mode: dropped ${strippedImageSources.droppedCount} inherited image source(s). ` +
+                `Visuals are generated from the coverage summaries, never extracted from an upload.`,
+            );
+        }
+        normalizedImageSources = strippedImageSources.imageSources;
+    }
 
     // ── Description-only: when the user supplies no info sources, auto-enable web/AI ──
+    // Paid-deck mode is deliberately excluded from this fallback. Auto-enabling
+    // open web sources would put arbitrary third-party text back into content
+    // that gets sold — the exact thing Phase 0 exists to make structurally
+    // impossible. The gate already refuses a paid-deck run with no sources, so
+    // this branch is unreachable there; the condition states the invariant
+    // rather than relying on that.
     let effectiveInformationSources = normalizedInformationSources;
-    if (effectiveInformationSources.length === 0)
+    if (!bPaidDeckMode && effectiveInformationSources.length === 0)
     {
         effectiveInformationSources = VIRTUAL_WEB_SOURCE_TYPES.map(sourceTypeValue => buildVirtualWebSource(sourceTypeValue));
         console.log("[Generate] No information sources provided — auto-enabling web/reputed/AI sources for description-driven generation.");
@@ -434,7 +480,15 @@ async function handleGenerate(request, response)
     // sources or web sources happen to be present.
     const captureImagesEnabled = generalGenerationSettings.getCaptureImagesEnabled() !== false;
 
-    const shouldPrepareImages = captureImagesEnabled && (normalizedImageSources.length > 0 || hasWebImageSource);
+    // Paid-deck mode has no image sources and no web sources by construction, so
+    // the normal predicate would skip PrepareImages entirely. It must still run:
+    // in this mode the stage generates the visuals the Phase 1 coverage summaries
+    // declared (symbolic diagrams, formulae, illustrations) instead of extracting
+    // figures from a PDF, then places them through the SAME page-less placement
+    // path web-sourced images already use. One stage, two sources of figures —
+    // not a second image pipeline.
+    const shouldPrepareImages = captureImagesEnabled
+        && (bPaidDeckMode || normalizedImageSources.length > 0 || hasWebImageSource);
 
     // "Enhance Images" runs AFTER PrepareImages and re-synthesizes each
     // embedded <figure> through Gemini so the published artwork is no
@@ -443,7 +497,12 @@ async function handleGenerate(request, response)
     // PrepareImages, before EnhanceImages ever runs) -- only the inline
     // base64 inside flashcard.question/answer and studyMaterial.content
     // is rewritten.
-    const enhanceImagesEnabled = generalGenerationSettings.getEnhanceImages() === true;
+    //
+    // Forced off in paid-deck mode: enhancement exists to stop source artwork
+    // from being republished verbatim, and a visual this pipeline generated is
+    // already first-party. Re-synthesising it would only risk degrading a
+    // diagram that was produced — and vision-verified — to be exact.
+    const enhanceImagesEnabled = !bPaidDeckMode && generalGenerationSettings.getEnhanceImages() === true;
 
     // Single image-pipeline tasks shared across both scopes (flashcards +
     // study materials). Both source PDFs and the Gemini work are identical
@@ -484,6 +543,16 @@ async function handleGenerate(request, response)
                 imageSources: resolvedImageSourceJsons,
                 generateFlashcards: hasFlashcardScope,
                 generateStudyMaterials: hasStudyMaterialScope,
+                // Switches PrepareImages from "extract figures from the source
+                // PDFs" to "generate the visuals the coverage summaries asked
+                // for". Placement, vision verification and injection are shared.
+                paidDeckMode: bPaidDeckMode,
+                // Grounds generated visuals in the right discipline — "cell"
+                // means something different in Biology and in Electronics.
+                subjectName: generalGenerationSettings.getSubjectName() || "",
+                // Scopes inferred visuals to what the target exam expects a
+                // student to be able to read and draw.
+                examName: generalGenerationSettings.getExamName() || "",
                 // When enhance is enabled, PrepareImages writes a JSON
                 // sidecar of figure assignments instead of injecting
                 // the originals into the per-task study-material and
@@ -890,6 +959,36 @@ async function handleGenerate(request, response)
             }
         }
 
+        // ── Phase 6: verification (paid-deck runs only) ───────────────────────
+        // Runs after all content exists and after the image pipeline, so it sees
+        // the same text a student would. Deliberately NOT allowed to fail the
+        // run: a verification stage that can destroy a completed generation
+        // creates pressure to switch it off. An unreachable verifier records
+        // itself as an unverified gap instead, and the publish gate refuses to
+        // publish a deck whose verification did not complete.
+        if (bPaidDeckMode)
+        {
+            try
+            {
+                const verificationTask = new TaskDescriptor({
+                    type: taskTypes.PAID_DECK_VERIFICATION,
+                    executionTarget: taskExecutionTargets.LOCAL,
+                    userId: userId,
+                    payload: { subjectName: generalGenerationSettings.getSubjectName() || "" },
+                    nextTaskIds: [],
+                });
+
+                await TaskManager.setTask(verificationTask);
+                await TaskManager.execute(verificationTask, 0, completedTask, mainTaskId);
+
+                console.log(`[Generate] Paid-deck verification complete for task ${mainTaskId}.`);
+            }
+            catch (verificationError)
+            {
+                console.error(`[Generate] Paid-deck verification failed for ${mainTaskId} (continuing to persist): ${verificationError.message}`);
+            }
+        }
+
         const moveResult = await moveToDatabase(
             userId,
             mainTaskId,
@@ -900,6 +999,7 @@ async function handleGenerate(request, response)
             mockTestGenerationSettings,
             generationFailureContext,
             bIsRetry,
+            generalGenerationSettings,
         );
 
         console.log(`[Generate] Database move complete for task ${mainTaskId}.`);

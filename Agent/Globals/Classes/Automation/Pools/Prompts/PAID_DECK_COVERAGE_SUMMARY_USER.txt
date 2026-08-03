@@ -1,0 +1,8 @@
+Subject: {subject_name}
+{exam_context}
+
+{additional_instructions_block}
+Produce a coverage summary for each of the following syllabus topics. The topicChain in your output must be copied verbatim from the list below — it is how each summary is matched back to its topic.
+
+TOPICS:
+{topic_block}

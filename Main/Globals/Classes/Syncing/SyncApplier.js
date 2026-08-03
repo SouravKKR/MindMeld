@@ -8,6 +8,7 @@ import StudyMaterial from "../../Model/StudyMaterial.js";
 import ActiveEntityTracker from "../ActiveEntityTracker.js";
 import Persistence from "../Persistence.js";
 import SyncTransport from "./SyncTransport.js";
+import ContentOverlayStore from "../Content/ContentOverlayStore.js";
 
 
 /**
@@ -24,6 +25,12 @@ import SyncTransport from "./SyncTransport.js";
 class SyncApplier
 {
     static #APPLY_YIELD_BATCH_SIZE = 50;
+
+    // additionalData slots holding records that sync as their own entity type.
+    // Deck.toSyncJson strips these from every deck push, so an incoming deck
+    // must never be treated as authoritative for them. Kept in step with
+    // Deck's own list.
+    static ENTITY_CHANNEL_ADDITIONAL_DATA_KEYS = ["askAiPopupLinks", "contentOverlays"];
 
     // ── Apply server changes ──────────────────────────────────────────
 
@@ -48,6 +55,7 @@ class SyncApplier
         const studyMaterialChanges = [];
         const mockTestChanges      = [];
         const popupLinkChanges     = [];
+        const contentOverlayChanges = [];
 
         for (let changeIndex = 0; changeIndex < changes.length; changeIndex++)
         {
@@ -73,11 +81,15 @@ class SyncApplier
             {
                 popupLinkChanges.push(change.data);
             }
+            else if (change.entityType === entityTypes.CONTENT_OVERLAY)
+            {
+                contentOverlayChanges.push(change.data);
+            }
         }
 
         SyncApplier.#applyDeckChangesInOrder(deckChanges, dirtyDeckIds);
 
-        const totalApplyableCount = cardChanges.length + studyMaterialChanges.length + mockTestChanges.length + popupLinkChanges.length;
+        const totalApplyableCount = cardChanges.length + studyMaterialChanges.length + mockTestChanges.length + popupLinkChanges.length + contentOverlayChanges.length;
 
         if (totalApplyableCount === 0)
         {
@@ -137,6 +149,15 @@ class SyncApplier
             await tickAndYieldIfDue();
         }
 
+        // Overlays apply last: each targets a card or study material, so the
+        // entity it overlays has already been applied above.
+        for (let overlayIndex = 0; overlayIndex < contentOverlayChanges.length; overlayIndex++)
+        {
+            SyncApplier.#applyContentOverlayChange(contentOverlayChanges[overlayIndex], dirtyDeckIds);
+            appliedCount++;
+            await tickAndYieldIfDue();
+        }
+
         if (onProgress)
         {
             onProgress(1.0);
@@ -171,6 +192,7 @@ class SyncApplier
         const studyMaterialDeletionIds = [];
         const mockTestDeletionIds      = [];
         const popupLinkDeletionIds     = [];
+        const contentOverlayDeletionIds = [];
 
         for (let deletionIndex = 0; deletionIndex < deletions.length; deletionIndex++)
         {
@@ -195,6 +217,10 @@ class SyncApplier
             else if (deletion.entityType === entityTypes.ASK_AI_POPUP_LINK)
             {
                 popupLinkDeletionIds.push(deletion.entityId);
+            }
+            else if (deletion.entityType === entityTypes.CONTENT_OVERLAY)
+            {
+                contentOverlayDeletionIds.push(deletion.entityId);
             }
         }
 
@@ -340,6 +366,36 @@ class SyncApplier
             }
         }
 
+        if (contentOverlayDeletionIds.length > 0)
+        {
+            // An overlay id encodes its target entity but not its deck, and a
+            // tombstone carries only the id — so, exactly like popup links,
+            // find the owning deck by probing every deck's map once.
+            const overlayIdToOwningDeck = new Map();
+            const allDecksForOverlays   = Deck.getAll();
+
+            for (let deckIndex = 0; deckIndex < allDecksForOverlays.length; deckIndex++)
+            {
+                const deck = allDecksForOverlays[deckIndex];
+                const overlayMap = (deck.getAdditionalData?.() || {})[ContentOverlayStore.DECK_ADDITIONAL_DATA_KEY] || {};
+                for (const overlayId of Object.keys(overlayMap))
+                {
+                    overlayIdToOwningDeck.set(overlayId, deck);
+                }
+            }
+
+            for (let deletionIndex = 0; deletionIndex < contentOverlayDeletionIds.length; deletionIndex++)
+            {
+                const overlayId = contentOverlayDeletionIds[deletionIndex];
+                const owningDeck = overlayIdToOwningDeck.get(overlayId);
+                if (owningDeck && ContentOverlayStore.removeRecordById(owningDeck, overlayId))
+                {
+                    dirtyDeckIds.add(owningDeck.getId());
+                }
+                processedDeletionCount++;
+            }
+        }
+
         if (onProgress)
         {
             onProgress(1.0);
@@ -394,6 +450,38 @@ class SyncApplier
         // queue a redundant deck push). The dirty-deck flush below
         // persists the new state.
         dirtyDeckIds.add(owningDeck.getId());
+    }
+
+    /**
+     * Applies one incoming content-overlay record — a learner's own edit to a
+     * card or study material, made on another device.
+     *
+     * The record's `value` stays exactly as it arrived: for a paid deck it is a
+     * ciphertext envelope the server re-encrypted on the wire, and only
+     * decryptForStudy (after the deck is unlocked) turns it into readable text.
+     * Nothing here ever holds plaintext.
+     */
+    static #applyContentOverlayChange(overlayData, dirtyDeckIds)
+    {
+        if (!overlayData || !overlayData.id || !overlayData.deckId)
+        {
+            return;
+        }
+
+        const owningDeck = Deck.getById(overlayData.deckId);
+        if (!owningDeck)
+        {
+            console.warn(`[SyncApplier] content overlay ${overlayData.id}: owning deck ${overlayData.deckId} not found locally. Skipping.`);
+            return;
+        }
+
+        // Mutates the map in place (no deck.lifecycle bump, so no redundant
+        // deck push) and applies last-write-wins on lifecycle.lastModified,
+        // matching the server's own upsert gate.
+        if (ContentOverlayStore.applyIncomingRecord(owningDeck, overlayData))
+        {
+            dirtyDeckIds.add(owningDeck.getId());
+        }
     }
 
     // ── Flush dirty decks ─────────────────────────────────────────────
@@ -471,8 +559,9 @@ class SyncApplier
         const incomingStudyMaterials = Array.isArray(snapshot?.studyMaterials) ? snapshot.studyMaterials : [];
         const incomingMockTests      = Array.isArray(snapshot?.mockTests)      ? snapshot.mockTests      : [];
         const incomingPopupLinks     = Array.isArray(snapshot?.popupLinks)     ? snapshot.popupLinks     : [];
+        const incomingContentOverlays = Array.isArray(snapshot?.contentOverlays) ? snapshot.contentOverlays : [];
 
-        console.log(`[SyncApplier] applyBulkSnapshot: ${incomingDecks.length} decks, ${incomingCards.length} cards, ${incomingStudyMaterials.length} study materials, ${incomingMockTests.length} mock tests, ${incomingPopupLinks.length} popup link(s).`);
+        console.log(`[SyncApplier] applyBulkSnapshot: ${incomingDecks.length} decks, ${incomingCards.length} cards, ${incomingStudyMaterials.length} study materials, ${incomingMockTests.length} mock tests, ${incomingPopupLinks.length} popup link(s), ${incomingContentOverlays.length} content overlay(s).`);
 
         // Snapshot the existing in-memory deck IDs so we can blow away
         // their on-disk entries in the same IDB transaction as the
@@ -635,9 +724,26 @@ class SyncApplier
             };
         }
 
-        if (droppedCards || droppedStudyMaterials || droppedMockTests || droppedPopupLinks)
+        // Content overlays — a learner's own edits. Applied after the cards and
+        // materials above so their targets already exist in the tree. The value
+        // stays as it arrived (ciphertext for a paid deck); only
+        // decryptForStudy, after an unlock, ever renders it readable.
+        let droppedContentOverlays = 0;
+        for (let overlayIndex = 0; overlayIndex < incomingContentOverlays.length; overlayIndex++)
         {
-            console.warn(`[SyncApplier] applyBulkSnapshot: dropped ${droppedCards} orphan card(s), ${droppedStudyMaterials} study material(s), ${droppedMockTests} mock test(s), ${droppedPopupLinks} popup link(s) — referenced deckId not present in snapshot.`);
+            const overlayData = incomingContentOverlays[overlayIndex];
+            const targetDeck  = Deck.getById(overlayData?.deckId);
+            if (!targetDeck)
+            {
+                droppedContentOverlays++;
+                continue;
+            }
+            ContentOverlayStore.applyIncomingRecord(targetDeck, overlayData);
+        }
+
+        if (droppedCards || droppedStudyMaterials || droppedMockTests || droppedPopupLinks || droppedContentOverlays)
+        {
+            console.warn(`[SyncApplier] applyBulkSnapshot: dropped ${droppedCards} orphan card(s), ${droppedStudyMaterials} study material(s), ${droppedMockTests} mock test(s), ${droppedPopupLinks} popup link(s), ${droppedContentOverlays} content overlay(s) — referenced deckId not present in snapshot.`);
         }
 
         // ── Phase 4: persist. Serialize every deck's toJson() into
@@ -680,6 +786,7 @@ class SyncApplier
             studyMaterials: incomingStudyMaterials.length - droppedStudyMaterials,
             mockTests:      incomingMockTests.length      - droppedMockTests,
             popupLinks:     incomingPopupLinks.length     - droppedPopupLinks,
+            contentOverlays: incomingContentOverlays.length - droppedContentOverlays,
         };
     }
 
@@ -881,6 +988,35 @@ class SyncApplier
                     };
                 }
             }
+
+            // Content overlays live in this deck's additionalData for exactly
+            // the same reason as popup records, and sync as their own entity
+            // too — so a full local->server resync has to ship them or the
+            // learner's edits would be dropped on wipe recovery. The stored
+            // record is already the wire shape, so it ships as-is.
+            for (const overlayRecord of ContentOverlayStore.collectAllRecords(deck))
+            {
+                if (!overlayRecord || typeof overlayRecord.id !== "string")
+                {
+                    continue;
+                }
+
+                const overlayLastModified = overlayRecord.lifecycle?.lastModified;
+                if (sinceMilliseconds > 0
+                    && overlayLastModified
+                    && !(new Date(overlayLastModified).getTime() > sinceMilliseconds))
+                {
+                    continue;
+                }
+
+                gatheredChanges[overlayRecord.id] =
+                {
+                    entityId:   overlayRecord.id,
+                    entityType: entityTypes.CONTENT_OVERLAY,
+                    data:       overlayRecord,
+                    deleted:    false,
+                };
+            }
         }
 
         console.log(`[SyncApplier] gathered ${allDecks.length - orphanCount} decks, ${totalCards} cards, ${totalStudyMaterials} study materials, ${totalMockTests} mock tests${orphanCount > 0 ? ` (skipped ${orphanCount} local orphan deck(s) — queued as deletions)` : ""}.`);
@@ -1011,20 +1147,23 @@ class SyncApplier
             // safe — the lifecycle gate above already ensured the
             // server's view is newer than the local one.
             //
-            // Carve-out: askAiPopupLinks. Those used to live here but
-            // now sync as standalone entities (entityTypes.ASK_AI_POPUP_LINK).
-            // Deck pushes strip the field in toSyncJson, so the server
-            // copy is intentionally empty for any deck saved post-
-            // refactor; using it as the source of truth would wipe out
-            // the local popup map every time a deck updated for any
-            // other reason. Preserve whatever the local deck already
-            // holds — the popup sync channel keeps it correct on its
-            // own.
+            // Carve-out: the entity-channel slots (askAiPopupLinks,
+            // contentOverlays). Those records live under the deck on disk but
+            // sync as standalone entities, and Deck.toSyncJson strips them from
+            // every deck push — so the server's copy of these slots is
+            // intentionally empty. Taking the server's view as the source of
+            // truth would wipe the local map every time the deck updated for
+            // any unrelated reason (a rename, an analysis stamp). Preserve
+            // whatever the local deck holds; each record's own sync channel
+            // keeps it correct.
             const localExistingAdditionalData = existingDeck.getAdditionalData() || {};
             const incomingAdditionalData = { ...(deckData.additionalData || {}) };
-            if (localExistingAdditionalData.askAiPopupLinks)
+            for (const entityChannelKey of SyncApplier.ENTITY_CHANNEL_ADDITIONAL_DATA_KEYS)
             {
-                incomingAdditionalData.askAiPopupLinks = localExistingAdditionalData.askAiPopupLinks;
+                if (localExistingAdditionalData[entityChannelKey])
+                {
+                    incomingAdditionalData[entityChannelKey] = localExistingAdditionalData[entityChannelKey];
+                }
             }
             existingDeck.setAdditionalData(incomingAdditionalData);
 

@@ -1,6 +1,7 @@
 import { askAiPromptModes } from "../../../Globals/Enumerations/AskAiPromptModes.js";
 import Card from "../../../Globals/Model/Card.js";
 import StudyMaterial from "../../../Globals/Model/StudyMaterial.js";
+import GeneratedVisualRenderer from "../../../Globals/Classes/GeneratedVisualRenderer.js";
 import HtmlSanitizer from "../../../Globals/Classes/HtmlSanitizer.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
@@ -885,23 +886,44 @@ class AskAiActionDispatcher
                 {
                     studyPageElement.renderLatex();
                 }
+                GeneratedVisualRenderer.render(materialContentSection);
             }
         }
     }
 
+    /**
+     * Writes the entity's new HTML and persists it.
+     *
+     * The setters return false when the deck is a paid one that is currently
+     * LOCKED — the edit is stored as an encrypted overlay, so it cannot be
+     * written without the session key. Surfacing that is the whole point:
+     * before overlays existed these setters were silent no-ops on any paid
+     * deck, so every insert and append appeared to work and quietly did
+     * nothing.
+     *
+     * @returns {Promise<boolean>} false when the edit could not be stored.
+     */
     static async #commitEntityHtml(entity, newHtml)
     {
+        let bAccepted = false;
+
         if (entity instanceof Card)
         {
-            entity.setAnswer(newHtml);
-            await entity.save();
-            return;
+            bAccepted = entity.setAnswer(newHtml);
         }
-        if (entity instanceof StudyMaterial)
+        else if (entity instanceof StudyMaterial)
         {
-            entity.setContent(newHtml);
-            await entity.save();
+            bAccepted = entity.setContent(newHtml);
         }
+
+        if (!bAccepted)
+        {
+            await DialogBox.alert("Deck is locked", "Unlock this deck with its password, then try again — your changes weren't saved.");
+            return false;
+        }
+
+        await entity.save();
+        return true;
     }
 
     static #getEntityLabel(entity)

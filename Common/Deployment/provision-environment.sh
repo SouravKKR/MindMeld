@@ -104,7 +104,9 @@ write_env_value()
 
 generate_base64_key() { node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"; }
 generate_password()   { node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"; }
-detect_admin_cidr()   { local ip; ip="$(curl -s --max-time 8 https://api.ipify.org || true)"; [ -n "$ip" ] && printf '%s/32' "$ip" || printf '0.0.0.0/0'; }
+# detect_admin_cidr lives in Library/EnvironmentConfig.sh — shared with
+# deploy-environment.sh, which needs the same answer to grant itself temporary
+# SSH access when the deploying machine's IP is not on the allow-list.
 
 # Write a per-environment deploy secret as KEY_<ENV> into the shared deployment.env.
 write_deployment_value() { write_env_value "$DEPLOYMENT_ENV_FILE" "${1}_${ENVIRONMENT_UPPER}" "$2"; }
@@ -174,10 +176,19 @@ EOF
 # GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64 (base64 -w0 of a "Vertex AI User" service-account key
 # JSON for that project) — a service account is ~10x faster to first token than an API key. Optional:
 # GOOGLE_ENTERPRISE_AGENT_LOCATION (default "global") and OPENAI_API_KEY. provision appends MONGODB_URL / REDIS_URL.
+#
+# ANTHROPIC_API_KEY is required ONLY by the admin-only paid-deck generation mode
+# (the ModelPool.PAID_DECK_* stages: coverage summaries, coverage reconciliation,
+# symbolic SVG diagrams, visual-need inference, factual/visual verification).
+# AnthropicProvider fails loudly at construction when it is unset rather than
+# falling back to another provider, so an environment that never runs paid-deck
+# generation can leave it blank and every other workflow is unaffected — but a
+# paid-deck run on such an environment will stop at its first Anthropic stage.
 GOOGLE_ENTERPRISE_AGENT_PROJECT=
 GOOGLE_ENTERPRISE_AGENT_LOCATION=global
 GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64=
 OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
 EOF
 
     # Generate the crypto secret we own, if absent.

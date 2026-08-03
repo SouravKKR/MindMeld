@@ -23,7 +23,6 @@ from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
 from Globals.Enumerations.CuratedBatchReviewStates import CuratedBatchReviewStates
 from Globals.Enumerations.CuratedFlashcardGrade import CuratedFlashcardGrade
 from Globals.Enumerations.TopicStrength import TopicStrength
-from Globals.Classes.Database.EmbeddingsQueryEngine import EmbeddingsQueryEngine
 from Globals.Utility.StripJsonMarkdown import strip_json_markdown
 
 
@@ -31,11 +30,23 @@ class GenerateCuratedStudyMaterial(Workflow):
     """
     Per-topic curated study material generator. Runs as a child task
     spawned by AnalyzeDeckPerformance for each WEAK or VOLATILE topic the
-    user needs help on. Combines best-effort vector search across the
-    user's textbook embeddings with a live web search, hands the merged
-    context to Gemini 3.1-flash-lite (with grounding enabled), and
-    persists a new StudyMaterial under the deck — then generates a set
-    of curated flashcards reinforcing that material in the same task.
+    user needs help on. Hands the merged context to Gemini 3.1-flash-lite
+    (with grounding enabled) and persists a new StudyMaterial under the
+    deck — then generates a set of curated flashcards reinforcing that
+    material in the same task.
+
+    Grounding corpus (all tenant-scoped or public, by design):
+      1. The weak cards themselves, carried in the `hardCards` payload —
+         the questions this student actually got wrong.
+      2. The student's own non-curated study material for this deck.
+      3. A live web search.
+
+    It does NOT read the shared textEmbeddings chunk store. An earlier
+    version ran an unfiltered vector search over it, which pulled verbatim
+    page text out of other users' uploaded textbooks and persisted the
+    derived material into this user's deck. Grounding only on content this
+    user already owns removes that by construction — there is no filter to
+    forget. Do not reintroduce a chunk-store read here.
 
     Each curated material self-describes via its `additionalData`:
     `bCurated`, `topicName`, `topicStrength`, `generatedForAnalysisAt`
@@ -50,12 +61,13 @@ class GenerateCuratedStudyMaterial(Workflow):
     """
 
     MODEL_NAME                                     = "gemini-3.1-flash-lite"
-    EMBEDDING_MODEL_NAME                           = "nomic-ai/nomic-embed-text-v1"
-    EMBEDDING_QUERY_PREFIX                         = "search_query: "
-    EMBEDDING_DOC_FETCH_LIMIT                      = 1500
-    EMBEDDING_TOP_K                                = 8
     WEB_SEARCH_RESULT_LIMIT                        = 5
     WEB_CONTENT_SNIPPET_CHAR_LIMIT                 = 600
+    # Own-material grounding bounds. The corpus is one deck's worth of the
+    # user's own study material, so these only guard against a pathological
+    # deck crowding the web sources out of the prompt.
+    OWN_MATERIAL_FETCH_LIMIT                       = 12
+    OWN_MATERIAL_SNIPPET_CHAR_LIMIT                = 2000
     MAX_CONTEXT_CHARACTERS                         = 14000
     STUDY_MATERIAL_STANDARD_DETAIL_LEVEL           = 1
     MAX_FLASHCARDS_PER_TOPIC                       = 8
@@ -75,8 +87,21 @@ class GenerateCuratedStudyMaterial(Workflow):
         " When you state a fact drawn from one of the numbered web sources in the user context, append "
         "the matching reference in square brackets immediately after that sentence — for example `[1]` or "
         "`[2, 4]` for multiple sources. Only use numbers that exist in the Sources list; never invent a "
-        "number, never cite the textbook excerpts, and never put a bracketed reference inside a code "
-        "block or formula."
+        "number, never cite the student's own study-material excerpts, and never put a bracketed "
+        "reference inside a code block or formula."
+    )
+
+    # Appended to both tutor prompts. Curated material is remedial by definition —
+    # it exists because the student was already confused once — so a derivation or
+    # worked example compressed into a single line is the exact failure this
+    # material is meant to correct. Kept as one clause rather than duplicated into
+    # each prompt so the two tiers cannot drift apart.
+    STEP_DECOMPOSITION_CLAUSE = (
+        " Work any derivation or worked example the way a textbook does — step by step, each step its own "
+        "displayed equation, with the reason for it stated alongside — rather than collapsing it into one "
+        "line. Use block LaTeX \\[ ... \\] for displayed equations (KaTeX renders it), number the ones you "
+        "refer to later with \\tag{1}, \\tag{2}, … and cite them in prose by that number. Unicode symbols "
+        "are for math sitting inside a sentence."
     )
 
     SYSTEM_PROMPT_WEAK = (
@@ -89,7 +114,7 @@ class GenerateCuratedStudyMaterial(Workflow):
         "goal is comprehension over rigour — better that the student leaves understanding the core idea "
         "than dazzled by terminology. Output a single self-contained HTML fragment (no <html> or <body> "
         "wrappers) with semantic tags (<h2>, <h3>, <p>, <ul>, <ol>, <pre>, <strong>, <em>). Keep tone "
-        "warm and encouraging." + CITATION_INSTRUCTION_CLAUSE
+        "warm and encouraging." + CITATION_INSTRUCTION_CLAUSE + STEP_DECOMPOSITION_CLAUSE
     )
 
     SYSTEM_PROMPT_VOLATILE = (
@@ -101,7 +126,8 @@ class GenerateCuratedStudyMaterial(Workflow):
         "confused with X — the difference is …'). Include at least one worked example whose solution "
         "depends on getting this distinction right. Comprehension over rigour. Output a single "
         "self-contained HTML fragment (no <html> or <body> wrappers) with semantic tags (<h2>, <h3>, "
-        "<p>, <ul>, <ol>, <pre>, <strong>, <em>). Keep tone warm and encouraging." + CITATION_INSTRUCTION_CLAUSE
+        "<p>, <ul>, <ol>, <pre>, <strong>, <em>). Keep tone warm and encouraging."
+        + CITATION_INSTRUCTION_CLAUSE + STEP_DECOMPOSITION_CLAUSE
     )
 
     SYSTEM_PROMPT_FLASHCARDS = (
@@ -204,7 +230,6 @@ class GenerateCuratedStudyMaterial(Workflow):
         deck_collection            = database[DatabaseConstants.DECKS_COLLECTION]
         study_materials_collection = database[DatabaseConstants.STUDY_MATERIALS_COLLECTION]
         cards_collection           = database[DatabaseConstants.CARDS_COLLECTION]
-        text_embeddings_collection = database[DatabaseConstants.TEXT_EMBEDDINGS_COLLECTION]
 
         # Paid and non-paid decks share the same normal read/write path. The
         # deck lives in the normal sync collection wrapped as {userId, data:
@@ -214,10 +239,10 @@ class GenerateCuratedStudyMaterial(Workflow):
             print(f"[GenerateCuratedStudyMaterial] Deck {self.__deck_id} not found for user {self.__user_id} — exiting.")
             return
 
-        textbook_snippets = await self.__collect_textbook_snippets(text_embeddings_collection)
-        web_sources       = await self.__collect_web_snippets()
+        own_material_snippets = await self.__collect_own_study_material_snippets(study_materials_collection)
+        web_sources           = await self.__collect_web_snippets()
 
-        merged_context = self.__assemble_context(textbook_snippets, web_sources)
+        merged_context = self.__assemble_context(own_material_snippets, web_sources)
 
         html_content = await self.__synthesize_html_content(merged_context)
         if not html_content:
@@ -284,61 +309,73 @@ class GenerateCuratedStudyMaterial(Workflow):
             current_task.set_completion(1.0)
             await TaskManager.set_task(current_task)
 
-    async def __collect_textbook_snippets(self, text_embeddings_collection) -> list[str]:
+    async def __collect_own_study_material_snippets(self, study_materials_collection) -> list[str]:
+        """
+        Gathers background context from the student's OWN study material for
+        this deck.
+
+        This deliberately replaces what used to be a global vector search over
+        the shared textEmbeddings chunk store. That search was unfiltered by
+        tenant, so it retrieved verbatim page text from every other user's
+        uploaded textbooks and persisted the derived material into this user's
+        deck — a cross-tenant content flow that needed no attacker. Grounding on
+        the user's own material removes the problem by construction rather than
+        by filter, and cannot regress the way a filter can be forgotten.
+
+        It also grounds better: the weak-topic cards and the material this
+        student has actually been studying are more relevant to their confusion
+        than the highest-cosine chunk from a stranger's textbook.
+
+        Curated material is excluded from the corpus. Without that exclusion a
+        curated batch would be grounded on the previous curated batch, and each
+        round would drift further from the source material with nothing pulling
+        it back.
+        """
         try:
-            return await self.__vector_search_textbook(text_embeddings_collection)
-        except Exception as vector_search_error:
-            print(f"[GenerateCuratedStudyMaterial] Vector search failed for topic '{self.__topic_name}': {vector_search_error}")
+            documents = await asyncio.to_thread(
+                list,
+                study_materials_collection.find(
+                    {
+                        "userId": self.__user_id,
+                        "data.deckId": self.__deck_id,
+                        f"data.additionalData.{CuratedStudyMaterialFields.B_CURATED}": {"$ne": True},
+                    },
+                    {"_id": 0, "data.content": 1},
+                ).limit(GenerateCuratedStudyMaterial.OWN_MATERIAL_FETCH_LIMIT),
+            )
+        except Exception as lookup_error:
+            print(f"[GenerateCuratedStudyMaterial] Own-material lookup failed for topic '{self.__topic_name}': {lookup_error}")
             return []
 
-    async def __vector_search_textbook(self, text_embeddings_collection) -> list[str]:
-        from sentence_transformers import SentenceTransformer
+        snippets: list[str] = []
+        for document in documents:
+            content_html = (document.get("data") or {}).get("content")
+            if not isinstance(content_html, str) or not content_html.strip():
+                continue
+            plain_text = GenerateCuratedStudyMaterial.__strip_html_to_text(content_html)
+            if plain_text:
+                snippets.append(plain_text[: GenerateCuratedStudyMaterial.OWN_MATERIAL_SNIPPET_CHAR_LIMIT])
 
-        embedding_query = GenerateCuratedStudyMaterial.EMBEDDING_QUERY_PREFIX + self.__topic_name
+        return snippets
 
-        def encode_query():
-            model = SentenceTransformer(
-                GenerateCuratedStudyMaterial.EMBEDDING_MODEL_NAME,
-                trust_remote_code=True,
-                device="cpu",
-            )
-            return model.encode([embedding_query], convert_to_numpy=True)[0].tolist()
-
-        query_vector = await asyncio.to_thread(encode_query)
-
-        top_k = GenerateCuratedStudyMaterial.EMBEDDING_TOP_K
-
-        # Global (un-scoped) Atlas $vectorSearch over the textbook corpus — the
-        # index defines an informationSourceHash filter field, but curated study
-        # intentionally searches across all embedded sources, so no filter is
-        # supplied. If the index is missing or still building the aggregation
-        # raises and __collect_textbook_snippets swallows it (returns []).
-        pipeline = [
-            {
-                "$vectorSearch":
-                {
-                    "index": EmbeddingsQueryEngine.VECTOR_INDEX_NAME,
-                    "path": "embedding",
-                    "queryVector": [float(value) for value in query_vector],
-                    "numCandidates": max(top_k * 20, 150),
-                    "limit": top_k,
-                }
-            },
-            {
-                "$project": {"_id": 0, "content": 1},
-            },
-        ]
-
-        scored_documents = await asyncio.to_thread(
-            list,
-            text_embeddings_collection.aggregate(pipeline),
+    @staticmethod
+    def __strip_html_to_text(content_html: str) -> str:
+        """
+        Flattens a study material's HTML into prose for prompt context. Block
+        tags become spaces so words either side of a tag boundary do not run
+        together, and entities common in generated material are decoded.
+        """
+        without_tags = re.sub(r"<[^>]+>", " ", content_html)
+        decoded = (
+            without_tags
+            .replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", '"')
+            .replace("&#39;", "'")
         )
-
-        return [
-            document["content"]
-            for document in scored_documents
-            if isinstance(document.get("content"), str) and document.get("content")
-        ]
+        return re.sub(r"\s+", " ", decoded).strip()
 
     async def __collect_web_snippets(self) -> list[dict]:
         """
@@ -371,12 +408,12 @@ class GenerateCuratedStudyMaterial(Workflow):
 
         return web_sources
 
-    def __assemble_context(self, textbook_snippets: list[str], web_sources: list[dict]) -> str:
+    def __assemble_context(self, own_material_snippets: list[str], web_sources: list[dict]) -> str:
         assembled_blocks: list[str] = []
 
-        if textbook_snippets:
-            assembled_blocks.append("=== EXCERPTS FROM THE STUDENT'S OWN TEXTBOOK (do not cite — use only as background) ===")
-            for excerpt_index, snippet in enumerate(textbook_snippets, start=1):
+        if own_material_snippets:
+            assembled_blocks.append("=== THE STUDENT'S OWN STUDY MATERIAL FOR THIS DECK (do not cite — use only as background) ===")
+            for excerpt_index, snippet in enumerate(own_material_snippets, start=1):
                 assembled_blocks.append(f"Excerpt {excerpt_index}: {snippet}")
 
         if web_sources:

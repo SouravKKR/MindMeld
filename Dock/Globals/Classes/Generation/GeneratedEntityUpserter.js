@@ -2,6 +2,7 @@ const { getRandomUuid } = require("../../UtilityFunctions.js/GetRandomUuid");
 const SyncQueryEngine = require("../Database/SyncQueryEngine");
 const DatabaseConnector = require("../Database/DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
+const GenerationProvenance = require("./GenerationProvenance");
 
 /**
  * Persists generated cards and study materials onto the shared deck
@@ -23,7 +24,7 @@ class GeneratedEntityUpserter
         return rawQuestion.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
     }
 
-    static async upsertCards(userId, flashcardFiles, resolveLeafDeckId, syllabusPositionIndex, now, reusedDeckIds = null)
+    static async upsertCards(userId, flashcardFiles, resolveLeafDeckId, syllabusPositionIndex, now, reusedDeckIds = null, sourceContentHashes = [])
     {
         const cardCollection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.CARDS_COLLECTION);
 
@@ -67,7 +68,7 @@ class GeneratedEntityUpserter
                     tags: [],
                     deckId: leafDeckId,
                     baseDifficulty: GeneratedEntityUpserter.#DEFAULT_CARD_BASE_DIFFICULTY,
-                    additionalData: { ...(card.additionalData ?? {}), syllabusPosition },
+                    additionalData: GenerationProvenance.applyTo({ ...(card.additionalData ?? {}), syllabusPosition }, sourceContentHashes),
                     lifecycle:
                     {
                         creationDate: now,
@@ -87,7 +88,7 @@ class GeneratedEntityUpserter
         }
     }
 
-    static async upsertStudyMaterials(userId, studyMaterialFiles, resolveLeafDeckId, syllabusPositionIndex, now)
+    static async upsertStudyMaterials(userId, studyMaterialFiles, resolveLeafDeckId, syllabusPositionIndex, now, sourceContentHashes = [])
     {
         for (const file of studyMaterialFiles)
         {
@@ -102,6 +103,7 @@ class GeneratedEntityUpserter
                 deckId: deckId,
                 syllabusPosition,
                 detailLevel,
+                additionalData: GenerationProvenance.applyTo({}, sourceContentHashes),
                 lifecycle:
                 {
                     creationDate: now,

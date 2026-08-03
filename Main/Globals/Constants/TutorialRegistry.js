@@ -2,41 +2,58 @@ import { tutorialStepTypes } from "../Enumerations/TutorialStepTypes.js";
 import DeckEvents from "../Events/DeckEvents.js";
 import CardEvents from "../Events/CardEvents.js";
 import TutorialSampleDeckBuilder from "../Classes/Tutorials/TutorialSampleDeckBuilder.js";
+import DeckCreationChoiceAvailability from "../Classes/DeckCreationChoiceAvailability.js";
+import TutorialTargetResolver from "../Classes/TutorialTargetResolver.js";
 
 /**
  * Shared validator that gates a HIGHLIGHT step's Next button on the
  * spotlight target having a non-empty trimmed value. Works for both
- * <input>/<textarea> (.value) and contenteditable rich-text editors
- * (.textContent) — DeckEditor uses the former, CardEditor uses the
- * latter.
+ * <input>/<textarea> (.value) and contenteditable rich-text editors —
+ * DeckEditor uses the former, CardEditor uses the latter.
+ *
+ * A <rich-text-editor> is a composite: a toolbar, the contenteditable
+ * surface, and a normally-hidden raw-HTML help banner that carries real
+ * text. Reading the HOST's textContent therefore always returned a
+ * non-empty string, so the gate passed with an empty editor — the user
+ * could click Next through "Type your question" without typing, then hit
+ * an "A card must have a question" alert on Save that renders beneath
+ * the tutorial overlay. Read the editable surface itself instead.
  */
 const buildNonEmptyTextValidator = (selector) =>
 {
     return () =>
     {
-        const targetElement = document.querySelector(selector);
+        // Resolved the same way the overlay resolves the spotlight, so the
+        // gate reads the field the user is actually typing into rather than
+        // a hidden namesake on another mounted page.
+        const targetElement = TutorialTargetResolver.resolve(selector);
         if (!targetElement)
         {
             return false;
         }
-        const inputValue = (typeof targetElement.value === "string" && targetElement.value.length > 0)
-            ? targetElement.value
-            : (targetElement.textContent || "");
+
+        const editableElement = (typeof targetElement.querySelector === "function")
+            ? targetElement.querySelector("[contenteditable]")
+            : null;
+        const valueElement = editableElement || targetElement;
+
+        const inputValue = (typeof valueElement.value === "string")
+            ? valueElement.value
+            : (valueElement.textContent || "");
+
         return inputValue.trim().length > 0;
     };
 };
 
 /**
- * Opens a page during a tutorial step's setupAction. PageNavigator is
- * lazy-imported (it pulls in every page module, several of which
- * transitively reference the tutorial engine) to avoid a load-time
- * import cycle — mirroring how TutorialEngine imports it.
+ * Selector for the deck tile of a deck created during the running
+ * tutorial — either the sample deck the builder drops in, or the deck the
+ * user makes themselves on the Beginners tour. DeckTile stamps the
+ * attribute from the same CREATED_DURING_TUTORIAL_KEY flag the cleanup
+ * pass uses, so this always resolves to the tutorial's own deck rather
+ * than whichever tile happens to be first in the grid.
  */
-const openTutorialPage = async (pageTagName, ...pageArguments) =>
-{
-    const pageNavigatorModule = await import("../Classes/PageNavigator.js");
-    pageNavigatorModule.default.open(pageTagName, ...pageArguments);
-};
+const TUTORIAL_DECK_TILE_SELECTOR = "deck-tile[data-is-tutorial-sample=\"true\"]";
 
 /**
  * TutorialRegistry
@@ -53,13 +70,20 @@ const openTutorialPage = async (pageTagName, ...pageArguments) =>
  *                    { type: MODAL, title, body, bWideTooltip? }
  *                    { type: HIGHLIGHT, title, body, selector, fallbackBody? }
  *                    { type: WAIT_FOR_CLICK, title, body, selector, fallbackBody? }
+ *                    { type: WAIT_FOR_EVENT, title, body, selector, eventName }
  *                    { type: IFRAME, title, body, iframeUrl }
  *
- * The Beginners tour is designed to work on a brand-new, completely
- * blank account: every interactive step targets an element that always
- * exists for new users (`new-deck-tile`, `.deck-save-input`), and the
- * user actually performs the actions themselves rather than being
- * shown static highlights.
+ * Every step additionally carries `expectedPageTagName` so the engine's
+ * navigation guard knows which page the step belongs on, and may carry
+ * `bShouldSkipStep()` for a step that only exists on one branch of a
+ * real flow (see the Beginners deck-chooser step).
+ *
+ * THE GOLDEN RULE for authoring steps: the tutorial must walk the SAME
+ * path a real user walks. Every page change has to be caused by the user
+ * clicking a real element the tour pointed at — never by a setupAction
+ * calling PageNavigator — and every intermediate popup the app shows on
+ * that path needs its own step. A missing intermediate step strands the
+ * user on a screen the next step doesn't expect.
  */
 class TutorialRegistry
 {
@@ -94,7 +118,7 @@ class TutorialRegistry
                     <button type="button" class="tutorial-lifecycle-diagram-zoom" aria-label="Open the lifecycle diagram fullscreen">
                         <img
                             class="tutorial-lifecycle-diagram"
-                            src="./Globals/Assets/Images/Diagrams/CogniumLearnKnowledgeConsolidationLifecycle.png"
+                            src="./Globals/Assets/Images/Diagrams/CogniumLearnKnowledgeConsolidationLifecycleSimple.png"
                             alt="CogniumLearn Knowledge Consolidation Lifecycle"
                         >
                         <span class="tutorial-lifecycle-diagram-zoom-hint">Tap the diagram to expand</span>
@@ -149,15 +173,32 @@ class TutorialRegistry
             {
                 type: tutorialStepTypes.WAIT_FOR_CLICK,
                 title: "Click the + tile",
-                body: "<p>That's the New Deck tile. Click it to open the deck editor.</p>",
+                body: "<p>That's the New Deck tile. Click it — it's how you add anything new to your home page.</p>",
                 selector: "new-deck-tile",
                 expectedPageTagName: "home-page",
                 fallbackBody: "<p>If you can't see the + tile, scroll the home page to find it. We'll continue once you click it.</p>"
             },
             {
+                // Only signed-in, online users get the chooser — everyone
+                // else lands straight in the deck editor, so this step is
+                // skipped for them rather than waiting for a button that
+                // will never render.
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Choose \"Create a new deck\"",
+                body:
+                `
+                    <p>The + tile offers three ways to get a deck: build one yourself, import a <em>.emmd</em> file, or buy a ready-made one.</p>
+                    <p>Click <strong>Create a new deck</strong> to start from scratch.</p>
+                `,
+                selector: ".create-deck-choice-create",
+                expectedPageTagName: "home-page",
+                bShouldSkipStep: () => !DeckCreationChoiceAvailability.bShouldShowChoiceModal(),
+                fallbackBody: "<p>Pick <strong>Create a new deck</strong> from the menu that just appeared.</p>"
+            },
+            {
                 type: tutorialStepTypes.HIGHLIGHT,
                 title: "Give your deck a name",
-                body: "<p>Type a name for your deck in the highlighted field, then click <strong>Next</strong>.</p>",
+                body: "<p>This is the deck editor. Type a name for your deck in the highlighted field, then click <strong>Next</strong>.</p>",
                 selector: ".deck-name-input",
                 expectedPageTagName: "deck-editor-page",
                 canAdvanceValidator: buildNonEmptyTextValidator(".deck-name-input"),
@@ -166,7 +207,7 @@ class TutorialRegistry
             {
                 type: tutorialStepTypes.HIGHLIGHT,
                 title: "Add a short name",
-                body: "<p>Pick a short abbreviation for the deck — anything works. Then click <strong>Next</strong>.</p>",
+                body: "<p>Pick a short abbreviation for the deck — it's what the tile on your home page shows. Then click <strong>Next</strong>.</p>",
                 selector: ".deck-short-name-input",
                 expectedPageTagName: "deck-editor-page",
                 canAdvanceValidator: buildNonEmptyTextValidator(".deck-short-name-input"),
@@ -178,7 +219,7 @@ class TutorialRegistry
                 title: "Save your deck",
                 body:
                 `
-                    <p>Click <strong>Save</strong> to create the deck.</p>
+                    <p>Click <strong>Save</strong> to create the deck. You'll be taken back to your home page.</p>
                     <p>Both fields are required — Save won't go through with an empty name or short name.</p>
                 `,
                 selector: ".deck-save-input",
@@ -193,7 +234,7 @@ class TutorialRegistry
                     <p>Nice — that's your first deck. Tapping it opens its contents; right-click (or long-press) for options.</p>
                     <p>The <strong>Study</strong> button on the tile is where the five-phase journey begins.</p>
                 `,
-                selector: "deck-tile",
+                selector: TUTORIAL_DECK_TILE_SELECTOR,
                 expectedPageTagName: "home-page",
                 fallbackBody: "<p>Your deck is now on the home page. Find it whenever you want to add cards or start studying.</p>"
             },
@@ -216,7 +257,7 @@ class TutorialRegistry
                     <p>Click the <strong>three dots</strong> at the top-right of your deck tile.</p>
                     <p>You can also right-click the tile, or long-press it on a phone — they all open the same options menu.</p>
                 `,
-                selector: ".deck-options-button",
+                selector: `${TUTORIAL_DECK_TILE_SELECTOR} .deck-options-button`,
                 expectedPageTagName: "home-page",
                 fallbackBody: "<p>Open your deck's options menu (three-dots button, right-click, or long-press). We'll continue once it's open.</p>"
             },
@@ -236,7 +277,7 @@ class TutorialRegistry
                     <p>A picker just appeared. Click <strong>Card</strong> — that's the flashcard option.</p>
                     <p>(The picker also lets you add Study Materials and Mock Tests, but we'll stick with Card for the tour.)</p>
                 `,
-                selector: ".entity-picker-button",
+                selector: ".entity-picker-card-button",
                 expectedPageTagName: "home-page",
                 fallbackBody: "<p>Click Card from the picker that just appeared, then we'll continue.</p>"
             },
@@ -264,12 +305,28 @@ class TutorialRegistry
                 title: "Save your card",
                 body:
                 `
-                    <p>Click <strong>Save</strong> to create the card. The editor stays open so you can add more — but for now, just one is enough.</p>
+                    <p>Click <strong>Save</strong> to create the card.</p>
                     <p>Both the question and the answer are required.</p>
                 `,
                 selector: ".save-button",
                 expectedPageTagName: "card-editor-page",
                 fallbackBody: "<p>Click Save to create the card. We'll wait for the save to go through.</p>"
+            },
+            {
+                // Saving a NEW card deliberately leaves the editor open and
+                // blank so you can add another. That means the tour has to
+                // walk the user back to Home itself instead of assuming the
+                // save navigated for them.
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Head back home",
+                body:
+                `
+                    <p>Saved. Notice the editor cleared itself and stayed open — that's so you can type the next card straight away.</p>
+                    <p>One card is enough for the tour. Click <strong>Back</strong> in the header to return to your home page.</p>
+                `,
+                selector: "header-component .back-button",
+                expectedPageTagName: "card-editor-page",
+                fallbackBody: "<p>Use the back button at the top of the card editor to return to your home page.</p>"
             },
             {
                 type: tutorialStepTypes.MODAL,
@@ -328,24 +385,16 @@ class TutorialRegistry
             {
                 type: tutorialStepTypes.HIGHLIGHT,
                 title: "Your sample deck",
-                body: "<p>This is the sample deck we set up. It contains a study material and a few flashcards on CogniumLearn's own learning lifecycle.</p>",
-                selector: "deck-tile[data-is-tutorial-sample=\"true\"]",
+                body: "<p>This is the sample deck we set up. It contains study materials and a few flashcards on CogniumLearn's own learning lifecycle.</p>",
+                selector: TUTORIAL_DECK_TILE_SELECTOR,
                 expectedPageTagName: "home-page",
                 fallbackBody: "<p>Look for the new deck tile on your home page named 'Tutorial Sample Deck'.</p>"
             },
             {
-                type: tutorialStepTypes.HIGHLIGHT,
-                title: "Start studying",
-                body: "<p>The <strong>Study</strong> button on the tile is where the journey begins. We'll start with reading the study material.</p>",
-                selector: "deck-tile[data-is-tutorial-sample=\"true\"] .study-button",
-                expectedPageTagName: "home-page",
-                fallbackBody: "<p>Find the <strong>Study</strong> button on the sample deck tile.</p>"
-            },
-            {
                 type: tutorialStepTypes.WAIT_FOR_CLICK,
                 title: "Click Study",
-                body: "<p>Click <strong>Study</strong> to open the study-mode picker.</p>",
-                selector: "deck-tile[data-is-tutorial-sample=\"true\"] .study-button",
+                body: "<p>The <strong>Study</strong> button on the tile is where the journey begins. Click it to open the study-mode picker.</p>",
+                selector: `${TUTORIAL_DECK_TILE_SELECTOR} .study-button`,
                 expectedPageTagName: "home-page",
                 fallbackBody: "<p>Click the Study button on the sample deck tile.</p>"
             },
@@ -360,7 +409,7 @@ class TutorialRegistry
             {
                 type: tutorialStepTypes.WAIT_FOR_CLICK,
                 title: "Start the session",
-                body: "<p>Pick a detail level — Standard is what we'll demo — and click <strong>Start Study</strong>.</p>",
+                body: "<p>The sample deck has material at two detail levels, so CogniumLearn asks which you want. Keep <strong>Standard</strong> and click <strong>Start Study</strong>.</p>",
                 selector: ".detail-level-picker-start",
                 expectedPageTagName: "home-page",
                 fallbackBody: "<p>Click Start Study in the detail-level picker.</p>"
@@ -374,12 +423,23 @@ class TutorialRegistry
                 fallbackBody: "<p>The study material content is rendered on the page.</p>"
             },
             {
+                // The assistant panel is mounted collapsed on every study
+                // session. Without opening it first, the four steps below
+                // would spotlight a zero-height, pointer-events:none strip.
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Open the Assistant",
+                body: "<p>The AI helpers live in the Assistant panel, which starts hidden. Click <strong>Show Assistant</strong> at the bottom of the screen to reveal it.</p>",
+                selector: ".assistant-toggle-button",
+                expectedPageTagName: "study-page",
+                fallbackBody: "<p>Click <strong>Show Assistant</strong> in the study action row to reveal the AI tools.</p>"
+            },
+            {
                 type: tutorialStepTypes.HIGHLIGHT,
                 title: "Ask anything",
                 body: "<p>Drop a question about what you're reading into this input and hit Send — the AI answers in context. Multi-line and images both work.</p>",
                 selector: ".bottom-panel-question-row",
                 expectedPageTagName: "study-page",
-                fallbackBody: "<p>The Ask input lives in the bottom panel of the study page.</p>"
+                fallbackBody: "<p>The Ask input lives in the Assistant panel at the bottom of the study page.</p>"
             },
             {
                 type: tutorialStepTypes.HIGHLIGHT,
@@ -387,7 +447,7 @@ class TutorialRegistry
                 body: "<p><strong>Explain</strong> gives you a plain-language summary of the whole material — no question needed.</p>",
                 selector: ".bottom-panel-explain-button",
                 expectedPageTagName: "study-page",
-                fallbackBody: "<p>Look for the Explain button in the bottom panel.</p>"
+                fallbackBody: "<p>Look for the Explain button in the Assistant panel.</p>"
             },
             {
                 type: tutorialStepTypes.HIGHLIGHT,
@@ -395,7 +455,7 @@ class TutorialRegistry
                 body: "<p><strong>Summarize</strong> produces a tight cheat sheet — perfect for the night before an exam.</p>",
                 selector: ".bottom-panel-summarize-button",
                 expectedPageTagName: "study-page",
-                fallbackBody: "<p>Look for the Summarize button in the bottom panel.</p>"
+                fallbackBody: "<p>Look for the Summarize button in the Assistant panel.</p>"
             },
             {
                 type: tutorialStepTypes.HIGHLIGHT,
@@ -403,7 +463,7 @@ class TutorialRegistry
                 body: "<p><strong>Enhance</strong> applies prebuilt transformations like <em>Make mnemonic</em> or <em>Format</em>, with room for your own instructions. More tools land in this menu over time.</p>",
                 selector: ".bottom-panel-enhance-button",
                 expectedPageTagName: "study-page",
-                fallbackBody: "<p>Look for the Enhance button in the bottom panel.</p>"
+                fallbackBody: "<p>Look for the Enhance button in the Assistant panel.</p>"
             },
             {
                 type: tutorialStepTypes.MODAL,
@@ -428,7 +488,7 @@ class TutorialRegistry
                 type: tutorialStepTypes.WAIT_FOR_CLICK,
                 title: "Open Study again",
                 body: "<p>Click <strong>Study</strong> on the sample deck tile one more time — this time we'll pick Spaced Repetition.</p>",
-                selector: "deck-tile[data-is-tutorial-sample=\"true\"] .study-button",
+                selector: `${TUTORIAL_DECK_TILE_SELECTOR} .study-button`,
                 expectedPageTagName: "home-page",
                 fallbackBody: "<p>Click Study on the sample deck tile again.</p>"
             },
@@ -466,12 +526,22 @@ class TutorialRegistry
                 fallbackBody: "<p>Rate the card using the four feedback buttons below the answer.</p>"
             },
             {
+                // Fresh study page, fresh collapsed panel — it has to be
+                // reopened for the card-mode session too.
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Open the Assistant again",
+                body: "<p>The Assistant is available on flashcards too, and it starts hidden here as well. Click <strong>Show Assistant</strong> to open it.</p>",
+                selector: ".assistant-toggle-button",
+                expectedPageTagName: "study-page",
+                fallbackBody: "<p>Click <strong>Show Assistant</strong> in the study action row.</p>"
+            },
+            {
                 type: tutorialStepTypes.HIGHLIGHT,
                 title: "Mark important cards for review",
                 body: "<p>Use this toggle to mark a card for review. <strong>Revise</strong> mode plays back only marked cards — perfect for a quick polish pass right before an exam.</p>",
                 selector: ".bottom-panel-mark-review-toggle",
                 expectedPageTagName: "study-page",
-                fallbackBody: "<p>The Mark for Review toggle lives in the bottom panel for card sessions.</p>"
+                fallbackBody: "<p>The Mark for Review toggle lives in the Assistant panel for card sessions.</p>"
             },
             {
                 type: tutorialStepTypes.MODAL,
@@ -483,16 +553,10 @@ class TutorialRegistry
                     <ul>
                         <li><strong>Revise</strong> — fast linear pass over cards you've marked for review.</li>
                         <li><strong>Summary cheat sheet</strong> — open Content Study again and pick the <em>Summary</em> detail level for a one-page cram view.</li>
-                        <li><strong>Mock Test</strong> — exam-style timed assessment (coming soon).</li>
+                        <li><strong>Mock Test</strong> — exam-style timed assessment. The <em>Mock tests &amp; grading</em> tutorial walks one end to end.</li>
                         <li><strong>Curated Study</strong> — auto-generated materials targeted at the topics you're weakest in. Enable <em>Auto Performance Analysis</em> + <em>Auto Generate Curated Study</em> in the deck editor and the app does the rest after a week of study.</li>
                     </ul>
                 `
-                // TODO: Wire up a mock-test walkthrough segment here once
-                // the timed MockTestSession UI ships. As soon as
-                // MockTestSession.start() can render a non-PDF in-page
-                // quiz, add WAIT_FOR_CLICK + HIGHLIGHT steps for the
-                // Start, Submit, and per-question score reveal — the
-                // sample deck already contains the cards needed for it.
             },
             {
                 type: tutorialStepTypes.WAIT_FOR_CLICK,
@@ -518,8 +582,8 @@ class TutorialRegistry
                 body:
                 `
                     <ul>
-                        <li><strong>Buy a pre-made deck</strong> — the Paid Deck Library has high-quality decks made by educators, ready to study.</li>
-                        <li><strong>Generate With AI</strong> — right-click any deck and pick "Generate With AI" to have the app build flashcards / study materials / mock tests from a syllabus, your notes, or a description. (Currently restricted to admins during the beta.)</li>
+                        <li><strong>Buy a pre-made deck</strong> — the Paid Deck Library has high-quality decks made by educators, ready to study. It's the third option behind the same + tile.</li>
+                        <li><strong>Generate With AI</strong> — right-click any deck and pick "Generate With AI" to have the app build flashcards / study materials / mock tests from a syllabus, your notes, or a description.</li>
                     </ul>
                     <p>You don't have to choose just one — most users mix all three.</p>
                 `
@@ -556,7 +620,7 @@ class TutorialRegistry
                 },
                 body:
                 `
-                    <p>While you're studying, the AI can <strong>explain</strong>, <strong>summarize</strong>, <strong>enhance</strong> or <strong>answer a question</strong> about what you're reading — right from the bottom panel.</p>
+                    <p>While you're studying, the AI can <strong>explain</strong>, <strong>summarize</strong>, <strong>enhance</strong> or <strong>answer a question</strong> about what you're reading — right from the Assistant panel.</p>
                     <p>Let's open a study session on the sample deck and try it. The responses in this tutorial are <strong>built-in samples</strong> — no real AI call is made. (The real AI features use credits.)</p>
                 `
             },
@@ -564,7 +628,7 @@ class TutorialRegistry
                 type: tutorialStepTypes.WAIT_FOR_CLICK,
                 title: "Open Study",
                 body: "<p>Click <strong>Study</strong> on the sample deck tile.</p>",
-                selector: "deck-tile[data-is-tutorial-sample=\"true\"] .study-button",
+                selector: `${TUTORIAL_DECK_TILE_SELECTOR} .study-button`,
                 expectedPageTagName: "home-page",
                 fallbackBody: "<p>Click the Study button on the sample deck tile.</p>"
             },
@@ -594,7 +658,7 @@ class TutorialRegistry
                 body: "<p>The AI tools live in the Assistant panel, which starts hidden. Click <strong>Show Assistant</strong> at the bottom to reveal it.</p>",
                 selector: ".assistant-toggle-button",
                 expectedPageTagName: "study-page",
-                fallbackBody: "<p>Click <strong>Show Assistant</strong> in the footer to reveal the AI tools.</p>"
+                fallbackBody: "<p>Click <strong>Show Assistant</strong> in the study action row to reveal the AI tools.</p>"
             },
             {
                 type: tutorialStepTypes.WAIT_FOR_CLICK,
@@ -612,11 +676,11 @@ class TutorialRegistry
                 title: "What an AI response looks like",
                 expectedPageTagName: "study-page",
                 selector: ".ask-ai-dialog",
-                fallbackBody: "<p>The AI response popup is open in front of you. Read it, then close it and click Next.</p>",
+                fallbackBody: "<p>The AI response popup is open in front of you. Read it, then click Next.</p>",
                 body:
                 `
                     <p>This is exactly what an AI answer looks like, rendered through the real popup — but it's a <strong>built-in sample</strong>, not a live AI call.</p>
-                    <p>Close the popup (✕ or Escape) when you're done, then click <strong>Next</strong>.</p>
+                    <p>Read it, then click <strong>Next</strong> — we'll close the popup for you.</p>
                 `
             },
             {
@@ -624,6 +688,12 @@ class TutorialRegistry
                 title: "Summarize, Enhance and Ask",
                 expectedPageTagName: "study-page",
                 bWideTooltip: true,
+                // Close the sample response popup so the next steps aren't
+                // read through a dialog the user has to dismiss themselves.
+                setupAction: async () =>
+                {
+                    TutorialRegistry.#closeAskAiDialogIfOpen();
+                },
                 body:
                 `
                     <p><strong>Summarize</strong> makes a cheat sheet, <strong>Enhance</strong> applies tools like "Make mnemonic", and the <strong>Ask</strong> input answers your own question — all on what you're studying.</p>
@@ -634,23 +704,11 @@ class TutorialRegistry
                 type: tutorialStepTypes.HIGHLIGHT,
                 title: "Select text → mini menu",
                 expectedPageTagName: "study-page",
-                // Close the Explain popup if it's still open, so the material is
-                // clear to select text on.
+                // Belt-and-braces: the user may have re-opened a response
+                // from the previous step's buttons.
                 setupAction: async () =>
                 {
-                    const askAiHost = document.querySelector(".ask-ai-dialog");
-                    const dialogBoxElement = askAiHost ? askAiHost.closest("dialog-box") : null;
-                    if (dialogBoxElement)
-                    {
-                        if (typeof dialogBoxElement.close === "function")
-                        {
-                            dialogBoxElement.close();
-                        }
-                        else
-                        {
-                            dialogBoxElement.remove();
-                        }
-                    }
+                    TutorialRegistry.#closeAskAiDialogIfOpen();
                 },
                 selector: ".study-material-content-section",
                 fallbackBody: "<p>Select any text in the material — a small Explain / Ask menu pops up over your selection. Then click Next.</p>",
@@ -665,6 +723,10 @@ class TutorialRegistry
                 title: "That's Ask AI",
                 expectedPageTagName: "study-page",
                 bWideTooltip: true,
+                setupAction: async () =>
+                {
+                    TutorialRegistry.#closeAskAiDialogIfOpen();
+                },
                 body: () => TutorialRegistry.#buildFinalStepBody()
             }
         ]
@@ -697,7 +759,7 @@ class TutorialRegistry
                 type: tutorialStepTypes.WAIT_FOR_CLICK,
                 title: "Open Study",
                 body: "<p>Click <strong>Study</strong> on the sample deck tile to open the study-mode picker.</p>",
-                selector: "deck-tile[data-is-tutorial-sample=\"true\"] .study-button",
+                selector: `${TUTORIAL_DECK_TILE_SELECTOR} .study-button`,
                 expectedPageTagName: "home-page",
                 fallbackBody: "<p>Click the Study button on the sample deck tile.</p>"
             },
@@ -778,7 +840,7 @@ class TutorialRegistry
     {
         id: TutorialRegistry.AI_GENERATION_ID,
         title: "Generate decks with AI",
-        body: "Watch CogniumLearn build a deck from your material — demonstrated with a built-in sample run, so the tutorial doesn't start a real generation.",
+        body: "Walk the real Generate-With-AI route from your home page and watch CogniumLearn build a deck — played as a built-in sample run, so the tutorial doesn't start a real generation.",
         bAutoPlayOnFirstLaunch: false,
         steps:
         [
@@ -787,25 +849,45 @@ class TutorialRegistry
                 title: "Generate decks with AI",
                 expectedPageTagName: "home-page",
                 bWideTooltip: true,
+                setupAction: async () =>
+                {
+                    await TutorialSampleDeckBuilder.createForUser();
+                },
                 body:
                 `
                     <p>CogniumLearn can build a whole deck — flashcards, study materials and mock tests — from a syllabus, your notes, a PDF or a web link.</p>
-                    <p>Click <strong>Next</strong> and we'll play a <strong>built-in sample</strong> run so you can see the flow — the tutorial doesn't start a real generation. (Real generation uses credits.)</p>
+                    <p>We've put a <strong>sample deck</strong> on your home page to generate into. We'll take the same route you would on a real deck — the run itself is a <strong>built-in sample</strong>, so no generation is started and no credits are spent.</p>
                 `
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Open the deck options",
+                body:
+                `
+                    <p>Generation always starts from a deck. Click the <strong>three dots</strong> at the top-right of the sample deck tile.</p>
+                    <p>Right-click or long-press the tile does the same thing.</p>
+                `,
+                selector: `${TUTORIAL_DECK_TILE_SELECTOR} .deck-options-button`,
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Open the sample deck's options menu (three-dots button, right-click, or long-press).</p>"
+            },
+            {
+                type: tutorialStepTypes.WAIT_FOR_CLICK,
+                title: "Click Generate With AI",
+                body: "<p>Pick <strong>Generate With AI</strong> from the menu — that opens the generation form for this deck.</p>",
+                selector: ".generate-with-ai-button",
+                expectedPageTagName: "home-page",
+                fallbackBody: "<p>Click the Generate With AI option in the deck menu.</p>"
             },
             {
                 type: tutorialStepTypes.WAIT_FOR_CLICK,
                 title: "Start the generation",
                 expectedPageTagName: "automatic-generation-page",
-                setupAction: async () =>
-                {
-                    await openTutorialPage("automatic-generation-page", null);
-                },
                 selector: ".automatic-generation-start-button",
                 fallbackBody: "<p>Find the <strong>Start Generation</strong> button at the bottom of the page.</p>",
                 body:
                 `
-                    <p>This is the generation form — you'd describe your subject or attach a syllabus / notes / PDF.</p>
+                    <p>This is the generation form — on a real run you'd describe your subject and attach a syllabus, notes or a PDF, and pick what to generate.</p>
                     <p>Click <strong>Start Generation</strong>. In this tutorial it skips the form and plays a built-in sample run — it doesn't start a real generation.</p>
                 `
             },
@@ -860,7 +942,7 @@ class TutorialRegistry
                     <p>Click the <strong>three dots</strong> at the top-right of the sample deck tile.</p>
                     <p>You can also right-click the tile, or long-press it on a phone — they all open the same options menu.</p>
                 `,
-                selector: "deck-tile[data-is-tutorial-sample=\"true\"] .deck-options-button",
+                selector: `${TUTORIAL_DECK_TILE_SELECTOR} .deck-options-button`,
                 expectedPageTagName: "home-page",
                 fallbackBody: "<p>Open the sample deck's options menu (three-dots button, right-click, or long-press). We'll continue once it's open.</p>"
             },
@@ -972,6 +1054,31 @@ class TutorialRegistry
     };
 
     /**
+     * Dismisses the Ask-AI sample response popup if one is open. Used by
+     * the Ask-AI tour so the user isn't left reading later steps through
+     * a dialog they have to close themselves.
+     */
+    static #closeAskAiDialogIfOpen()
+    {
+        const askAiHostElement = document.querySelector(".ask-ai-dialog");
+        const dialogBoxElement = askAiHostElement ? askAiHostElement.closest("dialog-box") : null;
+
+        if (!dialogBoxElement)
+        {
+            return;
+        }
+
+        if (typeof dialogBoxElement.close === "function")
+        {
+            dialogBoxElement.close();
+        }
+        else
+        {
+            dialogBoxElement.remove();
+        }
+    }
+
+    /**
      * Renders the body of the final "You're ready" modal. Lists every
      * tutorial currently in the registry so the user discovers other
      * tours that may have been added since they last opened the app —
@@ -988,7 +1095,7 @@ class TutorialRegistry
             <p>That's the whirlwind tour. Open the sidebar (☰) and click <strong>Tutorial</strong> any time to retake this — or any other tutorial we've added.</p>
             <p>Available tutorials right now:</p>
             <ul>${tutorialListItems}</ul>
-            <p>Click <strong>Finish</strong>. On the next screen you can choose to clear anything you created during this tour, or keep it.</p>
+            <p>Click <strong>Finish</strong>. Anything created just for this tour is cleared automatically.</p>
         `;
     }
 

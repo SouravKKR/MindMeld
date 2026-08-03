@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const LicenseConstants = require("../../Globals/Constants/LicenseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
+const PaidDeckContentFingerprint = require("../../Globals/Classes/PaidDeck/PaidDeckContentFingerprint");
 const { deckLicenseStatuses } = require("../../Globals/Enumerations/DeckLicenseStatuses");
 const { entityTypes } = require("../../Globals/Enumerations/EntityTypes");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
@@ -141,6 +142,56 @@ function buildPaidInstanceRowFilter(userId, deckId, instanceId)
  * (and therefore surfaces on the home page).
  */
 
+// entityTypes is a numeric enum; PaidDeckContentFingerprint keys its content
+// field lists by name, so this maps between them in one place.
+const ENTITY_TYPE_NAME_BY_VALUE =
+{
+    [entityTypes.DECK]: "DECK",
+    [entityTypes.CARD]: "CARD",
+    [entityTypes.STUDY_MATERIAL]: "STUDY_MATERIAL",
+    [entityTypes.MOCK_TEST]: "MOCK_TEST"
+};
+
+/**
+ * The content version a paid-deck document currently publishes. Distinct from
+ * keyVersion, which tracks the master ASSET KEY and moves on key rotation
+ * rather than on a content upload.
+ */
+function resolveDeckContentVersion(paidDeckDocument)
+{
+    const contentVersion = Number(paidDeckDocument?.contentSummary?.contentVersion);
+    return Number.isInteger(contentVersion) && contentVersion > 0 ? contentVersion : 1;
+}
+
+/**
+ * Records which content version this copy was seeded from, both on the copy's
+ * instance entry (copies update independently, so they can diverge) and on the
+ * license as a whole (the fallback for single-copy and legacy licenses).
+ */
+function stampSeededContentVersion(license, instanceId, contentVersion)
+{
+    const additionalData = license.getAdditionalData() || {};
+    const instances = Array.isArray(additionalData.instances) ? additionalData.instances : [];
+
+    for (const instance of instances)
+    {
+        if (instance && instance.instanceId === instanceId)
+        {
+            instance.contentVersion = contentVersion;
+        }
+    }
+
+    additionalData.instances = instances;
+    license.setAdditionalData(additionalData);
+
+    // The license-level value is the MINIMUM across copies, so "is anything I
+    // own out of date?" stays answerable without walking the array.
+    const seededVersions = instances
+        .map(instance => Number(instance?.contentVersion))
+        .filter(version => Number.isInteger(version) && version > 0);
+    license.setDownloadedContentVersion(seededVersions.length > 0 ? Math.min(...seededVersions) : contentVersion);
+}
+
 /**
  * Seeds ONE copy (instance) of the paid deck into the buyer's normal sync
  * collections (plaintext at rest; /Sync encrypts content on pull) and records
@@ -247,6 +298,18 @@ async function seedProtectedContentForLicense(database, userId, deckId, license,
                 // carries the human-facing copy label.
                 const existingAdditionalData = (entityData.additionalData && typeof entityData.additionalData === "object") ? entityData.additionalData : {};
                 entityData.additionalData = { ...existingAdditionalData, paidDeckId: deckId, paidDeckInstanceId: instanceId };
+
+                // Fingerprint the SELLER's content as seeded. A later content
+                // update compares this per entity to decide whether the buyer
+                // keeps their study progress and their own edit for that entity
+                // or has to start it over — without it, an update can only keep
+                // everything (corrupting FSRS state) or reset everything (so a
+                // one-typo fix costs a 2,000-card deck's whole history).
+                const contentFingerprint = PaidDeckContentFingerprint.compute(entityData, ENTITY_TYPE_NAME_BY_VALUE[entity.entityType]);
+                if (contentFingerprint)
+                {
+                    entityData.additionalData.paidContentFingerprint = contentFingerprint;
+                }
                 if (entity.entityType === entityTypes.DECK && entity.entityId === rootDeckId)
                 {
                     entityData.additionalData.paidDeckInstanceLabel = instanceLabel;
@@ -276,6 +339,7 @@ async function seedProtectedContentForLicense(database, userId, deckId, license,
     // Record this copy on the license registry and bump rotatedAt so the next
     // /Sync/Licenses pull re-delivers the updated instances array to the client.
     registerInstanceOnLicense(license, deckId, userId, rootDeckId, instanceId, instanceLabel);
+    stampSeededContentVersion(license, instanceId, resolveDeckContentVersion(paidDeckDocument));
     license.setRotatedAt(new Date());
 
     // The server-wrapped content key is per-LICENSE, not per-copy: generate it
@@ -377,4 +441,4 @@ async function grantAndSeedDeck(database, userId, deckId, licenseOptions)
     return licenseResult.license.toJson();
 }
 
-module.exports = { seedProtectedContentForLicense, checkUserHasPaidDeckPassword, grantAndSeedDeck, removeInstanceFromLicense, buildPaidInstanceRowFilter };
+module.exports = { seedProtectedContentForLicense, checkUserHasPaidDeckPassword, grantAndSeedDeck, removeInstanceFromLicense, buildPaidInstanceRowFilter, remapPaidEntityId, resolveDeckContentVersion, stampSeededContentVersion, ENTITY_TYPE_NAME_BY_VALUE };

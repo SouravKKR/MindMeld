@@ -40,6 +40,11 @@ class HomePage extends HTMLElement
     // CardEditor, UPDATE event hitting a sibling subtree).
     static #deckDrillStack = [];
 
+    // Id of the deck the grid is currently showing, so #rebuildGrid can tell a
+    // navigation (close any open context menu) from a background refresh
+    // (leave it alone).
+    static #displayedDeckId = null;
+
     static
     {
         window.addEventListener(DeckEvents.EXPAND, (event) =>
@@ -253,8 +258,26 @@ class HomePage extends HTMLElement
         const newDeckTile = NewDeckTile.create();
         decksContainer.appendChild(newDeckTile);
 
-        DeckOptionsContextMenu.removeAll();
-        HomePageContextMenu.removeAll();
+        // Dismiss open menus only when the grid actually NAVIGATED to a
+        // different deck — a menu anchored to a tile that is no longer on
+        // screen would be meaningless.
+        //
+        // A same-deck rebuild is a background refresh: a sync landing, a deck
+        // saving, a tutorial seeding its sample deck. Those used to close the
+        // menu the user had just opened, so a right-click could silently
+        // vanish a second later — which is also how the tutorials' "pick
+        // Insights / Generate With AI" steps dead-ended, the menu disappearing
+        // between opening it and choosing an entry. The menus hold Deck
+        // instances from the shared id map, so they stay valid across a
+        // rebuild of the tiles.
+        const bNavigatedToDifferentDeck = HomePage.#displayedDeckId !== deckToOpen.getId();
+        HomePage.#displayedDeckId = deckToOpen.getId();
+
+        if (bNavigatedToDifferentDeck)
+        {
+            DeckOptionsContextMenu.removeAll();
+            HomePageContextMenu.removeAll();
+        }
 
         if (deckToOpen.getParent())
         {

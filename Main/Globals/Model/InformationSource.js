@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const { informationSourceTypes } = require('../Enumerations/InformationSourceTypes');
 const { ocrModes } = require('../Enumerations/OcrModes');
 const { contentRetentionModes } = require('../Enumerations/ContentRetentionModes');
+const { curriculumPlausibility } = require('../Enumerations/CurriculumPlausibility');
 
 class InformationSource
 {
@@ -17,8 +18,12 @@ class InformationSource
     #ocrMode;
     #fileSizeBytes;
     #retentionMode;
+    #expiresAt;
+    #uploadedAt;
+    #curriculumPlausibility;
+    #curriculumPlausibilityReason;
 
-    constructor({name = null, userId = null, sourceType = null, directoryPath = null, tags = [], mimeType = '', hash = '', ocrMode = 1, fileSizeBytes = 0, retentionMode = 1} = {})
+    constructor({name = null, userId = null, sourceType = null, directoryPath = null, tags = [], mimeType = '', hash = '', ocrMode = 1, fileSizeBytes = 0, retentionMode = 1, expiresAt = 0, uploadedAt = 0, curriculumPlausibility = 0, curriculumPlausibilityReason = ''} = {})
     {
         this.#id = crypto.randomUUID();
         this.setName(name);
@@ -31,6 +36,10 @@ class InformationSource
         this.setOcrMode(ocrMode);
         this.setFileSizeBytes(fileSizeBytes);
         this.setRetentionMode(retentionMode);
+        this.setExpiresAt(expiresAt);
+        this.setUploadedAt(uploadedAt);
+        this.setCurriculumPlausibility(curriculumPlausibility);
+        this.setCurriculumPlausibilityReason(curriculumPlausibilityReason);
     }
 
     getId()
@@ -217,6 +226,82 @@ class InformationSource
         this.#retentionMode = value;
     }
 
+    getExpiresAt()
+    {
+        return this.#expiresAt;
+    }
+
+    setExpiresAt(value)
+    {
+        if (value !== null)
+        {
+            value = parseInt(value, 10);
+            if (isNaN(value))
+            {
+                value = 0;
+            }
+            else
+            {
+                value = Math.max(value, 0);
+            }
+        }
+        this.#expiresAt = value;
+    }
+
+    getUploadedAt()
+    {
+        return this.#uploadedAt;
+    }
+
+    setUploadedAt(value)
+    {
+        if (value !== null)
+        {
+            value = parseInt(value, 10);
+            if (isNaN(value))
+            {
+                value = 0;
+            }
+            else
+            {
+                value = Math.max(value, 0);
+            }
+        }
+        this.#uploadedAt = value;
+    }
+
+    getCurriculumPlausibility()
+    {
+        return this.#curriculumPlausibility;
+    }
+
+    setCurriculumPlausibility(value)
+    {
+        if (value !== null)
+        {
+            const enumValues = Object.values(curriculumPlausibility);
+            if (!enumValues.includes(value))
+            {
+                value = enumValues[0] ?? null;
+            }
+        }
+        this.#curriculumPlausibility = value;
+    }
+
+    getCurriculumPlausibilityReason()
+    {
+        return this.#curriculumPlausibilityReason;
+    }
+
+    setCurriculumPlausibilityReason(value)
+    {
+        if (value !== null)
+        {
+            value = String(value);
+        }
+        this.#curriculumPlausibilityReason = value;
+    }
+
     toJson()
     {
         return {
@@ -231,6 +316,10 @@ class InformationSource
             ocrMode: this.getOcrMode() !== null ? Number(this.getOcrMode()) : null,
             fileSizeBytes: this.getFileSizeBytes(),
             retentionMode: this.getRetentionMode() !== null ? Number(this.getRetentionMode()) : null,
+            expiresAt: this.getExpiresAt(),
+            uploadedAt: this.getUploadedAt(),
+            curriculumPlausibility: this.getCurriculumPlausibility() !== null ? Number(this.getCurriculumPlausibility()) : null,
+            curriculumPlausibilityReason: this.getCurriculumPlausibilityReason(),
         };
     }
 
@@ -246,7 +335,11 @@ class InformationSource
             hash: json.hash ?? null,
             ocrMode: json.ocrMode ?? null,
             fileSizeBytes: json.fileSizeBytes ?? null,
-            retentionMode: json.retentionMode ?? null
+            retentionMode: json.retentionMode ?? null,
+            expiresAt: json.expiresAt ?? null,
+            uploadedAt: json.uploadedAt ?? null,
+            curriculumPlausibility: json.curriculumPlausibility ?? null,
+            curriculumPlausibilityReason: json.curriculumPlausibilityReason ?? null
         });
         instance._restoreId_id(json.id);
         return instance;

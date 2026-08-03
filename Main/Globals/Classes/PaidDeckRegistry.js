@@ -216,6 +216,61 @@ class PaidDeckRegistry
         return PaidDeckRegistry.getInstances(deckId).length;
     }
 
+    /**
+     * The content version a specific copy was seeded from, or 0 when unknown.
+     *
+     * Per-copy values win: copies are updated independently, so one can sit on
+     * an older version than another. The license-level field is the fallback
+     * for single-copy and legacy licenses.
+     */
+    static getInstanceContentVersion(deckId, instanceId)
+    {
+        const license = PaidDeckRegistry.getLicense(deckId);
+        if (!license)
+        {
+            return 0;
+        }
+
+        const instances = Array.isArray(license.additionalData?.instances) ? license.additionalData.instances : [];
+        const matchingInstance = instances.find(instance => instance && instance.instanceId === instanceId);
+        const instanceVersion = Number(matchingInstance?.contentVersion);
+        if (Number.isInteger(instanceVersion) && instanceVersion > 0)
+        {
+            return instanceVersion;
+        }
+
+        const licenseVersion = Number(license.downloadedContentVersion);
+        return Number.isInteger(licenseVersion) && licenseVersion > 0 ? licenseVersion : 0;
+    }
+
+    /**
+     * Whether the publisher has released newer content than this copy holds.
+     *
+     * A copy whose seeded version is UNKNOWN is treated as current. Every
+     * license issued before content versioning reads 0, and telling those
+     * buyers to update — for content they already have, at the cost of their
+     * progress on every changed card — would be worse than saying nothing. The
+     * server backfills the real version on the next licence pull, after which
+     * this becomes meaningful.
+     */
+    static isContentUpdateAvailable(deckId, instanceId)
+    {
+        const license = PaidDeckRegistry.getLicense(deckId);
+        if (!license)
+        {
+            return false;
+        }
+
+        const downloadedVersion = PaidDeckRegistry.getInstanceContentVersion(deckId, instanceId);
+        if (downloadedVersion === 0)
+        {
+            return false;
+        }
+
+        const availableVersion = Number(license.availableContentVersion);
+        return Number.isInteger(availableVersion) && availableVersion > downloadedVersion;
+    }
+
     static getAllLicenses()
     {
         return Array.from(PaidDeckRegistry.#licensesByDeckId.values());

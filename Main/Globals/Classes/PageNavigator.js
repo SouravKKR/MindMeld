@@ -138,6 +138,17 @@ class PageNavigator
             // duplicate cleanup logic per trigger.
             leavingPage.onPageLeft?.();
 
+            // Detach the popped page. Hiding it alone left every page the
+            // user had ever visited parked in document.body for the rest of
+            // the session — a steady DOM leak, and worse, a correctness
+            // hazard: any global document.querySelector(".some-button") then
+            // resolves to a stale hidden copy from an earlier page instead of
+            // the live one. Its stack slot is already being dropped, so the
+            // element has no way back; removing it also lets each page's
+            // disconnectedCallback unbind listeners at the right moment.
+            leavingPage.remove();
+            PageNavigator.#stack[PageNavigator.#stackPointer] = undefined;
+
             PageNavigator.#stackPointer--;
 
             // Reset before the resumed page re-asserts via onPageResumed.

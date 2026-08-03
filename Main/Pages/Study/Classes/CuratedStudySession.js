@@ -3,6 +3,7 @@ import CuratedStudyCompletionDialog from "../Components/CuratedStudyCompletionDi
 import CuratedStudyController from "../../../Globals/Classes/CuratedStudy/CuratedStudyController.js";
 import CuratedStudyProgressOverlay from "../Components/CuratedStudyProgressOverlay.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
+import GeneratedVisualRenderer from "../../../Globals/Classes/GeneratedVisualRenderer.js";
 import HtmlSanitizer from "../../../Globals/Classes/HtmlSanitizer.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import StudySession from "./StudySession.js";
@@ -135,6 +136,7 @@ class CuratedStudySession extends StudySession
         }
         contentSection.innerHTML = HtmlSanitizer.sanitize(flowState.currentMaterial.getContent?.() || "");
         this._studyPage.renderLatex?.();
+        GeneratedVisualRenderer.render(contentSection);
 
         const readButton = this._studyPage.querySelector(".curated-i-have-read-this-button");
         if (!readButton)

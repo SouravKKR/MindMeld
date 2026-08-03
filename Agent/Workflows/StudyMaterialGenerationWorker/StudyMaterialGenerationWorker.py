@@ -12,6 +12,7 @@ from Globals.Classes.Automation.BatchSubmitter import BatchSubmitter
 from Globals.Classes.Automation.Pools.ModelPool import ModelPool
 from Globals.Classes.Automation.Pools.PromptPool import PromptPool
 from Globals.Classes.Automation.Providers.GoogleEnterpriseAiProvider import GoogleEnterpriseAiProvider
+from Globals.Classes.Compliance.SourceSimilarityScorer import SourceSimilarityScorer
 from Globals.Classes.StudyMaterial.StudyMaterialDetailDirectives import StudyMaterialDetailDirectives
 from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Classes.Task.AutoGeneration.StudyMaterialGenerationSettings import StudyMaterialGenerationSettings
@@ -89,6 +90,10 @@ class StudyMaterialGenerationWorker(Workflow):
                 request = AutomationRequest(
                     model_string,
                     [
+                        # The shared expression rules lead so every generation
+                        # prompt inherits the same copyright/accuracy posture.
+                        # The provider joins multiple SYSTEM parts with a newline.
+                        AutomationContent(AutomationContentTypes.SYSTEM, PromptPool.SOURCE_EXPRESSION_RULES),
                         AutomationContent(AutomationContentTypes.SYSTEM, PromptPool.STUDY_MATERIAL_GENERATION_SYSTEM),
                         AutomationContent(AutomationContentTypes.TEXT, user_prompt, {"response_as_text": True}),
                     ]
@@ -108,6 +113,7 @@ class StudyMaterialGenerationWorker(Workflow):
 
                 loaded_jobs.append({
                     "topic_chain": topic_chain,
+                    "source_content": content,
                     "source_pages": source_pages,
                     "detail_level": int(detail_level),
                     "level_name": level_name,
@@ -171,6 +177,32 @@ class StudyMaterialGenerationWorker(Workflow):
 
             data = response.get_output().get_data()
             parsed = sanitize_html_response(str(data))
+
+            # Observability only — never gates the generation. Reports how much
+            # of the generated PROSE overlaps the source chunks it was grounded
+            # on, with formulae, notation, code and tables masked out first so
+            # the content that must be reproduced verbatim is not counted
+            # against it. Provides the evidence needed to set a threshold before
+            # any enforcement is considered.
+            gate_result = SourceSimilarityScorer.evaluate_gate(
+                f"study-material topic='{' -> '.join(job['topic_chain'])}' level={job['level_name']}",
+                parsed,
+                [job["source_content"]],
+            )
+
+            # Enforcement is opt-in and off by default (see SourceSimilarityScorer).
+            # Until it is switched on with a calibrated threshold, this branch is
+            # never taken and the score is telemetry only. Dropping the material
+            # is the safe failure mode: a missing section is recoverable, shipping
+            # a substantially-copied one is not.
+            if gate_result["bShouldReject"]:
+                print(
+                    f"[StudyMaterialGenerationWorker] Rejected '{' -> '.join(job['topic_chain'])}' "
+                    f"({job['level_name']}) — source containment {gate_result['containment']:.4f} "
+                    f"exceeds threshold {gate_result['threshold']:.4f}."
+                )
+                await TaskManager.increment_completion(parent_task_id, (1.0 - BatchSubmitter.SUBMIT_PROGRESS_SHARE) * job["weight"])
+                continue
 
             output = {
                 "topicChain": job["topic_chain"],

@@ -8,14 +8,16 @@ class GeneralGenerationSettings extends AutoGenerationSettings
     #inheritImageCurriculumFromInformationSources;
     #captureImagesEnabled;
     #goodQualityDeckShortNames;
+    #paidDeckMode;
 
-    constructor({type = null, additionalInstructions = '', description = '', informationSources = [], enhanceImages = false, imageSources = [], subjectName = '', examName = '', generationMode = 0, inheritImageCurriculumFromInformationSources = true, captureImagesEnabled = false, goodQualityDeckShortNames = false} = {})
+    constructor({type = null, additionalInstructions = '', description = '', informationSources = [], enhanceImages = false, imageSources = [], subjectName = '', examName = '', generationMode = 0, inheritImageCurriculumFromInformationSources = true, captureImagesEnabled = false, goodQualityDeckShortNames = false, paidDeckMode = false} = {})
     {
         super({type, additionalInstructions, description, informationSources, enhanceImages, imageSources, subjectName, examName});
         this.setGenerationMode(generationMode);
         this.setInheritImageCurriculumFromInformationSources(inheritImageCurriculumFromInformationSources);
         this.setCaptureImagesEnabled(captureImagesEnabled);
         this.setGoodQualityDeckShortNames(goodQualityDeckShortNames);
+        this.setPaidDeckMode(paidDeckMode);
     }
 
     getGenerationMode()
@@ -78,6 +80,20 @@ class GeneralGenerationSettings extends AutoGenerationSettings
         this.#goodQualityDeckShortNames = value;
     }
 
+    getPaidDeckMode()
+    {
+        return this.#paidDeckMode;
+    }
+
+    setPaidDeckMode(value)
+    {
+        if (value !== null)
+        {
+            value = Boolean(value);
+        }
+        this.#paidDeckMode = value;
+    }
+
     toJson()
     {
         return {
@@ -86,6 +102,7 @@ class GeneralGenerationSettings extends AutoGenerationSettings
             inheritImageCurriculumFromInformationSources: this.getInheritImageCurriculumFromInformationSources(),
             captureImagesEnabled: this.getCaptureImagesEnabled(),
             goodQualityDeckShortNames: this.getGoodQualityDeckShortNames(),
+            paidDeckMode: this.getPaidDeckMode(),
         };
     }
 
@@ -103,7 +120,8 @@ class GeneralGenerationSettings extends AutoGenerationSettings
             generationMode: json.generationMode ?? null,
             inheritImageCurriculumFromInformationSources: json.inheritImageCurriculumFromInformationSources ?? null,
             captureImagesEnabled: json.captureImagesEnabled ?? null,
-            goodQualityDeckShortNames: json.goodQualityDeckShortNames ?? null
+            goodQualityDeckShortNames: json.goodQualityDeckShortNames ?? null,
+            paidDeckMode: json.paidDeckMode ?? null
         });
         instance._restoreId_id(json.id);
         return instance;

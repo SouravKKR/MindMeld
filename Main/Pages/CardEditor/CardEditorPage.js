@@ -8,6 +8,7 @@ import { scaleDownImage } from "../../Globals/UtilityFunctions/ScaleDownImage.js
 import RichTextEditor from "./Components/RichTextEditor.js";
 import ActiveEntityTracker from "../../Globals/Classes/ActiveEntityTracker.js";
 import { entityTypes } from "../../Globals/Enumerations/EntityTypes.js";
+import PaidDeckSession from "../../Globals/Classes/Crypto/PaidDeckSession.js";
 import TutorialEngine from "../../Globals/Classes/TutorialEngine.js";
 import CardEvents from "../../Globals/Events/CardEvents.js";
 
@@ -111,8 +112,16 @@ class CardEditorPage extends HTMLElement
 
         saveButton.addEventListener("click", async () => 
         {
-            this.#card.setQuestion(questionEditor.getInnerHtml());
-            this.#card.setAnswer(answerEditor.getInnerHtml());
+            // The setters refuse only when a paid deck locked mid-edit. Bail
+            // out loudly rather than saving a card whose text never changed.
+            const bQuestionAccepted = this.#card.setQuestion(questionEditor.getInnerHtml());
+            const bAnswerAccepted = this.#card.setAnswer(answerEditor.getInnerHtml());
+            if (!bQuestionAccepted || !bAnswerAccepted)
+            {
+                await DialogBox.alert("Deck is locked", "Unlock this deck with its password, then save again — your changes weren't saved.");
+                return;
+            }
+
             this.#card.setTags(tagsInput.value.split(","));
             this.#card.setAdditionalDataField("review", (reviewCheckbox.checked ? true : false));
 
@@ -248,15 +257,17 @@ class CardEditorPage extends HTMLElement
     {
         this.setAttribute("page", "");
 
-        // Paid-deck cards are server-authored and read-only on the device —
-        // the editor can't meaningfully edit them (content stays ciphertext and
-        // any change is discarded server-side), so refuse to open it.
-        if (this.#card?.getDeck?.()?.getAdditionalData?.()?.paidDeckId)
+        // A paid card is editable now: the seller's ciphertext is never
+        // overwritten — the learner's version is stored as a separate overlay
+        // encrypted under the same deck key. It does require the deck to be
+        // unlocked this session, because that key is what encrypts the edit.
+        const paidDeckId = this.#card?.getDeck?.()?.getAdditionalData?.()?.paidDeckId;
+        if (paidDeckId && !PaidDeckSession.isUnlocked(paidDeckId))
         {
             this.innerHTML =
             `
-                <header-component title="Read-only"></header-component>
-                <p style="padding: 20px; text-align: center;">Cards in a paid deck are read-only and can't be edited.</p>
+                <header-component title="Locked"></header-component>
+                <p style="padding: 20px; text-align: center;">Unlock this deck with its password to edit this card.</p>
             `;
             return;
         }

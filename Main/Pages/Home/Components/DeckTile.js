@@ -10,6 +10,8 @@ import ReviseSession from "../../Study/Classes/ReviseSession.js";
 import ContentStudySession from "../../Study/Classes/ContentStudySession.js";
 import CuratedStudyEntryDialog from "../../Study/Components/CuratedStudyEntryDialog.js";
 import MockTestPickerModal from "../../Study/Components/MockTestPickerModal.js";
+import PaidDeckRegistry from "../../../Globals/Classes/PaidDeckRegistry.js";
+import LicenseConstants from "../../../Globals/Constants/LicenseConstants.js";
 import DetailLevelPickerDialog from "../../../CommonComponents/DetailLevelPickerDialog.js";
 import DeckMergeFlow from "./DeckMergeFlow.js";
 import FullscreenImageViewer from "../../../CommonComponents/FullscreenImageViewer.js";
@@ -343,6 +345,14 @@ class DeckTile extends HTMLElement
             this.setAttribute("data-is-tutorial-sample", "true");
         }
 
+        // Stable, non-visual hook for the browser gates, which need to assert on
+        // the export gate without depending on how the watermark happens to look.
+        // Selector: deck-tile[data-ai-generated="true"]
+        if (this.#deck.isAiGenerated?.() === true)
+        {
+            this.setAttribute("data-ai-generated", "true");
+        }
+
         // A purchased paid deck is now a NORMAL deck in the tree (delivered by
         // sync, content encrypted at rest). It renders like any other tile —
         // drill-in, study modes, owner watermark — the only differences being
@@ -355,6 +365,7 @@ class DeckTile extends HTMLElement
             <button class="study-button">Study</button>
         `;
 
+        this.#renderOwnerWatermark();
         this.#renderPaidDeckOverlay();
         this.#renderIncompleteGenerationBadge();
         this.#handleEvents();
@@ -490,7 +501,7 @@ class DeckTile extends HTMLElement
         {
             FullscreenImageViewer.open
             (
-                "./Globals/Assets/Images/Diagrams/CogniumLearnKnowledgeConsolidationLifecycle.png",
+                "./Globals/Assets/Images/Diagrams/CogniumLearnKnowledgeConsolidationLifecycleSimple.png",
                 "Knowledge consolidation lifecycle"
             );
         });
@@ -504,29 +515,56 @@ class DeckTile extends HTMLElement
             .replace(/>/g, "&gt;");
     }
 
+    /**
+     * Brands a tile whose deck the user owns but did not freely author: a
+     * purchased paid deck, or a deck the AI generation pipeline produced. Both
+     * mean the same thing on the grid — this content is yours to study, not
+     * yours to take out of the app — so both carry the same corner mark.
+     *
+     * Rendered from ONE place for both cases so a deck that is paid AND
+     * AI-generated can never end up with two stacked watermarks. Every paid
+     * deck is produced by the generation pipeline, so that overlap is the norm
+     * rather than an edge case.
+     */
+    #renderOwnerWatermark()
+    {
+        const bPaidDeck = this.#getPaidDeckId() !== null;
+        const bAiGeneratedDeck = this.#deck.isAiGenerated?.() === true;
+
+        if (!bPaidDeck && !bAiGeneratedDeck)
+        {
+            return;
+        }
+
+        const ownerProfilePictureUrl = window["user"]?.getProfilePictureUrl?.()
+            || window["user"]?.getAdditionalData?.()?.displayPicture
+            || "./Globals/Assets/Images/Icons/ProfileIcon.svg";
+
+        const watermarkElement = document.createElement("img");
+        watermarkElement.className = "deck-owner-watermark";
+        // Google's googleusercontent.com avatars return HTTP 429 when a Referer
+        // header is sent — omit it so the owner's profile picture loads.
+        watermarkElement.referrerPolicy = "no-referrer";
+        watermarkElement.src = ownerProfilePictureUrl;
+        watermarkElement.draggable = false;
+        watermarkElement.alt = "";
+        watermarkElement.title = bPaidDeck
+            ? "You own this deck. Paid decks can't be exported."
+            : "AI-generated for you. Generated decks can't be exported.";
+        this.appendChild(watermarkElement);
+    }
+
     #renderPaidDeckOverlay()
     {
-        // A paid deck node (root or sub-deck) carries the paidDeckId tag. Brand
-        // its tile with the buyer's profile picture in the corner to signal
-        // ownership — the deck is, by definition, owned by this user.
+        // Paid-deck-only tile extras. The owner watermark used to live here too,
+        // but it is now shared with AI-generated decks and renders from
+        // #renderOwnerWatermark so the two cases can never double up.
         if (!this.#getPaidDeckId())
         {
             return;
         }
 
-        const buyerProfilePictureUrl = window["user"]?.getProfilePictureUrl?.()
-            || window["user"]?.getAdditionalData?.()?.displayPicture
-            || "./Globals/Assets/Images/Icons/ProfileIcon.svg";
-
-        const watermarkElement = document.createElement("img");
-        watermarkElement.className = "paid-deck-owner-watermark";
-        // Google's googleusercontent.com avatars return HTTP 429 when a Referer
-        // header is sent — omit it so the buyer's profile picture loads.
-        watermarkElement.referrerPolicy = "no-referrer";
-        watermarkElement.src = buyerProfilePictureUrl;
-        watermarkElement.draggable = false;
-        watermarkElement.alt = "";
-        this.appendChild(watermarkElement);
+        this.#renderContentUpdateBadge();
 
         // Provision for seller-side branding. Today the buyer overlay is the
         // only enabled signal; the seller hook is reserved for a future
@@ -539,6 +577,38 @@ class DeckTile extends HTMLElement
         //     sellerOverlay.src = deck.sellerProfilePictureUrl;
         //     this.appendChild(sellerOverlay);
         // }
+    }
+    /**
+     * A quiet "Update available" marker on a paid copy's root tile.
+     *
+     * Passive on purpose: accepting an update resets the buyer's progress on
+     * every card the publisher changed, so it is offered rather than pushed.
+     * They act on it through the tile's menu when they choose to, and declining
+     * simply means the badge stays.
+     */
+    #renderContentUpdateBadge()
+    {
+        const additionalData = this.#deck.getAdditionalData?.() || {};
+        const paidDeckId = this.#getPaidDeckId();
+        const parentDeck = this.#deck.getParent?.();
+        const bIsCopyRoot = Boolean(parentDeck) && typeof parentDeck.isRoot === "function" && parentDeck.isRoot();
+
+        if (!paidDeckId || !bIsCopyRoot)
+        {
+            return;
+        }
+
+        const instanceId = additionalData.paidDeckInstanceId || LicenseConstants.PAID_DECK_FIRST_INSTANCE_ID;
+        if (!PaidDeckRegistry.isContentUpdateAvailable(paidDeckId, instanceId))
+        {
+            return;
+        }
+
+        const updateBadgeElement = document.createElement("span");
+        updateBadgeElement.className = "paid-deck-update-badge";
+        updateBadgeElement.textContent = "Update available";
+        updateBadgeElement.title = "The publisher has released a newer version of this deck.";
+        this.appendChild(updateBadgeElement);
     }
 }
 

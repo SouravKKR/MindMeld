@@ -17,6 +17,11 @@ const { logLevel } = require("../../Enumerations/LogLevel");
 const { logCategory } = require("../../Enumerations/LogCategory");
 const { logServiceOrigin } = require("../../Enumerations/LogServiceOrigin");
 const { couponBenefitTargets } = require("../../Enumerations/CouponBenefitTargets");
+const { supportTicketStatus } = require("../../Enumerations/SupportTicketStatus");
+const { supportTicketTypes } = require("../../Enumerations/SupportTicketTypes");
+const { supportTicketReportStatus } = require("../../Enumerations/SupportTicketReportStatus");
+const SupportTicketLimits = require("../Support/SupportTicketLimits");
+const { supportTicketTypeDisplayName } = require("../../UtilityFunctions.js/SupportTicketTypeDisplayName");
 
 const LOG_CATEGORY_NAME_BY_VALUE = Object.fromEntries(Object.entries(logCategory).map(([categoryName, categoryValue]) => [categoryValue, categoryName]));
 const LOG_SERVICE_NAME_BY_VALUE = Object.fromEntries(Object.entries(logServiceOrigin).map(([serviceName, serviceValue]) => [serviceValue, serviceName]));
@@ -905,6 +910,177 @@ class AdminListRegistry
             },
             defaultSort: { field: "timestamp", direction: -1 },
             sortableFields: ["timestamp", "level"],
+            rowIdField: "id"
+        }));
+
+        // ── Support tickets (deduplicated issue reports) ─────────────────────
+        // Sorted by reportCount descending by default: the whole point of
+        // deduplicating reports is that the row at the top is the problem hurting
+        // the most users, which is the one worth fixing first. createdAtIsoString
+        // is the denormalised copy of createdAt (stored as UTC milliseconds) that
+        // lets DateRangeFilter compare as a string.
+        AdminListRegistry.register(new AdminListDefinition
+        ({
+            listKey: adminListTypes.SUPPORT_TICKETS,
+            collectionName: DatabaseConstants.SUPPORT_TICKETS_COLLECTION,
+            searchableFields: ["title", "description", "id"],
+            searchPlaceholder: "Search title, description or id…",
+            filters:
+            [
+                new EnumFilter
+                ({
+                    key: "status",
+                    label: "Status",
+                    field: "status",
+                    options:
+                    [
+                        { value: supportTicketStatus.ACTIVE, label: "Active" },
+                        { value: supportTicketStatus.RESOLVED, label: "Resolved" },
+                        { value: supportTicketStatus.DECLINED, label: "Declined" }
+                    ]
+                }),
+                new EnumFilter
+                ({
+                    key: "issueType",
+                    label: "Issue type",
+                    field: "issueType",
+                    options: Object.values(supportTicketTypes)
+                        .filter(typeValue => typeValue !== supportTicketTypes.UNKNOWN)
+                        .map(typeValue => ({ value: typeValue, label: supportTicketTypeDisplayName(typeValue) }))
+                }),
+                new NumberRangeFilter({ key: "reportCount", label: "Reporters", field: "reportCount", defaultMin: 0, defaultMax: 500, step: 1 }),
+                new DateRangeFilter({ key: "createdAt", label: "First reported", field: "createdAtIsoString", compareAsIsoString: true })
+            ],
+            columns:
+            [
+                { key: "title", label: "Issue" },
+                { key: "issueTypeLabel", label: "Type" },
+                { key: "status", label: "Status", badge:
+                    {
+                        [supportTicketStatus.ACTIVE]: { label: "ACTIVE", variant: "warning" },
+                        [supportTicketStatus.RESOLVED]: { label: "RESOLVED", variant: "info" },
+                        [supportTicketStatus.DECLINED]: { label: "DECLINED", variant: "neutral" }
+                    }
+                },
+                { key: "reportCount", label: "Reporters" },
+                { key: "createdAt", label: "First reported", format: "dateTime" },
+                { key: "lastReportedAt", label: "Last reported", format: "dateTime" }
+            ],
+            rowMapper: (document) =>
+            {
+                const aspectCount = Array.isArray(document.aspects) ? document.aspects.length : 0;
+                const rawTitle = typeof document.title === "string" && document.title.length > 0 ? document.title : "(untitled)";
+
+                return {
+                    id: document.id,
+                    // Saturation is surfaced in the title rather than a separate
+                    // column: it means the grouping has stopped absorbing detail
+                    // and wants a human split, which an admin should notice while
+                    // scanning rather than have to go looking for.
+                    title: aspectCount >= SupportTicketLimits.MAXIMUM_ASPECTS_PER_TICKET ? `${rawTitle} ⚠` : rawTitle,
+                    issueTypeLabel: supportTicketTypeDisplayName(document.issueType),
+                    issueType: document.issueType,
+                    status: document.status,
+                    reportCount: document.reportCount || 0,
+                    createdAt: document.createdAt ? new Date(document.createdAt) : null,
+                    lastReportedAt: document.lastReportedAt ? new Date(document.lastReportedAt) : null
+                };
+            },
+            defaultSort: { field: "reportCount", direction: -1 },
+            sortableFields: ["reportCount", "createdAt", "lastReportedAt"],
+            rowIdField: "id"
+        }));
+
+        // ── Ungrouped support reports ────────────────────────────────────────
+        // Reports that never reached a ticket: the deduplication task failed, the
+        // queue was unavailable, or the workflow could not take the dedup lock.
+        // Without this list such a report is durable in Mongo but visible to
+        // nobody except its reporter, who would see "Under review" forever. This
+        // is the surface that makes a grouping failure recoverable rather than
+        // merely survivable. Backed by the (groupingStatus, createdAt) index.
+        AdminListRegistry.register(new AdminListDefinition
+        ({
+            listKey: adminListTypes.SUPPORT_UNGROUPED_REPORTS,
+            searchPlaceholder: "Search description, reporter or id…",
+            searchableFields: ["description"],
+            filters:
+            [
+                new EnumFilter
+                ({
+                    key: "groupingStatus",
+                    label: "Grouping",
+                    field: "groupingStatus",
+                    options:
+                    [
+                        { value: supportTicketReportStatus.PENDING_GROUPING, label: "Still pending" },
+                        { value: supportTicketReportStatus.GROUPING_FAILED, label: "Failed" }
+                    ]
+                })
+            ],
+            columns:
+            [
+                { key: "createdAt", label: "Reported", format: "dateTime" },
+                { key: "userEmail", label: "Reporter" },
+                { key: "issueTypeLabel", label: "Type" },
+                { key: "groupingStatusLabel", label: "Grouping" },
+                { key: "description", label: "What they said" },
+                { key: "attachmentCount", label: "Files" }
+            ],
+            // A custom builder rather than a collection-backed definition because
+            // this list needs a permanent base predicate ("not attached to any
+            // ticket"), which the collection-backed mode has no way to express —
+            // there is no baseFilter option, and without one the list would
+            // silently show every report ever submitted.
+            customQueryBuilder: async (database, parameters) =>
+            {
+                const collection = database.collection(DatabaseConstants.SUPPORT_TICKET_REPORTS_COLLECTION);
+
+                const queryParts =
+                [
+                    { $or: [ { ticketId: null }, { groupingStatus: supportTicketReportStatus.GROUPING_FAILED } ] }
+                ];
+
+                if (typeof parameters.search === "string" && parameters.search.trim().length > 0)
+                {
+                    const pattern = AdminListRegistry.#escapeRegex(parameters.search.trim());
+                    queryParts.push({ $or: [ { description: { $regex: pattern, $options: "i" } }, { userEmail: { $regex: pattern, $options: "i" } }, { id: pattern } ] });
+                }
+
+                const groupingStatusValue = parameters.filters?.groupingStatus;
+                if (groupingStatusValue !== undefined && groupingStatusValue !== null && groupingStatusValue !== "")
+                {
+                    queryParts.push({ groupingStatus: Number(groupingStatusValue) });
+                }
+
+                const mongoQuery = { $and: queryParts };
+                const sortDirection = parameters.sort?.direction === 1 ? 1 : -1;
+
+                const totalCount = await collection.countDocuments(mongoQuery);
+                const documents = await collection.find(mongoQuery, { projection: { _id: 0 } })
+                    .sort({ createdAt: sortDirection })
+                    .skip(parameters.offset)
+                    .limit(parameters.limit)
+                    .toArray();
+
+                const items = documents.map((document) =>
+                {
+                    const rawDescription = typeof document.description === "string" ? document.description : "";
+
+                    return {
+                        id: document.id,
+                        createdAt: document.createdAt ? new Date(document.createdAt) : null,
+                        userEmail: document.userEmail || document.userId || "",
+                        issueTypeLabel: supportTicketTypeDisplayName(document.issueType),
+                        groupingStatusLabel: document.groupingStatus === supportTicketReportStatus.GROUPING_FAILED ? "Failed" : "Pending",
+                        description: rawDescription.length > 200 ? `${rawDescription.slice(0, 200)}…` : rawDescription,
+                        attachmentCount: Array.isArray(document.attachments) ? document.attachments.length : 0
+                    };
+                });
+
+                return { items: items, totalCount: totalCount };
+            },
+            defaultSort: { field: "createdAt", direction: -1 },
+            sortableFields: ["createdAt"],
             rowIdField: "id"
         }));
     }

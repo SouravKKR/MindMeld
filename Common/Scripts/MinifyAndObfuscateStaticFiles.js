@@ -34,9 +34,20 @@ class StaticFileMinifier
         // tiny *Bundle.js proxy plus N part/chunk files that import each
         // other by name across module boundaries. Renaming top-level
         // identifiers would silently break those cross-file imports.
+        // 'browser-no-eval' rather than 'browser'. The two targets apply exactly
+        // the same transforms — string array + RC4, selfDefending, control-flow
+        // flattening, dead-code injection and domain lock are all supported
+        // identically — but 'browser' picks its global-object code helper at
+        // random from two templates, one of which is
+        // `Function('return this')()`. That landed a live eval call in roughly a
+        // quarter of the emitted files, which is what tripped the strict CSP's
+        // script-src at runtime. 'browser-no-eval' swaps only that helper (and
+        // the debugger / domain-lock helpers) for eval-free equivalents, so the
+        // obfuscation is unchanged in strength and the bundle no longer needs
+        // 'unsafe-eval' to run.
         const conservativeOptions = {
             compact: true,
-            target: 'browser',
+            target: 'browser-no-eval',
             identifierNamesGenerator: 'mangled-shuffled',
             renameGlobals: false,
             transformObjectKeys: false,

@@ -8,6 +8,12 @@ import AiFeatureGate from "../../../Globals/Classes/AiFeatureGate.js";
 import LicenseConstants from "../../../Globals/Constants/LicenseConstants.js";
 import PaidDeckLicenseSyncer from "../../../Globals/Classes/Syncing/PaidDeckLicenseSyncer.js";
 import ManagePaidDeckCopiesDialog from "./ManagePaidDeckCopiesDialog.js";
+import PaidDeckRegistry from "../../../Globals/Classes/PaidDeckRegistry.js";
+import ProgressDialog from "../../../CommonComponents/ProgressDialog.js";
+import IntellectualPropertyNotice from "../../../CommonComponents/IntellectualPropertyNotice.js";
+import SyncManager from "../../../Globals/Classes/SyncManager.js";
+import AiGeneratedExportReporter from "../../../Globals/Classes/Security/AiGeneratedExportReporter.js";
+import { aiGeneratedExportBlockReasons } from "../../../Globals/Enumerations/AiGeneratedExportBlockReasons.js";
 
 
 class DeckOptionsContextMenu extends ContextMenu
@@ -22,10 +28,17 @@ class DeckOptionsContextMenu extends ContextMenu
         this.#deck = deck;
     }
 
+    /**
+     * @param {string} title
+     * @param {object[]} options - each { label, entityClassName, handler }.
+     *        `entityClassName` gives every choice its own stable hook (e.g.
+     *        `entity-picker-card-button`) so a tutorial can spotlight exactly
+     *        one of them; `.entity-picker-button` alone matches all three.
+     */
     #openEntityPicker(title, options)
     {
-        const buttons = options.map(opt =>
-            `<button class="entity-picker-button">${opt.label}</button>`
+        const buttons = options.map(option =>
+            `<button class="entity-picker-button ${option.entityClassName}">${option.label}</button>`
         ).join("");
 
         const dialog = DialogBox.modal(
@@ -97,6 +110,25 @@ class DeckOptionsContextMenu extends ContextMenu
             });
         }
 
+        // Bound before the `if (!addButton) return` guard below, because a paid
+        // deck's menu has no Add button and would never reach anything wired
+        // after it.
+        if (browseButton)
+        {
+            browseButton.addEventListener("click", () => { this.#openBrowsePicker(); });
+        }
+
+        const updateContentButton = this.querySelector(".update-content-button");
+        if (updateContentButton)
+        {
+            updateContentButton.addEventListener("click", async () =>
+            {
+                DeckOptionsContextMenu.removeAll();
+                HomePageContextMenu.removeAll();
+                await this.#updateThisCopyContent();
+            });
+        }
+
         const manageCopiesButton = this.querySelector(".manage-copies-button");
         if (manageCopiesButton)
         {
@@ -124,64 +156,62 @@ class DeckOptionsContextMenu extends ContextMenu
 
             this.#openEntityPicker("Add to deck", [
                 {
-                    label:   "Card",
-                    handler: () => PageNavigator.open("card-editor-page", null, this.#deck)
+                    label:           "Card",
+                    entityClassName: "entity-picker-card-button",
+                    handler:         () => PageNavigator.open("card-editor-page", null, this.#deck)
                 },
                 {
-                    label:   "Study Material",
-                    handler: () => PageNavigator.open("study-material-editor-page", null, this.#deck)
+                    label:           "Study Material",
+                    entityClassName: "entity-picker-study-material-button",
+                    handler:         () => PageNavigator.open("study-material-editor-page", null, this.#deck)
                 },
                 {
-                    label:   "Mock Test",
-                    handler: () => PageNavigator.open("mock-test-editor-page", null, this.#deck)
+                    label:           "Mock Test",
+                    entityClassName: "entity-picker-mock-test-button",
+                    handler:         () => PageNavigator.open("mock-test-editor-page", null, this.#deck)
                 },
             ]);
         });
 
-        generateWithAIButton.addEventListener("click", async () =>
+        if (generateWithAIButton)
         {
-            if(!window["user"])
+            generateWithAIButton.addEventListener("click", async () =>
             {
-                await DialogBox.alert("Error", "You must be logged in to use this feature.");
-                return;
-            }
+                if(!window["user"])
+                {
+                    await DialogBox.alert("Error", "You must be logged in to use this feature.");
+                    return;
+                }
 
-            if (!await AiFeatureGate.ensureAllowedOrShowAlert())
+                if (!await AiFeatureGate.ensureAllowedOrShowAlert())
+                {
+                    return;
+                }
+
+                PageNavigator.open("automatic-generation-page", this.#deck);
+                DeckOptionsContextMenu.removeAll();
+                HomePageContextMenu.removeAll();
+            });
+        }
+
+        if (editButton)
+        {
+            editButton.addEventListener("click", () =>
             {
-                return;
-            }
+                PageNavigator.open("deck-editor-page", this.#deck, this.#deck.getParent());
+                DeckOptionsContextMenu.removeAll();
+            });
+        }
 
-            PageNavigator.open("automatic-generation-page", this.#deck);
-            DeckOptionsContextMenu.removeAll();
-            HomePageContextMenu.removeAll();
-        });
-
-        editButton.addEventListener("click", () =>
+        // Null-guarded like every other optional button above. The Export button
+        // is absent on an AI-generated deck, and the `if (!addButton) return`
+        // guard does NOT cover that case — a generated deck is not a paid deck,
+        // so it still renders Add. Without this guard opening the options menu
+        // on any generated deck threw a TypeError.
+        if (!exportButton)
         {
-            PageNavigator.open("deck-editor-page", this.#deck, this.#deck.getParent());
-            DeckOptionsContextMenu.removeAll();
-        });
-
-        browseButton.addEventListener("click", () =>
-        {
-            DeckOptionsContextMenu.removeAll();
-            HomePageContextMenu.removeAll();
-
-            this.#openEntityPicker("Browse", [
-                {
-                    label:   "Cards",
-                    handler: () => PageNavigator.open("browser-page", this.#deck, entityTypes.CARD)
-                },
-                {
-                    label:   "Study Materials",
-                    handler: () => PageNavigator.open("browser-page", this.#deck, entityTypes.STUDY_MATERIAL)
-                },
-                {
-                    label:   "Mock Tests",
-                    handler: () => PageNavigator.open("browser-page", this.#deck, entityTypes.MOCK_TEST)
-                },
-            ]);
-        });
+            return;
+        }
 
         exportButton.addEventListener("click", () =>
         {
@@ -202,20 +232,6 @@ class DeckOptionsContextMenu extends ContextMenu
                             font-size: 1.15rem;
                             font-weight: 700;
                             text-align: center;
-                        }
-                        .export-options-body .export-ipr-disclaimer
-                        {
-                            margin: 0 0 6px 0;
-                            padding: 8px 10px;
-                            border-radius: 6px;
-                            border: 1px solid rgba(220, 150, 60, 0.5);
-                            background-color: rgba(220, 150, 60, 0.08);
-                            font-size: 12px;
-                            line-height: 1.4;
-                        }
-                        .export-options-body .export-ipr-disclaimer strong
-                        {
-                            color: rgb(230, 170, 80);
                         }
                         .export-options-body .export-field-container
                         {
@@ -266,11 +282,6 @@ class DeckOptionsContextMenu extends ContextMenu
                                 font-size: 1.05rem;
                                 margin: 4px 0 2px 0;
                             }
-                            .export-options-body .export-ipr-disclaimer
-                            {
-                                font-size: 11.5px;
-                                padding: 7px 9px;
-                            }
                             .export-options-body .export-field-container
                             {
                                 padding: 5px 2px;
@@ -281,10 +292,7 @@ class DeckOptionsContextMenu extends ContextMenu
                     </style>
                     <div class="export-options-body">
                         <div class="export-options-title">Export Options</div>
-                        <div class="export-ipr-disclaimer">
-                            <strong>You are responsible for any third-party content in this deck.</strong>
-                            By exporting and sharing it, you confirm you have the rights to do so. CogniumLearn does not verify ownership of exported material.
-                        </div>
+                        <intellectual-property-notice context="export"></intellectual-property-notice>
                         <div class="export-field-container">
                             <label for="retain-progress-checkbox">Retain Progress</label>
                             <input id="retain-progress-checkbox" type="checkbox" class="retain-progress-checkbox" checked>
@@ -309,6 +317,46 @@ class DeckOptionsContextMenu extends ContextMenu
                 const retainProgress = dialog.querySelector(".retain-progress-checkbox").checked;
                 const recursive      = dialog.querySelector(".recursive-checkbox").checked;
                 const retainAutoAnalysisSettings = dialog.querySelector(".retain-auto-analysis-settings-checkbox").checked;
+
+                // Subtree gate. A recursive export pulls in every descendant, so
+                // a deck that is itself clean still cannot be exported when
+                // anything beneath it was AI-generated — otherwise a parent, or
+                // ultimately the root deck, becomes the way that content leaves
+                // the app. Non-recursive exports of a clean deck stay allowed;
+                // the node-level check that gates the menu button covers those.
+                if (recursive && this.#deck?.containsAiGeneratedContent?.() === true)
+                {
+                    AiGeneratedExportReporter.report(
+                    {
+                        deckId: this.#deck?.getId?.() ?? null,
+                        bRecursiveRequested: true,
+                        bBlocked: true,
+                        reason: aiGeneratedExportBlockReasons.SUBTREE_AI_GENERATED,
+                    });
+
+                    await DialogBox.alert(
+                        "Can't export this deck",
+                        "This deck contains AI-generated study material, which can't be exported. "
+                        + "Turn off Recursive to export only this deck's own content.",
+                    );
+                    return;
+                }
+
+                // The node-level gate hides the Export button entirely, so on an
+                // unmodified client this branch is unreachable. Reaching it means
+                // the button was re-enabled — exactly the bypass the telemetry
+                // exists to surface — so record it (bBlocked false: the export
+                // below is about to run) rather than silently allowing it.
+                if (this.#deck?.isAiGenerated?.() === true)
+                {
+                    AiGeneratedExportReporter.report(
+                    {
+                        deckId: this.#deck?.getId?.() ?? null,
+                        bRecursiveRequested: recursive,
+                        bBlocked: false,
+                        reason: aiGeneratedExportBlockReasons.NODE_AI_GENERATED,
+                    });
+                }
 
                 await this.#deck.export({
                     bRecursive: recursive,
@@ -396,17 +444,162 @@ class DeckOptionsContextMenu extends ContextMenu
         window.dispatchEvent(new CustomEvent(DeckEvents.EXPAND, { detail: { deck: parentDeck } }));
     }
 
+    #openBrowsePicker()
+    {
+        DeckOptionsContextMenu.removeAll();
+        HomePageContextMenu.removeAll();
+
+        this.#openEntityPicker("Browse", [
+            {
+                label:           "Cards",
+                entityClassName: "entity-picker-card-button",
+                handler:         () => PageNavigator.open("browser-page", this.#deck, entityTypes.CARD)
+            },
+            {
+                label:           "Study Materials",
+                entityClassName: "entity-picker-study-material-button",
+                handler:         () => PageNavigator.open("browser-page", this.#deck, entityTypes.STUDY_MATERIAL)
+            },
+            {
+                label:           "Mock Tests",
+                entityClassName: "entity-picker-mock-test-button",
+                handler:         () => PageNavigator.open("browser-page", this.#deck, entityTypes.MOCK_TEST)
+            },
+        ]);
+    }
+
+    /**
+     * Walks the buyer through updating this copy to the publisher's current
+     * content.
+     *
+     * The dry run comes first so the confirmation can state real numbers rather
+     * than a vague warning: which cards keep their progress, which reset, and
+     * what the publisher removed. An update is never applied silently, and
+     * declining leaves the copy on its current version indefinitely.
+     */
+    async #updateThisCopyContent()
+    {
+        const additionalData = this.#deck?.getAdditionalData?.() || {};
+        const paidDeckId = additionalData.paidDeckId;
+        const instanceId = additionalData.paidDeckInstanceId || LicenseConstants.PAID_DECK_FIRST_INSTANCE_ID;
+
+        if (!paidDeckId)
+        {
+            return;
+        }
+
+        let plannedCounts = null;
+        try
+        {
+            const dryRunResponse = await fetch("/PaidDecks/Copies/UpdateContent",
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ deckId: paidDeckId, instanceId: instanceId, dryRun: true })
+            });
+
+            if (!dryRunResponse.ok)
+            {
+                const errorJson = await dryRunResponse.json().catch(() => ({}));
+                await DialogBox.alert("Couldn't check for an update", errorJson.error || `HTTP ${dryRunResponse.status}`);
+                return;
+            }
+
+            plannedCounts = (await dryRunResponse.json()).counts;
+        }
+        catch (dryRunError)
+        {
+            await DialogBox.alert("Couldn't check for an update", dryRunError.message);
+            return;
+        }
+
+        const confirmationLines = [];
+        if (plannedCounts.reset > 0)
+        {
+            confirmationLines.push(`${plannedCounts.reset} item(s) changed — your progress on those resets, and any edits you made to them are replaced by the new version.`);
+        }
+        if (plannedCounts.carried > 0)
+        {
+            confirmationLines.push(`${plannedCounts.carried} item(s) are unchanged — your progress and your edits on those are kept.`);
+        }
+        if (plannedCounts.added > 0)
+        {
+            confirmationLines.push(`${plannedCounts.added} new item(s) will be added.`);
+        }
+        if (plannedCounts.removed > 0)
+        {
+            confirmationLines.push(`${plannedCounts.removed} item(s) were removed by the publisher and will disappear.`);
+        }
+        confirmationLines.push("This can't be undone. Your other copies of this deck aren't affected.");
+
+        const bConfirmed = await DialogBox.confirm("Update this copy?", confirmationLines.join("<br><br>"));
+        if (!bConfirmed)
+        {
+            return;
+        }
+
+        const progressDialog = ProgressDialog.show("Updating your copy");
+        progressDialog.setProgress(0.3, "Applying the new content\u2026");
+
+        try
+        {
+            const updateResponse = await fetch("/PaidDecks/Copies/UpdateContent",
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ deckId: paidDeckId, instanceId: instanceId })
+            });
+
+            if (!updateResponse.ok)
+            {
+                const errorJson = await updateResponse.json().catch(() => ({}));
+                progressDialog.close();
+                await DialogBox.alert("Update failed", errorJson.error || `HTTP ${updateResponse.status}`);
+                return;
+            }
+
+            progressDialog.setProgress(0.7, "Syncing\u2026");
+            await PaidDeckLicenseSyncer.pullLicenses();
+            await SyncManager.sync();
+            progressDialog.setProgress(1, "Done");
+        }
+        catch (updateError)
+        {
+            progressDialog.close();
+            await DialogBox.alert("Update failed", updateError.message);
+            return;
+        }
+        finally
+        {
+            progressDialog.close();
+        }
+
+        await DialogBox.alert("Updated", "This copy is now on the publisher's latest version.");
+    }
+
     connectedCallback()
     {
         // A paid deck is any node carrying the paidDeckId tag (stamped on the
-        // bundle root AND every sub-deck at provisioning). Its content is owned
-        // by the seller and immutable on the device, so every option that would
-        // ADD / EDIT / GENERATE / EXPORT content is hidden — only Insights and
-        // Expand remain (study modes are reached from the tile's Study button).
-        // Hiding Export here is the primary enforcement that paid content can't
-        // be extracted to a shareable file.
+        // bundle root AND every sub-deck at provisioning). The seller's content
+        // is still immutable — a learner's edits are stored as separate
+        // encrypted overlays and never overwrite it — so the options that would
+        // ADD or GENERATE new content into someone else's deck stay hidden.
+        // Browse is offered because that is how the learner reaches the card
+        // and study-material editors outside a study session.
+        // Export stays hidden: it is the primary enforcement that paid content
+        // can't be extracted to a shareable file.
         const additionalData = this.#deck?.getAdditionalData?.() || {};
         const isPaidDeck = typeof additionalData.paidDeckId === "string" && additionalData.paidDeckId.length > 0;
+
+        // Export is withheld from AI-generated content: it was synthesised from
+        // uploaded source material and must not leave the app as a shareable file.
+        //
+        // Gated at the NODE here, and again on the subtree at export time. Hiding
+        // the button whenever any descendant is generated would be simpler but
+        // wrong — it would block a clean parent from a non-recursive export that
+        // never touches the generated children. The recursive case is caught in
+        // the export handler, where the recursion flag is actually known.
+        const bExportAllowed = this.#deck?.isAiGenerated?.() !== true;
 
         // Per-copy controls only make sense on the ROOT of a paid copy (a
         // top-level tile), not on its sub-decks — those still show just
@@ -414,8 +607,18 @@ class DeckOptionsContextMenu extends ContextMenu
         const parentDeck = this.#deck?.getParent?.();
         const isPaidCopyRoot = isPaidDeck && parentDeck && typeof parentDeck.isRoot === "function" && parentDeck.isRoot();
         const isHiddenCopy = additionalData.hidden === true;
+        // Offered only when the publisher has actually released newer content
+        // than this copy holds. A copy whose seeded version is unknown (every
+        // licence issued before content versioning) counts as current, so no
+        // existing buyer is nagged to reset their progress for nothing.
+        const bUpdateAvailable = isPaidCopyRoot
+            && PaidDeckRegistry.isContentUpdateAvailable(additionalData.paidDeckId, additionalData.paidDeckInstanceId || LicenseConstants.PAID_DECK_FIRST_INSTANCE_ID);
+        const updateContentControl = bUpdateAvailable
+            ? `<button class="update-content-button">Update content…</button>`
+            : "";
         const paidCopyControls = isPaidCopyRoot
             ? `
+                ${updateContentControl}
                 <button class="hide-from-home-button">${isHiddenCopy ? "Show on home" : "Hide from home"}</button>
                 <button class="delete-copy-button">Delete copy</button>
                 <button class="manage-copies-button">Manage copies…</button>
@@ -426,6 +629,7 @@ class DeckOptionsContextMenu extends ContextMenu
             ? `
                 <button class="insights-button">Insights</button>
                 <button class="expand-button">Expand</button>
+                <button class="browse-button">Browse</button>
                 ${paidCopyControls}
             `
             : `
@@ -435,7 +639,7 @@ class DeckOptionsContextMenu extends ContextMenu
                 <button class="expand-button">Expand</button>
                 <button class="edit-button">Edit</button>
                 <button class="browse-button">Browse</button>
-                <button class="export-button">Export</button>
+                ${bExportAllowed ? `<button class="export-button">Export</button>` : ""}
             `;
 
         super.connectedCallback();

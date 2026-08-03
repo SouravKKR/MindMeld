@@ -17,8 +17,20 @@
 #   SSH keys, bakebox) unsuffixed, and per-env values suffixed by environment
 #   (BASE_NODE_SSH_HOST_<ENV>, CLOUDFLARE_TUNNEL_TOKEN_<ENV>, ...), resolved per run.
 #
+# Every run is gated on browser suites driven against the freshly-built bundle
+# BEFORE anything is baked or shipped: the seven interactive tutorials on EVERY
+# environment, plus 25 critical user flows on PRODUCTION. Needs a local Redis +
+# MongoDB and TUTORIAL_TEST_SESSION_COOKIE in deployment.env — Deployment.md §1.1.1.
+#
 # Flags (same meaning as the legacy deploy.sh):
-#   --skip-base-update  --skip-bake  --skip-frontend-build  --cleanup-bakeboxes  --help
+#   --skip-base-update  --skip-bake  --skip-frontend-build  --skip-tutorial-tests
+#   --keep-node-running  --cleanup-bakeboxes  --help
+#
+# Before anything expensive runs, the environment's Linode is checked: if it is
+# powered off it is booted, and if this machine's public IP is not on the
+# firewall's SSH allow-list a temporary rule is added using the Linode token in
+# deployment.env. BOTH are reverted on every exit path (--keep-node-running
+# leaves a node that was booted for the deploy running).
 set -euo pipefail
 
 SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,6 +43,17 @@ BAKEBOX_MANAGEMENT_TAG="cogniumlearn-bakebox"
 SKIP_BASE_UPDATE=0
 SKIP_BAKE=0
 SKIP_FRONTEND_BUILD=0
+SKIP_TUTORIAL_TESTS=0
+KEEP_NODE_RUNNING=0
+TUTORIAL_GATE_DOCK_PID=""
+
+# Temporary-access bookkeeping. Every field is the record of something this run
+# CHANGED on the account and must therefore put back — see restore_base_node_access.
+BASE_NODE_INSTANCE_ID=""
+BASE_NODE_WAS_OFFLINE=0
+SERVER_FIREWALL_ID=""
+FIREWALL_RULES_BACKUP_FILE=""
+TEMPORARY_SSH_RULE_LABEL="temp-deploy-ssh"
 BAKEBOX_INSTANCE_ID=""
 BAKEBOX_PUBLIC_IP=""
 NEW_IMAGE_VERSION=""
@@ -42,7 +65,7 @@ SSH_COMMON_OPTIONS=()
 
 show_help()
 {
-    sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 expand_path()
@@ -150,6 +173,19 @@ send_notification()
 handle_exit()
 {
     local exit_code=$?
+
+    # Never leave the gate's own Dock running, whichever way we exit.
+    if [ -n "$TUTORIAL_GATE_DOCK_PID" ]
+    then
+        kill "$TUTORIAL_GATE_DOCK_PID" 2>/dev/null || true
+        TUTORIAL_GATE_DOCK_PID=""
+    fi
+
+    # Put back any temporary firewall opening / power-on, on EVERY exit path —
+    # success, failure and Ctrl-C. Leaving SSH open to a stale IP is the one
+    # side effect of this script that must never survive the run.
+    restore_base_node_access || true
+
     [ "$RUN_SUCCEEDED" -eq 1 ] && return
     echo
     log_error "Deployment of '$ENVIRONMENT_NAME' FAILED (exit $exit_code)."
@@ -255,6 +291,318 @@ build_frontend()
     done
     log_error "Frontend build failed after 5 attempts."
     return 1
+}
+
+# ── Pre-deploy: is the node actually reachable from HERE? ────────────────────
+#
+# Two things routinely make a deploy fail late, after a bakebox has been created
+# and an image captured — expensive, and confusing because the error surfaces as
+# an SSH timeout:
+#
+#   * the environment's Linode is powered OFF (development / testing get parked
+#     to save money), so there is nothing to SSH into; and
+#   * the machine you are deploying FROM has a different public IP than the one
+#     baked into the environment's firewall (dynamic ISP address, a different
+#     office, a VPN), so port 22 is dropped for you specifically.
+#
+# Both are fixed here, up front, using the Linode token already in
+# deployment.env — and both are recorded so restore_base_node_access() can put
+# the account back exactly as it found it.
+ensure_base_node_access()
+{
+    log_step "Checking that the '$ENVIRONMENT_NAME' base node is up and reachable from this machine..."
+
+    BASE_NODE_INSTANCE_ID="$(linode_find_instance_id_by_label "$(label_for_role Server)")"
+
+    if [ -z "$BASE_NODE_INSTANCE_ID" ]
+    then
+        log_error "No Linode labelled '$(label_for_role Server)' exists — provision the environment first (provision-environment.sh)."
+        return 1
+    fi
+
+    # ── Power state ──────────────────────────────────────────────────────────
+    local power_status
+    power_status="$(linode_get_instance_status "$BASE_NODE_INSTANCE_ID")"
+    log_info "Base node $(label_for_role Server) (id=$BASE_NODE_INSTANCE_ID) is '$power_status'."
+
+    if [ "$power_status" != "running" ]
+    then
+        BASE_NODE_WAS_OFFLINE=1
+        log_warning "Base node is not running — booting it for this deploy."
+        linode_power_on "$BASE_NODE_INSTANCE_ID" || { log_error "Could not boot the base node."; return 1; }
+        log_success "Base node is running."
+    fi
+
+    # ── Firewall: is THIS machine allowed to SSH in? ─────────────────────────
+    SERVER_FIREWALL_ID="$(linode_find_firewall_id_by_label "$(label_for_role SrvFW)")"
+
+    if [ -z "$SERVER_FIREWALL_ID" ]
+    then
+        log_warning "No firewall labelled '$(label_for_role SrvFW)' — skipping the allow-list check (nothing is filtering SSH)."
+    else
+        local admin_cidr
+        admin_cidr="$(detect_admin_cidr)"
+
+        if [ "$admin_cidr" = "0.0.0.0/0" ]
+        then
+            log_error "Could not determine this machine's public IP, so the firewall allow-list cannot be checked safely."
+            log_error "Refusing to open SSH to the world. Set ADMIN_SSH_CIDR in deployment.env, or fix outbound access to api.ipify.org."
+            return 1
+        fi
+
+        log_info "This machine's public address: $admin_cidr"
+
+        local current_rules
+        current_rules="$(linode_get_firewall_rules "$SERVER_FIREWALL_ID")"
+
+        if [ "$(printf '%s' "$current_rules" | node "$SCRIPT_DIRECTORY/Library/FirewallAdminAccess.js" check "$admin_cidr")" = "allowed" ]
+        then
+            log_success "SSH from $admin_cidr is already allowed by $(label_for_role SrvFW)."
+        else
+            log_warning "SSH from $admin_cidr is NOT allowed by $(label_for_role SrvFW) — granting temporary access for this deploy."
+
+            # Snapshot the EXACT original rules so the revert is a verbatim
+            # restore rather than an attempt to undo a diff.
+            FIREWALL_RULES_BACKUP_FILE="$(mktemp -t cogniumlearn-fw-XXXXXX.json)"
+            printf '%s' "$current_rules" > "$FIREWALL_RULES_BACKUP_FILE"
+
+            local granted_rules
+            granted_rules="$(printf '%s' "$current_rules" | node "$SCRIPT_DIRECTORY/Library/FirewallAdminAccess.js" grant "$admin_cidr" "$TEMPORARY_SSH_RULE_LABEL")"
+
+            if ! linode_set_firewall_rules "$SERVER_FIREWALL_ID" "$granted_rules"
+            then
+                log_error "Could not add the temporary SSH rule to $(label_for_role SrvFW)."
+                rm -f "$FIREWALL_RULES_BACKUP_FILE"
+                FIREWALL_RULES_BACKUP_FILE=""
+                return 1
+            fi
+
+            log_success "Temporary rule '$TEMPORARY_SSH_RULE_LABEL' added — it is removed again when this run ends."
+            # Firewall changes take a moment to apply at the edge.
+            sleep 5
+        fi
+    fi
+
+    # ── Prove it, rather than assuming ───────────────────────────────────────
+    local base_node_target="${BASE_NODE_SSH_USER}@${BASE_NODE_SSH_HOST}"
+    log_step "Verifying SSH to $base_node_target..."
+    if ! wait_for_ssh "$base_node_target"
+    then
+        log_error "Still cannot SSH to $base_node_target after booting the node and opening the firewall."
+        log_error "Check BASE_NODE_SSH_HOST_${ENVIRONMENT_NAME^^} in deployment.env and the node's own sshd."
+        return 1
+    fi
+    log_success "SSH to the base node works."
+}
+
+# Puts back everything ensure_base_node_access changed. Called from the exit
+# trap, so it runs on success, on failure, and on Ctrl-C alike. Every step is
+# individually guarded — a failure to revert one thing must not stop the others.
+restore_base_node_access()
+{
+    if [ -n "$FIREWALL_RULES_BACKUP_FILE" ] && [ -f "$FIREWALL_RULES_BACKUP_FILE" ]
+    then
+        log_step "Removing the temporary SSH rule from $(label_for_role SrvFW)..."
+        if linode_set_firewall_rules "$SERVER_FIREWALL_ID" "$(cat "$FIREWALL_RULES_BACKUP_FILE")"
+        then
+            log_success "Firewall rules restored to their original state."
+        else
+            log_error "COULD NOT RESTORE THE FIREWALL. Rule '$TEMPORARY_SSH_RULE_LABEL' may still allow SSH from your IP."
+            log_error "Original rules were saved at: $FIREWALL_RULES_BACKUP_FILE"
+            log_error "Restore by hand: PUT /networking/firewalls/${SERVER_FIREWALL_ID}/rules with that file's contents."
+            # Deliberately NOT deleted — it is the only copy of the original.
+            FIREWALL_RULES_BACKUP_FILE=""
+            return
+        fi
+        rm -f "$FIREWALL_RULES_BACKUP_FILE"
+        FIREWALL_RULES_BACKUP_FILE=""
+    fi
+
+    if [ "$BASE_NODE_WAS_OFFLINE" -eq 1 ] && [ -n "$BASE_NODE_INSTANCE_ID" ]
+    then
+        BASE_NODE_WAS_OFFLINE=0
+
+        # Production is never parked on purpose. If it was somehow off and we
+        # booted it to deploy, powering it back off would take the site down —
+        # leave it running and say so loudly.
+        if [ "$ENVIRONMENT_NAME" = "production" ]
+        then
+            log_warning "PRODUCTION was powered off before this run and was booted to deploy. Leaving it RUNNING."
+            log_warning "That is deliberate — shutting it back down would take production offline. Power it off yourself if that was intended."
+            return
+        fi
+
+        if [ "$KEEP_NODE_RUNNING" -eq 1 ]
+        then
+            log_info "Base node was offline before this run; leaving it running (--keep-node-running)."
+            return
+        fi
+
+        log_step "Base node was offline before this run — powering it back off..."
+        if linode_power_off "$BASE_NODE_INSTANCE_ID"
+        then
+            log_success "Base node returned to its original 'offline' state. The deployed code is on disk and will be live when it next boots."
+        else
+            log_warning "Could not power the base node back off — it is still running (id=$BASE_NODE_INSTANCE_ID)."
+        fi
+    fi
+}
+
+# ── Pre-deploy browser gates ─────────────────────────────────────────────────
+#
+# Two Puppeteer suites drive the REAL UI against the freshly-built bundle
+# before anything is baked or shipped:
+#
+#   * Tutorial walkthrough  — EVERY environment. The guided tours click real
+#     tiles, menu entries, popups and editors, which makes them the first thing
+#     a frontend change breaks, and the breakage is invisible in code review: a
+#     renamed class, a new intermediate popup, or a page that mounts one element
+#     differently is enough to strand a user mid-tour. The Beginners tour also
+#     auto-plays on first launch, so a broken tour is the first thing a new user
+#     sees.
+#
+#   * Critical user flows   — PRODUCTION only. 25 everyday operations (create /
+#     rename / nest / delete decks, author and edit cards and study materials,
+#     browse and search them, every study mode, persistence across a reload).
+#     Slower and more data-churning than the tour walk, so it gates the one
+#     environment where a regression reaches real users.
+#
+# Both need (see Deployment.md §1.1.1):
+#   - Redis + MongoDB reachable per Dock/.env  (the same stack local dev uses)
+#   - TUTORIAL_TEST_SESSION_COOKIE in deployment.env — a sessionId for a seeded,
+#     terms-accepted LOCAL test account. Never a production session: the suites
+#     create and delete decks on whatever account they run as.
+run_browser_test_gates()
+{
+    if [ "$SKIP_TUTORIAL_TESTS" -eq 1 ]
+    then
+        log_warning "Skipping the browser test gates (--skip-tutorial-tests). Frontend regressions in the guided tours and everyday flows will NOT be caught."
+        return 0
+    fi
+
+    if [ -z "${TUTORIAL_TEST_SESSION_COOKIE:-}" ]
+    then
+        log_error "TUTORIAL_TEST_SESSION_COOKIE is not set in deployment.env — the browser test gates cannot run."
+        log_error "Set it to a sessionId for a seeded, terms-accepted LOCAL test account (see Deployment.md §1.1.1),"
+        log_error "or pass --skip-tutorial-tests to deploy without the gates."
+        return 1
+    fi
+
+    # Build first so the suites exercise the exact bundle this deploy ships,
+    # and tell update_base_node not to build it a second time.
+    if [ "$SKIP_FRONTEND_BUILD" -eq 0 ]
+    then
+        build_frontend || return 1
+        SKIP_FRONTEND_BUILD=1
+    fi
+
+    local test_directory="$REPOSITORY_ROOT/Common/Testing/Main"
+    if [ ! -d "$test_directory/node_modules" ]
+    then
+        log_step "Installing the browser-test dependencies (Puppeteer)..."
+        ( cd "$test_directory" && npm install --no-audit --no-fund ) || { log_error "npm install failed in $test_directory."; return 1; }
+    fi
+
+    local base_url="${TUTORIAL_TEST_BASE_URL:-http://127.0.0.1:3000}"
+    local started_dock=0
+    local dock_log="$REPOSITORY_ROOT/Common/Reports/.results/browser-gate-dock.log"
+    mkdir -p "$(dirname "$dock_log")"
+
+    # Reuse an already-running server when the operator has one up; otherwise
+    # start our own. Dock indexes Dock/Static ONCE at boot, so a server that was
+    # running before build_frontend would still be serving the previous bundle's
+    # (now deleted) chunk files — always start a fresh one in that case.
+    if curl -sf -o /dev/null --max-time 3 "$base_url/index.html"
+    then
+        log_warning "A server is already responding at $base_url — reusing it. Restart it if it predates this build, or it will serve stale bundle chunks."
+    else
+        log_step "Starting a local Dock for the browser test gates..."
+        # --environment=local is mandatory, not cosmetic. A bare `node index.js`
+        # resolves to the PRODUCTION environment (Dock/index.js: no flag, no
+        # COGNIUMLEARN_ENVIRONMENT -> "production"), which would point the gate
+        # at the production database — and these suites create and delete decks
+        # on whatever account they run as. The gate must only ever touch the
+        # local stack.
+        ( cd "$REPOSITORY_ROOT/Dock" && node index.js --environment=local >"$dock_log" 2>&1 ) &
+        TUTORIAL_GATE_DOCK_PID=$!
+        started_dock=1
+
+        local waited=0
+        until curl -sf -o /dev/null --max-time 3 "$base_url/index.html"
+        do
+            waited=$((waited + 1))
+            if [ "$waited" -gt 40 ]
+            then
+                log_error "Dock did not come up at $base_url within 40s. Last lines of $dock_log:"
+                tail -n 20 "$dock_log" >&2 || true
+                log_error "The browser gates need Redis + MongoDB running locally (same as 'npm run web')."
+                return 1
+            fi
+            sleep 1
+        done
+    fi
+
+    local gate_status=0
+
+    run_browser_suite "Tutorial walkthrough" "Common/Testing/Main/run_tutorial_ui_tests.js" "$REPOSITORY_ROOT/Common/Reports/.results/tutorial-ui.json" "$base_url" || gate_status=1
+
+    # The critical-flow suite is production-only: it writes and deletes a lot
+    # more than the tour walk, and it is the last line before real users.
+    if [ "$gate_status" -eq 0 ] && [ "$ENVIRONMENT_NAME" = "production" ]
+    then
+        run_browser_suite "Critical user flows" "Common/Testing/Main/run_critical_flow_tests.js" "$REPOSITORY_ROOT/Common/Reports/.results/critical-flow-ui.json" "$base_url" || gate_status=1
+    elif [ "$gate_status" -eq 0 ]
+    then
+        log_info "Critical-flow gate skipped for '$ENVIRONMENT_NAME' (production only)."
+    fi
+
+    if [ "$started_dock" -eq 1 ]
+    then
+        log_step "Stopping the browser-gate Dock..."
+        kill "$TUTORIAL_GATE_DOCK_PID" 2>/dev/null || true
+        wait "$TUTORIAL_GATE_DOCK_PID" 2>/dev/null || true
+        TUTORIAL_GATE_DOCK_PID=""
+    fi
+
+    return "$gate_status"
+}
+
+# Runs one Puppeteer suite and reads its verdict out of the result JSON.
+# A SKIPPED verdict fails the gate just like a FAIL: it means the suite never
+# proved the behaviour, which is not something to deploy on.
+run_browser_suite()
+{
+    local suite_label="$1"
+    local suite_script="$2"
+    local result_file="$3"
+    local base_url="$4"
+
+    log_step "$suite_label — driving Chromium against the freshly-built bundle..."
+
+    local suite_exit=0
+    (
+        cd "$REPOSITORY_ROOT"
+        BASE_URL="$base_url" TEST_SESSION_COOKIE="$TUTORIAL_TEST_SESSION_COOKIE" VERBOSE=1 node "$suite_script"
+    ) || suite_exit=1
+
+    if [ "$suite_exit" -ne 0 ]
+    then
+        log_error "$suite_label: the suite errored."
+        return 1
+    fi
+
+    local result_status
+    result_status="$(node -e "try{process.stdout.write(require(process.argv[1]).status||'MISSING')}catch(error){process.stdout.write('MISSING')}" "$result_file")"
+
+    if [ "$result_status" != "PASS" ]
+    then
+        log_error "$suite_label gate: $result_status — deployment aborted."
+        log_error "Full per-case detail: $result_file"
+        return 1
+    fi
+
+    log_success "$suite_label gate: passed."
+    return 0
 }
 
 create_and_provision_bakebox()
@@ -397,6 +745,8 @@ main()
             --skip-base-update) SKIP_BASE_UPDATE=1 ;;
             --skip-bake) SKIP_BAKE=1 ;;
             --skip-frontend-build) SKIP_FRONTEND_BUILD=1 ;;
+            --skip-tutorial-tests) SKIP_TUTORIAL_TESTS=1 ;;
+            --keep-node-running) KEEP_NODE_RUNNING=1 ;;
             --cleanup-bakeboxes) cleanup_only=1 ;;
             --help|-h) show_help; exit 0 ;;
             -*) log_error "Unknown flag: $1"; show_help; exit 1 ;;
@@ -413,6 +763,19 @@ main()
     if [ "$cleanup_only" -eq 1 ]; then cleanup_stray_bakeboxes; RUN_SUCCEEDED=1; exit 0; fi
 
     trap handle_exit EXIT
+
+    # Reachability BEFORE anything expensive: a parked Linode or a firewall that
+    # does not know this machine's IP would otherwise surface as an SSH timeout
+    # after a bakebox has been created and an image captured. Skipped when we
+    # are not touching the node at all.
+    if [ "$SKIP_BASE_UPDATE" -eq 0 ]
+    then
+        ensure_base_node_access || exit 1
+    fi
+
+    # Gate SECOND: a broken tour or flow should cost nothing but the run itself —
+    # no bakebox spun up, no image captured, nothing shipped to the base node.
+    run_browser_test_gates || exit 1
 
     if [ "$SKIP_BAKE" -eq 1 ]
     then

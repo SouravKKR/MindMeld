@@ -167,6 +167,25 @@ class BrowserPage extends HTMLElement
         this.#search(this.querySelector(".entity-search-input").value || "");
     }
 
+    /**
+     * Rebuild the list when the user comes back from an editor. Every row
+     * renders a snapshot of its entity's text taken at render time, so without
+     * this an edit made through a row's Edit action returned to a list still
+     * showing the OLD question / content — the change looked like it had not
+     * saved until the user left the browser and came back in. The current
+     * search term is preserved because refresh() re-applies it.
+     */
+    onPageResumed()
+    {
+        // The list only exists once #renderWhenReady has run; a resume that
+        // beats it (paid-deck unlock still pending) is a no-op — that path
+        // renders the list itself.
+        if (this.querySelector(".entity-search-input"))
+        {
+            this.refresh();
+        }
+    }
+
     connectedCallback()
     {
         this.#renderWhenReady();

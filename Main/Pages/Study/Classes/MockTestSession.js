@@ -13,6 +13,7 @@ import MockTestItemFactory from "../../../Globals/Model/MockTestEntities/MockTes
 import MetricTracker from "../../../Globals/Classes/Metrics/MetricTracker.js";
 import EvaluationInstructionsDialog from "../Components/EvaluationInstructionsDialog.js";
 import TutorialEngine from "../../../Globals/Classes/TutorialEngine.js";
+import AiFeatureGate from "../../../Globals/Classes/AiFeatureGate.js";
 import "../Components/MockTestRunner.js";
 
 class MockTestSession extends StudySession
@@ -371,6 +372,27 @@ class MockTestSession extends StudySession
                 }
 
                 await CreditNotice.showInsufficientCredits(insufficientDetail);
+                PageNavigator.clearAndOpen("mock-test-answer-key-page", mockTest, attempt);
+                return;
+            }
+
+            // The server refuses LLM grading with 403 FEATURE_NOT_IN_PLAN when
+            // the account's tier doesn't include mock-test evaluation. Without
+            // this branch the response fell into the generic !ok/catch path
+            // below and surfaced as a misleading "couldn't reach the grading
+            // service" message instead of naming the actual cause.
+            if (evaluationResponse.status === 403)
+            {
+                const planDetail = await evaluationResponse.json().catch(() => ({}));
+                attempt.setEvaluationStatus(mockTestEvaluationStatuses.FAILED);
+                try { await mockTest.save(); } catch (resaveError) { /* ignore */ }
+
+                if (document.fullscreenElement)
+                {
+                    try { await document.exitFullscreen(); } catch (exitError) { /* ignore */ }
+                }
+
+                await AiFeatureGate.showFeatureNotInPlanAlert(planDetail, "Mock test evaluation");
                 PageNavigator.clearAndOpen("mock-test-answer-key-page", mockTest, attempt);
                 return;
             }

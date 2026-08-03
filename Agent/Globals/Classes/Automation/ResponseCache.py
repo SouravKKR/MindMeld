@@ -22,9 +22,30 @@ class ResponseCache:
 
     @staticmethod
     def compute_key(request: AutomationRequest) -> str | None:
+        # A request that names no model is not an LLM call at all. The local
+        # providers (DocumentProcessingProvider and friends) do their work
+        # in-process and never consult a model, so ProcessSyllabus builds their
+        # requests with model=None — and AutomationRequest exposes no setter, so
+        # that is permanent rather than a value filled in later.
+        #
+        # This cache stores LLM responses keyed on the model, precisely so one
+        # model can never serve another's cached answer. A model-less request has
+        # no meaningful key, so it is simply not cacheable. None is the
+        # established "do not cache this" signal here — the skipped content types
+        # below return it too, and every caller in AutomationCaller already
+        # guards with `if cache_key is not None`.
+        #
+        # This must stay a None-check and never an unconditional dereference: a
+        # cache lookup is an optimisation, and letting one raise takes down the
+        # whole workflow it was only meant to make faster.
+        model_name = request.get_model()
+
+        if model_name is None:
+            return None
+
         digest = hashlib.sha256()
         digest.update(b"model:")
-        digest.update(request.get_model().encode("utf-8"))
+        digest.update(model_name.encode("utf-8"))
 
         for content in request.get_inputs():
             content_type = content.get_content_type()

@@ -52,7 +52,12 @@ class CreditConfigurationStore
         // bypasses the task queue and must carry a configured flat-cost rule.
         const bAddedAutoFillRule = configuration.ensureAutoFillGenerationOptionsTaskRule();
 
-        if (!document || bAddedAskAiRules || bAddedAutoFillRule)
+        // The queued generation workers had no rules at all, so every run was
+        // free AND Compute Cost could only ever report 0. Backfilled here so the
+        // estimator and TaskCreditCharger read the same configured policy.
+        const bAddedGenerationRules = configuration.ensureGenerationTaskRules();
+
+        if (!document || bAddedAskAiRules || bAddedAutoFillRule || bAddedGenerationRules)
         {
             await collection.updateOne
             (

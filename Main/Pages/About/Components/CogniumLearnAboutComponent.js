@@ -1,4 +1,5 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
+import ReportIssueDialog from "../../../CommonComponents/ReportIssueDialog.js";
 
 class CogniumLearnAboutComponent extends HTMLElement
 {
@@ -388,7 +389,7 @@ class CogniumLearnAboutComponent extends HTMLElement
                 <div class="about-lifecycle-diagram-container">
                     <img
                         class="about-lifecycle-diagram"
-                        src="./Globals/Assets/Images/Diagrams/CogniumLearnKnowledgeConsolidationLifecycle.png"
+                        src="./Globals/Assets/Images/Diagrams/CogniumLearnKnowledgeConsolidationLifecycleSimple.png"
                         alt="CogniumLearn Knowledge Consolidation Lifecycle Diagram"
                     >
                 </div>
@@ -464,28 +465,27 @@ class CogniumLearnAboutComponent extends HTMLElement
         `;
     }
 
-    static #SUPPORT_EMAIL = "support@cogniumlabs.co.in";
-
     #renderContact()
     {
-        const supportEmail = CogniumLearnAboutComponent.#SUPPORT_EMAIL;
-
+        // Replaced the support mailto: card. Reporting in-app means the report is
+        // grouped with everyone else hitting the same problem, and the reporter can
+        // follow its status — neither of which an email thread could offer.
         return `
             <section class="about-contact-section">
                 <div class="about-section-label">We're here to help</div>
                 <h2 class="about-section-title">Get in touch</h2>
                 <p class="about-section-body">
-                    Questions, feedback, or running into trouble? Reach out to the CogniumLearn team directly —
-                    we read every message.
+                    Hit a bug, or something not working the way you expected? Report it here and we'll
+                    look into it — you can track the outcome from inside the app.
                 </p>
-                <a class="about-contact-card" href="mailto:${supportEmail}">
+                <button type="button" class="about-contact-card about-contact-report-button">
                     <img class="about-contact-icon" src="${CogniumLearnAboutComponent.#ICON_PATH}/AboutMailIcon.svg" alt="">
                     <div class="about-contact-text">
                         <div class="about-contact-label">Support</div>
-                        <div class="about-contact-email">${supportEmail}</div>
+                        <div class="about-contact-email">Report an issue</div>
                     </div>
                     <span class="about-contact-arrow">›</span>
-                </a>
+                </button>
             </section>
         `;
     }
@@ -664,6 +664,16 @@ class CogniumLearnAboutComponent extends HTMLElement
             getStartedButton.addEventListener('click', () =>
             {
                 this.dispatchEvent(new CustomEvent('cogniumlearn-get-started', { bubbles: true }));
+            });
+        }
+
+        const reportIssueButton = this.querySelector('.about-contact-report-button');
+
+        if (reportIssueButton)
+        {
+            reportIssueButton.addEventListener('click', () =>
+            {
+                ReportIssueDialog.show();
             });
         }
     }

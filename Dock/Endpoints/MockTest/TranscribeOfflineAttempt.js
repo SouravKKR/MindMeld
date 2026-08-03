@@ -19,6 +19,8 @@ const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
 const MaintenanceGate = require("../../Globals/Classes/Maintenance/MaintenanceGate");
 const PlanEntitlementGate = require("../../Globals/Classes/Plans/PlanEntitlementGate");
 const { planFeatures } = require("../../Globals/Enumerations/PlanFeatures");
+const EphemeralUploadRegistry = require("../../Globals/Classes/Content/EphemeralUploadRegistry");
+const { ephemeralUploadKinds } = require("../../Globals/Enumerations/EphemeralUploadKinds");
 
 
 // Ceiling on how many scan pages one attempt may upload — kept in step with the
@@ -253,6 +255,24 @@ async function handleTranscribeOfflineAttempt(request, response)
             try { await fs.unlink(scanFile.path); } catch (unlinkError) { /* best effort */ }
         }
     }
+
+    // The scans are images of this user's handwriting and, before this, nothing
+    // ever deleted them — unlike the generation pipeline, this flow has no
+    // moveToDatabase step to wipe its task folder. Register the prefix so the
+    // reaper reclaims it once the dispute window elapses.
+    //
+    // A window rather than an immediate delete: the transcription is what gets
+    // graded, so a candidate disputing their marks needs the original scan to be
+    // re-readable. ANSWER_SHEET_RETENTION_DAYS bounds that, and account deletion
+    // purges it immediately regardless.
+    await EphemeralUploadRegistry.register
+    ({
+        storagePrefix: transcriptionsDirectory,
+        kind: ephemeralUploadKinds.MOCK_TEST_ANSWER_SHEET,
+        userId: userId,
+        retentionDays: DatabaseConstants.ANSWER_SHEET_RETENTION_DAYS,
+        metadata: { mockTestId: mockTestId, attemptId: attemptId, scanCount: scanFileNames.length },
+    });
 
     await TaskManager.setTask(transcriptionTaskDescriptor);
     await TaskManager.trackForUser(userId, transcriptionTaskId);

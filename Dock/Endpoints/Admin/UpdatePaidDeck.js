@@ -2,6 +2,8 @@ const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnec
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const PaidDeckPublishGate = require("../../Globals/Classes/Generation/PaidDeckPublishGate");
+const GenerationProvenanceQueryEngine = require("../../Globals/Classes/Database/GenerationProvenanceQueryEngine");
 
 const ALLOWED_FIELDS = new Set
 ([
@@ -66,6 +68,28 @@ async function updatePaidDeck(request, response)
         return;
     }
 
+    // ── Phase 8 review gate ───────────────────────────────────────────────
+    // Flipping isPublished to true is the publish action, so it is gated here
+    // as well as on upload — otherwise a deck could be uploaded unpublished
+    // (passing the gate trivially) and then published through this endpoint,
+    // which would make the control decorative. Every other field update is
+    // unaffected, including turning publication OFF.
+    if (setOperations.isPublished === true)
+    {
+        const publishDecision = await PaidDeckPublishGate.evaluate(deckId);
+        if (!publishDecision.allowed)
+        {
+            response.statusCode = httpStatus.CONFLICT;
+            response.sendJson
+            ({
+                error: publishDecision.reason,
+                detail: publishDecision.detail,
+                blockingFlags: publishDecision.blockingFlags,
+            });
+            return;
+        }
+    }
+
     // Stamp the "date modified" the details page shows on every real edit.
     setOperations.updatedAt = new Date();
 
@@ -73,6 +97,22 @@ async function updatePaidDeck(request, response)
     const result = await database
         .collection(DatabaseConstants.PAID_DECKS_COLLECTION)
         .updateOne({ id: deckId }, { $set: setOperations });
+
+    // Stamp who published this deck and when into its provenance record. Written
+    // once and never overwritten, so the record shows the first publication
+    // rather than the most recent metadata edit. A deck with no provenance
+    // record (not pipeline-generated) is a no-op.
+    if (setOperations.isPublished === true)
+    {
+        try
+        {
+            await GenerationProvenanceQueryEngine.recordPublication(deckId, request.user?.getId() || null);
+        }
+        catch (publicationRecordError)
+        {
+            console.warn(`[UpdatePaidDeck] Could not stamp publication into the provenance record: ${publicationRecordError.message}`);
+        }
+    }
 
     response.statusCode = httpStatus.OK;
     response.sendJson({ success: true, matchedCount: result.matchedCount, modifiedCount: result.modifiedCount });

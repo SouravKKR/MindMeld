@@ -1,12 +1,9 @@
 const { PacketronRequest, PacketronResponse } = require("@gamiumgamers/packetron");
 const { getUser } = require("../Helpers/GetUser");
 const InformationSourceQueryEngine = require("../../Globals/Classes/Database/InformationSourceQueryEngine");
-const StorageQuotaEnforcer = require("../../Globals/Classes/Storage/StorageQuotaEnforcer");
-const Persistence = require("../../Globals/Classes/Persistence");
-const { storageTargets } = require("../../Globals/Enumerations/StorageTargets");
+const InformationSourcePurger = require("../../Globals/Classes/Content/InformationSourcePurger");
 const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
-const path = require("path");
 
 /**
  * Deletes one of the authenticated user's uploaded information sources.
@@ -16,14 +13,11 @@ const path = require("path");
  * id is never trusted. Ownership is confirmed from the row's own userId, not
  * from the request payload.
  *
- * Content-addressed-store safety: upload blobs are shared across users (two
- * users who upload the same file get two rows with the same hash pointing at
- * one blob — see InformationSourceUpload's bAlreadyInContentStore reuse). So
- * the row is deleted FIRST, then the blob is removed ONLY when no other row
- * still references that hash (isLastInformationSourceWithSameContent, checked
- * after the delete so the row being removed isn't counted). Deleting the row
- * before the check also means a wrongful blob delete can never precede the row
- * removal; a stray orphaned blob (lost race) is harmless.
+ * Content-addressed-store safety and the derived-content cascade both live in
+ * InformationSourcePurger — see that class for the ordering discipline. In
+ * short: upload blobs are shared across users, so the row is deleted first and
+ * the blob plus everything derived from it (embedding chunks, cached figures)
+ * is removed only once no other row references that hash.
  *
  * @param {PacketronRequest} request
  * @param {PacketronResponse} response
@@ -67,31 +61,19 @@ async function handleInformationSourceDelete(request, response)
         return;
     }
 
-    await InformationSourceQueryEngine.deleteInformationSource(informationSource);
-
-    // Only remove the shared blob when this was the last row referencing its
-    // content. A storage-layer failure here must not fail the delete — the row
-    // (the user-facing entity and the billed footprint) is already gone.
-    try
-    {
-        const bIsLastReference = await InformationSourceQueryEngine.isLastInformationSourceWithSameContent(informationSource);
-        if (bIsLastReference)
-        {
-            const blobPath = path.join(informationSource.getDirectoryPath(), informationSource.getHash());
-            await Persistence.delete(blobPath, storageTargets.LINODE_OBJECT_STORAGE);
-        }
-    }
-    catch (blobDeletionError)
-    {
-        console.warn(`[InformationSourceDelete] Row deleted but blob cleanup failed for ${informationSourceId}: ${blobDeletionError?.message || blobDeletionError}`);
-    }
-
-    // The footprint shrank — drop the cached measurement so the storage meter
-    // and the next quota check re-measure, mirroring the upload path.
-    StorageQuotaEnforcer.invalidate(user.getId());
+    // The purger owns the whole cascade — row, then blob and derived content
+    // (embedding chunks + cached figures) when this was the last reference —
+    // and invalidates the cached storage measurement. Sharing it with the
+    // expiry reaper and the admin takedown path keeps the three from drifting.
+    const purgeResult = await InformationSourcePurger.purgeSingleSource(informationSource);
 
     response.statusCode = httpStatus.OK;
-    response.sendJson({ success: true });
+    response.sendJson({
+        success: true,
+        contentRemoved: purgeResult.bContentRemoved,
+        embeddingChunksRemoved: purgeResult.embeddingChunksRemoved,
+        figuresRemoved: purgeResult.figuresRemoved
+    });
 }
 
 module.exports = { handleInformationSourceDelete };

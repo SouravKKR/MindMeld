@@ -25,13 +25,22 @@ class LocalWorkerSupervisor
     static #bStarted = false;
 
     /**
-     * Reads a strictly-positive integer from the environment, falling back when
-     * the value is missing or invalid.
+     * Reads a non-negative integer from the environment, falling back when the
+     * value is missing or invalid.
+     *
+     * Zero is a VALID, meaningful value — not an error. It means "this process
+     * supervises no workers of its own", which is exactly the containerised
+     * layout used by the emergency bundle (Common/EmergencyRecovery): Dock runs
+     * in a Node-only image with no Python or Agent venv on its filesystem, and
+     * the worker runs beside it as its own container draining the same Redis
+     * queue. Treating zero as invalid would fall back to the default and spawn
+     * workers that crash-loop on a missing interpreter.
+     *
      * @param {string} environmentVariableName
      * @param {number} fallbackValue
      * @returns {number}
      */
-    static #resolvePositiveIntegerSetting(environmentVariableName, fallbackValue)
+    static #resolveNonNegativeIntegerSetting(environmentVariableName, fallbackValue)
     {
         const rawValue = process.env[environmentVariableName];
 
@@ -42,7 +51,7 @@ class LocalWorkerSupervisor
 
         const parsedValue = Number(rawValue);
 
-        if (!Number.isFinite(parsedValue) || parsedValue <= 0)
+        if (!Number.isFinite(parsedValue) || parsedValue < 0)
         {
             console.warn(`[LocalWorkerSupervisor] Ignoring invalid ${environmentVariableName}="${rawValue}"; using default ${fallbackValue}.`);
             return fallbackValue;
@@ -64,7 +73,18 @@ class LocalWorkerSupervisor
         LocalWorkerSupervisor.#bStarted = true;
         LocalWorkerSupervisor.#bStopping = false;
 
-        const workerCount = LocalWorkerSupervisor.#resolvePositiveIntegerSetting("AGENT_LOCAL_WORKER_COUNT", LocalWorkerSupervisor.#DEFAULT_WORKER_COUNT);
+        const workerCount = LocalWorkerSupervisor.#resolveNonNegativeIntegerSetting("AGENT_LOCAL_WORKER_COUNT", LocalWorkerSupervisor.#DEFAULT_WORKER_COUNT);
+
+        if (workerCount === 0)
+        {
+            // console.log, not Logger.log: INFO entries are only mirrored to standard
+            // output under --debug, and "no workers were started" is a state an
+            // operator must be able to confirm from `docker compose logs` during a
+            // recovery — a silent absence is indistinguishable from a failure. Same
+            // reasoning as TaskManager's "TaskManager initialized." boot line.
+            console.log("[LocalWorkerSupervisor] AGENT_LOCAL_WORKER_COUNT=0 — supervising no local workers; queued tasks are expected to be drained by external workers.");
+            return;
+        }
 
         Logger.log(`[LocalWorkerSupervisor] Starting ${workerCount} local worker(s).`);
 

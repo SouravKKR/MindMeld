@@ -10,6 +10,29 @@ from openai import AsyncOpenAI
 
 
 class OpenAiProvider(AutomationProvider):
+    """
+    OpenAI chat-completions provider.
+
+    Data posture (asserted here rather than assumed). Requests carry user-
+    uploaded coursework, so the retention posture matters and must be visible at
+    the point it is relied upon:
+
+      - `store=False` is set on every call, so prompts and completions are not
+        persisted to the account for model-improvement or playground retrieval.
+        The OpenAI API does not train on business-tier API data by default; this
+        flag makes the intent explicit and survives a default changing.
+      - Zero Data Retention, if required, is an ACCOUNT-level setting granted by
+        OpenAI — it cannot be enabled from client code. Confirm it is active on
+        the account backing OPENAI_API_KEY before routing production traffic
+        here. Without it, OpenAI retains request data for up to 30 days for
+        abuse monitoring.
+      - This provider is not on the live generation path today (ModelPool routes
+        to Vertex). Re-verify the account posture before that changes.
+    """
+
+    # Suppresses server-side persistence of prompts and completions.
+    STORE_COMPLETIONS = False
+
     def __init__(self):
         self.__client: AsyncOpenAI = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -52,6 +75,7 @@ class OpenAiProvider(AutomationProvider):
         response = await self.__client.chat.completions.create(
             model=request.get_model(),
             messages=messages,
+            store=OpenAiProvider.STORE_COMPLETIONS,
         )
 
         outputs = []

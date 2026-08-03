@@ -79,16 +79,24 @@ options-sidebar .options-sidebar-contact-label
     color: #888888;
 }
 
-options-sidebar .options-sidebar-contact-email
+/* Replaced the support mailto: link. Styled as a link rather than as another
+   sidebar button so the "Need help?" footer keeps reading as a contact prompt and
+   does not compete visually with the navigation buttons above it. */
+options-sidebar .options-sidebar-report-issue
 {
+    align-self: flex-start;
+    padding: 0;
+    background: none;
+    border: none;
+    font-family: inherit;
     font-size: 15px;
     font-weight: bold;
     color: var(--gradient-start-color, #0098c4);
     text-decoration: none;
-    word-break: break-all;
+    cursor: pointer;
 }
 
-options-sidebar .options-sidebar-contact-email:hover
+options-sidebar .options-sidebar-report-issue:hover
 {
     text-decoration: underline;
 }

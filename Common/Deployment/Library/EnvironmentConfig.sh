@@ -120,6 +120,30 @@ load_deployment_secrets()
     export LINODE_API_TOKEN
 }
 
+# This machine's public IPv4 as a /32 CIDR — the address a Linode firewall sees
+# for SSH from here. Falls back to 0.0.0.0/0 only when detection fails, which
+# callers must treat as "could not determine" rather than "open it up".
+detect_admin_cidr()
+{
+    local detected_ip
+    detected_ip="$(curl -s --max-time 8 https://api.ipify.org || true)"
+
+    if [ -z "$detected_ip" ]
+    then
+        # Second opinion — ipify occasionally rate-limits or is blocked on
+        # corporate networks, and a wrong answer here silently opens SSH.
+        detected_ip="$(curl -s --max-time 8 https://checkip.amazonaws.com || true)"
+        detected_ip="$(printf '%s' "$detected_ip" | tr -d '[:space:]')"
+    fi
+
+    if printf '%s' "$detected_ip" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'
+    then
+        printf '%s/32' "$detected_ip"
+    else
+        printf '0.0.0.0/0'
+    fi
+}
+
 # The per-environment Dock / Agent env files (gitignored) that ship to the node.
 dock_environment_file_name()
 {

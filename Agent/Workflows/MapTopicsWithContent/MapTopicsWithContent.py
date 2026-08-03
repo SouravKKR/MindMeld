@@ -30,6 +30,10 @@ from Workflows.MapTopicsWithContent.ChunkUtils import (
     CHUNK_SIZE,
 )
 from Workflows.MapTopicsWithContent.MatchChunksToTopic import match_chunks_to_topics, encode_texts_to_cpu
+from Workflows.MapTopicsWithContent.CoverageReconciler import CoverageReconciler
+from Workflows.MapTopicsWithContent.KnowledgeChunkGenerator import KnowledgeChunkGenerator
+from Globals.Classes.Generation.PaidDeckActionLog import PaidDeckActionLog
+from Globals.Utility.RedactSourceName import redact_source_name
 
 
 class MapTopicsWithContent(Workflow):
@@ -102,7 +106,7 @@ class MapTopicsWithContent(Workflow):
         try:
             pdf_bytes = await Persistence.read(textbook_path)
         except Exception as read_error:
-            print(f"[MapTopicsWithContent] Could not read '{information_source.get_name()}': {read_error}")
+            print(f"[MapTopicsWithContent] Could not read '{redact_source_name(information_source.get_name())}': {read_error}")
             return source_hash, "", []
 
         text_segments = []
@@ -110,11 +114,11 @@ class MapTopicsWithContent(Workflow):
         running_length = 0
 
         for (start_page, end_page) in self.__ranges_to_extract(extractable_source):
-            print(f"\n--- Extracting text from '{information_source.get_name()}' (pages {start_page}–{end_page or 'end'}) ---")
+            print(f"\n--- Extracting text from '{redact_source_name(information_source.get_name())}' (pages {start_page}–{end_page or 'end'}) ---")
             try:
                 extracted_text, page_spans = extract_text_with_page_map(pdf_bytes, start_page=start_page, end_page=end_page)
             except Exception as extract_error:
-                print(f"[MapTopicsWithContent] extract_text failed for '{information_source.get_name()}': {extract_error}")
+                print(f"[MapTopicsWithContent] extract_text failed for '{redact_source_name(information_source.get_name())}': {extract_error}")
                 continue
 
             if not extracted_text.strip():
@@ -167,6 +171,17 @@ class MapTopicsWithContent(Workflow):
         topic_strings  = [leaf["topic"] for leaf in leaves]
         print(f"Loaded {len(leaves)} leaf topics from syllabus.")
         await self.__update_progress(0.05)
+
+        # ── Paid-deck mode: replace retrieval, keep the output contract ────────
+        # Everything below this branch is the retrieval pipeline (embed the
+        # uploaded PDF, match passages to topics). Paid-deck mode has no PDF, so
+        # it writes the chunks instead and returns through the same
+        # __save_results / mapping-complete-marker path — the per-topic JSON that
+        # lands in MappedTopics/ is identical in shape either way, which is why
+        # no downstream worker knows or cares which produced it.
+        if self.__general_generation_settings.get_paid_deck_mode() is True:
+            await self.__run_paid_deck_mode(main_task_id, leaves, mapping_complete_marker_path)
+            return
 
         # ── 2. Iterate over ALL provided document sources (multi-source fix) ──
         extractable_information_sources = self.__general_generation_settings.get_information_sources() or []
@@ -289,13 +304,142 @@ class MapTopicsWithContent(Workflow):
 
         print(f"\nDone. {saved_count} topic files written.")
 
+    async def __run_paid_deck_mode(self, main_task_id: str, leaves: list, mapping_complete_marker_path: str) -> None:
+        """
+        Phases 2 and 3 for a paid-deck run.
+
+        Phase 2 (coverage reconciliation) audits the syllabus tree against the
+        current exam pattern and writes an advisory report the review gate shows.
+        Phase 3 (knowledge-first chunk generation) writes the per-topic content
+        that replaces retrieval.
+
+        The reconciliation is deliberately non-blocking: it informs a human
+        decision at the review gate and must never stop content from being
+        generated, because a stale or low-confidence pattern read would then take
+        the whole run down with it.
+        """
+        action_log = PaidDeckActionLog(main_task_id, "MapTopicsWithContent")
+
+        await action_log.record_note(
+            phase_name = "KNOWLEDGE_CHUNK_GENERATION",
+            outcome = (
+                "Paid-deck mode: retrieval skipped entirely (no document was accepted). "
+                "Chunks are written from model knowledge against the Phase 1 coverage summaries."
+            ),
+        )
+
+        # ── Phase 2: coverage reconciliation (advisory, web search permitted) ──
+        reconciliation_path = join_path(
+            "/",
+            PersistenceConstants.TASKS_DIRECTORY,
+            main_task_id,
+            PersistenceConstants.COVERAGE_RECONCILIATION_FILE_NAME,
+        )
+
+        if await Persistence.exists(reconciliation_path):
+            print("[MapTopicsWithContent] Coverage reconciliation already exists — reusing it (resume).")
+        else:
+            reconciler = CoverageReconciler(
+                subject_name = self.__general_generation_settings.get_subject_name(),
+                exam_name = self.__general_generation_settings.get_exam_name(),
+                action_log = action_log,
+            )
+            reconciliation_report = await reconciler.reconcile(leaves)
+            await Persistence.write(reconciliation_path, json.dumps(reconciliation_report, ensure_ascii=False))
+            print(
+                f"[MapTopicsWithContent] Coverage reconciliation: "
+                f"{len(reconciliation_report['gaps'])} gap(s), "
+                f"{len(reconciliation_report['outOfScope'])} out-of-scope topic(s)."
+            )
+
+        await self.__update_progress(0.15)
+
+        # ── Phase 3: knowledge-first chunk generation ─────────────────────────
+        coverage_summaries = await self.__load_coverage_summaries(main_task_id)
+
+        generator = KnowledgeChunkGenerator(
+            subject_name = self.__general_generation_settings.get_subject_name(),
+            exam_name = self.__general_generation_settings.get_exam_name(),
+            coverage_summaries = coverage_summaries,
+            action_log = action_log,
+        )
+
+        completed_topic_count = 0
+
+        async def on_topic_completed():
+            nonlocal completed_topic_count
+            completed_topic_count += 1
+            # Same 0.15 → 0.65 band the retrieval path creeps through, so the
+            # progress page behaves identically in both modes.
+            await self.__update_progress(0.15 + 0.50 * (completed_topic_count / max(1, len(leaves))))
+
+        chunks_by_leaf_index = await generator.generate(leaves, on_topic_completed)
+
+        if not chunks_by_leaf_index:
+            raise RuntimeError(
+                f"Knowledge-first chunk generation produced no content for any of the {len(leaves)} "
+                f"syllabus topic(s). There is nothing for the downstream workers to generate from."
+            )
+
+        await self.__update_progress(0.65)
+
+        print("\n--- Saving results ---")
+        saved_count = await self.__save_results(
+            topic_buckets = {topic_index: [] for topic_index in range(len(leaves))},
+            leaves = leaves,
+            main_task_id = main_task_id,
+            enabled_web_source_types = [],
+            generated_chunks_by_topic_index = chunks_by_leaf_index,
+        )
+
+        await Persistence.write(mapping_complete_marker_path, json.dumps({"savedCount": saved_count}))
+        await self.__update_progress(1.0)
+
+        print(
+            f"\nDone. {saved_count} topic file(s) written from generated content "
+            f"({len(chunks_by_leaf_index)}/{len(leaves)} topic(s) produced chunks)."
+        )
+
+    async def __load_coverage_summaries(self, main_task_id: str) -> dict:
+        """
+        Loads the Phase 1 coverage summaries. A missing or unreadable file is not
+        fatal — KnowledgeChunkGenerator falls back to a standard treatment per
+        topic and says so in its output — but it is logged loudly, because a
+        silent fallback here is the difference between a specified deck and a
+        generic one.
+        """
+        coverage_summaries_path = join_path(
+            "/",
+            PersistenceConstants.TASKS_DIRECTORY,
+            main_task_id,
+            PersistenceConstants.COVERAGE_SUMMARIES_FILE_NAME,
+        )
+
+        try:
+            summaries_bytes = await Persistence.read(coverage_summaries_path)
+            return json.loads(summaries_bytes.decode("utf-8"))
+        except Exception as read_error:
+            print(
+                f"[MapTopicsWithContent] Could not read coverage summaries ({read_error}) — "
+                f"every topic will fall back to a standard treatment."
+            )
+            return {"version": 1, "topics": []}
+
     async def __save_results(
         self,
         topic_buckets:           dict,
         leaves:                  list,
         main_task_id:            str,
         enabled_web_source_types: list,
+        generated_chunks_by_topic_index: dict = None,
     ) -> int:
+        """
+        generated_chunks_by_topic_index is the paid-deck path: when supplied, a
+        topic's chunks come from Phase 3 instead of from the embedded corpus, and
+        its sourcePages are empty (there is no page to point at). Everything else
+        — the weight denominator, the file layout, the JSON keys — is shared, so
+        both modes emit exactly the same contract.
+        """
         # ── First pass: assemble all chunks (PDF + web) per topic so we can compute
         #    a denominator that actually reflects the full corpus. The earlier
         #    formula was based on PDF chunks only, which broke down catastrophically
@@ -310,7 +454,17 @@ class MapTopicsWithContent(Workflow):
 
             content_chunks = []
             source_page_keys = set()
-            if chunk_list:
+            primary_chunk_count = 0
+
+            if generated_chunks_by_topic_index is not None:
+                # Knowledge-first path. sourcePages stays empty by construction —
+                # there is no document, so there is no page to attribute a chunk
+                # to. Every consumer reads it as .get("sourcePages", []), and
+                # PrepareImages routes page-less figures through its existing
+                # similarity-gated placement.
+                content_chunks = list(generated_chunks_by_topic_index.get(topic_index, []))
+                primary_chunk_count = len(content_chunks)
+            elif chunk_list:
                 chunk_list.sort(key=lambda item: item["chunkIndex"])
                 groups = merge_consecutive_groups(chunk_list)
                 content_chunks = [
@@ -320,6 +474,7 @@ class MapTopicsWithContent(Workflow):
                 for item in chunk_list:
                     for (source_hash, page_number) in item.get("pages", []):
                         source_page_keys.add((source_hash, page_number))
+                primary_chunk_count = len(chunk_list)
 
             source_pages = [
                 {"sourceHash": source_hash, "page": page_number}
@@ -336,21 +491,21 @@ class MapTopicsWithContent(Workflow):
                 continue
 
             topic_payloads.append({
-                "topicIndex":      topic_index,
-                "topicChain":      hierarchy + [topic_str],
-                "hierarchy":       hierarchy,
-                "topicStr":        topic_str,
-                "contentChunks":   content_chunks,
-                "sourcePages":     source_pages,
-                "pdfChunkCount":   len(chunk_list),
-                "webChunkCount":   web_chunk_count,
+                "topicIndex":         topic_index,
+                "topicChain":         hierarchy + [topic_str],
+                "hierarchy":          hierarchy,
+                "topicStr":           topic_str,
+                "contentChunks":      content_chunks,
+                "sourcePages":        source_pages,
+                "primaryChunkCount":  primary_chunk_count,
+                "webChunkCount":      web_chunk_count,
             })
 
         # ── Compute the proper denominator across ALL topics (PDF + web). Guarantee
         #    sum(weights) == 1.0 by dividing each topic's chunk count by the global
         #    total. Falls back to uniform weights when no chunks exist anywhere.
         total_chunks_global = sum(
-            payload["pdfChunkCount"] + payload["webChunkCount"]
+            payload["primaryChunkCount"] + payload["webChunkCount"]
             for payload in topic_payloads
         )
 
@@ -360,7 +515,7 @@ class MapTopicsWithContent(Workflow):
                 payload["weight"] = uniform_weight
         else:
             for payload in topic_payloads:
-                topic_chunk_count = payload["pdfChunkCount"] + payload["webChunkCount"]
+                topic_chunk_count = payload["primaryChunkCount"] + payload["webChunkCount"]
                 payload["weight"] = topic_chunk_count / total_chunks_global
 
         saved_count = 0

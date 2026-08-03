@@ -22,6 +22,7 @@ from Globals.Enumerations.SectionQuestionCountModes import SectionQuestionCountM
 from Globals.Utility.JoinPath import join_path
 from Globals.Utility.SanitizeFilename import sanitize_filename
 from Globals.Utility.StripJsonMarkdown import strip_json_markdown
+from Globals.Classes.Compliance.SourceSimilarityScorer import SourceSimilarityScorer
 from Workflows.MockTestGenerationWorker.ConvertQuestions import convert_raw_questions
 from Workflows.Workflow import Workflow
 
@@ -385,7 +386,12 @@ class MockTestGenerationWorker(Workflow):
 
         if use_rephrase_prompt:
             seed_block = self.__format_seeds_block(seeds)
+            # Expression rules lead. They matter most on this path: the seeds are
+            # verbatim exam questions lifted from an uploaded paper, so this is
+            # the stage that must convert them into original phrasing while
+            # holding every quantity, option and answer exactly.
             system_text = (
+                PromptPool.SOURCE_EXPRESSION_RULES + "\n" +
                 PromptPool.MOCK_TEST_QUESTION_REPHRASE_SYSTEM
                 .replace("{marking_scheme_summary}", marking_scheme_summary)
                 .replace("{show_solving_steps_block}", show_solving_steps_block)
@@ -403,6 +409,7 @@ class MockTestGenerationWorker(Workflow):
             )
         else:
             system_text = (
+                PromptPool.SOURCE_EXPRESSION_RULES + "\n" +
                 PromptPool.MOCK_TEST_QUESTION_GENERATION_SYSTEM
                 .replace("{marking_scheme_summary}", marking_scheme_summary)
                 .replace("{show_solving_steps_block}", show_solving_steps_block)
@@ -432,7 +439,68 @@ class MockTestGenerationWorker(Workflow):
             ]
         )
 
-        return request, model_string
+        return request, model_string, seeds
+
+    def __log_seed_overlap_for_cell(self, topic_chain_string: str, cell: dict, generated_questions: list) -> None:
+        """
+        Measures each generated question against the verbatim exam seeds its cell
+        was built from, and logs the worst overlap found.
+
+        Why this exists. The seeds are lifted word-for-word out of a copyrighted
+        exam paper, and the rephrase prompt is the only thing that converts them
+        into original phrasing. Until now that conversion was enforced purely by
+        instruction with nothing checking the result — so a seed that came back
+        near-verbatim was invisible. This makes it observable.
+
+        Each question is compared against EVERY seed for the cell, not against a
+        presumed origin: the model is free to rephrase any seed into any slot, so
+        there is no reliable pairing, and "does this share a long run with ANY
+        seed" is the question that actually matters. Only the worst pair is
+        logged, so one line per question rather than one per combination.
+
+        LOG ONLY, deliberately — matching SourceSimilarityScorer's posture. It
+        never drops a question. The point is to produce the evidence a threshold
+        would have to be set from; rejecting on an uncalibrated limit would risk
+        discarding correct questions for sharing an unavoidable technical phrase.
+        Never raises: a telemetry helper must not be able to fail a generation.
+        """
+        seeds = cell.get("seeds") or []
+        if not seeds:
+            return
+
+        try:
+            for generated_question in generated_questions:
+                if not isinstance(generated_question, dict):
+                    continue
+
+                generated_text = str(generated_question.get("question") or "").strip()
+                if not generated_text:
+                    continue
+
+                worst_seed_text = None
+                worst_run_length = -1
+
+                for seed in seeds:
+                    seed_text = str((seed or {}).get("question") or "").strip()
+                    if not seed_text:
+                        continue
+                    run_length = SourceSimilarityScorer.longest_shared_word_run(generated_text, seed_text)
+                    if run_length > worst_run_length:
+                        worst_run_length = run_length
+                        worst_seed_text = seed_text
+
+                if worst_seed_text is None:
+                    continue
+
+                # Delegated rather than compared inline so the limit and the
+                # [SEED_OVERLAP] log format live in one place.
+                SourceSimilarityScorer.log_seed_overlap(
+                    f"mock-test topic='{topic_chain_string}' type={cell['type_key']}",
+                    generated_text,
+                    worst_seed_text,
+                )
+        except Exception as overlap_error:
+            self._wlog(f"[MockTestGenerationWorker] Seed-overlap logging failed (continuing): {overlap_error}")
 
     # ── Entry point ────────────────────────────────────────────────────────────
 
@@ -560,7 +628,7 @@ class MockTestGenerationWorker(Workflow):
                     if difficulty_counts_raw[difficulty_index] > 0
                 }
 
-                request, model_string = self.__build_request(topic, type_key, type_q_count, difficulty_allocation)
+                request, model_string, cell_seeds = self.__build_request(topic, type_key, type_q_count, difficulty_allocation)
                 cell_key              = f"topic-{topic_index}-type-{type_key}"
 
                 cells.append({
@@ -569,6 +637,10 @@ class MockTestGenerationWorker(Workflow):
                     "model_string": model_string,
                     "type_key":     type_key,
                     "expected":     type_q_count,
+                    # The verbatim exam seeds this cell was asked to re-author.
+                    # Carried through so the generated questions can be measured
+                    # against them after the response comes back.
+                    "seeds":        cell_seeds,
                 })
 
             topic_cells.append({"topic_index": topic_index, "topic": topic, "cells": cells, "reused": False, "output_path": output_path})
@@ -655,6 +727,7 @@ class MockTestGenerationWorker(Workflow):
                     data   = response.get_output().get_data()
                     parsed = strip_json_markdown(data) if isinstance(data, str) else data
                     if isinstance(parsed, list):
+                        self.__log_seed_overlap_for_cell(topic_chain_str, cell, parsed)
                         raw_questions.extend(parsed)
                 except Exception as parse_error:
                     wlog(f"[MockTestGenerationWorker] '{topic_chain_str}' / {cell['type_key']}: parse failed — {parse_error}")

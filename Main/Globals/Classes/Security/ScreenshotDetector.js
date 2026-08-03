@@ -56,9 +56,14 @@ class ScreenshotDetector
         }
 
         container.classList.add("paid-deck-card-container");
-        container.style.userSelect = "none";
-        container.style.webkitUserSelect = "none";
-        container.setAttribute("oncontextmenu", "return false");
+
+        // Selection is deliberately NOT disabled here. `user-select: none`
+        // would break Ask AI's selected-text flow and make the card / study
+        // material editors unusable on a purchased deck. PaidDeckCopyGuard
+        // blocks the copy and cut ACTIONS instead, which stops the clipboard
+        // just as effectively while leaving both features working. The
+        // right-click menu is suppressed there too, in JavaScript, rather than
+        // through an inline oncontextmenu attribute.
 
         ScreenshotDetector.#registeredContainers.add(container);
         ScreenshotDetector.#activeDeckId = deckId || null;

@@ -85,6 +85,24 @@ class MockTestEditorPage extends HTMLElement
 
     connectedCallback()
     {
+        // Mock tests in a paid deck are still server-authored and immutable:
+        // MockTest.setItems writes straight to the entity, and the server's
+        // paid-content preserve step discards it on the next push — so the
+        // editor would accept every change and silently lose it. Refuse to open
+        // rather than lie, exactly as the card editor used to. (Cards and study
+        // materials are editable now via encrypted overlays; extending overlays
+        // to a mock test means one record per field per question, which is a
+        // separate piece of work.)
+        if (this.#deck?.getAdditionalData?.()?.paidDeckId)
+        {
+            this.innerHTML =
+            `
+                <header-component title="Read-only"></header-component>
+                <p style="padding: 20px; text-align: center;">Mock tests in a purchased deck can't be edited.</p>
+            `;
+            return;
+        }
+
         this.innerHTML = `
             <header-component title="${this.#bNewMockTest ? "New Mock Test" : "Edit Mock Test"}"></header-component>
             <div class="mock-test-editor-scrollable">

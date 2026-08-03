@@ -124,6 +124,21 @@ class TranscribeMockTestAttempt(Workflow):
         # ── Load + normalize every scan page into PNG bytes ─────────────────────
         page_images = await self.__load_scan_images(transcriptions_directory, scan_file_names, write_log)
         write_log(f"[TranscribeMockTestAttempt] Prepared {len(page_images)} page image(s) for transcription.")
+
+        # The scans are now normalized PNG bytes held in memory, and nothing
+        # reads the stored copies again — not this workflow, not evaluation, and
+        # not the client (GetTranscriptionResult returns the transcription JSON
+        # alone, and the review page renders the File objects the browser still
+        # holds). A retry re-uploads from the browser as a brand-new task rather
+        # than re-reading these, so keeping them for retry would be pointless.
+        #
+        # Deleting at the earliest safe point rather than at the end means every
+        # later failure path — LLM error, write failure, a killed worker — also
+        # leaves nothing behind, so no separate sweeper is needed. These are
+        # photographs of a named student's handwriting that frequently capture
+        # the printed question paper too; retaining them past use has no
+        # product justification.
+        await self.__delete_scan_files(transcriptions_directory, scan_file_names, write_log)
         await TaskManager.increment_completion(parent_task_id, 0.2)
         await flush_log()
 
@@ -232,6 +247,26 @@ class TranscribeMockTestAttempt(Workflow):
             f"unmatched={len(unmatched_blocks)} failed={transcription_failed}"
         )
         await flush_log()
+
+    @staticmethod
+    async def __delete_scan_files(transcriptions_directory, scan_file_names, write_log):
+        """
+        Removes the uploaded answer-sheet images from storage once they have been
+        loaded into memory.
+
+        A deletion failure never fails the task — the images are already in hand
+        and the transcription can still be produced. The failure is logged so a
+        storage problem is visible rather than silently leaving scans behind.
+        """
+        deleted_count = 0
+        for scan_file_name in scan_file_names or []:
+            try:
+                await Persistence.delete(join_path(transcriptions_directory, scan_file_name))
+                deleted_count += 1
+            except Exception as delete_error:
+                write_log(f"[TranscribeMockTestAttempt] Could not delete scan '{scan_file_name}': {delete_error}")
+
+        write_log(f"[TranscribeMockTestAttempt] Deleted {deleted_count}/{len(scan_file_names or [])} scan file(s) after transcription.")
 
     # ── Scan loading / image normalization ──────────────────────────────────────
 

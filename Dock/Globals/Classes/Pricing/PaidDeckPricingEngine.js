@@ -4,6 +4,7 @@ const AuthenticationQueryEngine = require("../Database/AuthenticationQueryEngine
 const OrganizationPerkResolver = require("../Organization/OrganizationPerkResolver");
 const RegionMetadata = require("./RegionMetadata");
 const CurrencyConverter = require("./CurrencyConverter");
+const LicenseDurationConfigurationResolver = require("./LicenseDurationConfigurationResolver");
 const { deckLicenseStatuses } = require("../../Enumerations/DeckLicenseStatuses");
 const ErrorCodes = require("../../Constants/ErrorCodes");
 
@@ -96,6 +97,39 @@ class PaidDeckPricingEngine
             .toArray();
 
         return new Set(licenses.map(license => license.deckId));
+    }
+
+    /**
+     * Resolves the license-duration configuration that applies to one deck,
+     * loading the deck document only when the regional pricing row does not
+     * already state a duration (so the common, fully-configured case costs no
+     * extra round-trip).
+     *
+     * @param {string} deckId the deck being priced
+     * @param {object} regionalPricing the active PaidDeckPricing row, or null when none exists
+     * @param {object} preloadedDeckDocument the deck document when the caller already has it, else null
+     * @param {number} finalPriceMinor the price the buyer would actually pay, in minor units
+     *
+     * @returns {Promise<{ durationDays: number, isPerpetual: boolean, durationSource: string }>}
+     */
+    static async #resolveDurationConfiguration(deckId, regionalPricing, preloadedDeckDocument, finalPriceMinor)
+    {
+        if (LicenseDurationConfigurationResolver.isExplicitlyConfigured(regionalPricing))
+        {
+            return LicenseDurationConfigurationResolver.resolve(regionalPricing, null, finalPriceMinor);
+        }
+
+        if (preloadedDeckDocument)
+        {
+            return LicenseDurationConfigurationResolver.resolve(regionalPricing, preloadedDeckDocument, finalPriceMinor);
+        }
+
+        const database = await DatabaseConnector.getDatabase();
+        const deckDocument = await database
+            .collection(DatabaseConstants.PAID_DECKS_COLLECTION)
+            .findOne({ id: deckId });
+
+        return LicenseDurationConfigurationResolver.resolve(regionalPricing, deckDocument, finalPriceMinor);
     }
 
     static async #getBundleDiscounts(bundleDeckId)
@@ -207,6 +241,17 @@ class PaidDeckPricingEngine
                 }
 
                 totalMinor += fallbackPrice;
+                // No regional pricing row exists — the deck document carries the
+                // duration configuration for the base price, with the implicit
+                // fallbacks applied when it declares none (see
+                // LicenseDurationConfigurationResolver).
+                const fallbackDurationConfiguration = await PaidDeckPricingEngine.#resolveDurationConfiguration
+                (
+                    deckId,
+                    null,
+                    deckDocument,
+                    fallbackPrice
+                );
                 breakdown.push
                 ({
                     deckId: deckId,
@@ -215,10 +260,9 @@ class PaidDeckPricingEngine
                     finalPriceMinor: fallbackPrice,
                     currency: fallbackCurrency,
                     reason: "BASE_PRICE",
-                    // No regional pricing row exists — the deck document carries
-                    // the duration configuration for the base price.
-                    durationDays: Number.isInteger(deckDocument.durationDays) ? deckDocument.durationDays : 0,
-                    isPerpetual: deckDocument.isPerpetual === true
+                    durationDays: fallbackDurationConfiguration.durationDays,
+                    isPerpetual: fallbackDurationConfiguration.isPerpetual,
+                    durationSource: fallbackDurationConfiguration.durationSource
                 });
                 continue;
             }
@@ -284,6 +328,18 @@ class PaidDeckPricingEngine
             const finalMinor = Math.max(0, baseMinor - discountMinor);
             totalMinor += finalMinor;
 
+            // The active regional pricing row carries the duration configuration
+            // for this (deck, region). When it declares none, the deck-level
+            // default applies, then the free / legacy implicit fallbacks — see
+            // LicenseDurationConfigurationResolver for the full order.
+            const durationConfiguration = await PaidDeckPricingEngine.#resolveDurationConfiguration
+            (
+                deckId,
+                pricing,
+                null,
+                finalMinor
+            );
+
             breakdown.push
             ({
                 deckId: deckId,
@@ -292,12 +348,9 @@ class PaidDeckPricingEngine
                 finalPriceMinor: finalMinor,
                 currency: deckCurrency,
                 reason: discountMinor > 0 ? "DISCOUNTED" : "BASE_PRICE",
-                // The active regional pricing row carries the duration
-                // configuration for this (deck, region). Absent / zero
-                // durationDays with isPerpetual false is a misconfiguration the
-                // grant paths refuse (see LicenseExpiryResolver).
-                durationDays: Number.isInteger(pricing.durationDays) ? pricing.durationDays : 0,
-                isPerpetual: pricing.isPerpetual === true
+                durationDays: durationConfiguration.durationDays,
+                isPerpetual: durationConfiguration.isPerpetual,
+                durationSource: durationConfiguration.durationSource
             });
         }
 

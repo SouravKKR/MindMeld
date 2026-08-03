@@ -1,4 +1,5 @@
 from Globals.Classes.Automation.Providers.GoogleEnterpriseAiProvider import GoogleEnterpriseAiProvider
+from Globals.Classes.Automation.Providers.AnthropicProvider import AnthropicProvider
 
 
 class ModelPool:
@@ -150,3 +151,86 @@ class ModelPool:
 
     IMAGE_VALIDATION_MODEL = ("gemini-2.5-flash-lite", GoogleEnterpriseAiProvider)
     IMAGE_VERIFICATION_MODEL = ("gemini-3.1-flash-lite", GoogleEnterpriseAiProvider)
+
+    # ── Paid-deck generation mode (admin-only) ─────────────────────────────────
+    #
+    # Content the platform SELLS is first-party commercial material, so the
+    # stages where a wrong output is expensive in a way volume cannot offset are
+    # held on the premium tier. That is now three stages, not six:
+    #
+    #   - Symbolic diagrams are code, not pixels: geometry, labels and symbolic
+    #     notation are either exactly right or visibly wrong, and students
+    #     memorise visuals.
+    #   - Visual verification reads the RENDERED diagram back to judge whether
+    #     the generated code actually drew what it claimed. Pairing it with the
+    #     generator at the same tier is the point — a checker weaker than the
+    #     thing it checks waves through the errors it cannot see.
+    #   - Factual verification is the last check between a generated claim and a
+    #     paying student.
+    #
+    # The other three paid-deck stages sit on the mid-tier workhorse. They are
+    # structured-JSON work of the same shape the rest of the pipeline already
+    # runs there (syllabus processing, study material, mock tests), and the
+    # premium tier costs roughly five times as much per token for judgement that
+    # is not visibly better on this class of task. Coverage summaries remain the
+    # highest-stakes of the three — anything a summary fails to name gets
+    # silently dropped downstream — so if deck quality regresses, that entry is
+    # the first one to move back up, not the last.
+    #
+    # Everything else in the pipeline — chunk generation, flashcards, study
+    # material, mock tests, raster illustrations — stays on its existing tier.
+    # Reasoning effort is NOT part of the tuple; it is per-call metadata, and
+    # only the symbolic-diagram path raises it (see
+    # PaidDeckVisualGenerationSettings.SYMBOLIC_REASONING_EFFORT).
+    #
+    # ROUTE BOUNDARY — read before adding a caller to any PAID_DECK_* entry.
+    #
+    # These models may receive ONLY: syllabus topic names and the coverage
+    # specifications derived from them, content this pipeline generated itself,
+    # and rendered images of its own generated diagrams.
+    #
+    # They must NEVER receive user-uploaded document text — no extracted PDF
+    # pages, no retrieved chunks, no question-paper text, no support attachment
+    # contents. Two independent reasons:
+    #
+    #   1. Provider posture. Anthropic retains inputs for up to 30 days for
+    #      abuse monitoring unless account-level ZDR is in force (see the DATA
+    #      GOVERNANCE block on AnthropicProvider). That window means something
+    #      very different for a learner's private textbook than for a public
+    #      syllabus topic list.
+    #   2. The independent-creation position. Paid-deck content is defensible
+    #      because the pipeline demonstrably had no third-party document to work
+    #      from. Routing uploaded text through any stage of it would defeat that
+    #      argument regardless of which model served the call.
+    #
+    # Reason 2 is provider-agnostic, so the boundary binds every entry below —
+    # including the ones that now route to Google rather than Anthropic. Do not
+    # read a Gemini-tier entry as the relaxed one.
+    #
+    # The boundary holds structurally today — PaidDeckGenerationGate refuses
+    # every source type except CURRICULUM_OR_SYLLABUS, so there is no uploaded
+    # document in a paid-deck run to pass along. A caller that reaches these
+    # entries from outside paid-deck mode would break that guarantee.
+    PAID_DECK_COVERAGE_SUMMARY_MODEL = ("gemini-3.1-flash-lite", GoogleEnterpriseAiProvider)
+
+    # Decides which topics need a visual nobody explicitly asked for. A bounded
+    # per-topic judgement with a small output, which is what the mid-tier is for.
+    # Its failure modes stay asymmetric and both bad — miss a needed diagram and
+    # a visual subject ships as prose; invent unnecessary ones and the deck fills
+    # with decorative figures that train the reader to skip figures entirely — so
+    # watch this one if decks start looking over- or under-illustrated.
+    PAID_DECK_VISUAL_NEED_MODEL = ("gemini-3.1-flash-lite", GoogleEnterpriseAiProvider)
+    PAID_DECK_COVERAGE_RECONCILIATION_MODEL = ("gemini-3.1-flash-lite", GoogleEnterpriseAiProvider)
+
+    # The three premium holdouts. See the tier rationale above before moving any
+    # of these down — they are the generate/verify trio for content that ships to
+    # a paying student, not a cost tier applied by habit.
+    PAID_DECK_SYMBOLIC_VISUAL_MODEL = ("claude-opus-5", AnthropicProvider)
+    PAID_DECK_FACTUAL_VERIFICATION_MODEL = ("claude-opus-5", AnthropicProvider)
+    PAID_DECK_VISUAL_VERIFICATION_MODEL = ("claude-opus-5", AnthropicProvider)
+
+    # Knowledge-first chunk generation (Phase 3) replaces retrieval, not the
+    # generation tier — it produces the same per-topic chunk contract every
+    # downstream worker already consumes, so it stays on the configured
+    # mid-tier workhorse rather than the premium model.
+    PAID_DECK_KNOWLEDGE_CHUNK_MODEL = ("gemini-3.1-flash-lite", GoogleEnterpriseAiProvider)

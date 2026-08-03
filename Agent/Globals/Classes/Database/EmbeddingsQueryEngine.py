@@ -17,25 +17,28 @@ class EmbeddingsQueryEngine:
         """
         Upserts a list of embedding documents for a given information source into the database.
         Each document must contain: pageNumber, content, embedding.
-        Matched on informationSourceHash + pageNumber + content to avoid duplicating chunks on re-runs.
+        Matched on userId + informationSourceHash + pageNumber + content, so a document
+        uploaded by two users produces two independent chunk sets rather than one shared one.
         """
         collection = (await DatabaseConnector.get_database())[collection_name or DatabaseConstants.TEXT_EMBEDDINGS_COLLECTION]
 
-        hash = extractable_information_source.get_information_source().get_hash()
+        information_source = extractable_information_source.get_information_source()
+        hash = information_source.get_hash()
+        user_id = information_source.get_user_id()
 
         for document in embedding_documents:
+            owner_scoped_key = {
+                "userId": user_id,
+                "informationSourceHash": hash,
+                "pageNumber": document["pageNumber"],
+                "content": document["content"],
+            }
             collection.update_one(
-                {
-                    "informationSourceHash": hash,
-                    "pageNumber": document["pageNumber"],
-                    "content": document["content"],
-                },
+                owner_scoped_key,
                 {
                     "$set":
                     {
-                        "informationSourceHash": hash,
-                        "pageNumber": document["pageNumber"],
-                        "content": document["content"],
+                        **owner_scoped_key,
                         "embedding": document["embedding"],
                     }
                 },
@@ -51,25 +54,18 @@ class EmbeddingsQueryEngine:
         """
         collection = (await DatabaseConnector.get_database())[collection_name or DatabaseConstants.TEXT_EMBEDDINGS_COLLECTION]
 
-        hash = extractable_information_source.get_information_source().get_hash()
+        information_source = extractable_information_source.get_information_source()
+        hash = information_source.get_hash()
+        user_id = information_source.get_user_id()
 
         for page_number in page_numbers:
-            collection.update_one(
-                {
-                    "informationSourceHash": hash,
-                    "pageNumber": page_number,
-                    "content": None,
-                },
-                {
-                    "$set":
-                    {
-                        "informationSourceHash": hash,
-                        "pageNumber": page_number,
-                        "content": None,
-                    }
-                },
-                upsert=True
-            )
+            owner_scoped_key = {
+                "userId": user_id,
+                "informationSourceHash": hash,
+                "pageNumber": page_number,
+                "content": None,
+            }
+            collection.update_one(owner_scoped_key, {"$set": owner_scoped_key}, upsert=True)
 
     @staticmethod
     async def get_pages_without_embeddings(extractable_information_source: ExtractableInformationSource, candidate_pages: List[int], collection_name: str = None) -> list[int]:
@@ -82,12 +78,13 @@ class EmbeddingsQueryEngine:
 
         collection = (await DatabaseConnector.get_database())[collection_name or DatabaseConstants.TEXT_EMBEDDINGS_COLLECTION]
 
-        hash = extractable_information_source.get_information_source().get_hash()
+        information_source = extractable_information_source.get_information_source()
 
         results = collection.distinct(
             "pageNumber",
             {
-                "informationSourceHash": hash,
+                "userId": information_source.get_user_id(),
+                "informationSourceHash": information_source.get_hash(),
                 "pageNumber": { "$in": candidate_pages },
             }
         )
@@ -97,11 +94,46 @@ class EmbeddingsQueryEngine:
         return sorted(set(candidate_pages) - pages_with_records)
 
     @staticmethod
-    async def vector_search(query_embedding: list[float], information_source_hashes: list[str], top_k: int = 5, collection_name: str = None) -> list[dict[str, Any]]:
+    async def __filter_hashes_owned_by_user(owner_user_id: str, information_source_hashes: list[str]) -> list[str]:
+        """
+        Narrows a caller-supplied hash list to those the user actually owns an
+        information-source row for.
+
+        Chunks now carry their owner and the retrieval queries filter on it,
+        so this is the second of three independent checks rather than the only
+        one: Dock filters the caller's hashes before spawning this worker, this
+        method re-derives the permitted set from informationSources, and the
+        queries below scope on userId as well. A hash is a SHA-512 of the file
+        rather than a secret — anyone holding the same document can compute it —
+        so none of the three is load-bearing alone.
+        """
+        if not owner_user_id or not information_source_hashes:
+            return []
+
+        database = await DatabaseConnector.get_database()
+        information_sources_collection = database[DatabaseConstants.INFORMATION_SOURCES_COLLECTION]
+
+        owned_documents = list(information_sources_collection.find(
+            {
+                "userId": owner_user_id,
+                "hash": { "$in": information_source_hashes },
+            },
+            { "_id": 0, "hash": 1 }
+        ))
+
+        return list({ owned_document["hash"] for owned_document in owned_documents })
+
+    @staticmethod
+    async def vector_search(query_embedding: list[float], information_source_hashes: list[str], owner_user_id: str, top_k: int = 5, collection_name: str = None) -> list[dict[str, Any]]:
         """
         Cosine-similarity top-k retrieval scoped to a set of information
-        source hashes. Used by the AskAi streaming worker to inline grounded
-        excerpts into the LLM prompt.
+        source hashes THAT THE SUPPLIED USER OWNS. Used by the AskAi streaming
+        worker to inline grounded excerpts into the LLM prompt.
+
+        owner_user_id is mandatory: the supplied hashes originate from a client
+        payload, so this method re-derives the permitted set from
+        informationSources AND scopes the queries themselves on the owner.
+        Passing an empty owner id returns no chunks rather than falling open.
 
         Runs as an Atlas $vectorSearch against the VECTOR_INDEX_NAME index
         (created by Dock's DatabaseConnector). If that index is missing or still
@@ -111,10 +143,21 @@ class EmbeddingsQueryEngine:
 
         Returns a list of { sourceName, pageNumber, content, similarity }
         objects, ordered by descending similarity. Empty list when no chunks are
-        indexed for any of the supplied hashes.
+        indexed for any of the permitted hashes.
         """
         if not information_source_hashes or not query_embedding:
             return []
+
+        permitted_hashes = await EmbeddingsQueryEngine.__filter_hashes_owned_by_user(owner_user_id, information_source_hashes)
+
+        withheld_count = len(set(information_source_hashes)) - len(permitted_hashes)
+        if withheld_count > 0:
+            print(f"[EmbeddingsQueryEngine] Withheld {withheld_count} source(s) not owned by user {owner_user_id}.")
+
+        if not permitted_hashes:
+            return []
+
+        information_source_hashes = permitted_hashes
 
         top_k = max(0, int(top_k))
         if top_k == 0:
@@ -124,10 +167,10 @@ class EmbeddingsQueryEngine:
         embeddings_collection = database[collection_name or DatabaseConstants.TEXT_EMBEDDINGS_COLLECTION]
 
         try:
-            scored_chunks = EmbeddingsQueryEngine.__atlas_vector_search(embeddings_collection, query_embedding, information_source_hashes, top_k)
+            scored_chunks = EmbeddingsQueryEngine.__atlas_vector_search(embeddings_collection, query_embedding, information_source_hashes, owner_user_id, top_k)
         except Exception as vector_search_error:
             print(f"[EmbeddingsQueryEngine] Atlas vector search unavailable, falling back to brute-force cosine: {vector_search_error}")
-            scored_chunks = EmbeddingsQueryEngine.__brute_force_vector_search(embeddings_collection, query_embedding, information_source_hashes, top_k)
+            scored_chunks = EmbeddingsQueryEngine.__brute_force_vector_search(embeddings_collection, query_embedding, information_source_hashes, owner_user_id, top_k)
 
         if not scored_chunks:
             return []
@@ -154,7 +197,7 @@ class EmbeddingsQueryEngine:
         return retrieved_chunks
 
     @staticmethod
-    def __atlas_vector_search(embeddings_collection, query_embedding: list[float], information_source_hashes: list[str], top_k: int) -> list[dict[str, Any]]:
+    def __atlas_vector_search(embeddings_collection, query_embedding: list[float], information_source_hashes: list[str], owner_user_id: str, top_k: int) -> list[dict[str, Any]]:
         """
         Approximate-nearest-neighbour retrieval via the Atlas $vectorSearch
         stage. numCandidates is over-fetched relative to top_k so the
@@ -170,7 +213,7 @@ class EmbeddingsQueryEngine:
                     "queryVector": [float(value) for value in query_embedding],
                     "numCandidates": max(top_k * 20, 150),
                     "limit": top_k,
-                    "filter": { "informationSourceHash": { "$in": information_source_hashes } },
+                    "filter": { "userId": owner_user_id, "informationSourceHash": { "$in": information_source_hashes } },
                 }
             },
             {
@@ -188,7 +231,7 @@ class EmbeddingsQueryEngine:
         return list(embeddings_collection.aggregate(pipeline))
 
     @staticmethod
-    def __brute_force_vector_search(embeddings_collection, query_embedding: list[float], information_source_hashes: list[str], top_k: int) -> list[dict[str, Any]]:
+    def __brute_force_vector_search(embeddings_collection, query_embedding: list[float], information_source_hashes: list[str], owner_user_id: str, top_k: int) -> list[dict[str, Any]]:
         """
         Fallback path: pull every embedded chunk for the supplied hashes and
         score cosine similarity in-process. Linear in the number of candidate
@@ -196,6 +239,7 @@ class EmbeddingsQueryEngine:
         """
         candidate_documents = list(embeddings_collection.find(
             {
+                "userId": owner_user_id,
                 "informationSourceHash": { "$in": information_source_hashes },
                 "embedding": { "$exists": True },
             },

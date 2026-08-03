@@ -3,6 +3,7 @@ import ChatView from "../Components/ChatView.js";
 import DeckRetriever from "../../../Globals/Classes/Embeddings/DeckRetriever.js";
 import DeckImageHarvester from "../../../Globals/Classes/Embeddings/DeckImageHarvester.js";
 import EmbeddingPrewarmer from "../../../Globals/Classes/Embeddings/EmbeddingPrewarmer.js";
+import GeneratedVisualRenderer from "../../../Globals/Classes/GeneratedVisualRenderer.js";
 import HtmlSanitizer from "../../../Globals/Classes/HtmlSanitizer.js";
 import ModelTierMetadata from "../../../Globals/Constants/ModelTierMetadata.js";
 import StudyMaterial from "../../../Globals/Model/StudyMaterial.js";
@@ -513,10 +514,16 @@ class ChatSession extends StudySession
 
     static #previewHtml(title, rawHtml)
     {
-        DialogBox.modal(`
+        const dialog = DialogBox.modal(`
             <h3 style="margin-top:0;">${ChatSession.#escapeHtml(title)}</h3>
             <div class="chat-source-preview" style="max-height:60vh; overflow:auto;">${HtmlSanitizer.sanitize(rawHtml)}</div>
         `);
+
+        // The previewed source is study-material HTML, so it can carry generated
+        // visuals. Read-only surface, so drawing them here is safe — unlike the
+        // study-material editor, which would save the rendered SVG back over the
+        // diagram source.
+        GeneratedVisualRenderer.render(dialog.querySelector(".chat-source-preview"));
     }
 
     static #labelFromHtml(html, fallback)

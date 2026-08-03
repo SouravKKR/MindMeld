@@ -1,0 +1,7 @@
+Subject: {subject_name}
+{exam_context}
+
+For each topic below, decide whether it needs any visual that is not already declared, and describe the ones it does. Copy topicChain verbatim — it is how your answer is matched back to the topic.
+
+TOPICS:
+{topic_block}

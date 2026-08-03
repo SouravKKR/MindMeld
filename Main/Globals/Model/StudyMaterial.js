@@ -4,7 +4,10 @@ import Deck from "./Deck.js";
 import Lifecycle from "./Lifecycle.js";
 import SyncEvents from "../Events/SyncEvents.js";
 import PaidDeckFieldCipher from "../Classes/Crypto/PaidDeckFieldCipher.js";
+import ContentOverlayStore from "../Classes/Content/ContentOverlayStore.js";
+import PaidDeckMoveGuard from "../Classes/PaidDeckMoveGuard.js";
 import { entityTypes } from "../Enumerations/EntityTypes.js";
+import { contentOverlayFields } from "../Enumerations/ContentOverlayFields.js";
 import { studyMaterialDetailLevels } from "../Enumerations/StudyMaterialDetailLevels.js";
 import CuratedStudyMaterialFields from "../Classes/Analysis/CuratedStudyMaterialFields.js";
 import ChatStudyMaterialFields from "../Classes/Analysis/ChatStudyMaterialFields.js";
@@ -82,6 +85,11 @@ class StudyMaterial
 
     getContent()
     {
+        const overlayResolution = ContentOverlayStore.resolve(this, contentOverlayFields.STUDY_MATERIAL_CONTENT);
+        if (overlayResolution.hasOverlay)
+        {
+            return overlayResolution.value;
+        }
         if (PaidDeckFieldCipher.isEncryptedField(this.#content))
         {
             return this.#decryptedContent !== null ? this.#decryptedContent : PaidDeckFieldCipher.LOCKED_PLACEHOLDER;
@@ -115,6 +123,10 @@ class StudyMaterial
                 this.#decryptedContent = null;
             }
         }
+
+        // The learner's own edits are encrypted under the same key, so they are
+        // part of the same unlock.
+        await ContentOverlayStore.decryptForStudy(this);
     }
 
     /**
@@ -123,7 +135,8 @@ class StudyMaterial
      */
     needsDecryption()
     {
-        return this.#decryptedContent === null && PaidDeckFieldCipher.isEncryptedField(this.#content);
+        return (this.#decryptedContent === null && PaidDeckFieldCipher.isEncryptedField(this.#content))
+            || ContentOverlayStore.needsDecryption(this);
     }
 
     getDeckId()
@@ -149,22 +162,51 @@ class StudyMaterial
         return Deck.getById(this.#deckId);
     }
 
+    /**
+     * Sets the material's HTML.
+     *
+     * On a paid deck the seller's field is never overwritten — the edit is
+     * staged as an encrypted overlay instead, so the ciphertext envelope stays
+     * intact and a lapsed license still takes the content away. save() commits
+     * the staged edit.
+     *
+     * @returns {boolean} false only when the deck is paid AND locked, so the
+     *   caller can tell the learner rather than silently discarding their work.
+     */
     setContent(content)
     {
-        // Paid-deck content is server-authored and read-only on the device —
-        // refuse to overwrite it so no edit path can write plaintext into a
-        // paid study material at rest (the encrypted envelope must stay intact).
-        if (this.getDeck()?.getAdditionalData?.()?.paidDeckId)
+        if (ContentOverlayStore.isOverlayBacked(this))
         {
-            return;
+            return ContentOverlayStore.stage(this, contentOverlayFields.STUDY_MATERIAL_CONTENT, content);
         }
         this.#content = content;
         this.#lifecycle?.touch();
+        return true;
     }
 
-    setDeckId(deckId)
+    /**
+     * The structural re-stamp Deck.addStudyMaterial performs when a deck takes
+     * ownership. Deliberately UNGUARDED — see Card.assignOwningDeckId.
+     */
+    assignOwningDeckId(deckId)
     {
         this.#deckId = deckId;
+    }
+
+    /**
+     * Re-homes this study material at a caller's request. Refused when it would
+     * cross a paid boundary — see PaidDeckMoveGuard.
+     *
+     * @returns {boolean} false when the move was refused.
+     */
+    setDeckId(deckId)
+    {
+        if (!PaidDeckMoveGuard.canMove(this.getDeck(), Deck.getById(deckId)))
+        {
+            return false;
+        }
+        this.#deckId = deckId;
+        return true;
     }
 
     /**
@@ -271,6 +313,11 @@ class StudyMaterial
             return;
         }
 
+        // Encrypt and store any edit a setter staged, before the deck is
+        // written — commitPending mutates the deck's overlay map in place and
+        // relies on this same save to persist it.
+        await ContentOverlayStore.commitPending(this);
+
         // Paid decks persist + sync like normal decks now — the HTML content is
         // already a ciphertext envelope, so this writes ciphertext at rest and
         // the server preserves its plaintext copy, taking only read-state /
@@ -297,6 +344,11 @@ class StudyMaterial
             return;
         }
 
+        // Drop this material's overlays first, while the deck link still
+        // resolves. The server cascades them too, but emitting the tombstones
+        // here is what stops another device re-pushing an orphaned record.
+        const removedOverlayIds = ContentOverlayStore.removeAllForEntity(this);
+
         owningDeck.removeStudyMaterial(this);
         await owningDeck.save(false);
 
@@ -308,6 +360,18 @@ class StudyMaterial
                 entityType: entityTypes.STUDY_MATERIAL
             }
         }));
+
+        for (const removedOverlayId of removedOverlayIds)
+        {
+            window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_DELETED,
+            {
+                detail:
+                {
+                    entityId: removedOverlayId,
+                    entityType: entityTypes.CONTENT_OVERLAY
+                }
+            }));
+        }
     }
 
     /**

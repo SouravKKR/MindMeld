@@ -9,6 +9,7 @@ const notificationTypes =
   SECURITY: 6,
   SUBSCRIPTION: 7,
   ORGANIZATION: 8,
+  SUPPORT: 9,
 }
 
 module.exports = { notificationTypes };

@@ -21,6 +21,8 @@ Catalogued deterministic functions (coverage denominator):
   7) Globals/UtilityFunctions/Sha256.js                 :: sha256
   8) Globals/UtilityFunctions/SmoothCurve.js            :: smoothCurve
   9) Globals/UtilityFunctions/CreatePromiseMutex.js     :: createPromiseMutex
+ 10) Globals/UtilityFunctions/BuildContentOverlayId.js  :: buildContentOverlayId
+ 11) Globals/Classes/PaidDeckMoveGuard.js               :: canMove
 
 Test cases:
   formatCredits
@@ -52,6 +54,24 @@ Test cases:
     - preserves x-coordinates, holds a symmetric middle point, pulls the
       endpoints inward toward their neighbours
   createPromiseMutex
+  - buildContentOverlayId derives a content overlay's record id from the entity
+    it targets plus the field, so two devices editing the same field converge on
+    ONE record and last-write-wins can pick a winner. Same target + field always
+    yields the same id; each field of an entity gets a distinct id; distinct
+    entities never collide; the "::" separator cannot appear in a UUID, so an
+    overlay id can never equal another entity's id (the server's deletions
+    collection is keyed on (userId, entityId) with no entityType, so a collision
+    would make one tombstone delete the other); and the id stays well inside
+    SyncPayloadValidator's 512-character cap, past which a change is silently
+    dropped from the push.
+  - PaidDeckMoveGuard.canMove decides whether an entity may be re-homed into a
+    different deck. An entity's paid tag may not change: a same-deck re-stamp
+    (Deck.addCard / addStudyMaterial do this on every insertion, including while
+    loading from disk) and a move between two decks of the same purchase are
+    allowed; moving paid content into a normal deck, normal content into a paid
+    deck, or content between two different purchases is refused. Normal-to-normal
+    is untouched, and an entity with no resolvable current deck fails OPEN so
+    tree loading is never blocked.
     - exposes an acquire() function
     - a second acquire() only resolves after the first holder releases (FIFO
       mutual exclusion), asserted from a captured acquire/release ordering

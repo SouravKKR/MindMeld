@@ -1213,9 +1213,16 @@ class PaidDeckUploadDialog
      * side PaidDeckUserContentCloner's flat-list branch can ingest it
      * unchanged.
      *
-     * Per the protected-study spec, we strip buyer-meaningless state:
+     * We strip buyer-meaningless state:
      * - bRetainProgress: false        — the admin's FSRS / attempts are not the buyer's
      * - bRetainAutoAnalysisSettings: false  — those are per-user preferences
+     *
+     * Both export guards are opted out of, because this is the one authoring
+     * path where collecting the content is the point rather than a leak:
+     * - bAllowPaidContent          — the deck being published is paid by definition
+     * - bAllowAiGeneratedContent   — paid decks are produced BY the AI generation
+     *   pipeline, so every node in them carries the aiGenerated marker. Without
+     *   this, getExportData throws and publishing a paid deck stops working.
      */
     static serialiseDeckForUpload(deckInstance)
     {
@@ -1225,7 +1232,7 @@ class PaidDeckUploadDialog
         }
         const exportData = deckInstance.getExportData
         (
-            { bRecursive: true, bRetainProgress: false, bRetainAutoAnalysisSettings: false, bAllowPaidContent: true },
+            { bRecursive: true, bRetainProgress: false, bRetainAutoAnalysisSettings: false, bAllowPaidContent: true, bAllowAiGeneratedContent: true },
             []
         );
         if (!Array.isArray(exportData) || exportData.length === 0)

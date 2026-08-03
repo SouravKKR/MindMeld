@@ -170,12 +170,123 @@ linode_get_disk_status()
     linode_request GET "/linode/instances/${instance_id}/disks/${disk_id}" | json_query field "status"
 }
 
-# Shut a Linode down and wait until it is offline.
+# Block until a Linode is in a stable power state (not mid-transition). Linode
+# rejects power commands with "Linode busy." while an instance is booting,
+# shutting down, provisioning or rebooting, so anything issuing a power command
+# right after another one has to wait this out first.
+linode_wait_until_not_busy()
+{
+    local instance_id="$1"
+    local timeout_seconds="${2:-300}"
+
+    local elapsed_seconds=0
+    while [ "$elapsed_seconds" -lt "$timeout_seconds" ]
+    do
+        case "$(linode_get_instance_status "$instance_id")" in
+            running|offline|stopped)
+                return 0
+                ;;
+        esac
+        sleep 5
+        elapsed_seconds=$((elapsed_seconds + 5))
+    done
+
+    log_warning "Linode ${instance_id} was still busy after ${timeout_seconds}s."
+    return 1
+}
+
+# Shut a Linode down and wait until it is offline. Tolerates the instance still
+# settling: a shutdown issued moments after a boot comes back
+# 'HTTP 400 Linode busy.', which used to leave a node running that the caller
+# had promised to put back.
 linode_power_off()
 {
     local instance_id="$1"
-    linode_request POST "/linode/instances/${instance_id}/shutdown" "{}" >/dev/null
-    linode_wait_for_status "$instance_id" "offline" 180
+
+    linode_wait_until_not_busy "$instance_id" 300 || true
+
+    if [ "$(linode_get_instance_status "$instance_id")" = "offline" ]
+    then
+        return 0
+    fi
+
+    local attempt
+    for attempt in 1 2 3 4 5
+    do
+        if linode_request POST "/linode/instances/${instance_id}/shutdown" "{}" >/dev/null 2>&1
+        then
+            linode_wait_for_status "$instance_id" "offline" 240 && return 0
+        else
+            log_warning "Shutdown of Linode ${instance_id} was refused (attempt ${attempt}/5) — it is probably still busy; retrying in 15s."
+            sleep 15
+            linode_wait_until_not_busy "$instance_id" 120 || true
+        fi
+    done
+
+    log_error "Could not shut Linode ${instance_id} down after 5 attempts."
+    return 1
+}
+
+# Boot a Linode and wait until it is running. Safe to call on an instance that
+# is already running — Linode answers 400 for a boot on a running instance, so
+# the current status is checked first.
+linode_power_on()
+{
+    local instance_id="$1"
+
+    if [ "$(linode_get_instance_status "$instance_id")" = "running" ]
+    then
+        return 0
+    fi
+
+    linode_request POST "/linode/instances/${instance_id}/boot" "{}" >/dev/null
+    linode_wait_for_status "$instance_id" "running" 300
+}
+
+# Print a Linode's power status: running | offline | booting | shutting_down | ...
+linode_get_instance_status()
+{
+    local instance_id="$1"
+    linode_request GET "/linode/instances/${instance_id}" | json_query field "status"
+}
+
+# Print a firewall's current `rules` object as JSON. Snapshot this before making
+# a temporary change so the exact original can be restored verbatim — safer than
+# trying to compute and undo a diff.
+#
+# `version` and `fingerprint` are stripped: Linode bumps them on every rules
+# change, so they are server-owned bookkeeping rather than part of the rules.
+# Keeping them would mean PUTting a stale concurrency token back, and would also
+# make any before/after comparison differ even when the rules are identical.
+linode_get_firewall_rules()
+{
+    local firewall_id="$1"
+    linode_request GET "/networking/firewalls/${firewall_id}" | node -e '
+        let input = "";
+        process.stdin.on("data", chunk => input += chunk);
+        process.stdin.on("end", () =>
+        {
+            const rules = JSON.parse(input).rules || {};
+            delete rules.version;
+            delete rules.fingerprint;
+            process.stdout.write(JSON.stringify(rules));
+        });
+    '
+}
+
+# Replace a firewall's rules with the given `rules` JSON object.
+linode_set_firewall_rules()
+{
+    local firewall_id="$1"
+    local rules_json="$2"
+
+    if linode_is_dry_run
+    then
+        log_info "[dry-run] Would replace rules on firewall ${firewall_id}." >&2
+        return 0
+    fi
+
+    linode_request PUT "/networking/firewalls/${firewall_id}/rules" "$rules_json" >/dev/null
 }
 
 # Resize an (offline) disk and wait for it to be ready again.

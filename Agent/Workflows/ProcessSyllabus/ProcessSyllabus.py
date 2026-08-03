@@ -23,9 +23,13 @@ from Globals.Utility.JoinPath import join_path
 from Globals.Utility.StripJsonMarkdown import strip_json_markdown
 
 from Workflows.ProcessSyllabus.CleanHeadings import clean_headings
+from Workflows.ProcessSyllabus.CoverageSummaryGenerator import CoverageSummaryGenerator
 from Workflows.ProcessSyllabus.ExtractStructure import extract_structure
 from Workflows.ProcessSyllabus.HeadingsToOutline import headings_to_outline
+from Workflows.MapTopicsWithContent.ChunkUtils import extract_leaves
 from Workflows.Workflow import Workflow
+from Globals.Classes.Generation.PaidDeckActionLog import PaidDeckActionLog
+from Globals.Utility.RedactSourceName import redact_source_name
 
 
 class ProcessSyllabus(Workflow):
@@ -177,7 +181,7 @@ class ProcessSyllabus(Workflow):
         try:
             pdf_bytes = await Persistence.read(textbook_path)
         except Exception as read_error:
-            print(f"[ProcessSyllabus] Could not read textbook '{information_source.get_name()}': {read_error}")
+            print(f"[ProcessSyllabus] Could not read textbook '{redact_source_name(information_source.get_name())}': {read_error}")
             return None
 
         accumulated_headings = []
@@ -186,7 +190,7 @@ class ProcessSyllabus(Workflow):
             accumulated_headings.extend(headings)
 
         if not accumulated_headings:
-            print(f"[ProcessSyllabus] No headings extracted from '{information_source.get_name()}'.")
+            print(f"[ProcessSyllabus] No headings extracted from '{redact_source_name(information_source.get_name())}'.")
             return None
 
         cleaned_headings = clean_headings(accumulated_headings)
@@ -322,6 +326,11 @@ class ProcessSyllabus(Workflow):
         # Syllabus.json already exists, reuse it verbatim and skip extraction/merge.
         if await Persistence.exists(syllabus_file_destination_path):
             print("[ProcessSyllabus] Syllabus already exists — reusing it (resume); skipping extraction and merge.")
+            # The syllabus is reused, but the coverage summaries may not have been
+            # written yet (a run interrupted between the two writes). Generating
+            # them is idempotent and gated on its own file, so this is safe to
+            # re-enter and is what makes the resume path whole.
+            await self.__generate_coverage_summaries_if_paid_deck_mode(main_task_id, syllabus_file_destination_path)
             await self.__update_progress(1.0)
             return
 
@@ -367,6 +376,90 @@ class ProcessSyllabus(Workflow):
             json.dumps(merged_syllabus, ensure_ascii=False),
         )
 
+        print(f"[ProcessSyllabus] Persisted unified syllabus ({len(partial_syllabi)} partial syllabi merged).")
+
+        await self.__generate_coverage_summaries_if_paid_deck_mode(main_task_id, syllabus_file_destination_path)
+
         await self.__update_progress(1.0)
 
-        print(f"[ProcessSyllabus] Persisted unified syllabus ({len(partial_syllabi)} partial syllabi merged).")
+    async def __generate_coverage_summaries_if_paid_deck_mode(self, main_task_id: str, syllabus_file_path: str) -> None:
+        """
+        Paid-deck extension to this workflow. Normal-mode runs return immediately
+        and their Syllabus.json is byte-identical to what it was before this
+        existed — the summaries are an ADDITIONAL file, never a change to the
+        taxonomy shape that DeckHierarchyBuilder and MapTopicsWithContent parse.
+
+        In paid-deck mode there is no document to retrieve from, so the coverage
+        summary is the only specification the writers get. Without it the run
+        would produce a plausible overview of each topic and silently omit the
+        derivations, constants and diagrams that make it worth selling.
+        """
+        if self.__general_generation_settings.get_paid_deck_mode() is not True:
+            return
+
+        coverage_summaries_path = join_path(
+            "/",
+            PersistenceConstants.TASKS_DIRECTORY,
+            main_task_id,
+            PersistenceConstants.COVERAGE_SUMMARIES_FILE_NAME,
+        )
+
+        if await Persistence.exists(coverage_summaries_path):
+            print("[ProcessSyllabus] Coverage summaries already exist — reusing them (resume).")
+            return
+
+        syllabus_bytes = await Persistence.read(syllabus_file_path)
+        taxonomy = json.loads(syllabus_bytes.decode("utf-8"))
+        leaves = extract_leaves(taxonomy)
+
+        if not leaves:
+            print("[ProcessSyllabus] Syllabus has no leaf topics — no coverage summaries to generate.")
+            return
+
+        print(f"[ProcessSyllabus] Paid-deck mode: generating coverage summaries for {len(leaves)} topic(s)...")
+        await self.__update_progress(0.92)
+
+        action_log = PaidDeckActionLog(main_task_id, "ProcessSyllabus")
+
+        await self.__record_source_declarations(action_log)
+
+        generator = CoverageSummaryGenerator(
+            subject_name = self.__general_generation_settings.get_subject_name(),
+            exam_name = self.__general_generation_settings.get_exam_name(),
+            additional_instructions = self.__general_generation_settings.get_additional_instructions(),
+            action_log = action_log,
+        )
+        coverage_summaries = await generator.generate(leaves)
+
+        await Persistence.write(
+            coverage_summaries_path,
+            json.dumps(coverage_summaries, ensure_ascii=False),
+        )
+
+        produced_count = sum(
+            1 for topic in coverage_summaries["topics"]
+            if topic["coverageSummary"] != CoverageSummaryGenerator.EMPTY_SUMMARY_NOTE
+        )
+        print(
+            f"[ProcessSyllabus] Persisted coverage summaries: "
+            f"{produced_count}/{len(coverage_summaries['topics'])} topic(s) summarised."
+        )
+
+    async def __record_source_declarations(self, action_log: PaidDeckActionLog) -> None:
+        """
+        Writes the source declaration into the action trail: what was uploaded,
+        its content hash, and the type it was declared as.
+
+        This is the line the audit report leans on hardest — it is the positive
+        evidence for what entered the pipeline, alongside the negative evidence
+        that the mode accepted no other source type.
+        """
+        curriculum_sources, _ = self.__collect_syllabus_candidates()
+
+        for extractable_source in curriculum_sources:
+            information_source = extractable_source.get_information_source()
+            await action_log.record_source_declaration(
+                source_name = information_source.get_name(),
+                content_hash = information_source.get_hash(),
+                declared_source_type_name = InformationSourceTypes(information_source.get_source_type()).name,
+            )

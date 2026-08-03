@@ -1,5 +1,6 @@
 import Card from "../../../Globals/Model/Card.js";
 import HtmlSanitizer from "../../../Globals/Classes/HtmlSanitizer.js";
+import PaidDeckCopyGuard from "../../../Globals/Classes/Security/PaidDeckCopyGuard.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import ActiveEntityTracker from "../../../Globals/Classes/ActiveEntityTracker.js";
 import { entityTypes } from "../../../Globals/Enumerations/EntityTypes.js";
@@ -94,6 +95,8 @@ class StudySession
         questionSection.innerHTML = HtmlSanitizer.sanitize(card.getQuestion());
         answerSection.innerHTML = "";
 
+        StudySession.#protectPaidContent(card, questionSection, answerSection);
+
         showAnswerButton.style.display = "block";
         userScoreSection.style.display = "none";
         previousNextButtonContainer.style.display = "none";
@@ -123,10 +126,33 @@ class StudySession
         }
 
         answerSection.innerHTML = HtmlSanitizer.sanitize(this._current.getAnswer());
+        StudySession.#protectPaidContent(this._current, null, answerSection);
         showAnswerButton.style.display = "none";
 
     }
 
+    /**
+     * Registers a paid card's rendered sections with the copy guard, so
+     * copy / cut / right-click are blocked over the seller's content while
+     * selection (and therefore Ask-AI-on-selection) keeps working. A no-op on a
+     * normal deck.
+     */
+    static #protectPaidContent(card, questionSection, answerSection)
+    {
+        const paidDeckId = card?.getDeck?.()?.getAdditionalData?.()?.paidDeckId;
+        if (!paidDeckId)
+        {
+            return;
+        }
+
+        for (const renderedSection of [questionSection, answerSection])
+        {
+            if (renderedSection)
+            {
+                PaidDeckCopyGuard.registerContainer(renderedSection, paidDeckId, card.getId());
+            }
+        }
+    }
 }
 
 export default StudySession;

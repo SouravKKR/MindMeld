@@ -13,6 +13,27 @@ const DOCK_ROOT = path.join(REPOSITORY_ROOT, "Dock");
 const RESULT_FILE = process.env.RESULT_FILE
     || path.join(REPOSITORY_ROOT, "Common", "Reports", ".results", "dock-unit.json");
 
+// Load Dock's environment BEFORE any Dock module is required.
+//
+// None of these tests touch a network or a database, but some of the modules
+// they pull in build their clients in a STATIC initializer — Persistence
+// constructs an S3Client at load time, and derives its region from
+// LINODE_S3_ENDPOINT_HOSTNAMES. With no env loaded that is undefined, the S3
+// client throws "Region is missing" during require, and the whole suite reported
+// itself as SKIPPED. It looked like a missing AWS credential; it was only ever a
+// missing dotenv call, and it silently cost the suite every one of its 92 tests.
+//
+// Failure here is deliberately non-fatal: a checkout with no Dock/.env (CI, a
+// fresh clone) falls through to the existing skip path rather than crashing.
+try
+{
+    require(path.join(DOCK_ROOT, "node_modules", "dotenv")).config({ path: path.join(DOCK_ROOT, ".env") });
+}
+catch (environmentLoadError)
+{
+    console.warn(`[run_dock_unit_tests] Could not load Dock/.env (${environmentLoadError.message}); continuing with the ambient environment.`);
+}
+
 const CATEGORY = "Utility Functions (Node)";
 const CATALOGUED = [
     "derivePaidDeckPasswordKek", "computePaidDeckPasswordHash",
@@ -28,8 +49,15 @@ const CATALOGUED = [
     "LogFormatter.formatLine", "LogFormatter.severityName", "LogFormatter.renderHtmlLine",
     "DownloadLogs.splitEntries",
     "LicenseExpiryResolver.resolve", "LicenseExpiryResolver.isGrantable",
+    "LicenseDurationConfigurationResolver.resolve", "LicenseDurationConfigurationResolver.isImplicitFallback",
+    "LicenseFieldPreserver.carryForwardBuyerScopedFields",
+    "Sync.PAID_PROTECTED_TYPE_COLLECTIONS",
+    "PaidDeckContentFingerprint.compute", "PaidDeckContentUpdatePlanner.plan",
+    "LicenseContentVersionResolver.resolveDownloadedVersion", "LicenseContentVersionResolver.isUpdateAvailable",
     "SyncPayloadValidator.isValidId", "SyncPayloadValidator.isValidDeviceId",
     "SyncPayloadValidator.sanitizeChanges", "SyncPayloadValidator.sanitizeLastSync",
+    "AiGeneratedDeckFields.isMarked", "AiGeneratedFieldPreserver.restoreMarker",
+    "CreditConfiguration.ensureGenerationTaskRules", "PaidDeckGenerationGate.validateSourceTypes",
 ];
 
 // The Dock modules resolve their own dependencies against Dock/node_modules, so
@@ -50,7 +78,21 @@ let LogFormatter;
 let splitEntries;
 let logLevel;
 let LicenseExpiryResolver;
+let LicenseDurationConfigurationResolver;
+let LicenseFieldPreserver;
+let DeckLicense;
+let PAID_PROTECTED_TYPE_COLLECTIONS;
+let PaidDeckContentFingerprint;
+let PaidDeckContentUpdatePlanner;
+let LicenseContentVersionResolver;
 let SyncPayloadValidator;
+let AiGeneratedDeckFields;
+let AiGeneratedFieldPreserver;
+let CreditConfiguration;
+let PaidDeckGenerationGate;
+let informationSourceTypes;
+let curriculumPlausibility;
+let taskTypes;
 try
 {
     KeyManagementService = require(path.join(DOCK_ROOT, "Globals/Classes/Security/KeyManagementService"));
@@ -69,7 +111,21 @@ try
     ({ splitEntries } = require(path.join(DOCK_ROOT, "Endpoints/Admin/Logs/DownloadLogs")));
     ({ logLevel } = require(path.join(DOCK_ROOT, "Globals/Enumerations/LogLevel")));
     LicenseExpiryResolver = require(path.join(DOCK_ROOT, "Globals/Classes/Pricing/LicenseExpiryResolver"));
+    LicenseDurationConfigurationResolver = require(path.join(DOCK_ROOT, "Globals/Classes/Pricing/LicenseDurationConfigurationResolver"));
+    LicenseFieldPreserver = require(path.join(DOCK_ROOT, "Globals/Classes/Security/LicenseFieldPreserver"));
+    DeckLicense = require(path.join(DOCK_ROOT, "Globals/Model/DeckLicense"));
+    ({ PAID_PROTECTED_TYPE_COLLECTIONS } = require(path.join(DOCK_ROOT, "Endpoints/Sync/Sync")));
+    PaidDeckContentFingerprint = require(path.join(DOCK_ROOT, "Globals/Classes/PaidDeck/PaidDeckContentFingerprint"));
+    PaidDeckContentUpdatePlanner = require(path.join(DOCK_ROOT, "Globals/Classes/PaidDeck/PaidDeckContentUpdatePlanner"));
+    LicenseContentVersionResolver = require(path.join(DOCK_ROOT, "Globals/Classes/PaidDeck/LicenseContentVersionResolver"));
     SyncPayloadValidator = require(path.join(DOCK_ROOT, "Globals/Classes/Sync/SyncPayloadValidator"));
+    AiGeneratedDeckFields = require(path.join(DOCK_ROOT, "Globals/Classes/Security/AiGeneratedDeckFields"));
+    AiGeneratedFieldPreserver = require(path.join(DOCK_ROOT, "Globals/Classes/Security/AiGeneratedFieldPreserver"));
+    CreditConfiguration = require(path.join(DOCK_ROOT, "Globals/Classes/Credits/CreditConfiguration"));
+    PaidDeckGenerationGate = require(path.join(DOCK_ROOT, "Globals/Classes/Generation/PaidDeckGenerationGate"));
+    ({ informationSourceTypes } = require(path.join(DOCK_ROOT, "Globals/Enumerations/InformationSourceTypes")));
+    ({ curriculumPlausibility } = require(path.join(DOCK_ROOT, "Globals/Enumerations/CurriculumPlausibility")));
+    ({ taskTypes } = require(path.join(DOCK_ROOT, "Globals/Enumerations/TaskTypes")));
 }
 catch (error)
 {
@@ -182,6 +238,31 @@ harness.test("isEncryptedField: recognizes the envelope, rejects others", "isEnc
 });
 
 // -- Entity content encryption ------------------------------------------------
+
+harness.test("encryptEntityContent: a content overlay passes through untouched", "encryptEntityContent", () =>
+{
+    // An overlay's `value` is ALREADY a ciphertext envelope, written by the
+    // client under the same deck key. The pull hands every paid entity to this
+    // function, so the correct behaviour for an overlay is to return an
+    // unmodified clone — adding a CONTENT_OVERLAY branch here would
+    // double-encrypt it and the learner's edit would never decrypt again.
+    const contentKey = crypto.randomBytes(32);
+    const overlay =
+    {
+        id: "card-1::1",
+        deckId: "deck-1",
+        targetEntityId: "card-1",
+        fieldKey: 1,
+        value: { __enc: 1, ivBase64: "aXY=", ciphertextBase64: "Y3Q=" }
+    };
+
+    const passedThrough = PaidDeckSyncCrypto.encryptEntityContent(entityTypes.CONTENT_OVERLAY, overlay, contentKey);
+
+    assertEqual(passedThrough.value.ciphertextBase64, "Y3Q=", "the envelope must not be re-encrypted");
+    assertEqual(passedThrough.value.ivBase64, "aXY=");
+    assertEqual(passedThrough.targetEntityId, "card-1");
+    assert(passedThrough !== overlay, "a clone is returned, never the caller's object");
+});
 
 harness.test("encryptEntityContent: encrypts card content, leaves metadata, no mutation", "encryptEntityContent", () =>
 {
@@ -551,6 +632,372 @@ harness.test("LicenseExpiryResolver.isGrantable: true only for finite or explici
     assertEqual(LicenseExpiryResolver.isGrantable({ durationDays: 0, isPerpetual: false }, FIXED_NOW), false);
 });
 
+// -- LicenseDurationConfigurationResolver: which duration applies -------------
+
+harness.test("LicenseDurationConfigurationResolver.resolve: an explicit regional row wins", "LicenseDurationConfigurationResolver.resolve", () =>
+{
+    const resolution = LicenseDurationConfigurationResolver.resolve({ durationDays: 90, isPerpetual: false }, { isPerpetual: true }, 49900);
+    assertEqual(resolution.durationDays, 90, "the regional rental length is used");
+    assertEqual(resolution.isPerpetual, false);
+    assertEqual(resolution.durationSource, LicenseDurationConfigurationResolver.SOURCE_REGIONAL_PRICING);
+});
+
+harness.test("LicenseDurationConfigurationResolver.resolve: a blank regional row inherits the deck default", "LicenseDurationConfigurationResolver.resolve", () =>
+{
+    const resolution = LicenseDurationConfigurationResolver.resolve({ durationDays: 0, isPerpetual: false }, { durationDays: 0, isPerpetual: true }, 49900);
+    assertEqual(resolution.isPerpetual, true, "the deck-level perpetual flag is inherited, not ignored");
+    assertEqual(resolution.durationSource, LicenseDurationConfigurationResolver.SOURCE_DECK_DEFAULT);
+});
+
+harness.test("LicenseDurationConfigurationResolver.resolve: a free deck is perpetual with nothing configured", "LicenseDurationConfigurationResolver.resolve", () =>
+{
+    const resolution = LicenseDurationConfigurationResolver.resolve(null, { durationDays: 0, isPerpetual: false }, 0);
+    assertEqual(resolution.isPerpetual, true, "a zero-price acquisition is never refused for a missing term");
+    assertEqual(resolution.durationSource, LicenseDurationConfigurationResolver.SOURCE_FREE_IMPLICIT_PERPETUAL);
+    assertEqual(LicenseExpiryResolver.isGrantable(resolution), true, "and it is grantable at the expiry gate");
+});
+
+harness.test("LicenseDurationConfigurationResolver.resolve: an unconfigured priced deck falls back to perpetual", "LicenseDurationConfigurationResolver.resolve", () =>
+{
+    delete process.env.PAID_DECK_REQUIRE_EXPLICIT_LICENSE_DURATION;
+
+    const resolution = LicenseDurationConfigurationResolver.resolve(null, null, 49900);
+    assertEqual(resolution.isPerpetual, true, "the legacy catalogue stays purchasable");
+    assertEqual(resolution.durationSource, LicenseDurationConfigurationResolver.SOURCE_LEGACY_IMPLICIT_PERPETUAL);
+    assertEqual(LicenseDurationConfigurationResolver.isImplicitFallback(resolution.durationSource), true, "and is reported as an implicit fallback");
+});
+
+harness.test("LicenseDurationConfigurationResolver.resolve: the strict flag refuses a priced deck but not a free one", "LicenseDurationConfigurationResolver.resolve", () =>
+{
+    process.env.PAID_DECK_REQUIRE_EXPLICIT_LICENSE_DURATION = "true";
+    try
+    {
+        const pricedResolution = LicenseDurationConfigurationResolver.resolve(null, null, 49900);
+        assertEqual(pricedResolution.durationSource, LicenseDurationConfigurationResolver.SOURCE_UNSPECIFIED);
+        assertEqual(LicenseExpiryResolver.isGrantable(pricedResolution), false, "a priced deck with no term is refused");
+
+        const freeResolution = LicenseDurationConfigurationResolver.resolve(null, null, 0);
+        assertEqual(freeResolution.durationSource, LicenseDurationConfigurationResolver.SOURCE_FREE_IMPLICIT_PERPETUAL, "free decks are never gated by the flag");
+    }
+    finally
+    {
+        delete process.env.PAID_DECK_REQUIRE_EXPLICIT_LICENSE_DURATION;
+    }
+});
+
+harness.test("LicenseDurationConfigurationResolver.resolve: malformed duration fields are normalized away", "LicenseDurationConfigurationResolver.resolve", () =>
+{
+    const resolution = LicenseDurationConfigurationResolver.resolve({ durationDays: 1.5, isPerpetual: "yes" }, { durationDays: 30, isPerpetual: false }, 49900);
+    assertEqual(resolution.durationDays, 30, "a fractional regional window is not explicit, so the deck default applies");
+    assertEqual(resolution.isPerpetual, false, "a truthy non-boolean never becomes perpetual");
+});
+
+harness.test("LicenseDurationConfigurationResolver.isImplicitFallback: only the implicit sources", "LicenseDurationConfigurationResolver.isImplicitFallback", () =>
+{
+    assertEqual(LicenseDurationConfigurationResolver.isImplicitFallback(LicenseDurationConfigurationResolver.SOURCE_REGIONAL_PRICING), false);
+    assertEqual(LicenseDurationConfigurationResolver.isImplicitFallback(LicenseDurationConfigurationResolver.SOURCE_DECK_DEFAULT), false);
+    assertEqual(LicenseDurationConfigurationResolver.isImplicitFallback(LicenseDurationConfigurationResolver.SOURCE_UNSPECIFIED), false);
+    assertEqual(LicenseDurationConfigurationResolver.isImplicitFallback(undefined), false, "an org-perk entry carries no duration source");
+    assertEqual(LicenseDurationConfigurationResolver.isImplicitFallback(LicenseDurationConfigurationResolver.SOURCE_FREE_IMPLICIT_PERPETUAL), true);
+    assertEqual(LicenseDurationConfigurationResolver.isImplicitFallback(LicenseDurationConfigurationResolver.SOURCE_LEGACY_IMPLICIT_PERPETUAL), true);
+});
+
+// -- LicenseFieldPreserver: what a master-key rotation may NOT change ---------
+
+// A license as it looks after a purchase, an UnlockSession and a second copy:
+// every buyer-scoped field populated. issueLicenseForUser rebuilds none of
+// these, and persistLicense writes the whole document, so any field the
+// preserver misses is silently destroyed by the next rotation.
+function buildFullyPopulatedLicenseDocument()
+{
+    return {
+        userId: "user-1",
+        deckId: "deck-1",
+        status: 1,
+        keyVersion: 3,
+        wrappedKeyBlob: "{\"ivBase64\":\"old-iv\",\"ciphertextBase64\":\"old-blob\"}",
+        issuedAt: new Date("2026-01-05T00:00:00.000Z"),
+        rotatedAt: new Date("2026-05-01T00:00:00.000Z"),
+        serverWrappedContentKeyBase64: "server-wrapped-content-key",
+        serverWrappedIvBase64: "server-wrapped-iv",
+        passwordWrappedContentKeyBase64: "password-wrapped-content-key",
+        passwordWrappedIvBase64: "password-wrapped-iv",
+        contentKeyVersion: 4,
+        passwordHash: "stored-password-hash",
+        passwordSalt: "stored-password-salt",
+        downloadedContentVersion: 7,
+        additionalData: { instances: [{ instanceId: "1", label: "Copy 1" }, { instanceId: "abc", label: "Copy 2" }] }
+    };
+}
+
+harness.test("LicenseFieldPreserver.carryForwardBuyerScopedFields: the per-license content key survives a rotation", "LicenseFieldPreserver.carryForwardBuyerScopedFields", () =>
+{
+    const storedDocument = buildFullyPopulatedLicenseDocument();
+    const reissued = new DeckLicense({ userId: "user-1", deckId: "deck-1", keyVersion: 4 });
+
+    LicenseFieldPreserver.carryForwardBuyerScopedFields(reissued, storedDocument);
+
+    assertEqual(reissued.getServerWrappedContentKeyBase64(), "server-wrapped-content-key", "without this the server resolves no content key and withholds every paid entity from the pull");
+    assertEqual(reissued.getServerWrappedIvBase64(), "server-wrapped-iv");
+    assertEqual(reissued.getPasswordWrappedContentKeyBase64(), "password-wrapped-content-key", "without this the buyer can never unlock the deck again");
+    assertEqual(reissued.getPasswordWrappedIvBase64(), "password-wrapped-iv");
+    assertEqual(reissued.getContentKeyVersion(), 4, "the content key is untouched by a master-key rotation, so its version must not move");
+});
+
+harness.test("LicenseFieldPreserver.carryForwardBuyerScopedFields: password material and seeded version survive", "LicenseFieldPreserver.carryForwardBuyerScopedFields", () =>
+{
+    const storedDocument = buildFullyPopulatedLicenseDocument();
+    const reissued = new DeckLicense({ userId: "user-1", deckId: "deck-1", keyVersion: 4 });
+
+    LicenseFieldPreserver.carryForwardBuyerScopedFields(reissued, storedDocument);
+
+    assertEqual(reissued.getPasswordHash(), "stored-password-hash");
+    assertEqual(reissued.getPasswordSalt(), "stored-password-salt");
+    assertEqual(reissued.getDownloadedContentVersion(), 7, "the content version the buyer's copies were seeded from is not a rotation concern");
+});
+
+harness.test("LicenseFieldPreserver.carryForwardBuyerScopedFields: the manage-copies registry survives", "LicenseFieldPreserver.carryForwardBuyerScopedFields", () =>
+{
+    const storedDocument = buildFullyPopulatedLicenseDocument();
+    const reissued = new DeckLicense({ userId: "user-1", deckId: "deck-1", keyVersion: 4 });
+
+    LicenseFieldPreserver.carryForwardBuyerScopedFields(reissued, storedDocument);
+
+    const carriedInstances = reissued.getAdditionalData().instances;
+    assertEqual(Array.isArray(carriedInstances), true, "additionalData.instances is the copy registry — losing it orphans every extra copy");
+    assertEqual(carriedInstances.length, 2);
+    assertEqual(carriedInstances[1].instanceId, "abc");
+});
+
+harness.test("LicenseFieldPreserver.carryForwardBuyerScopedFields: the rotated fields are left alone", "LicenseFieldPreserver.carryForwardBuyerScopedFields", () =>
+{
+    const storedDocument = buildFullyPopulatedLicenseDocument();
+    const reissued = new DeckLicense
+    ({
+        userId: "user-1",
+        deckId: "deck-1",
+        keyVersion: 4,
+        wrappedKeyBlob: "{\"ivBase64\":\"new-iv\",\"ciphertextBase64\":\"new-blob\"}"
+    });
+
+    LicenseFieldPreserver.carryForwardBuyerScopedFields(reissued, storedDocument);
+
+    assertEqual(reissued.getKeyVersion(), 4, "the new master key version is what the rotation exists to write");
+    assertEqual(reissued.getWrappedKeyBlob().includes("new-blob"), true, "the freshly wrapped master key must not be reverted");
+    assertEqual(reissued.getIssuedAt().getTime(), new Date("2026-01-05T00:00:00.000Z").getTime(), "a rotation is not a new grant — issuedAt stays at the acquisition date");
+});
+
+harness.test("LicenseFieldPreserver.carryForwardBuyerScopedFields: a legacy document with no buyer fields yields model defaults", "LicenseFieldPreserver.carryForwardBuyerScopedFields", () =>
+{
+    const reissued = new DeckLicense({ userId: "user-1", deckId: "deck-1", keyVersion: 2 });
+
+    LicenseFieldPreserver.carryForwardBuyerScopedFields(reissued, { userId: "user-1", deckId: "deck-1" });
+
+    assertEqual(reissued.getServerWrappedContentKeyBase64(), "", "an absent field becomes the model default, never undefined");
+    assertEqual(reissued.getContentKeyVersion(), 0);
+    assertEqual(reissued.getDownloadedContentVersion(), 0);
+    assertEqual(typeof reissued.getAdditionalData(), "object");
+});
+
+harness.test("LicenseFieldPreserver.carryForwardBuyerScopedFields: a malformed additionalData becomes an empty object", "LicenseFieldPreserver.carryForwardBuyerScopedFields", () =>
+{
+    const reissuedFromString = new DeckLicense({ userId: "user-1", deckId: "deck-1" });
+    LicenseFieldPreserver.carryForwardBuyerScopedFields(reissuedFromString, { additionalData: "not-an-object" });
+    assertEqual(Object.keys(reissuedFromString.getAdditionalData()).length, 0);
+
+    const reissuedFromArray = new DeckLicense({ userId: "user-1", deckId: "deck-1" });
+    LicenseFieldPreserver.carryForwardBuyerScopedFields(reissuedFromArray, { additionalData: ["instances"] });
+    assertEqual(Array.isArray(reissuedFromArray.getAdditionalData()), false, "an array would serialise into the document as a broken registry");
+});
+
+harness.test("LicenseFieldPreserver.carryForwardBuyerScopedFields: every preserved field is one persistLicense would overwrite", "LicenseFieldPreserver.carryForwardBuyerScopedFields", () =>
+{
+    // persistLicense writes `$set: license.toJson()`. This asserts the premise
+    // that makes the preserver load-bearing: each buyer-scoped field really is
+    // emitted by toJson, so a whole-document $set would clobber it. If someone
+    // later narrows persistLicense to a targeted $set, this test still holds.
+    const emittedJson = new DeckLicense({ userId: "user-1", deckId: "deck-1" }).toJson();
+    const buyerScopedFieldNames =
+    [
+        "serverWrappedContentKeyBase64", "serverWrappedIvBase64",
+        "passwordWrappedContentKeyBase64", "passwordWrappedIvBase64",
+        "contentKeyVersion", "passwordHash", "passwordSalt",
+        "downloadedContentVersion", "additionalData"
+    ];
+
+    for (const fieldName of buyerScopedFieldNames)
+    {
+        assert(Object.prototype.hasOwnProperty.call(emittedJson, fieldName), `toJson emits ${fieldName}, so a whole-document $set overwrites it`);
+    }
+});
+
+// -- Sync: which entity types the server protects on push --------------------
+
+harness.test("Sync.PAID_PROTECTED_TYPE_COLLECTIONS: content overlays are NOT server-protected", "Sync.PAID_PROTECTED_TYPE_COLLECTIONS", () =>
+{
+    // A protected type has its stored content overlaid back onto every incoming
+    // push, so a client can never change it. A content overlay is the learner's
+    // OWN edit to their own copy — adding it to this list would silently revert
+    // every edit on the next sync, which is exactly the class of bug the
+    // overlay feature exists to fix. This test is the tripwire.
+    const protectedEntityTypes = PAID_PROTECTED_TYPE_COLLECTIONS.map(entry => entry.entityType);
+    assertEqual(protectedEntityTypes.includes(entityTypes.CONTENT_OVERLAY), false, "an overlay is buyer-authored and must survive the push");
+});
+
+harness.test("Sync.PAID_PROTECTED_TYPE_COLLECTIONS: the seller-authored types stay protected", "Sync.PAID_PROTECTED_TYPE_COLLECTIONS", () =>
+{
+    const protectedEntityTypes = PAID_PROTECTED_TYPE_COLLECTIONS.map(entry => entry.entityType);
+    for (const sellerAuthoredType of [entityTypes.DECK, entityTypes.CARD, entityTypes.STUDY_MATERIAL, entityTypes.MOCK_TEST])
+    {
+        assertEqual(protectedEntityTypes.includes(sellerAuthoredType), true, `entity type ${sellerAuthoredType} must stay server-protected`);
+    }
+});
+
+// -- Paid-deck content updates -----------------------------------------------
+
+harness.test("PaidDeckContentFingerprint.compute: identical content yields an identical fingerprint", "PaidDeckContentFingerprint.compute", () =>
+{
+    const firstCard = { id: "a", question: "What is FSRS?", answer: "A scheduler", progress: { history: [1] } };
+    const secondCard = { id: "b", question: "What is FSRS?", answer: "A scheduler", progress: { history: [] } };
+    assertEqual(PaidDeckContentFingerprint.compute(firstCard, "CARD"), PaidDeckContentFingerprint.compute(secondCard, "CARD"),
+        "ids and progress must not affect the fingerprint - they differ between master and buyer copy");
+});
+
+harness.test("PaidDeckContentFingerprint.compute: changed content changes the fingerprint", "PaidDeckContentFingerprint.compute", () =>
+{
+    const before = PaidDeckContentFingerprint.compute({ question: "What is FSRS?", answer: "A scheduler" }, "CARD");
+    const after = PaidDeckContentFingerprint.compute({ question: "What is FSRS?", answer: "A spaced-repetition scheduler" }, "CARD");
+    assert(before !== after, "a real edit by the publisher must be detected");
+});
+
+harness.test("PaidDeckContentFingerprint.compute: whitespace reflow is not a content change", "PaidDeckContentFingerprint.compute", () =>
+{
+    const compact = PaidDeckContentFingerprint.compute({ question: "<p>What is FSRS?</p>", answer: "<p>A scheduler</p>" }, "CARD");
+    const reflowed = PaidDeckContentFingerprint.compute({ question: "<p>What is   FSRS?</p>\n", answer: "  <p>A scheduler</p>  " }, "CARD");
+    assertEqual(compact, reflowed, "reflowing HTML must not cost the buyer their progress");
+});
+
+harness.test("PaidDeckContentFingerprint.compute: buyer-authored Ask AI markup is stripped", "PaidDeckContentFingerprint.compute", () =>
+{
+    const sellerOnly = PaidDeckContentFingerprint.compute({ question: "Q", answer: "<p>A scheduler</p>" }, "CARD");
+    const withBuyerNote = PaidDeckContentFingerprint.compute
+    ({
+        question: "Q",
+        answer: "<p>A scheduler</p><button class=\"ask-ai-popup-link\" data-popup-id=\"x\">View Mnemonic</button>"
+    }, "CARD");
+    assertEqual(sellerOnly, withBuyerNote, "the learner own inserted note is not a publisher edit");
+});
+
+harness.test("PaidDeckContentFingerprint.compute: study materials fingerprint their content field", "PaidDeckContentFingerprint.compute", () =>
+{
+    const first = PaidDeckContentFingerprint.compute({ content: "<h1>Lesson</h1>" }, "STUDY_MATERIAL");
+    const second = PaidDeckContentFingerprint.compute({ content: "<h1>Lesson</h1>" }, "STUDY_MATERIAL");
+    const third = PaidDeckContentFingerprint.compute({ content: "<h1>Lesson 2</h1>" }, "STUDY_MATERIAL");
+    assertEqual(first, second);
+    assert(first !== third);
+});
+
+harness.test("PaidDeckContentFingerprint.compute: an unfingerprintable type returns empty", "PaidDeckContentFingerprint.compute", () =>
+{
+    assertEqual(PaidDeckContentFingerprint.compute({ items: [] }, "MOCK_TEST"), "");
+    assertEqual(PaidDeckContentFingerprint.compute(null, "CARD"), "");
+});
+
+harness.test("PaidDeckContentUpdatePlanner.plan: unchanged entities carry progress, changed ones reset", "PaidDeckContentUpdatePlanner.plan", () =>
+{
+    const existingRows =
+    [
+        { id: "entity-1", fingerprint: "aaaa" },
+        { id: "entity-2", fingerprint: "bbbb" }
+    ];
+    const incomingEntities =
+    [
+        { id: "entity-1", fingerprint: "aaaa" },
+        { id: "entity-2", fingerprint: "cccc" }
+    ];
+
+    const plan = PaidDeckContentUpdatePlanner.plan(existingRows, incomingEntities);
+
+    assertEqual(plan.counts.carried, 1, "the untouched card keeps its progress");
+    assertEqual(plan.counts.reset, 1, "the edited card resets");
+    assertEqual(plan.carried[0].existingRow.id, "entity-1");
+    assertEqual(plan.reset[0].existingRow.id, "entity-2");
+});
+
+harness.test("PaidDeckContentUpdatePlanner.plan: new and removed entities are classified", "PaidDeckContentUpdatePlanner.plan", () =>
+{
+    const plan = PaidDeckContentUpdatePlanner.plan
+    (
+        [{ id: "kept", fingerprint: "aaaa" }, { id: "gone", fingerprint: "bbbb" }],
+        [{ id: "kept", fingerprint: "aaaa" }, { id: "brand-new", fingerprint: "dddd" }]
+    );
+
+    assertEqual(plan.counts.added, 1);
+    assertEqual(plan.added[0].id, "brand-new");
+    assertEqual(plan.counts.removed, 1);
+    assertEqual(plan.removed[0].id, "gone", "an entity the publisher deleted is removed, cascading its overlays");
+});
+
+harness.test("PaidDeckContentUpdatePlanner.plan: a missing fingerprint resets rather than carries", "PaidDeckContentUpdatePlanner.plan", () =>
+{
+    // A row seeded before fingerprints existed cannot be proven unchanged.
+    // Resetting costs progress; carrying would attach scheduling state to
+    // unverified text, which is worse.
+    const plan = PaidDeckContentUpdatePlanner.plan
+    (
+        [{ id: "legacy" }],
+        [{ id: "legacy", fingerprint: "aaaa" }]
+    );
+    assertEqual(plan.counts.reset, 1);
+    assertEqual(plan.counts.carried, 0);
+});
+
+harness.test("PaidDeckContentUpdatePlanner.plan: empty inputs are handled", "PaidDeckContentUpdatePlanner.plan", () =>
+{
+    const plan = PaidDeckContentUpdatePlanner.plan(null, undefined);
+    assertEqual(plan.counts.carried + plan.counts.reset + plan.counts.added + plan.counts.removed, 0);
+});
+
+harness.test("LicenseContentVersionResolver: a legacy license is never told to update", "LicenseContentVersionResolver.isUpdateAvailable", () =>
+{
+    // Every license issued before this feature has downloadedContentVersion 0
+    // while every deck has contentVersion >= 1. Comparing naively would show
+    // "Update available" to every existing buyer on day one.
+    const legacyLicense = { downloadedContentVersion: 0, additionalData: {} };
+    assertEqual(LicenseContentVersionResolver.isUpdateAvailable(legacyLicense, "1", 3), false);
+    assertEqual(LicenseContentVersionResolver.needsBackfill(legacyLicense, "1", 3), true, "it is backfilled instead, so the next comparison is meaningful");
+});
+
+harness.test("LicenseContentVersionResolver: a genuinely older copy is offered the update", "LicenseContentVersionResolver.isUpdateAvailable", () =>
+{
+    const license = { downloadedContentVersion: 2, additionalData: {} };
+    assertEqual(LicenseContentVersionResolver.isUpdateAvailable(license, "1", 3), true);
+    assertEqual(LicenseContentVersionResolver.isUpdateAvailable(license, "1", 2), false, "a current copy is not nagged");
+    assertEqual(LicenseContentVersionResolver.needsBackfill(license, "1", 3), false);
+});
+
+harness.test("LicenseContentVersionResolver: a per-copy version beats the license-level one", "LicenseContentVersionResolver.resolveDownloadedVersion", () =>
+{
+    // Copies are updated independently, so one can lag behind another.
+    const license =
+    {
+        downloadedContentVersion: 3,
+        additionalData: { instances: [{ instanceId: "1", contentVersion: 3 }, { instanceId: "second", contentVersion: 1 }] }
+    };
+
+    assertEqual(LicenseContentVersionResolver.resolveDownloadedVersion(license, "second"), 1);
+    assertEqual(LicenseContentVersionResolver.isUpdateAvailable(license, "second", 3), true, "the stale copy is offered an update");
+    assertEqual(LicenseContentVersionResolver.isUpdateAvailable(license, "1", 3), false, "the current copy is not");
+});
+
+harness.test("LicenseContentVersionResolver.resolveDownloadedVersion: falls back and rejects junk", "LicenseContentVersionResolver.resolveDownloadedVersion", () =>
+{
+    assertEqual(LicenseContentVersionResolver.resolveDownloadedVersion({ downloadedContentVersion: 5 }, "1"), 5, "no instances array -> license-level value");
+    assertEqual(LicenseContentVersionResolver.resolveDownloadedVersion({ downloadedContentVersion: -2 }, "1"), 0);
+    assertEqual(LicenseContentVersionResolver.resolveDownloadedVersion({ downloadedContentVersion: "abc" }, "1"), 0);
+    assertEqual(LicenseContentVersionResolver.resolveDownloadedVersion(null, "1"), 0);
+});
+
 // -- SyncPayloadValidator: NoSQL-operator injection defence --------------------
 
 harness.test("SyncPayloadValidator.isValidId: non-empty bounded string only", "SyncPayloadValidator.isValidId", () =>
@@ -602,6 +1049,176 @@ harness.test("SyncPayloadValidator.sanitizeChanges: non-array input yields empty
     const { validChanges, droppedCount } = SyncPayloadValidator.sanitizeChanges({ $where: "1==1" });
     assertEqual(validChanges.length, 0);
     assertEqual(droppedCount, 0);
+});
+
+// -- AI-generated deck marker --------------------------------------------------
+
+harness.test("AiGeneratedDeckFields.isMarked: reads both the current and legacy keys", "AiGeneratedDeckFields.isMarked", () =>
+{
+    assert(AiGeneratedDeckFields.isMarked({ aiGenerated: true }), "current key");
+    assert(AiGeneratedDeckFields.isMarked({ protected: true }), "legacy key survives until the migration has run everywhere");
+    assert(!AiGeneratedDeckFields.isMarked({ aiGenerated: false }));
+    assert(!AiGeneratedDeckFields.isMarked({}));
+    assert(!AiGeneratedDeckFields.isMarked(null), "null tolerated so call sites need no guard");
+    assert(!AiGeneratedDeckFields.isMarked("not-an-object"));
+    assert(!AiGeneratedDeckFields.isMarked({ aiGenerated: "true" }), "only a real boolean counts");
+});
+
+harness.test("AiGeneratedFieldPreserver.restoreMarker: a push that omits the marker cannot erase it", "AiGeneratedFieldPreserver.restoreMarker", () =>
+{
+    const incomingDeckData = { id: "deck-1", additionalData: { syllabusPosition: 3 } };
+    const bRestored = AiGeneratedFieldPreserver.restoreMarker(incomingDeckData, { additionalData: { aiGenerated: true } });
+
+    assert(bRestored, "reports that it had to restore");
+    assertEqual(incomingDeckData.additionalData.aiGenerated, true);
+    assertEqual(incomingDeckData.additionalData.syllabusPosition, 3, "unrelated fields are left alone");
+});
+
+harness.test("AiGeneratedFieldPreserver.restoreMarker: the marker is NON-CLEARABLE from a device", "AiGeneratedFieldPreserver.restoreMarker", () =>
+{
+    // The distinguishing case against the auto-analysis fields, which DO honour
+    // an explicit client clear. Un-marking generated content is never a
+    // legitimate client action, so an explicit false must be overridden.
+    const incomingDeckData = { id: "deck-1", additionalData: { aiGenerated: false } };
+    const bRestored = AiGeneratedFieldPreserver.restoreMarker(incomingDeckData, { additionalData: { aiGenerated: true } });
+
+    assert(bRestored);
+    assertEqual(incomingDeckData.additionalData.aiGenerated, true, "an explicit clear is refused");
+});
+
+harness.test("AiGeneratedFieldPreserver.restoreMarker: a legacy-keyed server row still forces the current key", "AiGeneratedFieldPreserver.restoreMarker", () =>
+{
+    const incomingDeckData = { id: "deck-1", additionalData: {} };
+    const bRestored = AiGeneratedFieldPreserver.restoreMarker(incomingDeckData, { additionalData: { protected: true } });
+
+    assert(bRestored, "a pre-migration server row is still a marked deck");
+    assertEqual(incomingDeckData.additionalData.aiGenerated, true);
+});
+
+harness.test("AiGeneratedFieldPreserver.restoreMarker: creates additionalData when the push has none", "AiGeneratedFieldPreserver.restoreMarker", () =>
+{
+    const incomingDeckData = { id: "deck-1" };
+    assert(AiGeneratedFieldPreserver.restoreMarker(incomingDeckData, { additionalData: { aiGenerated: true } }));
+    assertEqual(incomingDeckData.additionalData.aiGenerated, true);
+});
+
+harness.test("AiGeneratedFieldPreserver.restoreMarker: never marks a deck the server has not marked", "AiGeneratedFieldPreserver.restoreMarker", () =>
+{
+    // A one-way ratchet. It must not invent the marker, or an ordinary push
+    // could silently strip a user's own deck of its export capability.
+    const incomingDeckData = { id: "deck-1", additionalData: {} };
+
+    assert(!AiGeneratedFieldPreserver.restoreMarker(incomingDeckData, { additionalData: {} }));
+    assert(!AiGeneratedFieldPreserver.restoreMarker(incomingDeckData, null), "no stored row at all");
+    assertEqual(incomingDeckData.additionalData.aiGenerated, undefined);
+});
+
+harness.test("AiGeneratedFieldPreserver.restoreMarker: a client over-claim is left alone", "AiGeneratedFieldPreserver.restoreMarker", () =>
+{
+    // Setting the marker only ever removes capability, so it is harmless and
+    // is not second-guessed.
+    const incomingDeckData = { id: "deck-1", additionalData: { aiGenerated: true } };
+
+    assert(!AiGeneratedFieldPreserver.restoreMarker(incomingDeckData, { additionalData: {} }), "nothing to restore");
+    assertEqual(incomingDeckData.additionalData.aiGenerated, true, "the client's claim survives");
+});
+
+// -- Generation credit policy --------------------------------------------------
+
+harness.test("CreditConfiguration.ensureGenerationTaskRules: seeds every metered generation task", "CreditConfiguration.ensureGenerationTaskRules", () =>
+{
+    const configuration = new CreditConfiguration({});
+    assert(configuration.ensureGenerationTaskRules(), "reports that it added rules");
+
+    for (const taskTypeValue of [taskTypes.FLASHCARD_GENERATION_WORKER, taskTypes.STUDY_MATERIAL_GENERATION_WORKER, taskTypes.MOCK_TEST_GENERATION_WORKER])
+    {
+        const rule = configuration.getRuleForTask(taskTypeValue);
+        assert(rule, "a rule exists");
+        assert(rule.getEnabled(), "seeded rules are enabled");
+        assertEqual(rule.getTerms().length, 2, "one term per token dimension — a combined term would MULTIPLY them");
+    }
+
+    assert(configuration.getRuleForTask(taskTypes.PREPARE_FOR_SIMILARITY_SEARCH), "duration-metered prep task is seeded");
+    assert(configuration.getRuleForTask(taskTypes.ENHANCE_IMAGES), "image enhancement is seeded");
+});
+
+harness.test("CreditConfiguration.ensureGenerationTaskRules: never overwrites an existing rule", "CreditConfiguration.ensureGenerationTaskRules", () =>
+{
+    const configuration = new CreditConfiguration({});
+    configuration.ensureGenerationTaskRules();
+
+    // An admin who deliberately disabled a task, or left it free, must survive
+    // the next boot — this is the same contract ensureAskAiTaskRules honours.
+    const flashcardRule = configuration.getRuleForTask(taskTypes.FLASHCARD_GENERATION_WORKER);
+    flashcardRule.setEnabled(false);
+    flashcardRule.setTerms([]);
+
+    assert(!configuration.ensureGenerationTaskRules(), "a second pass adds nothing");
+    assert(!configuration.getRuleForTask(taskTypes.FLASHCARD_GENERATION_WORKER).getEnabled(), "the admin's disable survives");
+    assertEqual(configuration.getRuleForTask(taskTypes.FLASHCARD_GENERATION_WORKER).getTerms().length, 0, "the admin's empty terms survive");
+});
+
+// -- Paid-deck source admission ------------------------------------------------
+
+function paidDeckSource(sourceType, verdict, reason = "")
+{
+    return {
+        getInformationSource: () => (
+        {
+            getSourceType: () => sourceType,
+            getCurriculumPlausibility: () => verdict,
+            getCurriculumPlausibilityReason: () => reason,
+        })
+    };
+}
+
+harness.test("PaidDeckGenerationGate.validateSourceTypes: the row's declared type is what counts", "PaidDeckGenerationGate.validateSourceTypes", () =>
+{
+    // Everything is stored as a provided document; the generation page decides
+    // the role. A source declared Curriculum must be accepted whatever slot it
+    // happened to be uploaded into.
+    PaidDeckGenerationGate.validateSourceTypes([paidDeckSource(informationSourceTypes.CURRICULUM_OR_SYLLABUS, curriculumPlausibility.PLAUSIBLE)]);
+
+    // Never measured (uploaded before the check existed) is not a failure.
+    PaidDeckGenerationGate.validateSourceTypes([paidDeckSource(informationSourceTypes.CURRICULUM_OR_SYLLABUS, curriculumPlausibility.UNKNOWN)]);
+});
+
+harness.test("PaidDeckGenerationGate.validateSourceTypes: a measured textbook overrides the declaration", "PaidDeckGenerationGate.validateSourceTypes", () =>
+{
+    // The declaration is the user's, so on its own it would make this gate
+    // self-certifying. The structural verdict is what keeps it meaningful.
+    let thrownMessage = "";
+    try
+    {
+        PaidDeckGenerationGate.validateSourceTypes([paidDeckSource(informationSourceTypes.CURRICULUM_OR_SYLLABUS, curriculumPlausibility.IMPLAUSIBLE, "600 pages")]);
+    }
+    catch (refusal)
+    {
+        thrownMessage = refusal.message;
+    }
+
+    assert(thrownMessage.includes("does not read as a curriculum"), "refused on the measurement");
+    assert(thrownMessage.includes("600 pages"), "the measured reason reaches the user");
+});
+
+harness.test("PaidDeckGenerationGate.validateSourceTypes: refuses other types and names the position", "PaidDeckGenerationGate.validateSourceTypes", () =>
+{
+    let thrownMessage = "";
+    try
+    {
+        PaidDeckGenerationGate.validateSourceTypes(
+        [
+            paidDeckSource(informationSourceTypes.CURRICULUM_OR_SYLLABUS, curriculumPlausibility.PLAUSIBLE),
+            paidDeckSource(informationSourceTypes.PROVIDED_DOCUMENTS, curriculumPlausibility.PLAUSIBLE),
+        ]);
+    }
+    catch (refusal)
+    {
+        thrownMessage = refusal.message;
+    }
+
+    assert(thrownMessage.includes("Information source #2"), "identifies which source is wrong");
+    assert(thrownMessage.includes("Set this source's type to Curriculum Or Syllabus"), "says how to fix it");
 });
 
 harness.runAndWrite(RESULT_FILE);

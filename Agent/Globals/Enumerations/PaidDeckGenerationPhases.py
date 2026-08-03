@@ -1,0 +1,12 @@
+from enum import IntEnum
+
+class PaidDeckGenerationPhases(IntEnum):
+    MODE_GATE = 0
+    COVERAGE_SUMMARY = 1
+    COVERAGE_RECONCILIATION = 2
+    KNOWLEDGE_CHUNK_GENERATION = 3
+    VISUAL_GENERATION = 4
+    RESOURCE_GENERATION = 5
+    VERIFICATION = 6
+    PERSISTENCE = 9
+    PUBLICATION = 10

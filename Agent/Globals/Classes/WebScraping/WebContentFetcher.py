@@ -49,6 +49,12 @@ class WebContentFetcher:
         "pixel.",
         "newrelic.com",
     )
+    # Documents (question-paper PDFs and the like) are fetched through the same
+    # SSRF-hardened path as pages, but they legitimately run larger and slower
+    # than an HTML page, so they get their own ceiling and timeout.
+    MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
+    DOCUMENT_TIMEOUT_SECONDS = 30.0
+
     IMAGE_EXTENSION_BY_MIME = {
         "image/png":    ".png",
         "image/jpeg":   ".jpg",
@@ -108,7 +114,7 @@ class WebContentFetcher:
         )
 
     @staticmethod
-    async def __safe_get(client: httpx.AsyncClient, url: str, timeout_seconds: float) -> tuple[int, bytes, str]:
+    async def __safe_get(client: httpx.AsyncClient, url: str, timeout_seconds: float, max_response_bytes: int = None) -> tuple[int, bytes, str]:
         """
         SSRF-hardened GET that returns (status_code, body_bytes, content_type).
 
@@ -118,7 +124,8 @@ class WebContentFetcher:
         that was validated (the Host header and TLS SNI keep the original
         hostname), so DNS rebinding cannot redirect the request to an internal
         address after the check. Redirects are followed manually up to
-        MAX_REDIRECTS, and the response body is capped at MAX_RESPONSE_BYTES.
+        MAX_REDIRECTS, and the response body is capped at max_response_bytes
+        (MAX_RESPONSE_BYTES when the caller does not ask for a different cap).
 
         Raises SafeUrlValidator.UrlValidationError when any hop is unsafe, the
         redirect budget is exhausted, or the body exceeds the size limit. Those
@@ -126,6 +133,7 @@ class WebContentFetcher:
         treats them as a hard skip rather than retrying.
         """
         current_url = url
+        effective_byte_cap = max_response_bytes if max_response_bytes is not None else WebContentFetcher.MAX_RESPONSE_BYTES
 
         for hop_index in range(WebContentFetcher.MAX_REDIRECTS + 1):
             target = SafeUrlValidator.validate(current_url)
@@ -175,9 +183,9 @@ class WebContentFetcher:
                 declared_length = response.headers.get("content-length")
                 if declared_length is not None:
                     try:
-                        if int(declared_length) > WebContentFetcher.MAX_RESPONSE_BYTES:
+                        if int(declared_length) > effective_byte_cap:
                             raise SafeUrlValidator.UrlValidationError(
-                                f"Response Content-Length {declared_length} exceeds the {WebContentFetcher.MAX_RESPONSE_BYTES}-byte limit."
+                                f"Response Content-Length {declared_length} exceeds the {effective_byte_cap}-byte limit."
                             )
                     except ValueError:
                         pass
@@ -185,9 +193,9 @@ class WebContentFetcher:
                 collected = bytearray()
                 async for chunk in response.aiter_bytes():
                     collected.extend(chunk)
-                    if len(collected) > WebContentFetcher.MAX_RESPONSE_BYTES:
+                    if len(collected) > effective_byte_cap:
                         raise SafeUrlValidator.UrlValidationError(
-                            f"Response body exceeded the {WebContentFetcher.MAX_RESPONSE_BYTES}-byte limit."
+                            f"Response body exceeded the {effective_byte_cap}-byte limit."
                         )
 
                 return (response.status_code, bytes(collected), content_type)
@@ -233,7 +241,7 @@ class WebContentFetcher:
         return WebContentFetcher.__robots_cache[domain].can_fetch(WebContentFetcher.__user_agent(), url)
 
     @staticmethod
-    async def __fetch_url_bytes(url: str, timeout_seconds: float) -> tuple[bytes, str] | None:
+    async def __fetch_url_bytes(url: str, timeout_seconds: float, max_response_bytes: int = None) -> tuple[bytes, str] | None:
         """
         Returns (bytes, content_type) or None on failure.
         Applies robots.txt + per-domain rate limit before requesting.
@@ -270,7 +278,7 @@ class WebContentFetcher:
                             # transport error) on any unsafe hop, so it is never
                             # retried below.
                             status_code, body_bytes, content_type = await WebContentFetcher.__safe_get(
-                                client, url, timeout_seconds,
+                                client, url, timeout_seconds, max_response_bytes,
                             )
 
                             if status_code >= 500:
@@ -469,6 +477,59 @@ class WebContentFetcher:
         return fetched_images
 
     @staticmethod
+    def readable_text_from_soup(soup) -> str:
+        """
+        Strips the chrome tags (nav/footer/script/…) out of an already-parsed
+        document and returns its readable text, truncated to
+        MAX_PAGE_TEXT_CHARS.
+
+        NOTE: this mutates the soup — the skipped tags are decomposed. Callers
+        that also want images must extract them AFTER calling this, so that
+        images living inside the stripped chrome are excluded too (that is the
+        long-standing behaviour of fetch()).
+        """
+        for tag_name in WebContentFetcher.SKIP_TAGS:
+            for element in soup(tag_name):
+                element.decompose()
+
+        text_lines = [line.strip() for line in soup.get_text(separator="\n").splitlines() if line.strip()]
+        readable_text = "\n".join(text_lines)
+        if len(readable_text) > WebContentFetcher.MAX_PAGE_TEXT_CHARS:
+            readable_text = readable_text[: WebContentFetcher.MAX_PAGE_TEXT_CHARS] + "\n…[truncated]"
+
+        return readable_text
+
+    @staticmethod
+    def extract_readable_text(body_bytes: bytes) -> str:
+        """
+        Parses already-downloaded HTML bytes and returns their readable text.
+        Lets a caller that fetched a URL with fetch_document_bytes turn an
+        HTML response into usable text WITHOUT paying for a second request.
+        """
+        if not body_bytes:
+            return ""
+
+        return WebContentFetcher.readable_text_from_soup(BeautifulSoup(body_bytes, "html.parser"))
+
+    @staticmethod
+    async def fetch_document_bytes(url: str) -> tuple[bytes, str] | None:
+        """
+        SSRF-hardened raw fetch for non-page assets (question-paper PDFs and
+        similar). Returns (bytes, content_type) or None on any failure.
+
+        Every caller that needs the raw body of a URL MUST come through here
+        rather than building its own httpx client: this is what applies
+        SafeUrlValidator to the URL and to every redirect hop, pins the
+        connection to the validated IP, caps the body at MAX_DOCUMENT_BYTES,
+        and honours robots.txt plus the per-domain rate limit.
+        """
+        return await WebContentFetcher.__fetch_url_bytes(
+            url,
+            WebContentFetcher.DOCUMENT_TIMEOUT_SECONDS,
+            WebContentFetcher.MAX_DOCUMENT_BYTES,
+        )
+
+    @staticmethod
     async def fetch(url: str, main_task_id: str = None, image_limit: int = None) -> FetchedPage | None:
         """
         Fetches a web page, extracts its readable text, downloads up to image_limit
@@ -508,14 +569,7 @@ class WebContentFetcher:
             title_tag = soup.find("title")
             page_title = title_tag.get_text(strip=True) if title_tag else None
 
-            for tag_name in WebContentFetcher.SKIP_TAGS:
-                for element in soup(tag_name):
-                    element.decompose()
-
-            text_lines = [line.strip() for line in soup.get_text(separator="\n").splitlines() if line.strip()]
-            readable_text = "\n".join(text_lines)
-            if len(readable_text) > WebContentFetcher.MAX_PAGE_TEXT_CHARS:
-                readable_text = readable_text[: WebContentFetcher.MAX_PAGE_TEXT_CHARS] + "\n…[truncated]"
+            readable_text = WebContentFetcher.readable_text_from_soup(soup)
 
             images: List[FetchedImage] = []
             if main_task_id:

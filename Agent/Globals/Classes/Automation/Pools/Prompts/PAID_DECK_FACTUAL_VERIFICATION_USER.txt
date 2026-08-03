@@ -1,0 +1,7 @@
+Subject: {subject_name}
+Topic: {topic_chain}
+
+Fact-check the following generated content.
+
+CONTENT:
+{content_block}

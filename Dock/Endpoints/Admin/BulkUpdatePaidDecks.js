@@ -2,6 +2,7 @@ const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnec
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const PaidDeckPublishGate = require("../../Globals/Classes/Generation/PaidDeckPublishGate");
 
 /**
  * BulkUpdatePaidDecks
@@ -65,6 +66,38 @@ async function bulkUpdatePaidDecks(request, response)
                 // putting it under "assignments" instead of "addTags".
                 setOperations[fieldKey] = assignments[fieldKey];
             }
+        }
+    }
+
+    // ── Phase 8 review gate ───────────────────────────────────────────────
+    // A bulk publish is still a publish. Every named deck is evaluated and the
+    // whole operation is refused if ANY of them is blocked, rather than
+    // publishing the rest — a partial bulk publish would leave the admin
+    // believing they published a set they did not, which is how a blocked deck
+    // quietly reaches buyers.
+    if (setOperations.isPublished === true)
+    {
+        const blockedDeckDecisions = [];
+
+        for (const candidateDeckId of deckIds)
+        {
+            const publishDecision = await PaidDeckPublishGate.evaluate(candidateDeckId);
+            if (!publishDecision.allowed)
+            {
+                blockedDeckDecisions.push({ deckId: candidateDeckId, detail: publishDecision.detail, blockingFlags: publishDecision.blockingFlags });
+            }
+        }
+
+        if (blockedDeckDecisions.length > 0)
+        {
+            response.statusCode = httpStatus.CONFLICT;
+            response.sendJson
+            ({
+                error: ErrorCodes.PUBLISH_BLOCKED_BY_VERIFICATION_FLAGS,
+                detail: `${blockedDeckDecisions.length} of ${deckIds.length} deck(s) have unresolved blocking verification flags. No deck was published.`,
+                blockedDecks: blockedDeckDecisions,
+            });
+            return;
         }
     }
 

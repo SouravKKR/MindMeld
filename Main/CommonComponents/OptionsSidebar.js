@@ -3,6 +3,7 @@ import Deck from "../Globals/Model/Deck.js";
 import DialogBox from "./DialogBox.js";
 import SearchableDropdown from "./SearchableDropdown.js";
 import ReleaseNotesDialog from "./ReleaseNotesDialog.js";
+import ReportIssueDialog from "./ReportIssueDialog.js";
 import TutorialEngine from "../Globals/Classes/TutorialEngine.js";
 import AuthenticationEvents from "../Globals/Events/AuthenticationEvents.js";
 import { userRoles } from "../Globals/Enumerations/UserRoles.js";
@@ -12,8 +13,6 @@ import AlertNotifier from "../Pages/AdminPanel/Components/AlertNotifier.js";
 
 class OptionsSidebar extends HTMLElement
 {
-    static #SUPPORT_EMAIL = "support@cogniumlabs.co.in";
-
     static get()
     {
         const existing = document.querySelector('options-sidebar');
@@ -59,8 +58,17 @@ class OptionsSidebar extends HTMLElement
         const releaseNotesButton = this.querySelector(".release-notes-button");
         const clearDataButton = this.querySelector(".clear-data-button");
         const adminPanelButton = this.querySelector(".admin-panel-button");
+        const reportIssueButton = this.querySelector(".report-issue-button");
 
         document.body.addEventListener("click", () => OptionsSidebar.close());
+
+        if (reportIssueButton)
+        {
+            reportIssueButton.addEventListener("click", () =>
+            {
+                ReportIssueDialog.show();
+            });
+        }
 
         if (adminPanelButton)
         {
@@ -248,7 +256,7 @@ class OptionsSidebar extends HTMLElement
             </div>
             <div class="options-sidebar-contact">
                 <span class="options-sidebar-contact-label">Need help?</span>
-                <a class="options-sidebar-contact-email" href="mailto:${OptionsSidebar.#SUPPORT_EMAIL}">${OptionsSidebar.#SUPPORT_EMAIL}</a>
+                <button class="options-sidebar-report-issue report-issue-button">Report an Issue</button>
             </div>
         `;
 

@@ -14,5 +14,6 @@
     "ALLOWED_EMAILS": 12,
     "LOGS": 13,
     "SUBSCRIPTIONS": 14,
-    "COUPONS": 15
+    "COUPONS": 15,
+    "SUPPORT_TICKETS": 16
 }

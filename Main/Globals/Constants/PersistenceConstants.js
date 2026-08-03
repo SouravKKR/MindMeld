@@ -3,6 +3,11 @@ class PersistenceConstants
     static INFORMATION_SOURCE_DIRECTORY = 'InformationSources';
     static TASKS_DIRECTORY = 'Tasks';
     static SYLLABUS_FILE_NAME = 'Syllabus.json';
+    static COVERAGE_SUMMARIES_FILE_NAME = 'CoverageSummaries.json';
+    static COVERAGE_RECONCILIATION_FILE_NAME = 'CoverageReconciliation.json';
+    static GENERATED_VISUALS_DIRECTORY = 'GeneratedVisuals';
+    static PAID_DECK_VERIFICATION_FILE_NAME = 'PaidDeckVerification.json';
+    static PAID_DECK_ACTION_LOG_DIRECTORY = 'PaidDeckActionLog';
     static BLUEPRINT_FILE_NAME = 'Blueprint.json';
     static MAPPED_TOPICS_DIRECTORY = 'MappedTopics';
     static FLASHCARDS_DIRECTORY = 'Flashcards';

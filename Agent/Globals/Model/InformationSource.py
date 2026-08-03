@@ -3,10 +3,11 @@ from typing import List
 from Globals.Enumerations.InformationSourceTypes import InformationSourceTypes
 from Globals.Enumerations.OcrModes import OcrModes
 from Globals.Enumerations.ContentRetentionModes import ContentRetentionModes
+from Globals.Enumerations.CurriculumPlausibility import CurriculumPlausibility
 
 
 class InformationSource:
-    def __init__(self, name: str = None, user_id: str = None, source_type: InformationSourceTypes = None, directory_path: str = None, tags: List[str] = [], mime_type: str = '', hash: str = '', ocr_mode: OcrModes = OcrModes(1), file_size_bytes: int = 0, retention_mode: ContentRetentionModes = ContentRetentionModes(1)) -> None:
+    def __init__(self, name: str = None, user_id: str = None, source_type: InformationSourceTypes = None, directory_path: str = None, tags: List[str] = [], mime_type: str = '', hash: str = '', ocr_mode: OcrModes = OcrModes(1), file_size_bytes: int = 0, retention_mode: ContentRetentionModes = ContentRetentionModes(1), expires_at: int = 0, uploaded_at: int = 0, curriculum_plausibility: CurriculumPlausibility = CurriculumPlausibility(0), curriculum_plausibility_reason: str = '') -> None:
         self.__id = str(uuid.uuid4())
         self.set_name(name)
         self.set_user_id(user_id)
@@ -18,6 +19,10 @@ class InformationSource:
         self.set_ocr_mode(ocr_mode)
         self.set_file_size_bytes(file_size_bytes)
         self.set_retention_mode(retention_mode)
+        self.set_expires_at(expires_at)
+        self.set_uploaded_at(uploaded_at)
+        self.set_curriculum_plausibility(curriculum_plausibility)
+        self.set_curriculum_plausibility_reason(curriculum_plausibility_reason)
 
     def get_id(self) -> str:
         return self.__id
@@ -121,6 +126,48 @@ class InformationSource:
                 value = valid_values[0] if valid_values else None
         self.__retention_mode = value
 
+    def get_expires_at(self) -> int:
+        return self.__expires_at
+
+    def set_expires_at(self, value: int) -> None:
+        if value is not None:
+            try:
+                value = int(value)
+                value = max(0, value)
+            except (ValueError, TypeError):
+                value = 0
+        self.__expires_at = value
+
+    def get_uploaded_at(self) -> int:
+        return self.__uploaded_at
+
+    def set_uploaded_at(self, value: int) -> None:
+        if value is not None:
+            try:
+                value = int(value)
+                value = max(0, value)
+            except (ValueError, TypeError):
+                value = 0
+        self.__uploaded_at = value
+
+    def get_curriculum_plausibility(self) -> CurriculumPlausibility:
+        return self.__curriculum_plausibility
+
+    def set_curriculum_plausibility(self, value: CurriculumPlausibility) -> None:
+        if value is not None:
+            valid_values = list(CurriculumPlausibility)
+            if value not in valid_values:
+                value = valid_values[0] if valid_values else None
+        self.__curriculum_plausibility = value
+
+    def get_curriculum_plausibility_reason(self) -> str:
+        return self.__curriculum_plausibility_reason
+
+    def set_curriculum_plausibility_reason(self, value: str) -> None:
+        if value is not None:
+            value = str(value)
+        self.__curriculum_plausibility_reason = value
+
     def _restore_id_id(self, stored_id):
         if stored_id is not None:
             self.__id = stored_id
@@ -138,6 +185,10 @@ class InformationSource:
             'ocrMode': int(self.get_ocr_mode().value) if self.get_ocr_mode() is not None else None,
             'fileSizeBytes': self.get_file_size_bytes(),
             'retentionMode': int(self.get_retention_mode().value) if self.get_retention_mode() is not None else None,
+            'expiresAt': self.get_expires_at(),
+            'uploadedAt': self.get_uploaded_at(),
+            'curriculumPlausibility': int(self.get_curriculum_plausibility().value) if self.get_curriculum_plausibility() is not None else None,
+            'curriculumPlausibilityReason': self.get_curriculum_plausibility_reason(),
         }
 
     @classmethod
@@ -152,7 +203,11 @@ class InformationSource:
             hash=data.get('hash'),
             ocr_mode=OcrModes(data.get('ocrMode')) if data.get('ocrMode') is not None else None,
             file_size_bytes=data.get('fileSizeBytes'),
-            retention_mode=ContentRetentionModes(data.get('retentionMode')) if data.get('retentionMode') is not None else None
+            retention_mode=ContentRetentionModes(data.get('retentionMode')) if data.get('retentionMode') is not None else None,
+            expires_at=data.get('expiresAt'),
+            uploaded_at=data.get('uploadedAt'),
+            curriculum_plausibility=CurriculumPlausibility(data.get('curriculumPlausibility')) if data.get('curriculumPlausibility') is not None else None,
+            curriculum_plausibility_reason=data.get('curriculumPlausibilityReason')
         )
         if data.get('id') is not None:
             instance._restore_id_id(data.get('id'))

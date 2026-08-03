@@ -3,11 +3,40 @@ Audits to run:
 1) Common/Audits/SecurityRequirements.txt
 2) Common/Audits/TechnicalRequirements.txt
 3) Common/Audits/CodeQualityRequirements.txt
+4) Common/Audits/LegalComplianceRequirements.txt
 
-Instructions: 
+Instructions:
 - Generate the PDF reports based on the paths given in the individual files.
 - Any new file created for testing (if stored somewhere) must be removed.
 - For each report, for each aspect, mention whether the objective is accomplished, paritally accomplished, or unaccomplished.
 - For each unaccomplished and partially unaccomplished objective make sure to mention why (the gap) and give the possible fixes/solutions in detail. Also mention whether the current state of the aspect is okay to leave as is or needs change or is it fine to leave them as is even if not fully accomplished.
 - At the end, give a rating on a scale of 1 to 10 considering all the aspects with appropriate importance and aggregating the findings.
 - If a requirement is partially fullfilled but not beneficial for the scope of this application, assume accomplished.
+
+Presentation (applies to EVERY report):
+- Present findings as tables, using the mandatory theme in Common/Reports/PdfTheme.md.
+- Every table must carry an "Action" column whose value is exactly one of:
+      "Needs immediate action"  /  "Change recommended"  /  "No action needed"
+  Set it per finding. It is NOT a restatement of the severity rating: an accepted
+  trade-off can be severe and still need no action, and a trivial defect can be low
+  severity and still be worth fixing.
+- Cite exact file paths and line numbers for every finding.
+- Record verified controls as findings too, so a report states what is working rather
+  than only what is broken.
+
+Re-running an audit (mandatory):
+- Delete the previous report before re-auditing, and re-derive every finding from the
+  current source. Do NOT carry forward, restate or "update" the prior report's findings,
+  and do not treat an earlier conclusion as still true because it was true last time.
+  Re-verify each control against the code as it exists now.
+- This matters: the audit that produced LegalComplianceRequirements.txt found three
+  significant issues on a fresh pass that a diff-based re-read would have missed, because
+  the earlier pass had established a mental model of "where the risk lives" and the new
+  issues were outside it.
+
+Fixing findings:
+- Do not apply fixes during an audit. An audit reports; a separate pass remediates.
+- When asked to remediate, present the findings as a selectable list with effort and an
+  explicit accuracy-impact marker, and let the user choose which to action.
+- Flag any proposed fix that would trade correctness for compliance, and propose the
+  variant that preserves both. Never silently accept that trade.

@@ -1,0 +1,23 @@
+Expression rules (CRITICAL — accuracy first, then originality):
+
+These rules govern HOW you write, never WHAT is true. Never change, soften, generalise or "reword" a fact in order to satisfy them. If re-expressing something would make it less accurate, keep it accurate.
+
+Content that MUST be reproduced exactly — never paraphrase these:
+- Formulae, equations, constants, and their symbols and units.
+- Chemical formulae, reactions, and nomenclature.
+- The mathematical statement of a named law, theorem or principle.
+- Standard, statutory or body-defined definitions (SI, IUPAC, ISO, legal definitions) where a fixed official wording exists.
+- Technical terms of art, and the standard name of any concept, element, species, structure or process.
+- Numerical values, quantities, tolerances, dates and measured data.
+These have no alternative correct expression. Reproducing them exactly is required and is the accurate thing to do — it is never a violation of these rules.
+
+Content that you MUST express in your own words:
+- Explanation, commentary, motivation, framing, analogies, worked narrative, and the ordering of an argument.
+- Any passage of continuous prose from the supplied content. Extract the concept, then compose the sentence yourself — do not lightly edit the source's sentence into a near-copy.
+- Where the supplied content elaborates a definition across several sentences, keep the defining proposition exact and write the surrounding explanation yourself.
+
+The test to apply, sentence by sentence: could this be phrased another way without becoming less correct? If yes, phrase it your way. If no, reproduce it exactly.
+
+Not referring to the source is a presentation rule, not permission to copy it. Elsewhere you may be told to write as though authoring an original work and never to mention the supplied content, a textbook, a chapter or a passage. That instruction governs how the output reads. It does NOT license reproducing the source's wording — unattributed copying is worse than attributed copying, not better. Both rules apply at once: do not point at the source, and do not reproduce its prose.
+
+Never fabricate. If the supplied content does not establish something and you are not certain of it from your own knowledge, leave it out. An omission is acceptable; an invented fact, formula, value, definition or citation is not. Where you are unsure whether a detail is correct, omit the detail rather than guessing at it.

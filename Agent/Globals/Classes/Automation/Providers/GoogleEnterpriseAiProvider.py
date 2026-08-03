@@ -141,21 +141,57 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
             credentials = GoogleEnterpriseAiProvider.__load_service_account_credentials()
             if credentials is not None:
                 client_arguments["credentials"] = credentials
+                GoogleEnterpriseAiProvider.__log_resolved_auth_mode(
+                    f"SERVICE_ACCOUNT (Vertex, project={project}, location={location})"
+                )
+            else:
+                GoogleEnterpriseAiProvider.__log_resolved_auth_mode(
+                    f"AMBIENT_ADC (Vertex, project={project}, location={location})"
+                )
             return genai.Client(**client_arguments)
 
+        # No project configured. The API-key path is NOT taken silently: it is a
+        # different Vertex surface (Express mode) with a different contractual
+        # and data-governance posture, so falling back to it because an env var
+        # was missing would change where customer documents are processed
+        # without anyone noticing. It now requires an explicit opt-in.
         api_key = os.getenv("GOOGLE_ENTERPRISE_AGENT_API_KEY")
-        if api_key:
+        b_api_key_fallback_allowed = (os.getenv("GOOGLE_ENTERPRISE_AGENT_ALLOW_API_KEY_FALLBACK") or "").strip().lower() in ("1", "true", "yes")
+
+        if api_key and b_api_key_fallback_allowed:
+            GoogleEnterpriseAiProvider.__log_resolved_auth_mode(
+                "API_KEY (Vertex Express) — explicitly opted in via GOOGLE_ENTERPRISE_AGENT_ALLOW_API_KEY_FALLBACK"
+            )
             return genai.Client(
                 vertexai     = True,
                 api_key      = api_key,
                 http_options = http_options,
             )
 
+        if api_key and not b_api_key_fallback_allowed:
+            raise RuntimeError(
+                "GOOGLE_ENTERPRISE_AGENT_PROJECT is not set, so the provider would fall back to the "
+                "Vertex Express API-key path — a different data-governance posture from the "
+                "service-account backend. Refusing to do that implicitly. Set "
+                "GOOGLE_ENTERPRISE_AGENT_PROJECT (preferred), or set "
+                "GOOGLE_ENTERPRISE_AGENT_ALLOW_API_KEY_FALLBACK=true to accept the API-key path deliberately."
+            )
+
         raise RuntimeError(
-            "GoogleEnterpriseAiProvider requires either GOOGLE_ENTERPRISE_AGENT_PROJECT "
-            "(with GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64 or ambient ADC), or the "
-            "slow-fallback GOOGLE_ENTERPRISE_AGENT_API_KEY, to be set."
+            "GoogleEnterpriseAiProvider requires GOOGLE_ENTERPRISE_AGENT_PROJECT "
+            "(with GOOGLE_ENTERPRISE_AGENT_CREDENTIALS_BASE64 or ambient ADC) to be set."
         )
+
+    # Emitted once per process so the resolved data posture is visible in the
+    # logs of every worker, without repeating on each provider construction.
+    __b_auth_mode_logged = False
+
+    @staticmethod
+    def __log_resolved_auth_mode(mode_description: str) -> None:
+        if GoogleEnterpriseAiProvider.__b_auth_mode_logged:
+            return
+        GoogleEnterpriseAiProvider.__b_auth_mode_logged = True
+        print(f"[GoogleEnterpriseAiProvider] Resolved auth mode: {mode_description}", file=sys.stderr, flush=True)
 
     @staticmethod
     def __load_service_account_credentials():

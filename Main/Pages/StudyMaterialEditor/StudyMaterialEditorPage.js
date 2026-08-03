@@ -1,4 +1,5 @@
 import DialogBox from "../../CommonComponents/DialogBox.js";
+import PaidDeckMoveGuard from "../../Globals/Classes/PaidDeckMoveGuard.js";
 import StudyMaterial from "../../Globals/Model/StudyMaterial.js";
 import Deck from "../../Globals/Model/Deck.js";
 import Lifecycle from "../../Globals/Model/Lifecycle.js";
@@ -94,7 +95,14 @@ class StudyMaterialEditorPage extends HTMLElement
             const content = contentEditor.getInnerHtml();
             const selectedDeckId = deckSelector.value;
 
-            this.#studyMaterial.setContent(content);
+            // setContent refuses only when a paid deck locked mid-edit. Before
+            // overlays existed it was a silent no-op for EVERY paid deck, so
+            // this page accepted typing and then quietly discarded it.
+            if (!this.#studyMaterial.setContent(content))
+            {
+                await DialogBox.alert("Deck is locked", "Unlock this deck with its password, then save again — your changes weren't saved.");
+                return;
+            }
 
             if (!this.#studyMaterial.validate(true))
             {
@@ -110,7 +118,17 @@ class StudyMaterialEditorPage extends HTMLElement
             }
             else if (selectedDeckId !== this.#originalDeckId)
             {
+                // A cross-deck move is refused when it would carry content out
+                // of a purchased deck (or into one). Check BEFORE detaching it
+                // from its current deck, so a refusal leaves the material
+                // exactly where it was instead of orphaning it.
                 const originalDeck = Deck.getById(this.#originalDeckId);
+                if (!PaidDeckMoveGuard.canMove(originalDeck, selectedDeck))
+                {
+                    await DialogBox.alert("Can't move this", PaidDeckMoveGuard.explainRefusal());
+                    return;
+                }
+
                 originalDeck?.removeStudyMaterial(this.#studyMaterial);
                 this.#studyMaterial.setDeckId(selectedDeckId);
                 selectedDeck.addStudyMaterial(this.#studyMaterial);

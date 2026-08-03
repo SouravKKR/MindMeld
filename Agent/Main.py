@@ -22,9 +22,15 @@ from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Classes.Task.TaskRunner import TaskRunner
 
 from Globals.Utility.ArgumentParser import argument_parser
+from Globals.Utility.NetworkAddressPreference import NetworkAddressPreference
 from Globals.Utility.SetupEnvironment import setup_environment
 
 EnvironmentLoader.load()
+
+# Must run before the first outbound connection — on networks whose IPv6 egress is
+# broken, an unpreferred resolver order costs ~20s per AAAA record on every storage
+# and API call. See NetworkAddressPreference for the full reasoning.
+NetworkAddressPreference.prefer_ipv4_addresses()
 
 
 async def main():

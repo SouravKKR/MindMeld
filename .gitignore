@@ -1,5 +1,10 @@
 # Logs
-logs
+# NOTE: a bare `logs` pattern is deliberately NOT used here. It matches any directory
+# named "logs" at any depth — including source directories like Dock/Endpoints/Logs/
+# and Dock/Endpoints/Admin/Logs/, whose files are required by Dock/index.js and
+# HandleAdminEndpoints.js. That silently kept five real source files out of the
+# repository, so a fresh clone crashed on boot with MODULE_NOT_FOUND. The genuine log
+# directories are listed explicitly below instead.
 *.log
 Agent/logs/
 # Deployment/provision run logs (redirected here by the orchestrators' callers).
@@ -431,4 +436,21 @@ Agent/.tools/
 # Desktop/mobile release artifacts served by Dock's /DesktopUpdates route (signed installers +
 # latest.json). Uploaded per release, machine-generated — never committed.
 Dock/DesktopUpdates/
+
+# Emergency recovery bundle — the whole directory: the Docker configuration, the
+# build/render scripts, the generated restore-guide PDF, and the multi-gigabyte
+# image tars under Bundle/. Kept out of the repository entirely.
+#
+# Consequence to be aware of: a fresh clone will NOT contain the build tooling, so
+# whoever needs to rebuild the bundle must be given this directory out of band. To
+# version-control the configuration and scripts while still excluding the large
+# artifacts and secrets, replace this block with:
+#     Common/EmergencyRecovery/Bundle/
+#     Common/EmergencyRecovery/emergency.env
+#     Common/EmergencyRecovery/*.pdf
+Common/EmergencyRecovery/
+
+# Filled-in emergency stack configuration (real secrets). Listed separately so it
+# stays ignored even if the directory above is un-ignored.
+emergency.env
 

@@ -12,6 +12,8 @@ const SyncPayloadValidator = require("../../Globals/Classes/Sync/SyncPayloadVali
 const LapsedPaidDeckReaper = require("../../Globals/Classes/PaidDeck/LapsedPaidDeckReaper");
 const AutoAnalysisDeckFields = require("../../Globals/Classes/Analysis/AutoAnalysisDeckFields");
 const CuratedStudyMaterialFields = require("../../Globals/Classes/Analysis/CuratedStudyMaterialFields");
+const AiGeneratedDeckFields = require("../../Globals/Classes/Security/AiGeneratedDeckFields");
+const AiGeneratedFieldPreserver = require("../../Globals/Classes/Security/AiGeneratedFieldPreserver");
 const { entityTypes } = require("../../Globals/Enumerations/EntityTypes");
 const { curatedBatchReviewStates } = require("../../Globals/Enumerations/CuratedBatchReviewStates");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
@@ -128,6 +130,7 @@ async function handleSync(request, response)
         [entityTypes.STUDY_MATERIAL]:     [],
         [entityTypes.MOCK_TEST]:          [],
         [entityTypes.ASK_AI_POPUP_LINK]:  [],
+        [entityTypes.CONTENT_OVERLAY]:    [],
         deletions:                        []
     };
 
@@ -160,7 +163,8 @@ async function handleSync(request, response)
         || byType[entityTypes.CARD].length > 0
         || byType[entityTypes.STUDY_MATERIAL].length > 0
         || byType[entityTypes.MOCK_TEST].length > 0
-        || byType[entityTypes.ASK_AI_POPUP_LINK].length > 0;
+        || byType[entityTypes.ASK_AI_POPUP_LINK].length > 0
+        || byType[entityTypes.CONTENT_OVERLAY].length > 0;
 
     if (hasUpserts && !(await StorageQuotaEnforcer.isWithinQuota(userId)))
     {
@@ -179,6 +183,11 @@ async function handleSync(request, response)
     // author a brand-new paid entity. This is the server-side enforcement of
     // "content is read-only on the device".
     await preservePaidContentOnPush(db, userId, byType);
+
+    // AI-generated decks carry the aiGenerated marker, and bulkUpsert replaces
+    // the whole deck blob — so a stale or edited push would erase it and hand
+    // the deck its Export button back. Force-restore before the write.
+    await preserveAiGeneratedFlagOnPush(db, userId, byType);
 
     // Guard the agent-authored curated-study / analysis bookkeeping fields
     // (lastCuratedBatchTag, lastAnalysisTopics, …) that live inside the
@@ -216,10 +225,11 @@ async function handleSync(request, response)
         SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.STUDY_MATERIALS_COLLECTION),   byType[entityTypes.STUDY_MATERIAL],    pushWriteTimestamp),
         SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.MOCK_TESTS_COLLECTION),        byType[entityTypes.MOCK_TEST],         pushWriteTimestamp),
         SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION), byType[entityTypes.ASK_AI_POPUP_LINK], pushWriteTimestamp),
+        SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.CONTENT_OVERLAYS_COLLECTION),      byType[entityTypes.CONTENT_OVERLAY],   pushWriteTimestamp),
     ]);
     await SyncQueryEngine.bulkRecordDeletions(userId, db, byType.deletions);
 
-    console.log(`[Sync] PUSH complete — decks:${byType[entityTypes.DECK].length} cards:${byType[entityTypes.CARD].length} studyMaterials:${byType[entityTypes.STUDY_MATERIAL].length} mockTests:${byType[entityTypes.MOCK_TEST].length} popupLinks:${byType[entityTypes.ASK_AI_POPUP_LINK].length} deletions:${byType.deletions.length}`);
+    console.log(`[Sync] PUSH complete — decks:${byType[entityTypes.DECK].length} cards:${byType[entityTypes.CARD].length} studyMaterials:${byType[entityTypes.STUDY_MATERIAL].length} mockTests:${byType[entityTypes.MOCK_TEST].length} popupLinks:${byType[entityTypes.ASK_AI_POPUP_LINK].length} contentOverlays:${byType[entityTypes.CONTENT_OVERLAY].length} deletions:${byType.deletions.length}`);
 
     // Best-effort cleanup of the two legacy fields the client no
     // longer ships (studyMaterials embedded in the deck doc, and the
@@ -316,7 +326,8 @@ async function handleSync(request, response)
             { collection: DatabaseConstants.CARDS_COLLECTION,             entityType: entityTypes.CARD,              name: "Card",          maxPull: MAX_PULL_PER_COLLECTION },
             { collection: DatabaseConstants.STUDY_MATERIALS_COLLECTION,   entityType: entityTypes.STUDY_MATERIAL,    name: "StudyMaterial", maxPull: MAX_PULL_PER_COLLECTION },
             { collection: DatabaseConstants.MOCK_TESTS_COLLECTION,        entityType: entityTypes.MOCK_TEST,         name: "MockTest",      maxPull: MAX_PULL_PER_COLLECTION },
-            { collection: DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION, entityType: entityTypes.ASK_AI_POPUP_LINK, name: "PopupLink",     maxPull: MAX_PULL_PER_COLLECTION }
+            { collection: DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION, entityType: entityTypes.ASK_AI_POPUP_LINK, name: "PopupLink",     maxPull: MAX_PULL_PER_COLLECTION },
+            { collection: DatabaseConstants.CONTENT_OVERLAYS_COLLECTION,   entityType: entityTypes.CONTENT_OVERLAY,   name: "ContentOverlay", maxPull: MAX_PULL_PER_COLLECTION }
         ];
 
         const lastSyncDate = new Date(lastSync);
@@ -557,8 +568,11 @@ async function handleSync(request, response)
     // When chunking, also report how many entities still wait beyond
     // this cycle's watermark so the client can render a true overall
     // percentage across the multi-cycle drain instead of restarting
-    // its bar at 0 each chunk. Cheap relative to the pull itself —
-    // four count_documents per response, all hitting the userId index.
+    // its bar at 0 each chunk. Cheap relative to the pull itself — one
+    // count_documents per pulled collection per response, all hitting the
+    // userId index. The list must stay in step with pullConfig above:
+    // popup links were missing from it, so a drain dominated by them
+    // reported "0 remaining" while still chunking.
     let remainingEntityCount = 0;
     if (bMorePending)
     {
@@ -568,7 +582,9 @@ async function handleSync(request, response)
             DatabaseConstants.DECKS_COLLECTION,
             DatabaseConstants.CARDS_COLLECTION,
             DatabaseConstants.STUDY_MATERIALS_COLLECTION,
-            DatabaseConstants.MOCK_TESTS_COLLECTION
+            DatabaseConstants.MOCK_TESTS_COLLECTION,
+            DatabaseConstants.ASK_AI_POPUP_LINKS_COLLECTION,
+            DatabaseConstants.CONTENT_OVERLAYS_COLLECTION
         ];
 
         const remainingCountPromises = pullCollections.map((collectionName) =>
@@ -635,6 +651,22 @@ async function handleSync(request, response)
     });
 }
 
+// The entity types whose content the SERVER authors and therefore protects on
+// push. A type listed here has its stored content overlaid back onto any
+// incoming change, so a client can never alter it.
+//
+// entityTypes.CONTENT_OVERLAY is deliberately ABSENT: an overlay is the
+// learner's own edit, authored on their device, and the whole feature is that
+// it survives the push. Adding it here would silently revert every edit on the
+// next sync — exported so a unit test can assert it stays out.
+const PAID_PROTECTED_TYPE_COLLECTIONS =
+[
+    { entityType: entityTypes.DECK,            collectionName: DatabaseConstants.DECKS_COLLECTION            },
+    { entityType: entityTypes.CARD,            collectionName: DatabaseConstants.CARDS_COLLECTION            },
+    { entityType: entityTypes.STUDY_MATERIAL,  collectionName: DatabaseConstants.STUDY_MATERIALS_COLLECTION  },
+    { entityType: entityTypes.MOCK_TEST,       collectionName: DatabaseConstants.MOCK_TESTS_COLLECTION       }
+];
+
 /**
  * Server-side enforcement that paid-deck CONTENT is read-only on the device.
  * For every incoming paid entity (a card / study material / mock test / deck
@@ -648,17 +680,9 @@ async function handleSync(request, response)
  */
 async function preservePaidContentOnPush(database, userId, byType)
 {
-    const protectedTypeCollections =
-    [
-        { entityType: entityTypes.DECK,            collectionName: DatabaseConstants.DECKS_COLLECTION            },
-        { entityType: entityTypes.CARD,            collectionName: DatabaseConstants.CARDS_COLLECTION            },
-        { entityType: entityTypes.STUDY_MATERIAL,  collectionName: DatabaseConstants.STUDY_MATERIALS_COLLECTION  },
-        { entityType: entityTypes.MOCK_TEST,       collectionName: DatabaseConstants.MOCK_TESTS_COLLECTION       }
-    ];
-
     let droppedAuthoredPaidCount = 0;
 
-    for (const { entityType, collectionName } of protectedTypeCollections)
+    for (const { entityType, collectionName } of PAID_PROTECTED_TYPE_COLLECTIONS)
     {
         const incomingArray = byType[entityType];
         if (!incomingArray || incomingArray.length === 0)
@@ -718,6 +742,89 @@ async function preservePaidContentOnPush(database, userId, byType)
     if (droppedAuthoredPaidCount > 0)
     {
         console.warn(`[Sync] Dropped ${droppedAuthoredPaidCount} client-authored paid entity push(es) — paid content is server-authored only.`);
+    }
+}
+
+/**
+ * Server-side floor for the AI-generated deck marker.
+ *
+ * The generation pipeline marks every deck it creates plus the deck it was
+ * launched from. SyncQueryEngine.bulkUpsert replaces the whole deck blob, so a
+ * stale or edited client push erases the marker — and with it the owner
+ * watermark and the export gate, permanently and on every device.
+ *
+ * The decision itself lives in AiGeneratedFieldPreserver so it can be
+ * unit-tested without a database; this function only supplies the stored decks.
+ * The query is narrowed to already-marked decks, so an ordinary push costs one
+ * round-trip that returns nothing.
+ *
+ * Runs AFTER preservePaidContentOnPush so it operates on the already
+ * paid-restored entries, and BEFORE bulkUpsert so the restored marker is what
+ * actually gets written.
+ *
+ * Known limit, consistent with the stance in AiGeneratedExportReporter: the
+ * client that stripped the marker will not re-learn it from the echoed pull,
+ * because SyncApplier skips any incoming deck that is not strictly newer than
+ * its local copy. The server copy stays correct and the client picks it up on
+ * the next server-side write to that deck.
+ */
+async function preserveAiGeneratedFlagOnPush(database, userId, byType)
+{
+    const incomingDecks = byType[entityTypes.DECK];
+    if (!incomingDecks || incomingDecks.length === 0)
+    {
+        return;
+    }
+
+    const incomingDeckIds = incomingDecks
+        .map((deckData) => deckData?.id)
+        .filter((deckId) => typeof deckId === "string" && deckId.length > 0);
+    if (incomingDeckIds.length === 0)
+    {
+        return;
+    }
+
+    const markedDeckDocuments = await database
+        .collection(DatabaseConstants.DECKS_COLLECTION)
+        .find(
+        {
+            userId: userId,
+            "data.id": { $in: incomingDeckIds },
+            $or:
+            [
+                { ["data.additionalData." + AiGeneratedDeckFields.AI_GENERATED]: true },
+                { ["data.additionalData." + AiGeneratedDeckFields.LEGACY_AI_GENERATED]: true },
+            ],
+        },
+        { projection: { _id: 0, "data.id": 1, "data.additionalData": 1 } })
+        .toArray();
+
+    if (markedDeckDocuments.length === 0)
+    {
+        return;
+    }
+
+    const storedDeckDataById = new Map();
+    for (const markedDeckDocument of markedDeckDocuments)
+    {
+        if (markedDeckDocument?.data?.id)
+        {
+            storedDeckDataById.set(markedDeckDocument.data.id, markedDeckDocument.data);
+        }
+    }
+
+    let restoredCount = 0;
+    for (const incomingDeckData of incomingDecks)
+    {
+        if (AiGeneratedFieldPreserver.restoreMarker(incomingDeckData, storedDeckDataById.get(incomingDeckData?.id)))
+        {
+            restoredCount++;
+        }
+    }
+
+    if (restoredCount > 0)
+    {
+        console.warn(`[Sync] Restored the AI-generated marker on ${restoredCount} deck push(es) — generated content cannot be un-marked from a device.`);
     }
 }
 
@@ -947,4 +1054,4 @@ function batchTagToTimestamp(batchTag)
     return Number.isFinite(parsed) ? parsed : 0;
 }
 
-module.exports = { handleSync };
+module.exports = { handleSync, PAID_PROTECTED_TYPE_COLLECTIONS };

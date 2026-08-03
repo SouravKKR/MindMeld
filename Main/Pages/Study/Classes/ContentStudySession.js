@@ -1,5 +1,7 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
+import GeneratedVisualRenderer from "../../../Globals/Classes/GeneratedVisualRenderer.js";
 import HtmlSanitizer from "../../../Globals/Classes/HtmlSanitizer.js";
+import PaidDeckCopyGuard from "../../../Globals/Classes/Security/PaidDeckCopyGuard.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import StudySession from "./StudySession.js";
 import StudyMaterialEditorPage from "../../StudyMaterialEditor/StudyMaterialEditorPage.js";
@@ -182,6 +184,15 @@ class ContentStudySession extends StudySession
 
         container.innerHTML = HtmlSanitizer.sanitize(material.getContent());
         this._studyPage.renderLatex();
+        GeneratedVisualRenderer.render(container);
+
+        // Block copy / cut / right-click over a purchased material's content.
+        // Selection stays available so Ask-AI-on-selection still works.
+        const paidDeckId = material.getDeck?.()?.getAdditionalData?.()?.paidDeckId;
+        if (paidDeckId)
+        {
+            PaidDeckCopyGuard.registerContainer(container, paidDeckId, material.getId());
+        }
 
         // Each material is a fresh document, so start it at the top rather
         // than inheriting the previous material's scroll offset. The

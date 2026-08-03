@@ -169,6 +169,15 @@ async function runAlwaysOnTier()
     assert(escapedHtml.includes("Footer &amp; note"), "EmailTemplate escapes ampersands in the footer");
     assert(escapedHtml.includes("123456"), "EmailTemplate renders the code");
 
+    // Branding: both marks are present, they point at absolute public URLs
+    // (relative paths would be dead links in a mail client), and the code can
+    // never wrap onto a second line.
+    assert(escapedHtml.includes(EmailTemplate.PRODUCT_LOGO_URL), "Email carries the CogniumLearn logo");
+    assert(escapedHtml.includes(EmailTemplate.COMPANY_LOGO_URL), "Email carries the Cognium Labs logo");
+    assert(EmailTemplate.PRODUCT_LOGO_URL.startsWith("https://") && EmailTemplate.COMPANY_LOGO_URL.startsWith("https://"), "Logo URLs are absolute https URLs");
+    assert(escapedHtml.includes('alt="CogniumLearn"') && escapedHtml.includes('alt="Cognium Labs"'), "Both logos carry alt text for image-blocking clients");
+    assert(EmailTemplate.codeBlock("123456").includes("white-space: nowrap"), "Code block is pinned to a single line");
+
     // EmailSender composes + dispatches through the active provider. Swap the
     // selection seam for a capturing provider (the DI point EmailSender uses).
     const originalGetDefaultProvider = EmailProviderFactory.getDefaultProvider;
