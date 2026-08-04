@@ -61,14 +61,18 @@ class RateLimiter
     static DEFAULT_OTP_WINDOW_MILLISECONDS = RateLimiter.#resolvePositiveIntegerSetting("RATE_LIMIT_OTP_WINDOW_SECONDS", 300) * 1000;
 
     // Dedicated per-user cap for the generation cost estimator
-    // (/Generate/EstimateCost). The button sits next to Start Generation and
-    // invites repeated pressing, while each press loads the credit config and
-    // walks the whole settings body. The answer only changes when the form does,
-    // so one estimate per window is ample and the loose general per-user ceiling
-    // is far too high to deter drumming on it.
-    //   env: RATE_LIMIT_ESTIMATE_MAX_REQUESTS    (default 1)
+    // (/Generate/EstimateCost). Each call loads the credit config and walks the
+    // whole settings body, so it is not free, but it is no longer an optional
+    // button either: pricing the run is now a mandatory step of Start
+    // Generation, so the cap has to leave room for a normal decision — start,
+    // read the estimate, cancel, change a field, start again. One per window
+    // (the old value, sized for an optional button that invited drumming) would
+    // lock a user out of generating at all for the rest of the window. The
+    // client also caches the estimate for an unchanged form, so a handful per
+    // window still deters abuse without ever blocking real use.
+    //   env: RATE_LIMIT_ESTIMATE_MAX_REQUESTS    (default 5)
     //   env: RATE_LIMIT_ESTIMATE_WINDOW_SECONDS  (default 30)
-    static DEFAULT_ESTIMATE_MAX_REQUESTS = RateLimiter.#resolvePositiveIntegerSetting("RATE_LIMIT_ESTIMATE_MAX_REQUESTS", 1);
+    static DEFAULT_ESTIMATE_MAX_REQUESTS = RateLimiter.#resolvePositiveIntegerSetting("RATE_LIMIT_ESTIMATE_MAX_REQUESTS", 5);
     static DEFAULT_ESTIMATE_WINDOW_MILLISECONDS = RateLimiter.#resolvePositiveIntegerSetting("RATE_LIMIT_ESTIMATE_WINDOW_SECONDS", 30) * 1000;
 
     static #SWEEP_INTERVAL_MILLISECONDS = 5 * 60 * 1000;

@@ -19,7 +19,9 @@ import CreditNotice from "../../Globals/Classes/Credits/CreditNotice.js";
 import MaintenanceNotice from "../../Globals/Classes/MaintenanceNotice.js";
 import GenerationNotifier from "../../Globals/Classes/Notifications/GenerationNotifier.js";
 import TutorialEngine from "../../Globals/Classes/TutorialEngine.js";
-import { creditPricingStates } from "../../Globals/Enumerations/CreditPricingStates.js";
+import { generationEstimateOutcomes } from "../../Globals/Enumerations/GenerationEstimateOutcomes.js";
+import GenerationEstimateDialog from "./Components/GenerationEstimateDialog.js";
+import CreditPurchaseFlow from "../../Globals/Classes/Credits/CreditPurchaseFlow.js";
 
 class AutomaticGenerationPage extends HTMLElement
 {
@@ -896,19 +898,21 @@ class AutomaticGenerationPage extends HTMLElement
 
             const generationSettingsMap = this.#buildGenerationSettingsMap();
 
-            // Losing Export is permanent and it reaches content the user wrote
-            // themselves, so it is acknowledged rather than discovered. Asked
-            // BEFORE the button is disabled: cancelling here must leave the page
-            // exactly as it was found.
-            if (!await this.#confirmGeneratedContentIsNotExportable())
+            // Prompt for notification permission inside the click handler — the
+            // browser only shows the permission prompt from a user gesture, and
+            // the estimate dialog below awaits, so this has to run first while
+            // the original click's transient activation is still live.
+            // Fire-and-forget so it never blocks kicking off the generation.
+            GenerationNotifier.requestPermission().catch(() => { /* non-fatal */ });
+
+            // Pricing the run is mandatory: nothing reaches /Generate until the
+            // user has seen what it will cost and confirmed inside the dialog.
+            // Asked BEFORE the button is disabled — cancelling here must leave
+            // the page exactly as it was found.
+            if (!await this.#confirmEstimateAndStart(generationSettingsMap))
             {
                 return;
             }
-
-            // Prompt for notification permission inside the click handler — the
-            // browser only shows the permission prompt from a user gesture.
-            // Fire-and-forget so it never blocks kicking off the generation.
-            GenerationNotifier.requestPermission().catch(() => { /* non-fatal */ });
 
             generateButton.disabled = true;
             generateButton.textContent = "Starting...";
@@ -1006,82 +1010,45 @@ class AutomaticGenerationPage extends HTMLElement
             }
         });
 
-        const computeCostButton = this.querySelector(".automatic-generation-compute-cost-button");
+    }
 
-        computeCostButton?.addEventListener("click", async () =>
+    /**
+     * Prices the run and asks the user to confirm it before anything is
+     * submitted. Returns true only when they chose to start.
+     *
+     * Buying credits from inside the dialog returns to the same question with a
+     * refreshed balance rather than dropping the user back on the form, so a
+     * top-up does not cost them their place. Each pass blocks on a modal the
+     * user has to click, so the loop cannot spin.
+     *
+     * @param {object} generationSettingsMap the body /Generate will receive
+     * @returns {Promise<boolean>}
+     */
+    async #confirmEstimateAndStart(generationSettingsMap)
+    {
+        const exportWarningHtml = this.#buildExportWarningHtml();
+
+        while (true)
         {
-            // Same ordering rule as the generate button: an in-flight upload is
-            // missing from getSources(), so validating first would blame the form.
-            // An estimate computed without it would also under-count the cost.
-            if (this.#hasPendingUploads())
+            const outcome = await GenerationEstimateDialog.present(generationSettingsMap, exportWarningHtml);
+
+            if (outcome === generationEstimateOutcomes.START)
             {
-                await DialogBox.alert(
-                    "Uploads still in progress",
-                    "Some of your uploaded documents are still uploading or being processed. Please wait until every source shows a green tick before estimating the cost."
-                );
-                return;
+                return true;
             }
 
-            if (!this.#validate())
+            if (outcome !== generationEstimateOutcomes.BUY_CREDITS)
             {
-                await DialogBox.alert("Error", "Please fill out all the fields and make sure the values are valid.");
-                return;
+                return false;
             }
 
-            const originalLabel = computeCostButton.textContent;
-            computeCostButton.disabled = true;
-            computeCostButton.textContent = "Estimating…";
-
-            try
-            {
-                const response = await fetch("/Generate/EstimateCost",
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(this.#buildGenerationSettingsMap())
-                });
-
-                // Estimating is rate-limited per user. "Please try again" would be
-                // actively wrong here — trying again immediately is the one thing
-                // that cannot work — so say how long the wait is.
-                if (response.status === 429)
-                {
-                    const throttleDetail = await response.json().catch(() => ({}));
-                    const retryAfterSeconds = Number(throttleDetail?.retryAfterSeconds);
-                    await DialogBox.alert(
-                        "Just a moment",
-                        Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-                            ? `You can compute the cost again in ${retryAfterSeconds}s.`
-                            : "You're computing the cost too often. Please wait a moment and try again."
-                    );
-                    return;
-                }
-
-                if (!response.ok)
-                {
-                    await DialogBox.alert("Couldn't estimate", "We couldn't compute an estimate right now. Please try again.");
-                    return;
-                }
-
-                const estimate = await response.json();
-                await DialogBox.alert("Estimated cost", AutomaticGenerationPage.#buildEstimateMessage(estimate));
-            }
-            catch (estimateError)
-            {
-                console.error("[AutomaticGenerationPage] Cost estimate failed:", estimateError);
-                await DialogBox.alert("Couldn't estimate", "We couldn't reach the server. Please check your connection.");
-            }
-            finally
-            {
-                computeCostButton.disabled = false;
-                computeCostButton.textContent = originalLabel;
-            }
-        });
+            await CreditPurchaseFlow.run();
+        }
     }
 
     /**
      * Collects the same generation-settings body the Start button posts to
-     * /Generate, so the Compute Cost button can estimate against an identical
+     * /Generate, so the pre-flight estimate is computed against an identical
      * payload. Only the enabled secondary generation types are included.
      */
     /**
@@ -1134,57 +1101,6 @@ class AutomaticGenerationPage extends HTMLElement
 
         generationSettingsMap["parentDeckId"] = this.#parentDeck?.getId() ?? "0";
         return generationSettingsMap;
-    }
-
-    static #buildEstimateMessage(estimate)
-    {
-        if (!estimate || estimate.estimatedCredits === null || estimate.estimatedCredits === undefined)
-        {
-            return "Credit pricing isn't configured yet, so we can't estimate the cost.";
-        }
-
-        const credits = estimate.estimatedCredits;
-        const moneySuffix = (typeof estimate.pricePerCredit === "number" && estimate.currency)
-            ? ` (≈ ${estimate.currency} ${(credits * estimate.pricePerCredit).toFixed(2)})`
-            : "";
-
-        // A line reading "0 cr" says nothing about WHY. Label the three reasons a
-        // line can be zero so an unpriced task is never mistaken for a free one.
-        const stateLabelByValue =
-        {
-            [creditPricingStates.UNPRICED]: "not priced",
-            [creditPricingStates.DENIED]: "unavailable",
-            [creditPricingStates.FREE]: "free",
-        };
-
-        const breakdownHtml = (Array.isArray(estimate.breakdown) ? estimate.breakdown : [])
-            .map(item =>
-            {
-                const stateLabel = stateLabelByValue[item.state];
-                const amountLabel = stateLabel ? stateLabel : `${item.credits} cr`;
-                return `<div style="display:flex;justify-content:space-between;gap:16px;"><span>${item.label}</span><span>${amountLabel}</span></div>`;
-            })
-            .join("");
-
-        const unpricedLabels = Array.isArray(estimate.unpricedLabels) ? estimate.unpricedLabels : [];
-        const deniedLabels = Array.isArray(estimate.deniedLabels) ? estimate.deniedLabels : [];
-
-        const noticeHtml = [
-            deniedLabels.length > 0
-                ? `<div style="font-size:12px;margin-bottom:8px;">Currently unavailable: ${deniedLabels.join(", ")}. This generation can't run until that changes.</div>`
-                : "",
-            unpricedLabels.length > 0
-                ? `<div style="font-size:12px;margin-bottom:8px;">No credit pricing is configured for: ${unpricedLabels.join(", ")}. Those parts won't be charged, so the total above is lower than the real cost of the run.</div>`
-                : "",
-        ].join("");
-
-        return `
-            <div style="font-size:16px;font-weight:700;margin-bottom:6px;">≈ ${credits} credits${moneySuffix}</div>
-            <div style="font-size:13px;opacity:0.8;margin-bottom:12px;">Estimated range: ${estimate.low}–${estimate.high} credits</div>
-            ${breakdownHtml ? `<div style="font-size:13px;display:flex;flex-direction:column;gap:4px;margin-bottom:12px;">${breakdownHtml}</div>` : ""}
-            ${noticeHtml}
-            <div style="font-size:12px;opacity:0.7;">This is an estimate (±10%). Your actual credits are charged from real usage during generation.</div>
-        `;
     }
 
     #handleGenerationContainerCheckboxEvents()
@@ -1313,7 +1229,6 @@ class AutomaticGenerationPage extends HTMLElement
                 </div>
             </div>
             <div class="automatic-generation-action-bar">
-                <button class="automatic-generation-compute-cost-button">Compute Cost</button>
                 <button class="automatic-generation-start-button">Start Generation</button>
             </div>
             <div class="automatic-generation-deck-library-hint">
@@ -1349,16 +1264,22 @@ class AutomaticGenerationPage extends HTMLElement
     }
 
     /**
-     * Asks the user to accept that generating here permanently removes Export.
+     * The markup telling the user that generating here permanently removes
+     * Export, for the estimate dialog to render.
      *
      * The server marks every deck a run creates AND the deck it was launched
      * from, and that marker is a one-way ratchet — it cannot be cleared from a
      * device. When the run targets an existing deck, the loss reaches cards the
      * user wrote by hand, which is the part worth stopping for.
      *
-     * @returns {Promise<boolean>} true when the user chose to continue
+     * This used to be its own confirm dialog. It now rides in the estimate
+     * dialog, ABOVE the cost figures, because two stacked modals in front of one
+     * button made the irreversible half of the decision the easier one to click
+     * past. The final "Start Generation" press is still the acknowledgement.
+     *
+     * @returns {string} already-escaped markup
      */
-    async #confirmGeneratedContentIsNotExportable()
+    #buildExportWarningHtml()
     {
         // Generating at the top level creates new decks rather than absorbing an
         // existing one, so there is no hand-made content to lose — the warning
@@ -1368,22 +1289,15 @@ class AutomaticGenerationPage extends HTMLElement
 
         if (bTargetsRootDeck)
         {
-            return await DialogBox.confirm(
-                "Generated decks can't be exported",
-                "The decks this creates will hold AI-generated study material, so they can't be exported to a file."
-                + "<br><br>Continue?"
-            );
+            return "<strong>Generated decks can't be exported.</strong> The decks this creates will hold "
+                + "AI-generated study material, so they can't be exported to a file.";
         }
 
         const deckName = AutomaticGenerationPage.#escapeHtml(this.#parentDeck?.getName?.() ?? "this deck");
 
-        return await DialogBox.confirm(
-            "This deck will no longer be exportable",
-            `Generating into "${deckName}" marks it as holding AI-generated study material. `
-            + "It — and everything already inside it, including cards you wrote yourself — "
-            + "will no longer be exportable to a file, on any of your devices."
-            + "<br><br>This can't be undone. Continue?"
-        );
+        return `<strong>"${deckName}" will no longer be exportable.</strong> Generating into it marks it as holding `
+            + "AI-generated study material. It — and everything already inside it, including cards you wrote "
+            + "yourself — will no longer be exportable to a file, on any of your devices. This can't be undone.";
     }
 
     /**

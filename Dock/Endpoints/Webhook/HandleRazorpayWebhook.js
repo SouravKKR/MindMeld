@@ -5,6 +5,8 @@ const OrgAdminVerificationManager = require("../../Globals/Classes/Authenticatio
 const PendingCreditOrderQueryEngine = require("../../Globals/Classes/Database/PendingCreditOrderQueryEngine");
 const CreditPurchaseCompletionService = require("../../Globals/Classes/Credits/CreditPurchaseCompletionService");
 const CreditDealPaymentQueryEngine = require("../../Globals/Classes/Credits/CreditDealPaymentQueryEngine");
+const PendingOrderQueryEngine = require("../../Globals/Classes/Database/PendingOrderQueryEngine");
+const PaidDeckPurchaseCompletionService = require("../PaidDeck/PaidDeckPurchaseCompletionService");
 const SubscriptionWebhookProcessor = require("../../Globals/Classes/Plans/SubscriptionWebhookProcessor");
 const { paymentProviders } = require("../../Globals/Enumerations/PaymentProviders");
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
@@ -19,21 +21,24 @@ const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
  * the HMAC over the exact bytes Razorpay signed instead of a re-
  * serialised JSON.
  *
- * Completes two payment flows: organization payments (creation /
- * expansion) and credit purchases. Credit purchases are ALSO completed
- * by /Credits/Purchase/Verify from the buyer's browser — this webhook
- * is the safety net for buyers who pay and then close the tab before
- * Verify runs. Both paths share CreditPurchaseCompletionService, whose
- * referenceKey idempotency guarantees exactly one grant regardless of
- * which arrives first. (Paid-deck purchases remain verify-only by
- * design and fall through to PAYMENT_ROW_NOT_FOUND here.)
+ * Completes four payment flows: organization payments (creation /
+ * expansion), credit purchases, admin credit-deal payments and
+ * paid-deck purchases. Each is ALSO completed by the buyer's browser
+ * on its own verify endpoint — this webhook is the safety net for
+ * buyers who pay and then close the tab before Verify runs. Credits
+ * and paid decks share their completion service with the browser leg
+ * (CreditPurchaseCompletionService / PaidDeckPurchaseCompletionService)
+ * so the two paths cannot diverge: whichever arrives first settles and
+ * the other becomes a no-op.
  *
  * Idempotent on providerOrderId — repeat deliveries (Razorpay retries
  * each event up to ~5 times) match the unique index on
  * organizationPayments.providerOrderId and short-circuit at the
  * "already CAPTURED" check inside OrganizationPaymentQueryEngine; the
  * credit branch short-circuits on the CONSUMED status / duplicate
- * referenceKey.
+ * referenceKey; the paid-deck branch short-circuits on the CONSUMED
+ * status and, against a concurrent browser verify, on the pending
+ * order's atomic grant claim.
  *
  * Acks 200 even on benign errors (signature mismatch, unknown order)
  * — returning a 4xx would cause Razorpay to keep retrying. We log
@@ -164,8 +169,58 @@ async function handleRazorpayWebhook(request, response)
             return;
         }
 
-        // The order belongs to a non-org payment flow (e.g. paid-deck
-        // purchases) or to an org that was deleted before payment cleared.
+        // Not a credit deal either — try a paid-deck purchase. This is the
+        // safety net for a buyer who pays and then closes the tab before
+        // /PaidDecks/Purchase/Verify runs; without it they were charged with no
+        // license issued and no server-side recovery. The pending row is the
+        // trusted binding (buyer + exact decks + server price), so no session is
+        // needed — the verified HMAC signature is the auth.
+        const pendingDeckOrder = await PendingOrderQueryEngine.getByOrderId(providerOrderId);
+        if (pendingDeckOrder)
+        {
+            if (pendingDeckOrder.status === PendingOrderQueryEngine.STATUS_CONSUMED)
+            {
+                response.statusCode = httpStatus.OK;
+                response.sendJson({ acknowledged: true, reason: ErrorCodes.DECK_ORDER_ALREADY_PROCESSED });
+                return;
+            }
+
+            try
+            {
+                const deckCompletion = await PaidDeckPurchaseCompletionService.complete
+                (
+                    pendingDeckOrder,
+                    {
+                        providerPaymentId: providerPaymentId,
+                        paymentProvider: paymentProviders.RAZORPAY,
+                        source: PaidDeckPurchaseCompletionService.SOURCE_WEBHOOK
+                    }
+                );
+
+                response.statusCode = httpStatus.OK;
+                response.sendJson
+                ({
+                    acknowledged: true,
+                    deckOrderCompleted: deckCompletion.granted,
+                    licensesIssued: deckCompletion.licenses.length,
+                    alreadyProcessed: deckCompletion.alreadyProcessed
+                });
+            }
+            catch (deckCompletionError)
+            {
+                // The claim has already been released by the service, so a
+                // later verify (or Razorpay redelivery) can retry. Ack anyway —
+                // a 4xx/5xx would only make Razorpay replay an event we know
+                // will fail the same way until the underlying fault is fixed.
+                console.error(`[HandleRazorpayWebhook] Paid-deck settlement failed for order ${providerOrderId}: ${deckCompletionError?.message || deckCompletionError}`);
+                response.statusCode = httpStatus.OK;
+                response.sendJson({ acknowledged: true, reason: ErrorCodes.EXCEPTION });
+            }
+            return;
+        }
+
+        // The order belongs to no known payment flow, or to an org that was
+        // deleted before payment cleared.
         response.statusCode = httpStatus.OK;
         response.sendJson({ acknowledged: true, reason: ErrorCodes.PAYMENT_ROW_NOT_FOUND });
         return;

@@ -203,24 +203,6 @@ automatic-generation-page[page]
     color: var(--accent-color-hover);
 }
 
-.automatic-generation-compute-cost-button
-{
-    padding: 10px 20px;
-    border-radius: 10px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    background-color: var(--tertiary-background-color);
-    color: var(--primary-text-color);
-    opacity: 0.85;
-}
-
-.automatic-generation-compute-cost-button:hover
-{
-    background-color: var(--quaternary-background-color);
-    opacity: 1;
-}
-
 .automatic-generation-start-button
 {
     padding: 13px 36px;

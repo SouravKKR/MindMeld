@@ -9,11 +9,13 @@ const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
  *
  * Route-local per-user cap on POST /Generate/EstimateCost.
  *
- * Estimating is cheap for the user and not free for us: every click loads the
- * credit configuration and walks the whole settings body, and the button sits
- * next to Start Generation where it invites repeated pressing. One estimate per
- * window is plenty — the answer only changes when the form does — so this is
- * sized to stop drumming on the button rather than to ration a real workflow.
+ * Estimating is cheap for the user and not free for us: every call loads the
+ * credit configuration and walks the whole settings body. It is also on the
+ * critical path now — Start Generation prices the run before it submits
+ * anything — so the cap is sized to leave a normal decision (start, read,
+ * cancel, adjust, start again) untouched while still stopping a script from
+ * hammering it. The client re-uses its last answer for an unchanged form, so
+ * the common case does not spend a request at all.
  *
  * Runs after ensureLogin, so getUser(request) is resolved by the time this does.
  * Stamps request.__rateLimitIdentity and request.__rateLimitInfo (scope

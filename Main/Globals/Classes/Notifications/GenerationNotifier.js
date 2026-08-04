@@ -450,6 +450,19 @@ class GenerationNotifier
             return payload.status === taskStatus.FAILED ? generationOutcomes.FAILURE : generationOutcomes.SUCCESS;
         }
 
+        // The server sends its own roll-up on every live payload, and for a
+        // non-administrator it is the ONLY thing to go on — that payload carries
+        // no task tree for the probe below to walk. Trusting it here is also what
+        // keeps this notification agreeing with the bar the user is looking at.
+        if (typeof payload.isTerminal === "boolean")
+        {
+            if (!payload.isTerminal)
+            {
+                return null;
+            }
+            return payload.overallStatus === taskStatus.COMPLETED ? generationOutcomes.SUCCESS : generationOutcomes.FAILURE;
+        }
+
         const probe = GenerationNotifier.#getStatusProbe();
         probe.update(payload);
         if (!probe.isTerminal())

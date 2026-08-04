@@ -15,6 +15,14 @@ const DatabaseConstants = require("../../Constants/DatabaseConstants");
  * A unique index on providerOrderId makes initiation idempotent; a single
  * PENDING -> CONSUMED transition (markConsumed) guards a verified payment from
  * being replayed to re-grant licenses. A TTL index prunes abandoned checkouts.
+ *
+ * Two independent paths can settle the same order — the buyer's browser
+ * (/PaidDecks/Purchase/Verify) and the payment-provider webhook — so
+ * tryClaimForGrant serializes them: exactly one caller wins the claim and runs
+ * the (non-atomic, multi-collection) license grant while the other returns an
+ * idempotent "already handled". A claim goes stale after
+ * GRANT_CLAIM_STALE_MILLISECONDS so a holder that crashed mid-grant never
+ * strands a paid order — the row is still PENDING, and the next caller retries.
  */
 class PendingOrderQueryEngine
 {
@@ -22,6 +30,13 @@ class PendingOrderQueryEngine
 
     static STATUS_PENDING = "PENDING";
     static STATUS_CONSUMED = "CONSUMED";
+
+    // How long a grant claim is honoured before another caller may take it
+    // over. Must comfortably exceed the slowest realistic grant (seeding a
+    // large deck's entities into the buyer's collections), because taking a
+    // claim over from a still-running holder re-introduces the concurrent-seed
+    // race the claim exists to prevent.
+    static GRANT_CLAIM_STALE_MILLISECONDS = 10 * 60 * 1000;
 
     // Abandoned / never-completed checkouts are pruned this many days after
     // creation by a TTL index on createdAt.
@@ -92,7 +107,10 @@ class PendingOrderQueryEngine
             paymentProvider: paymentProvider !== undefined ? paymentProvider : null,
             status: PendingOrderQueryEngine.STATUS_PENDING,
             createdAt: new Date(),
-            consumedAt: new Date(0)
+            consumedAt: new Date(0),
+            // Epoch = unclaimed. Set by tryClaimForGrant while a settlement path
+            // is granting this order's licenses.
+            grantClaimedAt: new Date(0)
         };
 
         await collection.updateOne
@@ -114,6 +132,71 @@ class PendingOrderQueryEngine
         }
 
         return await collection.findOne({ providerOrderId: providerOrderId }, { projection: { _id: 0 } });
+    }
+
+    /**
+     * Atomically claims the right to grant this order's licenses. Only the
+     * caller that receives { claimed: true } may run the grant; a concurrent
+     * settlement path (browser verify vs provider webhook) receives
+     * { claimed: false } and must treat the order as handled elsewhere.
+     *
+     * A row already CONSUMED never yields a claim, so this doubles as the
+     * replay guard. An existing claim older than GRANT_CLAIM_STALE_MILLISECONDS
+     * is treated as abandoned and taken over — every grant write is an
+     * idempotent upsert / re-seed, so a retry after a crash converges.
+     */
+    static async tryClaimForGrant(providerOrderId, userId)
+    {
+        const collection = await PendingOrderQueryEngine.#getCollection();
+        if (!collection || typeof providerOrderId !== "string" || providerOrderId.length === 0)
+        {
+            return { claimed: false };
+        }
+
+        const staleThreshold = new Date(Date.now() - PendingOrderQueryEngine.GRANT_CLAIM_STALE_MILLISECONDS);
+
+        const result = await collection.updateOne
+        (
+            {
+                providerOrderId: providerOrderId,
+                userId: userId,
+                status: PendingOrderQueryEngine.STATUS_PENDING,
+                // Unclaimed rows store the epoch sentinel; rows written before
+                // claiming existed carry no field at all. Both are claimable,
+                // as is any claim that has gone stale.
+                $or:
+                [
+                    { grantClaimedAt: { $exists: false } },
+                    { grantClaimedAt: null },
+                    { grantClaimedAt: { $lte: staleThreshold } }
+                ]
+            },
+            { $set: { grantClaimedAt: new Date() } }
+        );
+
+        return { claimed: (result.modifiedCount || 0) > 0 };
+    }
+
+    /**
+     * Returns a claim so another settlement path can retry immediately. Called
+     * when a claimed grant fails before the order is consumed — without it the
+     * order would be untouchable until the claim went stale.
+     */
+    static async releaseGrantClaim(providerOrderId, userId)
+    {
+        const collection = await PendingOrderQueryEngine.#getCollection();
+        if (!collection || typeof providerOrderId !== "string" || providerOrderId.length === 0)
+        {
+            return { released: false };
+        }
+
+        const result = await collection.updateOne
+        (
+            { providerOrderId: providerOrderId, userId: userId, status: PendingOrderQueryEngine.STATUS_PENDING },
+            { $set: { grantClaimedAt: new Date(0) } }
+        );
+
+        return { released: (result.modifiedCount || 0) > 0 };
     }
 
     /**

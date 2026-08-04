@@ -30,11 +30,22 @@
 const fs = require("fs");
 const path = require("path");
 
+// The two credit cases read the ledger straight from MongoDB — credit charging
+// leaves no trace in the UI, so a database read is the only trustworthy check.
+const CreditLedgerProbe = require("./CreditLedgerProbe");
+
 const REPOSITORY_ROOT = path.resolve(__dirname, "..", "..", "..");
 const RESULT_FILE = process.env.RESULT_FILE
     || path.join(REPOSITORY_ROOT, "Common", "Reports", ".results", "critical-flow-ui.json");
 const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:3000";
 const SESSION_COOKIE = process.env.TEST_SESSION_COOKIE || "";
+// Must be the session's own user, or the credit cases measure the wrong balance.
+const TEST_ACCOUNT_ID = process.env.TEST_ACCOUNT_ID || "browser-suite-test-user";
+
+// Ask AI streams from a spawned worker, so first-token latency includes the
+// worker's start-up; the charge then settles a beat after the stream closes.
+const ASK_AI_STREAM_TIMEOUT_MS = 120000;
+const ASK_AI_LEDGER_SETTLE_TIMEOUT_MS = 45000;
 const CATEGORY = "Critical User Flows (Puppeteer)";
 const RUN_HEADFUL = process.env.HEADFUL === "1";
 const SLOW_MO_MS = Number(process.env.SLOW_MO_MS || 0) || 0;
@@ -1542,6 +1553,145 @@ async function returnToHome(page)
             return `back on Home with ${tileSelector} present`;
         });
 
+        await runCase("Ask AI actually charges the account (a real ledger row and a real balance drop)", async () =>
+        {
+            // The cheap half of the credit guarantee. A full generation is the
+            // real proof that token usage reaches the ledger, but it costs
+            // minutes and real money, so it lives in the on-demand
+            // run_credit_charging_tests.js. This case costs one Ask AI call
+            // (ASK_AI_BASIC, a flat 0.1 credit, and a FREE-tier feature so no
+            // plan write is needed) and still catches the failure that matters
+            // most here: the ledger not recording spend at all, which would mean
+            // every AI feature in the app is silently free.
+            const ledgerProbe = new CreditLedgerProbe(TEST_ACCOUNT_ID);
+            const bConnected = await ledgerProbe.connect(REPOSITORY_ROOT);
+
+            if (!bConnected)
+            {
+                throw new EnvironmentUnavailableError(
+                    "MONGODB_URL / MONGODB_DATABASE_NAME are not readable from Dock/.env, so the credit ledger "
+                    + "cannot be checked. The browser gates need Mongo anyway — run check_browser_gate_environment.js.");
+            }
+
+            try
+            {
+                const stateBefore = await ledgerProbe.readCreditState();
+                const snapshotDate = new Date();
+
+                // Deliberately placed AFTER the study block rather than inside
+                // it: this case can legitimately SKIP (no Agent venv, no model
+                // credentials), and runCase navigates home on a skip — which
+                // from inside the study block would strand every study case
+                // that followed. So it opens its own session and leaves the app
+                // back on Home either way.
+                await openStudyModePicker(page, FIXTURE_DECK_SHORT_NAME);
+                await clickVisible(page, ".spaced-repetition-button");
+                await waitForPage(page, "study-page");
+                await waitForVisible(page, ".question-section");
+
+                await ensureAssistantPanelOpen(page);
+                await clickVisible(page, ".bottom-panel-explain-button");
+
+                // Wait on the LEDGER, not on the DOM.
+                //
+                // Every DOM signal here lies about something. AskAiResultView
+                // drops .ask-ai-pending on the FIRST chunk rather than the last;
+                // its actions bar is never populated at all in some modes
+                // (AskAiSession#wirePostStreamActions returns early during a
+                // tutorial and with no context entity); and the
+                // <ask-ai-result-view> host itself reports no client rects even
+                // while its content is on screen, so the usual visible-match
+                // filter never finds it. The charge is what this case asserts
+                // and it settles a beat after the worker closes the stream, so
+                // poll for it directly and use the DOM only to notice an error.
+                let askAiCharge = null;
+                let streamErrorText = "";
+
+                const askAiDeadline = Date.now() + ASK_AI_STREAM_TIMEOUT_MS + ASK_AI_LEDGER_SETTLE_TIMEOUT_MS;
+                while (Date.now() < askAiDeadline)
+                {
+                    askAiCharge = await ledgerProbe.waitForChargeOfTaskType(
+                        CreditLedgerProbe.TASK_TYPE_ASK_AI_BASIC, snapshotDate, 2000);
+                    if (askAiCharge)
+                    {
+                        break;
+                    }
+
+                    streamErrorText = await page.evaluate(() =>
+                    {
+                        const errorElement = Array.from(document.querySelectorAll(".ask-ai-error, .ask-ai-error-footer"))[0];
+                        return errorElement ? (errorElement.textContent || "").trim() : "";
+                    }).catch(() => "");
+
+                    if (streamErrorText)
+                    {
+                        break;
+                    }
+                }
+
+                if (!askAiCharge && streamErrorText)
+                {
+                    // A worker that cannot start is an environment problem, not
+                    // the app being wrong — and it must not read as a
+                    // credit-system failure.
+                    throw new EnvironmentUnavailableError(
+                        `Ask AI could not answer: ${streamErrorText}. This needs the Agent venv and working `
+                        + "model credentials on this machine; the credit assertion was never reached.");
+                }
+
+                if (askAiCharge === null)
+                {
+                    throw new Error(
+                        "Ask AI ran but NOTHING was charged — no applied TASK_CHARGE row for task type 31 since "
+                        + "the request started. The credit ledger is not recording spend, so every AI feature is "
+                        + "currently free.");
+                }
+
+                if (askAiCharge.amount >= 0)
+                {
+                    throw new Error(`The Ask AI ledger row carries amount ${askAiCharge.amount} — a charge must debit.`);
+                }
+
+                // Compared against the row's OWN balanceAfter rather than a fresh
+                // read: the ledger's reward-milestone grants can move the balance
+                // again a moment later, and a later read would blame that on this
+                // charge.
+                const expectedBalanceAfter = stateBefore.balance + askAiCharge.amount;
+                if (!CreditLedgerProbe.creditsAreEqual(askAiCharge.balanceAfter, expectedBalanceAfter))
+                {
+                    throw new Error(
+                        `The ledger charged ${Math.abs(askAiCharge.amount)} credit(s) but recorded a post-balance of `
+                        + `${askAiCharge.balanceAfter} where ${expectedBalanceAfter} was due (pre-balance `
+                        + `${stateBefore.balance}). The transaction row and the account balance disagree.`);
+                }
+
+                await page.evaluate(() =>
+                {
+                    const closeButton = Array.from(document.querySelectorAll("dialog-box .close-button, dialog-box .ok-button"))
+                        .find(element => element.getClientRects().length > 0);
+                    if (closeButton)
+                    {
+                        closeButton.click();
+                    }
+                }).catch(() => {});
+                await waitForNoVisibleDialog(page).catch(() => {});
+
+                // A completed Ask AI records a "doubt asked", which can raise a
+                // milestone badge that owns the blocking-overlay slot and would
+                // swallow the next case's clicks.
+                await dismissBadgeCelebrationIfPresent(page);
+
+                // Leave the app where the next case expects to find it.
+                await returnToHome(page);
+
+                return `charged ${Math.abs(askAiCharge.amount)} credit(s); balance ${stateBefore.balance} -> ${askAiCharge.balanceAfter}`;
+            }
+            finally
+            {
+                await ledgerProbe.close();
+            }
+        });
+
         await runCase("Revise mode plays back only the cards marked for review", async () =>
         {
             await openStudyModePicker(page, FIXTURE_DECK_SHORT_NAME);
@@ -1666,6 +1816,81 @@ async function returnToHome(page)
             return `insights page rendered (${rendered} chars of content)`;
         });
 
+        await runCase("Start Generation prices the run before submitting anything (no AI spend)", async () =>
+        {
+            // Costs nothing and needs nothing beyond Dock: /Generate/EstimateCost
+            // is pure arithmetic over the stored credit configuration — no model
+            // call, no task, no charge, no plan gate. What it catches is a
+            // credit-system OUTAGE: a missing or corrupt creditConfig document,
+            // generation rules that were never seeded, or an admin edit that
+            // disabled every rule. All of those would let real generations run
+            // unpriced, and none of them are visible anywhere else in the UI.
+            //
+            // Pressing Start no longer submits — it prices the run and waits for
+            // a confirmation inside the estimate dialog — so this case reaches
+            // the estimate through the real user route and then CANCELS.
+            await openDeckOptionsMenu(page, FIXTURE_DECK_SHORT_NAME);
+            await clickVisible(page, "deck-options-context-menu .generate-with-ai-button");
+            await waitForPage(page, "automatic-generation-page");
+
+            // A description-only run: no upload, no object storage, no worker.
+            await typeIntoInput(page, ".subject-name-input", `${FIXTURE_PREFIX} Pricing ${RUN_TAG}`);
+            await typeIntoInput(page, ".description-input", "A short revision set on the five-phase learning lifecycle.");
+
+            await clickVisible(page, ".automatic-generation-start-button");
+            const estimateText = await waitForValidationDialogText(page, "the cost-estimate dialog");
+
+            // CANCEL, never OK. The confirming button in this dialog starts a
+            // real generation and spends real credits — this case must remain
+            // free. Every assertion below therefore runs after the dialog is
+            // already dismissed.
+            await clickVisible(page, "dialog-box .cancel-button");
+            await waitForNoVisibleDialog(page);
+
+            // Estimating is rate-limited per user. The client re-uses its last
+            // answer for an unchanged form, so this is now hard to hit, but a
+            // back-to-back suite run still can — that is the limiter working,
+            // not a defect.
+            if (/again in \d+|too many requests|rate limit|too quickly/i.test(estimateText))
+            {
+                throw new EnvironmentUnavailableError(
+                    `The pre-flight estimate was rate-limited: "${estimateText.slice(0, 120)}". Re-run in 30 seconds.`);
+            }
+
+            if (/isn't configured yet|is not configured/i.test(estimateText))
+            {
+                throw new Error(
+                    "The pre-flight estimate reports that credit pricing is not configured — the credit configuration "
+                    + "is missing or unreadable, so real generations would run unpriced.");
+            }
+
+            if (/not priced/i.test(estimateText))
+            {
+                throw new Error(
+                    `The pre-flight estimate reports unpriced generation tasks, so a real run would be partly free: "${estimateText.slice(0, 160)}"`);
+            }
+
+            const estimatedCredits = Number((/([\d.]+)\s*credit/i.exec(estimateText) || [])[1]);
+            if (!Number.isFinite(estimatedCredits) || estimatedCredits <= 0)
+            {
+                throw new Error(`The pre-flight estimate returned no positive figure from "${estimateText.slice(0, 160)}"`);
+            }
+
+            // The disclaimer is the reason this dialog exists — a costed run the
+            // user cannot mistake for an exact price. Its absence means the
+            // estimate rendered without its caveat.
+            if (!/estimate/i.test(estimateText))
+            {
+                throw new Error(`The estimate dialog carried no estimate disclaimer: "${estimateText.slice(0, 200)}"`);
+            }
+
+            await goBackViaHeader(page).catch(() => {});
+            await dismissAlert(page).catch(() => {});
+            await waitForPage(page, "home-page");
+
+            return `estimated ${estimatedCredits} credit(s) from the live pricing config, then cancelled`;
+        });
+
         await runCase("Delete a deck (menu → Edit → Delete Deck → confirm) removes it from Home", async () =>
         {
             await openDeckOptionsMenu(page, FIXTURE_DECK_SHORT_NAME);
@@ -1688,6 +1913,103 @@ async function returnToHome(page)
             }, FIXTURE_DECK_SHORT_NAME, "the deleted deck tile to disappear from Home");
 
             return `deck removed from the grid (${stillPresent})`;
+        });
+
+        // Placed last because it is the only case that navigates the browser by
+        // URL rather than by clicking: it re-enters the app through the
+        // paid-deck deep-link route, which is a second door onto the same SPA
+        // shell. It restores the standard entry point before finishing.
+        await runCase("A paid-deck share link opens that deck's store page with a scannable QR", async () =>
+        {
+            const publishedDeck = await page.evaluate(async () =>
+            {
+                try
+                {
+                    const response = await fetch("/PaidDecks/Library?limit=1");
+                    if (!response.ok)
+                    {
+                        return { error: `HTTP ${response.status}` };
+                    }
+                    const payload = await response.json();
+                    const firstDeck = Array.isArray(payload?.decks) ? payload.decks[0] : null;
+                    return firstDeck ? { id: firstDeck.id, title: firstDeck.title || "" } : { error: "" };
+                }
+                catch (fetchError)
+                {
+                    return { error: fetchError.message || String(fetchError) };
+                }
+            });
+
+            if (!publishedDeck || !publishedDeck.id)
+            {
+                throw new EnvironmentUnavailableError(
+                    "This environment has no published paid deck, so there is no store page to deep-link to"
+                    + (publishedDeck?.error ? ` (${publishedDeck.error})` : "") + ".");
+            }
+
+            const shareUrl = `${BASE_URL}/PaidDeck?id=${encodeURIComponent(publishedDeck.id)}&tutorialE2E=1`;
+            await page.goto(shareUrl, { waitUntil: "networkidle2", timeout: 30000 });
+
+            await waitForPage(page, "paid-deck-details-page");
+
+            // The QR itself, not just the section around it. A non-zero width
+            // proves the lazily-injected ThirdParty/QrCode script actually
+            // resolved over real HTTP under the real cache policy — the part
+            // that a bundling or path mistake would silently break.
+            const qrWidth = await waitUntil(page, () =>
+            {
+                const svgElement = document.querySelector("paid-deck-share-qr-panel svg");
+                if (!svgElement)
+                {
+                    return null;
+                }
+                const width = Math.round(svgElement.getBoundingClientRect().width);
+                return width > 0 ? width : null;
+            }, null, "the share QR code to render");
+
+            const panelState = await page.evaluate(() =>
+            {
+                const linkField = document.querySelector('paid-deck-share-qr-panel [data-role="share-link"]');
+                const headings = Array.from(document.querySelectorAll(".paid-deck-details-section-heading"))
+                    .map(heading => (heading.textContent || "").trim());
+                return {
+                    linkValue: linkField ? linkField.value : "",
+                    bHasShareHeading: headings.includes("Share this deck"),
+                    bHasDownloadButton: Boolean(document.querySelector('paid-deck-share-qr-panel [data-role="download-qr"]')),
+                    bHasCopyButton: Boolean(document.querySelector('paid-deck-share-qr-panel [data-role="copy-link"]')),
+                    search: window.location.search
+                };
+            });
+
+            if (!panelState.bHasShareHeading)
+            {
+                throw new Error("The deep-linked store page rendered without the 'Share this deck' section.");
+            }
+
+            if (!panelState.bHasDownloadButton || !panelState.bHasCopyButton)
+            {
+                throw new Error("The share panel is missing its Download QR / Copy link actions.");
+            }
+
+            const expectedLink = `${BASE_URL}/PaidDeck?id=${publishedDeck.id}`;
+            if (panelState.linkValue !== expectedLink)
+            {
+                throw new Error(`The share link field reads "${panelState.linkValue}" but should read "${expectedLink}".`);
+            }
+
+            // The deck ID is consumed out of the address bar, so a refresh or a
+            // back press cannot re-fire the navigation.
+            if (panelState.search !== "")
+            {
+                throw new Error(`The deep-link query string was left in the address bar: "${panelState.search}".`);
+            }
+
+            // Back through the standard entry point so whatever runs after this
+            // case starts from the same state every other case did.
+            await page.goto(BASE_URL + "/index.html?tutorialE2E=1", { waitUntil: "networkidle2", timeout: 30000 });
+            await waitForPage(page, "home-page");
+
+            return `deep-linked to ${publishedDeck.title || publishedDeck.id}, QR rendered at ${qrWidth}px`;
         });
 
         // ── Whole-run error gate ────────────────────────────────────────────

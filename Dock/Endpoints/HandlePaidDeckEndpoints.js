@@ -9,6 +9,8 @@ const { getPurchaseInvoice } = require("./PaidDeck/GetPurchaseInvoice");
 const { logScreenshotAttempt } = require("./PaidDeck/LogScreenshotAttempt");
 const { searchPaidDecks } = require("./PaidDeck/SearchPaidDecks");
 const { getPaidDeckFilters } = require("./PaidDeck/GetPaidDeckFilters");
+const { getPaidDeckDetails } = require("./PaidDeck/GetPaidDeckDetails");
+const PaidDeckShareConstants = require("../Globals/Constants/PaidDeckShareConstants");
 const { setPaidDeckPassword } = require("./PaidDeck/SetPaidDeckPassword");
 const { unlockPaidDeckSession } = require("./PaidDeck/UnlockPaidDeckSession");
 const { changePaidDeckPassword } = require("./PaidDeck/ChangePaidDeckPassword");
@@ -32,6 +34,15 @@ function handlePaidDeckEndpoints(server)
     ({
         routePath: `/PaidDecks/Filters`,
         handler: getPaidDeckFilters,
+        method: PacketronRequestMethod.GET
+    });
+
+    // Public single-listing lookup, used by the share/QR deep link to rebuild a
+    // storefront page from nothing but a deck ID.
+    server.handle
+    ({
+        routePath: PaidDeckShareConstants.DETAILS_ENDPOINT_PATH,
+        handler: getPaidDeckDetails,
         method: PacketronRequestMethod.GET
     });
 

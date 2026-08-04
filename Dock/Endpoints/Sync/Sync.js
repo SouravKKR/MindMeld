@@ -49,6 +49,34 @@ const MAX_PULL_PER_COLLECTION     = 200;
 const FETCH_BUFFER_BEYOND_MAX     = 100;
 const MAX_PULL_DELETIONS          = 2000;
 
+// ── Chunk-cursor trimming ──────────────────────────────────────────────
+//
+// When a pull is chunked, the cursor handed back to the client is the
+// SMALLEST overflow watermark (see the `serverTime` computation below) —
+// any larger value would skip past unsynced docs in a collection whose
+// watermark came in lower. But every collection is queried with an
+// open-ended `serverUpdatedAt > lastSync`, so a collection that did NOT
+// overflow returns its entire tail, including documents far above that
+// cursor. Those documents are `> cursor` again on the next cycle, so they
+// were re-queried, re-serialised, re-sent and re-applied on EVERY cycle of
+// the drain — and `remainingEntityCount` counted them a second time on top.
+// A returning device draining thousands of cards therefore watched the
+// "X / Y items" total climb by the re-delivered count every round trip
+// instead of counting down.
+//
+// The fix is to drop anything above the cursor before responding: it is
+// re-fetched next cycle by the very same `> cursor` filter, so nothing is
+// lost and each entity is delivered exactly once per drain.
+//
+// DECK is exempt. The client's SyncApplier.#applyDeckChangesInOrder can only
+// attach a deck whose parent is already in the local tree, so the whole deck
+// topology must arrive within a single cycle — which is also why
+// MAX_PULL_DECKS sits far above every other cap. Decks stay idempotent on the
+// client (last-write-wins on lifecycle.lastModified), so re-delivering them
+// is wasteful but safe; the overlap is subtracted from remainingEntityCount
+// below so it can no longer inflate the client's total.
+const CURSOR_TRIM_EXEMPT_ENTITY_TYPES = new Set([entityTypes.DECK]);
+
 async function handleSync(request, response)
 {
     console.log("[Sync] /Sync endpoint hit.");
@@ -285,6 +313,16 @@ async function handleSync(request, response)
     let bMorePending                   = false;
     let highestReturnedTimestamp       = 0;
     const overflowWatermarks           = [];
+    // Staging buffer for the pull. Each entry carries the document's
+    // `serverUpdatedAt` alongside the wire fields so the chunk-cursor trim
+    // below can decide what to keep; the timestamp is stripped when
+    // `serverChanges` is built, so the response shape is unchanged.
+    const pulledChanges                = [];
+    // How many entities this response still delivers ABOVE the chunk cursor
+    // because their type is exempt from the trim (decks). They are the only
+    // rows the next cycle will hand over twice, so they are subtracted from
+    // `remainingEntityCount` to keep that number a true disjoint remainder.
+    let cursorExemptOverlapCount       = 0;
 
     // Per-request cache of unwrapped paid-deck content keys (one per owned paid
     // deck), so the pull encrypts every entity of a deck without re-deriving the
@@ -436,11 +474,12 @@ async function handleSync(request, response)
                     outgoingData = PaidDeckSyncCrypto.encryptEntityContent(cfg.entityType, document.data, contentKeyBuffer);
                 }
 
-                serverChanges.push(
+                pulledChanges.push(
                 {
-                    entityId:   document.data.id,
+                    entityId: document.data.id,
                     entityType: cfg.entityType,
-                    data:       outgoingData
+                    data: outgoingData,
+                    timestampMillis: documentTimestamp
                 });
 
                 if (documentTimestamp > highestReturnedTimestamp)
@@ -516,6 +555,47 @@ async function handleSync(request, response)
         }
 
         bMorePending = overflowWatermarks.length > 0;
+
+        // ── Chunk-cursor trim ─────────────────────────────────────────
+        //
+        // Drop everything the next cycle's cursor will hand over again (see
+        // CURSOR_TRIM_EXEMPT_ENTITY_TYPES). When the pull is NOT chunked the
+        // cursor is unbounded, nothing is trimmed, and this is a straight
+        // copy of the staged rows — so a single-cycle sync is byte-for-byte
+        // what it was before.
+        const chunkCursorMillis = bMorePending
+            ? Math.min(...overflowWatermarks)
+            : Number.MAX_SAFE_INTEGER;
+
+        let trimmedChangeCount = 0;
+        for (const pulledChange of pulledChanges)
+        {
+            if (pulledChange.timestampMillis > chunkCursorMillis)
+            {
+                if (!CURSOR_TRIM_EXEMPT_ENTITY_TYPES.has(pulledChange.entityType))
+                {
+                    trimmedChangeCount++;
+                    continue;
+                }
+                cursorExemptOverlapCount++;
+            }
+
+            serverChanges.push(
+            {
+                entityId: pulledChange.entityId,
+                entityType: pulledChange.entityType,
+                data: pulledChange.data
+            });
+        }
+
+        const deletionsBeforeTrimCount = serverDeletions.length;
+        serverDeletions = serverDeletions.filter((deletion) => deletion.deletedAt.getTime() <= chunkCursorMillis);
+        const trimmedDeletionCount = deletionsBeforeTrimCount - serverDeletions.length;
+
+        if (trimmedChangeCount > 0 || trimmedDeletionCount > 0)
+        {
+            console.log(`[Sync] Trimmed ${trimmedChangeCount} change(s) and ${trimmedDeletionCount} deletion(s) above the chunk cursor ${new Date(chunkCursorMillis).toISOString()} — they are delivered by the next cycle instead of being re-sent every cycle.`);
+        }
 
         // Zero every unwrapped content key the pull derived — plaintext key
         // bytes must not linger in process memory beyond the request.
@@ -601,8 +681,15 @@ async function handleSync(request, response)
         });
 
         const remainingCounts = await Promise.all([...remainingCountPromises, remainingDeletionPromise]);
-        remainingEntityCount  = remainingCounts.reduce((sum, count) => sum + count, 0);
-        console.log(`[Sync] Estimated ${remainingEntityCount} entities still pending beyond this chunk.`);
+        const rawRemainingCount = remainingCounts.reduce((sum, count) => sum + count, 0);
+
+        // The raw count is "everything above the next cursor", which still
+        // includes the trim-exempt entities (decks) this very response just
+        // delivered. Counting them here as well as in the client's
+        // "entities in this chunk" tally is what made the drain total grow by
+        // the deck count on every round trip instead of counting down.
+        remainingEntityCount = Math.max(0, rawRemainingCount - cursorExemptOverlapCount);
+        console.log(`[Sync] Estimated ${remainingEntityCount} entities still pending beyond this chunk (raw ${rawRemainingCount} minus ${cursorExemptOverlapCount} already delivered above the cursor).`);
     }
 
     await SyncQueryEngine.upsertSyncData(userId, deviceId, serverTime);

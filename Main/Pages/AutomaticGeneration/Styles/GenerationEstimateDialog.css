@@ -1,0 +1,84 @@
+/* Styles for the pre-flight cost dialog raised by GenerationEstimateDialog.
+   The dialog element is appended to document.body rather than to the page, so
+   these rules are written against the dialog-box shell (every stylesheet in
+   this app is global) rather than nested under automatic-generation-page. */
+
+dialog-box .message-section .generation-estimate-export-warning
+{
+    font-size: 0.875rem;
+    line-height: 1.5;
+    margin-bottom: 14px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border-left: 3px solid var(--status-warning, #F0AA32);
+    background-color: var(--tertiary-background-color);
+}
+
+dialog-box .message-section .generation-estimate-headline
+{
+    font-size: 1.125rem;
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+dialog-box .message-section .generation-estimate-range
+{
+    font-size: 0.8125rem;
+    opacity: 0.8;
+    margin-bottom: 12px;
+}
+
+dialog-box .message-section .generation-estimate-breakdown
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.8125rem;
+    margin-bottom: 12px;
+}
+
+dialog-box .message-section .generation-estimate-breakdown-row
+{
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+dialog-box .message-section .generation-estimate-balance
+{
+    font-size: 0.875rem;
+    margin-bottom: 8px;
+}
+
+dialog-box .message-section .generation-estimate-shortfall
+{
+    font-size: 0.875rem;
+    line-height: 1.5;
+    margin-bottom: 12px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border-left: 3px solid var(--status-warning, #F0AA32);
+    background-color: var(--tertiary-background-color);
+}
+
+dialog-box .message-section .generation-estimate-note
+{
+    font-size: 0.75rem;
+    margin-bottom: 8px;
+    opacity: 0.85;
+}
+
+dialog-box .message-section .generation-estimate-disclaimer
+{
+    font-size: 0.75rem;
+    line-height: 1.5;
+    opacity: 0.7;
+}
+
+dialog-box .button-section .generation-estimate-buy-button
+{
+    padding: 10px;
+    border-radius: 5px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+}

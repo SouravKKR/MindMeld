@@ -7,6 +7,7 @@ from Globals.Classes.Automation.AutomationResponse import AutomationResponse
 from Globals.Classes.Automation.AutomationProvider import AutomationProvider
 from Globals.Classes.Automation.ResponseCache import ResponseCache
 from Globals.Classes.Automation.ShadowModelEvaluator import ShadowModelEvaluator
+from Globals.Classes.Credits.CreditMeter import CreditMeter
 
 
 class AutomationCaller:
@@ -20,12 +21,41 @@ class AutomationCaller:
     def __init__(self, provider: AutomationProvider):
         self.__provider = provider
 
+    @staticmethod
+    def __joined_text_output(response: AutomationResponse) -> str | None:
+        """
+        The response's text outputs joined together, used only as a chars/4
+        token-estimate fallback for cache entries written before usage was
+        persisted. Non-text outputs contribute nothing to a token estimate and
+        are skipped. Returns None when there is no text to estimate from.
+        """
+        text_fragments = []
+
+        for content in response.get_outputs() or []:
+            data = content.get_data()
+            if isinstance(data, str) and data:
+                text_fragments.append(data)
+
+        return "\n".join(text_fragments) if text_fragments else None
+
     async def call(self, request: AutomationRequest, validator: Callable[[AutomationResponse], bool] | None, retries: int = 3) -> AutomationResponse:
         cache_key       = ResponseCache.compute_key(request)
         cached_response = await ResponseCache.lookup(cache_key) if cache_key is not None else None
 
         if cached_response is not None:
             if validator is None or validator(cached_response):
+                # A hit returns without ever reaching the provider, so nothing
+                # else in this path will meter it. Record the original call's
+                # usage here or the task bills zero for work it delivered — and
+                # because the cache key is model + prompt with no account in it,
+                # that zero would apply to every user who ever asks for the same
+                # thing, not just the one who warmed the entry.
+                CreditMeter.record_cached_usage(
+                    cached_response.get_usage_metadata(),
+                    model = request.get_model(),
+                    fallback_input_text = request.get_text_content(),
+                    fallback_output_text = AutomationCaller.__joined_text_output(cached_response),
+                )
                 return cached_response
 
         response = await self.__provider.execute(request)

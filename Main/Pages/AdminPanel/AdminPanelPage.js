@@ -4,6 +4,7 @@ import AdminListView from "../../CommonComponents/AdminListView.js";
 import PaidDeckUploadDialog from "./Components/PaidDeckUploadDialog.js";
 import PaidDeckEditDialog from "./Components/PaidDeckEditDialog.js";
 import BulkApplyDialog from "./Components/BulkApplyDialog.js";
+import PaidDeckShareQrDialog from "./Components/PaidDeckShareQrDialog.js";
 import CreateOrganizationDialog from "./Components/CreateOrganizationDialog.js";
 import OrganizationDetailsDialog from "./Components/OrganizationDetailsDialog.js";
 import AddMembersDialog from "./Components/AddMembersDialog.js";
@@ -505,7 +506,12 @@ class AdminPanelPage extends HTMLElement
                     // not produce has no provenance record, and the handler says
                     // so plainly rather than the option being hidden — "there is
                     // no record" is the useful answer, not a missing button.
-                    { actionKey: "auditTrail", label: "Download Audit Trail" }
+                    { actionKey: "auditTrail", label: "Download Audit Trail" },
+                    // Offered on unpublished decks too. The panel says the link
+                    // will not open yet rather than the action being hidden —
+                    // an admin about to print a poster needs telling, not
+                    // leaving to guess why the button is missing.
+                    { actionKey: "shareQrCode", label: "Share QR code" }
                 ];
                 if (subdeckCount > 0)
                 {
@@ -598,6 +604,11 @@ class AdminPanelPage extends HTMLElement
             case "auditTrail":
             {
                 await this.#downloadAuditTrail(deck);
+                break;
+            }
+            case "shareQrCode":
+            {
+                await PaidDeckShareQrDialog.show(deck);
                 break;
             }
             case "apply-to-subdecks":

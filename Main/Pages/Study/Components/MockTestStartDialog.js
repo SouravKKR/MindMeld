@@ -18,6 +18,13 @@ class MockTestStartDialog
 {
     static MODE_ONLINE = "online";
     static MODE_OFFLINE = "offline";
+
+    // TEMPORARY: offline mode is shown but not selectable while the
+    // scan-and-grade pipeline is being refined. The radio is rendered
+    // disabled with a "Coming soon" badge; every downstream offline code path
+    // (MockTestRunner, transcription review, offline grading) is left intact.
+    // This will be re-enabled later — flip back to false to restore it.
+    static OFFLINE_MODE_TEMPORARILY_DISABLED = true;
     static MINIMUM_DURATION_MINUTES = 1;
     static FALLBACK_DURATION_MINUTES = 60;
 
@@ -75,7 +82,12 @@ class MockTestStartDialog
                 }
             }
 
-            const selectedMode = onlineRadio.checked ? MockTestStartDialog.MODE_ONLINE : MockTestStartDialog.MODE_OFFLINE;
+            // TEMPORARY: while offline mode is disabled its radio can never be
+            // checked, but pin the mode explicitly so a stale DOM state can not
+            // start an offline run. Remove this branch when re-enabling.
+            const selectedMode = (MockTestStartDialog.OFFLINE_MODE_TEMPORARILY_DISABLED || onlineRadio.checked)
+                ? MockTestStartDialog.MODE_ONLINE
+                : MockTestStartDialog.MODE_OFFLINE;
             const parsedMinutes = parseInt(durationInput.value, 10);
             const durationMinutes = Number.isFinite(parsedMinutes) && parsedMinutes >= MockTestStartDialog.MINIMUM_DURATION_MINUTES
                 ? parsedMinutes
@@ -183,6 +195,20 @@ class MockTestStartDialog
         const previewNotice = bPreviewMode
             ? `<div class="mock-test-start-preview-notice">Preview mode — finishing the test will exit without saving any attempt.</div>`
             : "";
+
+        // TEMPORARY: offline mode is rendered greyed-out and unselectable.
+        // See MockTestStartDialog.OFFLINE_MODE_TEMPORARILY_DISABLED — this will
+        // be re-enabled later and these four fragments go back to empty strings.
+        const bOfflineDisabled = MockTestStartDialog.OFFLINE_MODE_TEMPORARILY_DISABLED;
+        const offlineDisabledClass = bOfflineDisabled ? " mock-test-start-mode-option-disabled" : "";
+        const offlineDisabledAttribute = bOfflineDisabled ? "disabled" : "";
+        const offlineComingSoonBadge = bOfflineDisabled
+            ? `<span class="mock-test-start-mode-option-coming-soon-badge">Coming soon</span>`
+            : "";
+        const offlineRefinementNotice = bOfflineDisabled
+            ? `<div class="mock-test-start-mode-option-notice">This mode is temporarily unavailable while it undergoes refinements. It will be back shortly.</div>`
+            : "";
+
         return `
             <div class="mock-test-start-dialog-root">
                 <div class="mock-test-start-dialog-header">
@@ -207,11 +233,12 @@ class MockTestStartDialog
                                 <div class="mock-test-start-mode-option-description">Type answers on screen. MCQs as radios, subjective answers in the rich editor.</div>
                             </div>
                         </label>
-                        <label class="mock-test-start-mode-option">
-                            <input type="radio" name="mock-test-start-mode" value="${MockTestStartDialog.MODE_OFFLINE}" />
+                        <label class="mock-test-start-mode-option${offlineDisabledClass}">
+                            <input type="radio" name="mock-test-start-mode" value="${MockTestStartDialog.MODE_OFFLINE}" ${offlineDisabledAttribute} />
                             <div class="mock-test-start-mode-option-body">
-                                <div class="mock-test-start-mode-option-name">Offline</div>
+                                <div class="mock-test-start-mode-option-name">Offline${offlineComingSoonBadge}</div>
                                 <div class="mock-test-start-mode-option-description">Read on screen, write on paper — start each answer with its question number on the left. Upload photos or a PDF when finished; we read them and let you review before grading.</div>
+                                ${offlineRefinementNotice}
                             </div>
                         </label>
                     </div>

@@ -1089,13 +1089,17 @@ async function handleGenerate(request, response)
         }
         await TaskManager.untrackForUser(userId, mainTaskId);
 
-        // Notify the user their study set is ready — in-app + push so it lands
-        // even with the app closed. Success only; never throws into the pipeline.
+        // Notify the user their study set is ready on every channel. This is the
+        // promise the progress page makes — it tells the user to close the page
+        // and carry on studying — so it has to reach them once the app is shut,
+        // and email is the only channel that reliably does today (device push
+        // has no client-side token registration yet; see NotificationDispatcher).
+        // Success only; never throws into the pipeline.
         if (bGenerationSucceeded)
         {
             try
             {
-                await NotificationDispatcher.dispatch(userId, NotificationContent.generationComplete(deckId), notificationChannels.IN_APP | notificationChannels.PUSH);
+                await NotificationDispatcher.dispatch(userId, NotificationContent.generationComplete(deckId), NotificationDispatcher.IN_APP_AND_PUSH_AND_EMAIL);
             }
             catch (notifyError)
             {

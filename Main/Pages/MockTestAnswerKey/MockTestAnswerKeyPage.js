@@ -47,6 +47,11 @@ class MockTestAnswerKeyPage extends HTMLElement
 {
     static OPTION_LETTERS_UPPERCASE = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
+    // TEMPORARY: the answer key PDF download is hidden while the export is
+    // being refined. This will be unhidden later — flip back to false to
+    // restore the "Download PDF" button (nothing else was removed).
+    static ANSWER_KEY_DOWNLOAD_TEMPORARILY_HIDDEN = true;
+
     #mockTest = null;
     #attempt = null;
     #boundSyncCompletedHandler = null;
@@ -121,7 +126,7 @@ class MockTestAnswerKeyPage extends HTMLElement
         // A PDF download is an export path, so it is withheld for a paid deck —
         // the answer key can be viewed on-screen but not extracted to a file.
         const bIsPaidDeck = !!this.#mockTest.getDeck?.()?.getAdditionalData?.()?.paidDeckId;
-        const downloadButtonHtml = bIsPaidDeck
+        const downloadButtonHtml = bIsPaidDeck || MockTestAnswerKeyPage.ANSWER_KEY_DOWNLOAD_TEMPORARILY_HIDDEN
             ? ""
             : `<button class="mock-test-answer-key-page-download-button" type="button">
                         <img class="mock-test-answer-key-page-download-icon" src="./Globals/Assets/Images/Icons/DownloadIcon.svg" alt="">

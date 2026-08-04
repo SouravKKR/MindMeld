@@ -54,6 +54,16 @@ const ALLOWLISTED_PATHS = new Set
     "/getuser",
     "/legaldocuments",
     "/legal/accept",
+    // The paid-deck QR deep link is an SPA SHELL entry, exactly like "/" — but it
+    // carries no file extension, so isStaticResourcePath() does not cover it. A
+    // user who owes acceptance and follows a scanned link is precisely the case
+    // this feature exists for; without this entry they would receive a raw
+    // 403 LEGAL_ACCEPTANCE_REQUIRED JSON body in the address bar instead of the
+    // app (which then shows the blocking terms modal itself).
+    "/paiddeck",
+    // The storefront listing read behind that shell is public and exposes no user
+    // data, so the deep link can resolve while the terms modal is still up.
+    "/paiddecks/details",
     // A browser posts CSP violation reports with no app context and carries the
     // session cookie along automatically. 403-ing them would blind the strict-
     // policy rollout for exactly the users who have not accepted yet.

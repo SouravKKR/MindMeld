@@ -82,6 +82,7 @@ const { handleAuthenticationEndpoints } = require("./Endpoints/HandleAuthenticat
 const { handleAutomaticGenerationEndpoints } = require("./Endpoints/HandleAutomaticGenerationEndpoints");
 const TaskManager = require("./Globals/Classes/Task/TaskManager");
 const { noCache } = require("./Endpoints/Plugins/NoCache");
+const { staticCachePolicy } = require("./Endpoints/Plugins/StaticCachePolicy");
 const { handleSyncEndpoints } = require("./Endpoints/HandleSyncEndpoints");
 const { handleAdminEndpoints } = require("./Endpoints/HandleAdminEndpoints");
 const { handleLegalEndpoints } = require("./Endpoints/HandleLegalEndpoints");
@@ -115,6 +116,8 @@ const KeyRotationScheduler = require("./Globals/Classes/Security/KeyRotationSche
 const ExpiredLicenseSweeper = require("./Globals/Classes/PaidDeck/ExpiredLicenseSweeper");
 const AuthenticationQueryEngine = require("./Globals/Classes/Database/AuthenticationQueryEngine");
 const { getSession } = require("./Endpoints/Helpers/GetSession");
+const PaidDeckDeepLinkCookie = require("./Endpoints/Helpers/PaidDeckDeepLinkCookie");
+const PaidDeckShareConstants = require("./Globals/Constants/PaidDeckShareConstants");
 const { rateLimitPlugin } = require("./Endpoints/Plugins/EnsureRateLimit");
 const { requestLoggingPlugin } = require("./Endpoints/Plugins/RequestLogging");
 const { legalAcceptancePlugin } = require("./Endpoints/Plugins/EnsureLegalAcceptance");
@@ -283,7 +286,10 @@ server.handle = (options = {}) =>
     return registerHandler(options);
 };
 
-server.serve({ directory: path.join(__dirname, "Static"), plugins: [noCache] });
+// no-store for the app's own HTML and bundles (rewritten by every deploy),
+// long-lived caching for vendored ThirdParty/ libraries — see StaticCachePolicy
+// for why immutability is opted into by versioning the filename.
+server.serve({ directory: path.join(__dirname, "Static"), plugins: [staticCachePolicy] });
 
 // Offline-AI model files live OUTSIDE Dock/Static/ so they're not wiped
 // by CopyStaticFiles. Served at /Assets/<...> — frontend constants
@@ -319,11 +325,30 @@ async function handleSpaEntry(request, response)
         console.error("[SPA gate] Session lookup failed, falling back to login shell:", sessionLookupError);
     }
 
+    // A visitor who scanned a paid-deck QR code while signed out is about to be
+    // handed the login shell, and the Google leg navigates off-origin — so the
+    // deck they asked for is stashed server-side to survive the round trip. A
+    // signed-in visitor needs nothing stashed (the SPA reads ?id= off the URL it
+    // was served at), so any leftover cookie is cleared instead.
+    await PaidDeckDeepLinkCookie.captureOrClear(request, response, session);
+
     response.sendFile(session ? indexHtmlPath : loginHtmlPath);
 }
 
 server.handle({ routePath: "/", handler: handleSpaEntry, plugins: [noCache] });
 server.handle({ routePath: "/index.html", handler: handleSpaEntry, plugins: [noCache] });
+
+// The paid-deck share/QR deep link. It is a third door onto the same SPA shell,
+// not a page of its own — PaidDeckDeepLinkBootstrap reads ?id= client-side and
+// navigates to that deck's store page once the app has booted.
+//
+// Why a dedicated path rather than "/?id=<deckId>": packetron registers "/"
+// under the key path.normalize("") === ".", but dispatching "/?id=x" normalises
+// to "?id=x" and only then strips the query, yielding "" — which matches
+// nothing, so the bare root 404s the moment a query string is appended. Any
+// non-empty path survives that round trip intact ("PaidDeck?id=x" -> "PaidDeck").
+// The route table is case-sensitive, so the URL must be exactly this casing.
+server.handle({ routePath: PaidDeckShareConstants.DEEP_LINK_ROUTE_PATH, handler: handleSpaEntry, plugins: [noCache] });
 
 handleAuthenticationEndpoints(server);
 handleAutomaticGenerationEndpoints(server);

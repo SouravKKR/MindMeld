@@ -1,4 +1,5 @@
 {
     "IN_APP": 1,
-    "PUSH": 2
+    "PUSH": 2,
+    "EMAIL": 4
 }

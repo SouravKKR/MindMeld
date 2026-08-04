@@ -899,7 +899,8 @@ class TutorialRegistry
                 fallbackBody: "<p>The generation pipeline is running here.</p>",
                 body:
                 `
-                    <p>Watch the pipeline climb to completion. On a real run this is where the work happens and credits are spent — here it's a built-in sample played on your device. When it finishes, click <strong>Next</strong>.</p>
+                    <p>Watch the progress bar climb to completion. On a real run this is where the work happens and credits are spent — here it's a built-in sample played on your device. When it finishes, click <strong>Next</strong>.</p>
+                    <p>A real generation can take minutes or hours, so you don't have to sit here — you'll be notified when it's done.</p>
                 `
             },
             {

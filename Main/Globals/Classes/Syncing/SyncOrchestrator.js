@@ -92,6 +92,16 @@ class SyncOrchestrator
     static #bInChunkedDrain          = false;
     static #processedDrainEntities   = 0;
     static #totalDrainEntities       = 0;
+    // Every entity key ("<entityType>:<entityId>") this drain has already
+    // applied. The server cannot trim decks to the chunk cursor — the client
+    // needs the whole deck topology in one cycle to attach children — so a
+    // deck delivered early in a drain is re-sent by later cycles. Counting raw
+    // response lengths therefore inflated `#processedDrainEntities` on every
+    // round trip, and since the total is derived from it, the "X / Y items"
+    // denominator climbed instead of counting down. Keying on distinct
+    // entities makes both numbers reflect real progress regardless of how
+    // often a row is re-delivered.
+    static #drainProcessedEntityKeys = new Set();
     // Sum of (changes + deletions) the server has returned for this
     // sync run — whether it was one cycle or a multi-cycle drain. We
     // use this at the final cycle to detect the "everything was empty"
@@ -103,6 +113,11 @@ class SyncOrchestrator
     // corrupted cutoff was the cause. After that one retry, if the
     // result is still empty, accept the empty state and stop.
     static #bAutoForcePullAttempted  = false;
+    // One-shot guard for the full-library-push → bulk-snapshot reroute (see
+    // #runSyncCycle). Set when the reroute fires, cleared when either the bulk
+    // pull succeeds or an ordinary drain runs to completion, so a bail-out can
+    // never bounce between the two paths.
+    static #bBulkSnapshotResyncAttempted = false;
 
     // ── Connection-quality strings (no magic strings leak out) ────────
     static #CONNECTION_ISSUE_OFFLINE        = "offline";
@@ -339,6 +354,7 @@ class SyncOrchestrator
         SyncTransport.clearPendingChanges();
         SyncOrchestrator.#bInitialized = false;
         SyncOrchestrator.#bAutoForcePullAttempted = false;
+        SyncOrchestrator.#bBulkSnapshotResyncAttempted = false;
         SyncOrchestrator.#setState(syncStates.IDLE);
 
         await SyncTransport.saveSyncLog();
@@ -795,7 +811,8 @@ class SyncOrchestrator
         // !bResumingDrain so a drain continuation can never re-enter the
         // full-library gather (which would re-queue everything and feed the
         // re-push loop), even if serverTime ever came back as 0.
-        if (!bResumingDrain && SyncTransport.getLastSyncTimestamp() === 0)
+        const bFullLibraryPushCycle = !bResumingDrain && SyncTransport.getLastSyncTimestamp() === 0;
+        if (bFullLibraryPushCycle)
         {
             const gatheredChanges = SyncApplier.gatherAllLocalEntities();
             for (const entityId of Object.keys(gatheredChanges))
@@ -862,6 +879,50 @@ class SyncOrchestrator
             const thisCyclePulled = (syncResponse.changes?.length || 0)
                                   + (syncResponse.deletions?.length || 0);
             SyncOrchestrator.#pulledEntityCountThisRun += thisCyclePulled;
+
+            // ── Full-library resync: take the bulk snapshot, not the drain ──
+            //
+            // This cycle just pushed EVERY local entity (lastSync was 0 — a
+            // first sync, a stale-cursor reset after a long absence, or a
+            // wipe-recovery handshake) and the server answered "there is more
+            // than one chunk of data to send back". Draining that through
+            // /Sync costs one round trip per MAX_PULL_PER_COLLECTION entities,
+            // each of which re-queries and re-serialises the account's whole
+            // deck topology — the path a returning device used to crawl
+            // through while the "X / Y items" total climbed.
+            //
+            // /Sync/BulkSnapshot streams the same data in ONE request and
+            // commits it in a single IndexedDB transaction. It is safe here
+            // for the same reason the fresh-client route is: the push above
+            // already succeeded, so the server's copy is a superset of local
+            // and the wholesale replace cannot lose anything. Both of
+            // forcePullFromServer's bail-outs (pending changes appeared,
+            // snapshot empty while local is not) still apply and fall back to
+            // a normal cycle.
+            //
+            // #bBulkSnapshotResyncAttempted makes this one-shot per sync run:
+            // if the bulk path bails, the retry it schedules lands back here
+            // with the flag set and takes the ordinary chunked drain, so the
+            // two paths can never hand work back and forth.
+            if (bFullLibraryPushCycle
+                && syncResponse.morePending === true
+                && !SyncOrchestrator.#bBulkSnapshotResyncAttempted)
+            {
+                console.warn(`[SyncOrchestrator] Full-library push completed with ${syncResponse.remainingEntityCount ?? "?"} entities still pending — routing to the bulk snapshot instead of a multi-cycle drain.`);
+                SyncOrchestrator.#bBulkSnapshotResyncAttempted = true;
+                // The push landed, so drop the queue: leaving it populated
+                // would trip forcePullFromServer's pending-changes bail and
+                // send us straight back to the drain we are avoiding.
+                SyncTransport.removePushedChanges(changes);
+                await SyncTransport.saveSyncLog();
+                SyncOrchestrator.#resetDrainState();
+                // lastSync deliberately stays where it is — the bulk path sets
+                // it from the snapshot's own ceiling. State stays SYNCING and
+                // no COMPLETED is dispatched, so the blocking modal already on
+                // screen carries straight over into the bulk pull.
+                setTimeout(() => SyncOrchestrator.forcePullFromServer(), 0);
+                return;
+            }
 
             // Filter out the server's echoes of entities the user has
             // locally deleted while this cycle's push was in flight.
@@ -950,6 +1011,11 @@ class SyncOrchestrator
                 const bClientIsEmpty      = SyncOrchestrator.#isLocalLibraryEffectivelyEmpty();
                 const bAlreadyAutoRetried = SyncOrchestrator.#bAutoForcePullAttempted;
 
+                // A drain that ran to completion is proof the chunked path
+                // works for this account, so re-arm the bulk-snapshot reroute
+                // for the next full-library push.
+                SyncOrchestrator.#bBulkSnapshotResyncAttempted = false;
+
                 SyncOrchestrator.#resetDrainState();
                 SyncOrchestrator.#setState(syncStates.IDLE);
                 window.dispatchEvent(new CustomEvent(SyncEvents.COMPLETED));
@@ -995,12 +1061,58 @@ class SyncOrchestrator
         }
     }
 
+    /**
+     * Records every entity in a pull response against the drain's seen-set and
+     * returns how many of them were genuinely new.
+     *
+     * Keyed by entityType + entityId because ids are only unique within a
+     * collection, and because a deletion tombstone for an entity whose upsert
+     * arrived earlier in the same drain is NOT new work to count twice.
+     */
+    static #registerDrainEntities(serverChanges, serverDeletions)
+    {
+        let newEntityCount = 0;
+
+        const registerEntity = (entityType, entityId) =>
+        {
+            if (entityId === undefined || entityId === null)
+            {
+                return;
+            }
+            const entityKey = `${entityType}:${entityId}`;
+            if (SyncOrchestrator.#drainProcessedEntityKeys.has(entityKey))
+            {
+                return;
+            }
+            SyncOrchestrator.#drainProcessedEntityKeys.add(entityKey);
+            newEntityCount++;
+        };
+
+        for (let changeIndex = 0; changeIndex < serverChanges.length; changeIndex++)
+        {
+            registerEntity(serverChanges[changeIndex].entityType, serverChanges[changeIndex].entityId);
+        }
+
+        for (let deletionIndex = 0; deletionIndex < serverDeletions.length; deletionIndex++)
+        {
+            registerEntity(serverDeletions[deletionIndex].entityType, serverDeletions[deletionIndex].entityId);
+        }
+
+        return newEntityCount;
+    }
+
     static #resetDrainState()
     {
         SyncOrchestrator.#bInChunkedDrain        = false;
         SyncOrchestrator.#processedDrainEntities = 0;
         SyncOrchestrator.#totalDrainEntities     = 0;
         SyncOrchestrator.#pulledEntityCountThisRun = 0;
+        SyncOrchestrator.#drainProcessedEntityKeys.clear();
+        // Any deck the applier parked waiting for a parent belonged to the
+        // drain we are tearing down; without this it would survive into an
+        // unrelated later cycle and be judged against a tree it never
+        // came from.
+        SyncApplier.clearDeferredOrphanDecks();
     }
 
     /**
@@ -1244,6 +1356,7 @@ class SyncOrchestrator
             // 4. Clear drain / auto-retry guards. The system is healthy
             // — any future empty-state can fire a fresh one-shot retry.
             SyncOrchestrator.#bAutoForcePullAttempted = false;
+            SyncOrchestrator.#bBulkSnapshotResyncAttempted = false;
             SyncOrchestrator.#resetDrainState();
 
             // 5. Republish the deck tree so every page listening for
@@ -1364,7 +1477,13 @@ class SyncOrchestrator
         const serverChanges     = syncResponse.changes   || [];
         const serverDeletions   = syncResponse.deletions || [];
         const bResponseChunked  = syncResponse.morePending === true;
+        // Raw payload size — drives the glide animation, because that is the
+        // work this cycle actually performs (re-applying a re-delivered deck
+        // still costs a comparison).
         const thisChunkEntities = serverChanges.length + serverDeletions.length;
+        // Distinct entities this drain had not seen before — drives every
+        // progress NUMBER, so re-delivery cannot inflate the counters.
+        const newEntityCount    = SyncOrchestrator.#registerDrainEntities(serverChanges, serverDeletions);
         const remainingEntities = typeof syncResponse.remainingEntityCount === "number"
             ? syncResponse.remainingEntityCount
             : 0;
@@ -1422,7 +1541,7 @@ class SyncOrchestrator
                 // Refresh the total estimate every cycle so we self-
                 // correct if entities are added on the server mid-drain.
                 SyncOrchestrator.#totalDrainEntities =
-                    SyncOrchestrator.#processedDrainEntities + thisChunkEntities + remainingEntities;
+                    SyncOrchestrator.#processedDrainEntities + newEntityCount + remainingEntities;
                 SyncOrchestrator.#bInChunkedDrain = true;
 
                 // Surface entity counts as soon as we know the total so
@@ -1437,7 +1556,7 @@ class SyncOrchestrator
                     }
                 }));
 
-                const projectedProcessed = SyncOrchestrator.#processedDrainEntities + thisChunkEntities;
+                const projectedProcessed = SyncOrchestrator.#processedDrainEntities + newEntityCount;
                 const denominator        = Math.max(1, SyncOrchestrator.#totalDrainEntities);
                 const entityBasedFraction = (projectedProcessed / denominator) * SyncOrchestrator.#DRAIN_PROGRESS_CAP;
 
@@ -1468,14 +1587,19 @@ class SyncOrchestrator
 
             const tailAnimationPromise = SyncProgressReporter.animateLinearTo(glideTarget, tailGlideMs);
 
-            await SyncApplier.applyServerChanges(serverChanges, dirtyDeckIds);
+            // While the drain still has chunks pending, a deck whose parent has
+            // not arrived is "not delivered yet", not an orphan — the applier
+            // parks it for the next cycle instead of tombstoning it (which the
+            // server-side cascade would turn into a real deletion of the deck
+            // and everything under it).
+            await SyncApplier.applyServerChanges(serverChanges, dirtyDeckIds, null, bResponseChunked);
             await SyncApplier.applyServerDeletions(serverDeletions, dirtyDeckIds);
             await SyncApplier.flushDirtyDecks(dirtyDeckIds);
             await tailAnimationPromise;
 
             if (bResponseChunked)
             {
-                SyncOrchestrator.#processedDrainEntities += thisChunkEntities;
+                SyncOrchestrator.#processedDrainEntities += newEntityCount;
 
                 window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_PROGRESS,
                 {
@@ -1495,7 +1619,7 @@ class SyncOrchestrator
                 // on "X / X" instead of stopping at "X / Y" with X<Y.
                 if (bFinalisingDrain && SyncOrchestrator.#totalDrainEntities > 0)
                 {
-                    const finalProcessed = SyncOrchestrator.#processedDrainEntities + thisChunkEntities;
+                    const finalProcessed = SyncOrchestrator.#processedDrainEntities + newEntityCount;
                     const finalTotal     = Math.max(finalProcessed, SyncOrchestrator.#totalDrainEntities);
                     window.dispatchEvent(new CustomEvent(SyncEvents.ENTITY_PROGRESS,
                     {

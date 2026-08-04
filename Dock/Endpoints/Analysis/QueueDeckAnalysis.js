@@ -219,12 +219,17 @@ async function handleQueueDeckAnalysis(request, response)
             await TaskManager.untrackForUser(user.getId(), taskId);
 
             // Curated study material (and the refreshed analysis) is ready —
-            // notify in-app + push, success only. Never throws into the handler.
+            // notify on every channel, success only. Never throws into the
+            // handler. Note this also fires for the weekly automatic analysis, so
+            // a user with several auto-analysis decks can receive several emails
+            // a week; if that becomes a complaint the fix is a per-user
+            // notification preference read inside NotificationDispatcher, not
+            // dropping the channel here.
             if (bAnalysisSucceeded)
             {
                 try
                 {
-                    await NotificationDispatcher.dispatch(user.getId(), NotificationContent.deckAnalysisComplete(deckId), notificationChannels.IN_APP | notificationChannels.PUSH);
+                    await NotificationDispatcher.dispatch(user.getId(), NotificationContent.deckAnalysisComplete(deckId), NotificationDispatcher.IN_APP_AND_PUSH_AND_EMAIL);
                 }
                 catch (notifyError)
                 {

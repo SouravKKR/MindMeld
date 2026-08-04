@@ -697,17 +697,70 @@ Do these in order. Step 1.1 is on your dev workstation; 1.3 onward are on Linode
 
 Every `deploy-environment.sh` run drives the real UI in a real Chromium against
 the freshly-built bundle **before anything is baked or shipped**, and aborts the
-deployment if it does not come back clean. Two suites, gated differently:
+deployment if it does not come back clean. Three suites, gated differently:
 
 | Suite | Runs on | What it proves |
 |---|---|---|
 | **Tutorial walkthrough** — `Common/Testing/Main/run_tutorial_ui_tests.js` | **every** environment (development, testing, production) | All seven guided tours walk start to finish; every step's spotlight exposes a real, clickable element; no step teleports the user between pages. |
-| **Critical user flows** — `Common/Testing/Main/run_critical_flow_tests.js` | **production only** | 25 everyday operations still work by hand (below). |
+| **Critical user flows** — `Common/Testing/Main/run_critical_flow_tests.js` | **production only** | 27 everyday operations still work by hand (below), including that the credit ledger still charges. |
+| **Synchronisation** — `Common/Testing/Main/run_sync_ui_tests.js` | **production only** | 19 sync behaviours across three independent devices (below), each asserted against MongoDB as well as the screen. |
 
-Both are gated by the same `--skip-tutorial-tests` flag and the same
+All three are gated by the same `--skip-tutorial-tests` flag and the same
 `TUTORIAL_TEST_SESSION_COOKIE` prerequisite.
 
-### The 25 critical user flows
+### The 19 synchronisation cases
+
+Sync is the subsystem the app is least able to tell you is broken. A client that
+pushed nothing still shows "Synced ✓"; a client that dropped half the server's
+rows shows a smaller library, not an error; a pull that never converges shows a
+bar that keeps moving. All three look healthy from inside the browser, so every
+case here pairs a browser-visible outcome with MongoDB's own state — and the
+cross-device cases drive genuinely separate devices (separate browser contexts,
+therefore separate device ids, sync logs and IndexedDB copies), because two tabs
+in one context share all three and cannot tell a real pull from a local read.
+
+| # | Case |
+|---|---|
+| 01 | Device A boots and its first sync settles without error |
+| 02 | Device A's root grid matches the deck count the server holds |
+| 03 | A deck created on Device A reaches the server |
+| 04 | A card authored on Device A reaches the server |
+| 05 | Device B boots fresh and receives Device A's deck |
+| 06 | Device B lists the card Device A authored |
+| 07 | A rename on Device A reaches Device B |
+| 08 | A deletion on Device A reaches Device B and is tombstoned server-side |
+| 09 | Reloading Device A preserves the library rather than re-pulling an empty one |
+| 10 | Seed 260 server-side cards so the next pull must chunk |
+| 11 | The chunked drain runs to completion and delivers every card |
+| 12 | **The drain's "X / Y items" total never grows** |
+| 13 | The drain finishes on "X / X" with the blocking modal cleared |
+| 14 | The drain deleted nothing — no deck was tombstoned while chunks were still pending |
+| 15 | A brand-new device receives the whole multi-hundred-entity library |
+| 16 | Two devices sync in turn without either being blocked on the lock |
+| 17 | An edit made offline is queued and reaches the server once back online |
+| 18 | Every device converges on the server's view once all have synced |
+| 19 | No uncaught client script errors during the sync flows |
+
+Case 12 is the one this suite was written for. A chunked pull hands the client
+the *smallest* overflow watermark as its next cursor, but every collection is
+queried with an open-ended `serverUpdatedAt > lastSync` — so rows above that
+cursor in a collection that did not overflow were re-sent on every cycle, and
+counted a second time in `remainingEntityCount` on top. The denominator the user
+watches therefore **climbed** on every round trip instead of counting down, and a
+returning device could sit there indefinitely while the number got bigger.
+
+Case 10 seeds its cards by CLONING one the suite really did author through the
+card editor, so the fixture's shape can never drift from what the app writes.
+`DRAIN_CARD_COUNT` (default 260) must stay above the server's
+`MAX_PULL_PER_COLLECTION`, or the pull fits in one cycle and cases 11–14 prove
+nothing — case 11 fails loudly rather than passing vacuously if that happens.
+
+Every fixture is prefixed `ZZSync`; a run sweeps up its own rows *and their
+deletion tombstones* at the end, and sweeps anything an interrupted previous run
+left behind before it starts. A leftover deck tombstone would otherwise be
+replayed to every device on the next pull.
+
+### The 27 critical user flows
 
 Run in order against one throwaway fixture deck the suite creates and deletes
 itself (every fixture is prefixed `ZZTest`, and a run sweeps up anything an
@@ -735,15 +788,68 @@ interrupted previous run left behind):
 | 18 | Study — zoom controls scale the card and reset to 100% |
 | 19 | Spaced Repetition — rating a card advances to the next one |
 | 20 | Leaving a study session returns to Home with the grid intact |
-| 21 | Revise mode plays back only the cards marked for review |
-| 22 | Revise — Next / Previous page through the queue |
-| 23 | Content Study renders the deck's study material |
-| 24 | Deck Insights opens from the deck menu and renders |
-| 25 | Delete a deck (menu → Edit → Delete Deck → confirm) |
+| 21 | **Ask AI actually charges the account** (a real ledger row and a real balance drop) |
+| 22 | Revise mode plays back only the cards marked for review |
+| 23 | Revise — Next / Previous page through the queue |
+| 24 | Content Study renders the deck's study material |
+| 25 | Deck Insights opens from the deck menu and renders |
+| 26 | **Start Generation prices the run before submitting anything** (no AI spend) |
+| 27 | Delete a deck (menu → Edit → Delete Deck → confirm) |
 
 Mock-test authoring and grading are deliberately **not** repeated here — the
 tutorial suite already takes the sample deck's mock test end to end (launch →
 answer → finish → graded answer key) on every deploy.
+
+**Flows 21 and 26 are the credit guarantee.** Credit charging leaves no trace in
+the UI — a generation that completes and charges nothing produces decks, a happy
+user, and no signal anywhere on screen — so both read the ledger straight from
+MongoDB via `Common/Testing/Main/CreditLedgerProbe.js`. They are deliberately
+cheap: 26 calls `/Generate/EstimateCost`, which is pure arithmetic over the
+stored pricing and spends nothing at all, and 21 costs one flat 0.1-credit
+`ASK_AI_BASIC` call. Between them they catch a credit system that has stopped
+pricing work and one that has stopped recording it. Flow 21 SKIPs (rather than
+fails) when the Agent venv or the model credentials are missing on the deploying
+machine, since neither is the app being wrong. The expensive end-to-end
+proof — upload a document, run a real generation, assert the token-metered
+charge — is a separate on-demand suite, below.
+
+### The on-demand credit-charging suite (NOT a gate)
+
+`Common/Testing/Main/run_credit_charging_tests.js` is the full proof that a user
+who uploads a document and runs a real AI generation is **actually charged**. It
+uploads the committed fixture in `Common/Testing/Main/fixtures/`, configures the
+cheapest run the form accepts (flashcards only, 6 cards, no images), waits for
+the generation to reach a terminal state, and then asserts against MongoDB that:
+
+- applied `TASK_CHARGE` rows exist for the run and all of them debit;
+- at least one is from a token-metered worker (17/18/19) **with non-zero
+  `metadata.usage.inputTokens` and `outputTokens`** — this is the regression the
+  suite exists for, and the one that made generations silently free;
+- the balance dropped by the sum of the charges, and `lifetimeCreditsSpent` rose
+  by the same amount; and
+- the credit table the user is shown on the progress page agrees with the ledger.
+
+```bash
+TEST_SESSION_COOKIE=<seeded session id> VERBOSE=1 \
+    node Common/Testing/Main/run_credit_charging_tests.js
+```
+
+It is **deliberately not** wired into `deploy-environment.sh`. It spends real
+credits and real model tokens, takes minutes, and needs object storage plus a
+working Agent venv on top of Mongo and Redis — so its failures are as often
+environmental as they are the app's fault, and the gate treats `SKIPPED` as a
+stop. Run it after any change to the credit, metering or generation paths, and
+periodically: its `metrics` block reports credits charged and tokens metered per
+run, which is exactly the pricing-calibration data `CreditConfiguration`'s own
+comments ask for.
+
+The gate-side decisions it is too slow to enumerate — the paid-deck exemption,
+the per-task meter reset, cache-hit billing — are pinned cheaply by
+`Agent/Verification/VerifyCreditGate.py`, which needs no model calls:
+
+```bash
+cd Agent && .venv/Scripts/python.exe Verification/VerifyCreditGate.py
+```
 
 > **A SKIPPED case fails the gate.** Both suites mark a case SKIPPED when the
 > environment could not exercise it — most often because the sync backend never
@@ -821,7 +927,16 @@ TEST_SESSION_COOKIE=<local-session-id> \
 
 HEADFUL=1 VERBOSE=1 TEST_SESSION_COOKIE=<local-session-id> \
     node Common/Testing/Main/run_critical_flow_tests.js
+
+HEADFUL=1 VERBOSE=1 TEST_SESSION_COOKIE=<local-session-id> \
+    node Common/Testing/Main/run_sync_ui_tests.js
 ```
+
+The sync suite's result lands in `Common/Reports/.results/sync-ui.json`. Two of
+its knobs are worth knowing: `KEEP_FIXTURES=1` leaves the fixture deck and its
+seeded cards behind so a failure can be inspected in the app, and
+`DRAIN_CARD_COUNT` raises or lowers how much data the drain cases move (keep it
+above the server's `MAX_PULL_PER_COLLECTION`).
 
 > **Restart Dock after any rebuild.** Dock indexes `Dock/Static/` **once at
 > boot**, so a server started before a `npm run setup` keeps serving the previous
@@ -1626,7 +1741,7 @@ It performs every step of §1.10 + §2.2 automatically:
    IP is not on the firewall's allow-list. Both are reverted when the run ends.
 0. **Gates on the browser test suites (§1.1.1)** — builds the production
    frontend, then drives it in a real Chromium: the seven interactive tutorials
-   on **every** environment, plus the 25 critical user flows on **production**.
+   on **every** environment, plus the 27 critical user flows on **production**.
    Nothing is created or shipped until they pass; a failure aborts before a
    single Linode is spun up. Needs `TUTORIAL_TEST_SESSION_COOKIE` in
    `deployment.env` plus a local Redis + MongoDB. Bypass with

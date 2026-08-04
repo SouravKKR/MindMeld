@@ -5,11 +5,23 @@ import { taskTypeDisplayName } from "../../../Globals/UtilityFunctions/TaskTypeD
 /**
  * GenerationProgressComponent
  *
- * A reusable web component that renders a nested task tree as a live progress display.
+ * A reusable web component that renders a generation's progress.
  *
  * Usage:
  *   const component = document.createElement("generation-progress-component");
  *   component.update(taskTree);
+ *
+ * Two payload shapes arrive here, and the difference is who is watching:
+ *
+ *   1. Summary (every non-administrator). No `children`, `summaryOnly: true`,
+ *      and the server's own roll-up in `overallCompletion` / `overallStatus` /
+ *      `isTerminal` / `failureMessage`. The per-task tree is internal telemetry
+ *      that only invites a user to sit and watch a run lasting hours, so instead
+ *      of rows they get the overall bar and a note telling them they will be
+ *      notified and are free to go and study.
+ *
+ *   2. Full tree (administrators). Everything above PLUS the recursive
+ *      `children`, so a stuck run can still be diagnosed node by node.
  *
  * taskTree shape (recursive):
  *   {
@@ -18,8 +30,16 @@ import { taskTypeDisplayName } from "../../../Globals/UtilityFunctions/TaskTypeD
  *     status:       number,   // TaskStatus enum value
  *     completion:   number,   // 0.0 – 1.0
  *     parentTaskId: string|null,
- *     children:     taskTree[]
+ *     children:     taskTree[]   // administrators only
  *   }
+ *
+ * The overall figures are computed by the server
+ * (Dock/Globals/Classes/Task/GenerationProgressSummarizer) rather than here, so
+ * there is exactly one implementation of the roll-up and an administrator
+ * reading the tree can never see a different percentage from a user reading the
+ * bar. The local roll-up below is a fallback for a payload that carries no
+ * summary — in practice only the tutorial's canned demo snapshots, which never
+ * reach a server.
  *
  * Accumulating parent pattern:
  *   Some tasks (e.g. GenerateFlashcards) create worker sub-tasks that call
@@ -61,6 +81,12 @@ class GenerationProgressComponent extends HTMLElement
     // than invent a number.
     static #INDETERMINATE_TASK_TYPES = [taskTypes.GENERATION_FINALIZATION];
 
+    // Shown in place of the task tree to everyone who does not get the tree. The
+    // point is to release the user from the page: a generation can take hours,
+    // and without being told so people sit and watch a bar.
+    static SUMMARY_PRIMARY_MESSAGE = "You will be notified upon completion, it may take a few minutes to a few hours.";
+    static SUMMARY_SECONDARY_MESSAGE = "You can either wait or continue studying and check in later.";
+
     // ─────────────────────────────────────────────
     //  Public API
     // ─────────────────────────────────────────────
@@ -87,38 +113,67 @@ class GenerationProgressComponent extends HTMLElement
     }
 
     /**
+     * True when this payload carries no per-task tree, so the summary view is
+     * what should be rendered.
+     * @returns {boolean}
+     */
+    #isSummaryOnly()
+    {
+        return this.#taskTree?.summaryOnly === true || !Array.isArray(this.#taskTree?.children);
+    }
+
+    /**
      * Returns the overall pipeline completion (0–1).
+     *
+     * Prefers the server's figure, which is the authority for every real run.
+     * The local roll-up only runs for a payload without one.
      * @returns {number}
      */
     getOverallCompletion()
     {
         if (!this.#taskTree) return 0;
+
+        if (typeof this.#taskTree.overallCompletion === "number")
+        {
+            return Math.min(1, Math.max(0, this.#taskTree.overallCompletion));
+        }
+
         return this.#computeOverallCompletion(this.#taskTree);
     }
 
     /**
-     * Returns true when every node in the pipeline has reached a terminal state.
+     * Returns true when the pipeline has reached a terminal state.
      * @returns {boolean}
      */
     isTerminal()
     {
         if (!this.#taskTree) return false;
 
-        const overallStatus = this.#computeOverallStatus(this.#taskTree);
+        if (typeof this.#taskTree.isTerminal === "boolean")
+        {
+            return this.#taskTree.isTerminal;
+        }
+
+        const overallStatus = this.getOverallStatus();
         return overallStatus === taskStatus.COMPLETED || overallStatus === taskStatus.FAILED;
     }
 
     /**
-     * Returns the canonical overall pipeline status (TaskStatus enum value),
-     * derived from every node's effective status. Exposed so background
-     * consumers (e.g. GenerationNotifier) can distinguish a COMPLETED pipeline
-     * from a FAILED one without re-implementing the roll-up logic that powers
-     * the visible tree. Returns NOT_STARTED when there is no task tree yet.
+     * Returns the canonical overall pipeline status (TaskStatus enum value).
+     * Exposed so background consumers (e.g. GenerationNotifier) can distinguish
+     * a COMPLETED pipeline from a FAILED one without re-implementing the roll-up.
+     * Returns NOT_STARTED when there is no task tree yet.
      * @returns {number}
      */
     getOverallStatus()
     {
         if (!this.#taskTree) return taskStatus.NOT_STARTED;
+
+        if (Number.isInteger(this.#taskTree.overallStatus))
+        {
+            return this.#taskTree.overallStatus;
+        }
+
         return this.#computeOverallStatus(this.#taskTree);
     }
 
@@ -136,6 +191,14 @@ class GenerationProgressComponent extends HTMLElement
         if (!this.#taskTree)
         {
             return null;
+        }
+
+        // Without the tree there is nothing to scan, so the server sends the
+        // reason alongside the roll-up. Skipping this would leave a user who
+        // cannot see the tree told only THAT the run failed, never why.
+        if (typeof this.#taskTree.failureMessage === "string" && this.#taskTree.failureMessage.trim().length > 0)
+        {
+            return this.#taskTree.failureMessage.trim();
         }
 
         for (const taskNode of this.#flattenTree(this.#taskTree))
@@ -418,7 +481,7 @@ class GenerationProgressComponent extends HTMLElement
         {
             return { label: "Paused", color: "var(--status-warning, #F0AA32)" };
         }
-        return this.#getStatusMetadata(this.#computeOverallStatus(this.#taskTree));
+        return this.#getStatusMetadata(this.getOverallStatus());
     }
 
     /**
@@ -484,7 +547,7 @@ class GenerationProgressComponent extends HTMLElement
             return;
         }
 
-        const overallCompletion      = this.#computeOverallCompletion(this.#taskTree);
+        const overallCompletion      = this.getOverallCompletion();
 
         // Advance the high water mark but never retreat it.
         // Transitions between pipeline stages cause brief computed dips
@@ -501,6 +564,18 @@ class GenerationProgressComponent extends HTMLElement
         this.querySelector(".overall-progress-percentage").textContent   = `${overallCompletionPct}%`;
         this.querySelector(".overall-progress-status-label").textContent = overallStatusMetadata.label;
         this.querySelector(".overall-progress-status-label").style.color = overallStatusMetadata.color;
+
+        // No tree to draw: say what happens next instead of leaving an empty
+        // panel under the bar. This is what most users see.
+        if (this.#isSummaryOnly())
+        {
+            this.querySelector(".task-tree-container").innerHTML =
+            `
+                <div class="task-tree-summary-note">${GenerationProgressComponent.SUMMARY_PRIMARY_MESSAGE}</div>
+                <div class="task-tree-summary-note">${GenerationProgressComponent.SUMMARY_SECONDARY_MESSAGE}</div>
+            `;
+            return;
+        }
 
         const childrenHtml = (this.#taskTree.children || [])
             .map(childNode => this.#buildTaskNodeHtml(childNode, 0))

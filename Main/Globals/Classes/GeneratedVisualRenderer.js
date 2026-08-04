@@ -35,8 +35,13 @@
  */
 class GeneratedVisualRenderer
 {
-    static #SMILES_DRAWER_SCRIPT_PATH = "./ThirdParty/SmilesDrawer/smiles-drawer.min.js";
-    static #MERMAID_SCRIPT_PATH = "./ThirdParty/Mermaid/mermaid.min.js";
+    // The version lives in the FILENAME, not in a query string, because that is
+    // what opts these files into immutable HTTP caching — see
+    // Dock/Endpoints/Plugins/StaticCachePolicy.js. Bumping a library means
+    // dropping in the new file and changing the version here; the old URL simply
+    // stops being requested, so no cache anywhere has to be invalidated.
+    static #SMILES_DRAWER_SCRIPT_PATH = "./ThirdParty/SmilesDrawer/smiles-drawer-2.1.7.min.js";
+    static #MERMAID_SCRIPT_PATH = "./ThirdParty/Mermaid/mermaid-11.4.1.min.js";
 
     // Marks an element whose visual has already been drawn, so a second pass
     // over the same container is a no-op instead of a duplicate render.

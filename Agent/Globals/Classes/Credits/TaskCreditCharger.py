@@ -13,11 +13,9 @@ import time
 
 from Globals.Enumerations.CreditDeductionTimings import CreditDeductionTimings
 from Globals.Enumerations.CreditTransactionTypes import CreditTransactionTypes
-from Globals.Enumerations.LogCategory import LogCategory
 from Globals.Classes.Credits.CreditLedger import CreditLedger
 from Globals.Classes.Credits.CreditMeter import CreditMeter
-from Globals.Classes.Logging.Logger import Logger
-from Globals.Classes.Logging.LogTitles import LogTitles
+from Globals.Classes.Credits.TaskUsageReporter import TaskUsageReporter
 
 
 class TaskCreditCharger:
@@ -166,23 +164,6 @@ class TaskCreditCharger:
         gracefully (so no in-flight charge is interrupted), then applies the
         completion charge appropriate to the rule's timing.
         """
-        # ── TEMP DEBUG: surface exactly what the meter captured for this task.
-        # Remove once batch token usage is confirmed to be landing in the meter.
-        debug_metrics = self.__build_metrics()
-        raw_tokens = CreditMeter.raw_snapshot()
-        try:
-            debug_cost = self.__rule.evaluate(debug_metrics)
-        except Exception as evaluate_error:
-            debug_cost = f"<evaluate failed: {evaluate_error}>"
-        print(
-            f"[Credits][DEBUG] settle task={self.__task_id} type={self.__task_type} "
-            f"failed={b_failed} timing={self.__rule.get_deduction_timing()} "
-            f"raw_in={raw_tokens['INPUT_TOKENS']} raw_out={raw_tokens['OUTPUT_TOKENS']} "
-            f"norm_in={debug_metrics['INPUT_TOKENS']:.0f} norm_out={debug_metrics['OUTPUT_TOKENS']:.0f} "
-            f"duration={debug_metrics['DURATION_SECONDS']:.1f}s "
-            f"=> evaluated cost={debug_cost} credit(s)"
-        )
-
         if self.__interval_task is not None:
             if self.__stop_event is not None:
                 self.__stop_event.set()
@@ -208,22 +189,13 @@ class TaskCreditCharger:
 
         # Record this generation as a single AI request in the central log, with
         # the account, model usage and credits spent (requirement: every AI request
-        # is logged with its metadata, credits spent and account id).
-        try:
-            raw_usage = CreditMeter.raw_snapshot()
-            request_additional_data = {
-                "taskId": self.__task_id,
-                "taskType": self.__task_type,
-                "mainTaskId": os.getenv("MAIN_TASK_ID") or "",
-                "inputTokens": int(raw_usage.get("INPUT_TOKENS", 0)),
-                "outputTokens": int(raw_usage.get("OUTPUT_TOKENS", 0)),
-                "durationSeconds": round(max(0.0, time.time() - self.__start_time), 2),
-                "credits": round(float(self.__charged_amount), 4),
-                "failed": bool(b_failed),
-            }
-            if b_failed:
-                await Logger.warning(LogCategory.AI_REQUEST, LogTitles.AI_GENERATION, "AI generation task failed", account_id=self.__user_id, additional_data=request_additional_data)
-            else:
-                await Logger.info(LogCategory.AI_REQUEST, LogTitles.AI_GENERATION, "AI generation task completed", account_id=self.__user_id, additional_data=request_additional_data)
-        except Exception as log_error:
-            print(f"[Credits] failed to log AI request: {log_error}")
+        # is logged with its metadata, credits spent and account id). Shared with
+        # the free/exempt path in TaskRunner so both write the identical record.
+        await TaskUsageReporter.report(
+            user_id = self.__user_id,
+            task_id = self.__task_id,
+            task_type = self.__task_type,
+            start_time = self.__start_time,
+            credits_charged = self.__charged_amount,
+            b_failed = b_failed,
+        )

@@ -9,6 +9,7 @@ import InformationSourceSelector from "../../AutomaticGeneration/Components/Info
 import ExtractableInformationSource from "../../../Globals/Classes/Decorators/ExtractableInformationSource.js";
 import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
 import BrowserLlmDownloadConstants from "../../../Globals/Constants/BrowserLlmDownloadConstants.js";
+import { copyTextToClipboard } from "../../../Globals/UtilityFunctions/CopyTextToClipboard.js";
 import Deck from "../../../Globals/Model/Deck.js";
 import StudySessionEvents from "../Events/StudySessionEvents.js";
 import AskAiSession from "../Classes/AskAiSession.js";
@@ -525,52 +526,15 @@ class TextSelectionContextMenu extends ContextMenu
     }
 
     /**
-     * Copy the currently-selected text via the Clipboard API, falling
-     * back to the legacy execCommand path for environments where the
-     * async API is unavailable (older browsers, non-secure-context
-     * dev). We have the selection in #selectedText already, so we
-     * never need to touch window.getSelection here.
+     * Copy the currently-selected text. The Clipboard API / execCommand
+     * fallback dance lives in the shared copyTextToClipboard helper, which
+     * the paid-deck share panel uses too. We have the selection in
+     * #selectedText already, so we never need to touch window.getSelection
+     * here.
      */
     async #copySelectedTextToClipboard()
     {
-        const textToCopy = this.#selectedText || "";
-        if (textToCopy.length === 0)
-        {
-            return;
-        }
-
-        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function")
-        {
-            try
-            {
-                await navigator.clipboard.writeText(textToCopy);
-                return;
-            }
-            catch (clipboardError)
-            {
-                console.warn(`[TextSelectionContextMenu] Clipboard API write failed; falling back to execCommand. ${clipboardError?.message || clipboardError}`);
-            }
-        }
-
-        // Legacy fallback: drop the text into an off-screen textarea,
-        // select it, execCommand("copy"), then remove the helper.
-        const helperTextarea = document.createElement("textarea");
-        helperTextarea.value = textToCopy;
-        helperTextarea.setAttribute("readonly", "");
-        helperTextarea.style.position = "fixed";
-        helperTextarea.style.top = "-1000px";
-        helperTextarea.style.left = "-1000px";
-        document.body.appendChild(helperTextarea);
-        helperTextarea.select();
-        try
-        {
-            document.execCommand("copy");
-        }
-        catch (legacyCopyError)
-        {
-            console.warn(`[TextSelectionContextMenu] execCommand copy fallback failed. ${legacyCopyError?.message || legacyCopyError}`);
-        }
-        helperTextarea.remove();
+        await copyTextToClipboard(this.#selectedText || "");
     }
 
     #bindOutsideDismissHandlers()

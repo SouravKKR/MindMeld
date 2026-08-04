@@ -4997,6 +4997,47 @@
           ]
         },
         {
+          "name": "PROTECTED POST /Admin/Credits/Periodic/Delete",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/Admin/Credits/Periodic/Delete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Admin",
+                "Credits",
+                "Periodic",
+                "Delete"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('anonymous request is rejected (401/403)', function () {",
+                  "    pm.expect([401, 403], 'got ' + pm.response.code).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "PROTECTED GET /Admin/Credits/Periodic/Report",
           "request": {
             "method": "GET",

@@ -8,6 +8,7 @@ Renders SMILES strings (chemical structure notation) into SVG. Used by
 | | |
 |---|---|
 | Version | 2.1.7 |
+| File | `smiles-drawer-2.1.7.min.js` — the version is in the filename so the file can be served `immutable` ([StaticCachePolicy](../../../Dock/Endpoints/Plugins/StaticCachePolicy.js)). To upgrade, drop in the new versioned file and update `#SMILES_DRAWER_SCRIPT_PATH`; never replace the contents of an existing versioned name. |
 | Source | `https://cdn.jsdelivr.net/npm/smiles-drawer@2.1.7/dist/smiles-drawer.min.js` |
 | License | MIT |
 | Globals exposed | `SmiDrawer`, `SmilesDrawer` |

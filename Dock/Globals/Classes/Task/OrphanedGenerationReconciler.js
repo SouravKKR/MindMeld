@@ -6,7 +6,6 @@ const PersistenceConstants = require("../../Constants/PersistenceConstants");
 const { taskStatus } = require("../../Enumerations/TaskStatus");
 const NotificationDispatcher = require("../Notifications/NotificationDispatcher");
 const NotificationContent = require("../Notifications/NotificationContent");
-const { notificationChannels } = require("../../Enumerations/NotificationChannels");
 
 
 /**
@@ -123,10 +122,13 @@ class OrphanedGenerationReconciler
                 await TaskManager.untrackForUser(userId, mainTaskId);
 
                 // The run finished (its tail was skipped by a crash) — the user
-                // never got told. Notify now, in-app + push. Never throws.
+                // never got told. Notify now on every channel; email matters most
+                // here, because a run that was orphaned by a restart is exactly
+                // the case where nobody is still sitting on the progress page.
+                // Never throws.
                 try
                 {
-                    await NotificationDispatcher.dispatch(userId, NotificationContent.generationComplete(""), notificationChannels.IN_APP | notificationChannels.PUSH);
+                    await NotificationDispatcher.dispatch(userId, NotificationContent.generationComplete(""), NotificationDispatcher.IN_APP_AND_PUSH_AND_EMAIL);
                 }
                 catch (notifyError)
                 {

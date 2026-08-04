@@ -12,6 +12,37 @@ const { notificationTypes } = require("../../Enumerations/NotificationTypes");
  */
 class NotificationContent
 {
+    static DEFAULT_EMAIL_CALL_TO_ACTION_LABEL = "Open CogniumLearn";
+    static DEFAULT_EMAIL_FOOTER_TEXT = "You're receiving this because you have a CogniumLearn account.";
+
+    /**
+     * Resolves the email payload for any notification.
+     *
+     * An entry that carries no `email` block still produces a sensible, fully
+     * branded message built from its in-app title and body — requesting the
+     * EMAIL channel must never silently send nothing, and the alternative
+     * (every builder having to spell out an email block) would guarantee that
+     * some future one forgets.
+     *
+     * @param {{title?: string, body?: string, email?: object}} notification
+     * @returns {{subject: string, headingText: string, introText: string, highlightText: string, callToActionLabel: string, footerText: string}}
+     */
+    static toEmailContent(notification)
+    {
+        const emailBlock = (notification?.email !== null && typeof notification?.email === "object") ? notification.email : {};
+        const title = String(notification?.title ?? "");
+        const body = String(notification?.body ?? "");
+
+        return {
+            subject: emailBlock.subject || title || "A notification from CogniumLearn",
+            headingText: emailBlock.headingText || title,
+            introText: emailBlock.introText || body,
+            highlightText: emailBlock.highlightText || "",
+            callToActionLabel: emailBlock.callToActionLabel || NotificationContent.DEFAULT_EMAIL_CALL_TO_ACTION_LABEL,
+            footerText: emailBlock.footerText || NotificationContent.DEFAULT_EMAIL_FOOTER_TEXT
+        };
+    }
+
     // ── Generation ───────────────────────────────────────────────────────────
     static generationComplete(deckId)
     {
@@ -19,7 +50,16 @@ class NotificationContent
             type: notificationTypes.GENERATION_COMPLETE,
             title: "Your study set is ready",
             body: "Your generated flashcards and study materials are ready to review.",
-            data: { deckId: deckId ?? "", target: "deck" }
+            data: { deckId: deckId ?? "", target: "deck" },
+            email:
+            {
+                subject: "Your CogniumLearn study set is ready",
+                headingText: "Your study set is ready",
+                introText: "The generation you started has finished. Your new flashcards, study materials and mock tests are waiting for you in CogniumLearn.",
+                highlightText: "",
+                callToActionLabel: NotificationContent.DEFAULT_EMAIL_CALL_TO_ACTION_LABEL,
+                footerText: "You're receiving this because you started an AI generation on CogniumLearn."
+            }
         };
     }
 
@@ -29,7 +69,16 @@ class NotificationContent
             type: notificationTypes.GENERATION_COMPLETE,
             title: "New study material is ready",
             body: "Your deck analysis finished and fresh curated study material is waiting for you.",
-            data: { deckId: deckId ?? "", target: "deck" }
+            data: { deckId: deckId ?? "", target: "deck" },
+            email:
+            {
+                subject: "New curated study material is ready on CogniumLearn",
+                headingText: "New study material is ready",
+                introText: "We looked at how your studying is going and put together fresh curated material for the topics you're finding hardest.",
+                highlightText: "",
+                callToActionLabel: NotificationContent.DEFAULT_EMAIL_CALL_TO_ACTION_LABEL,
+                footerText: "You're receiving this because automatic deck analysis is switched on for one of your decks."
+            }
         };
     }
 

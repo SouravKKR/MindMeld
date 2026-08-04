@@ -136,7 +136,11 @@ class ResponseCache:
                 serialized.get("metadata") or {},
             ))
 
-        return AutomationResponse(rebuilt)
+        # The token usage the ORIGINAL live call reported, carried back out so a
+        # cache hit can be metered and billed like the call it is standing in
+        # for. Absent on entries written before usage was persisted; the caller
+        # falls back to a chars/4 estimate for those rather than billing zero.
+        return AutomationResponse(rebuilt, document.get("usageMetadata"))
 
     @staticmethod
     async def store(key: str, response: AutomationResponse) -> None:
@@ -183,6 +187,18 @@ class ResponseCache:
             "createdAt": now,
             "expiresAt": expires_at,
         }
+
+        # The live call's token usage, stored so every later hit on this key can
+        # be billed for what the work actually cost instead of nothing. Omitted
+        # rather than written as zeroes when the provider reported none, so a
+        # reader can tell "no usage recorded" (estimate it) apart from "this
+        # genuinely consumed nothing" (bill nothing).
+        usage_metadata = response.get_usage_metadata()
+        if usage_metadata:
+            document["usageMetadata"] = {
+                "inputTokens":  int(usage_metadata.get("inputTokens", 0) or 0),
+                "outputTokens": int(usage_metadata.get("outputTokens", 0) or 0),
+            }
 
         await asyncio.to_thread(
             lambda: collection.update_one(

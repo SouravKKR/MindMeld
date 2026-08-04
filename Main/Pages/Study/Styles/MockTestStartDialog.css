@@ -112,6 +112,49 @@ dialog-box .mock-test-start-mode-option-description
     line-height: 1.4;
 }
 
+/* TEMPORARY: styling for the disabled "Coming soon" offline mode option.
+   Delete this block when MockTestStartDialog.OFFLINE_MODE_TEMPORARILY_DISABLED
+   is flipped back to false and the mode is re-enabled. */
+dialog-box .mock-test-start-mode-option-disabled
+{
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+dialog-box .mock-test-start-mode-option-disabled:hover
+{
+    background-color: var(--primary-background-color);
+}
+
+dialog-box .mock-test-start-mode-option-disabled input[type="radio"]
+{
+    cursor: not-allowed;
+}
+
+dialog-box .mock-test-start-mode-option-coming-soon-badge
+{
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background-color: var(--tertiary-background-color);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    font-size: 10px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    vertical-align: middle;
+}
+
+dialog-box .mock-test-start-mode-option-notice
+{
+    margin-top: 6px;
+    font-size: 11px;
+    font-style: italic;
+    line-height: 1.4;
+    color: var(--accent-color);
+}
+
 dialog-box .mock-test-start-duration-input
 {
     padding: 8px 10px;

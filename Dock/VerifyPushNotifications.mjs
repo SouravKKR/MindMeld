@@ -40,6 +40,9 @@ const PushTokenQueryEngine = require("./Globals/Classes/Database/PushTokenQueryE
 const DatabaseConnector = require("./Globals/Classes/Database/DatabaseConnector");
 const PushToken = require("./Globals/Model/PushToken");
 const NotificationRecord = require("./Globals/Model/NotificationRecord");
+const AuthenticationQueryEngine = require("./Globals/Classes/Database/AuthenticationQueryEngine");
+const EmailProviderFactory = require("./Globals/Classes/Email/EmailProviderFactory");
+const EmailSender = require("./Globals/Classes/Email/EmailSender");
 const { notificationChannels } = require("./Globals/Enumerations/NotificationChannels");
 const { notificationTypes } = require("./Globals/Enumerations/NotificationTypes");
 
@@ -183,6 +186,101 @@ async function runAlwaysOnTier()
         PushTokenQueryEngine.removeTokens = originalRemoveTokens;
         FirebaseMessagingClient.isConfigured = originalIsConfigured;
         FirebaseMessagingClient.sendToTokens = originalSend;
+    }
+}
+
+/**
+ * The EMAIL channel. Email is currently the ONLY channel that reaches a user who
+ * has closed the app — device push has no client-side token registration yet —
+ * so its routing and, above all, its failure modes matter: a notification must
+ * never be able to fail the pipeline that raised it.
+ */
+async function runEmailChannelChecks()
+{
+    section("Tier 1e — EMAIL channel routing + degradation (always on)");
+
+    assert(notificationChannels.EMAIL === 4, "notificationChannels.EMAIL is the third bit (4)");
+    assert(NotificationDispatcher.EMAIL_ONLY === notificationChannels.EMAIL, "EMAIL_ONLY equals the EMAIL flag");
+    assert(
+        NotificationDispatcher.IN_APP_AND_PUSH_AND_EMAIL === (notificationChannels.IN_APP | notificationChannels.PUSH | notificationChannels.EMAIL),
+        "IN_APP_AND_PUSH_AND_EMAIL is the bitwise OR of all three flags");
+
+    const originalInsert = NotificationQueryEngine.insertNotification;
+    const originalListTokens = PushTokenQueryEngine.listTokensForUser;
+    const originalIsConfigured = FirebaseMessagingClient.isConfigured;
+    const originalGetUserById = AuthenticationQueryEngine.getUserById;
+    const originalGetDefaultProvider = EmailProviderFactory.getDefaultProvider;
+    const originalSendNotificationEmail = EmailSender.sendNotificationEmail;
+
+    let sentToAddress = null;
+    let sentContent = null;
+
+    NotificationQueryEngine.insertNotification = async () => ({ saved: true });
+    PushTokenQueryEngine.listTokensForUser = async () => [];
+    FirebaseMessagingClient.isConfigured = () => false;
+    AuthenticationQueryEngine.getUserById = async () => ({ getAdditionalData: () => ({ email: "learner@example.invalid" }) });
+    EmailProviderFactory.getDefaultProvider = () => ({ isConfigured: () => true });
+    EmailSender.sendNotificationEmail = async (toEmailAddress, emailContent) =>
+    {
+        sentToAddress = toEmailAddress;
+        sentContent = emailContent;
+    };
+
+    try
+    {
+        // EMAIL requested → resolves the address from the user record and sends.
+        sentToAddress = null;
+        const emailResult = await NotificationDispatcher.dispatch("user-1", NotificationContent.generationComplete("42"), notificationChannels.EMAIL);
+        assert(emailResult.email.attempted === true && emailResult.email.delivered === true, "EMAIL-only dispatch reports a delivered email");
+        assert(sentToAddress === "learner@example.invalid", "EMAIL dispatch resolves the recipient from the user's additionalData.email");
+        assert(sentContent.subject === "Your CogniumLearn study set is ready", "generationComplete supplies its own email subject");
+        assert(sentContent.callToActionLabel === NotificationContent.DEFAULT_EMAIL_CALL_TO_ACTION_LABEL, "generationComplete carries a call-to-action label");
+
+        // EMAIL not requested → not attempted at all.
+        sentToAddress = null;
+        const withoutEmailResult = await NotificationDispatcher.dispatch("user-1", NotificationContent.generationComplete("42"), notificationChannels.IN_APP);
+        assert(withoutEmailResult.email.attempted === false && sentToAddress === null, "A dispatch without the EMAIL flag never touches the email path");
+
+        // A user with no stored address → reported, not thrown.
+        AuthenticationQueryEngine.getUserById = async () => ({ getAdditionalData: () => ({}) });
+        const noAddressResult = await NotificationDispatcher.dispatch("user-1", NotificationContent.generationComplete("42"), notificationChannels.EMAIL);
+        assert(noAddressResult.email.reason === "NO_EMAIL_ADDRESS" && noAddressResult.email.delivered === false, "EMAIL for a user with no address reports NO_EMAIL_ADDRESS (no throw)");
+
+        // No mail credentials → degrades exactly like FCM_NOT_CONFIGURED does.
+        AuthenticationQueryEngine.getUserById = async () => ({ getAdditionalData: () => ({ email: "learner@example.invalid" }) });
+        EmailProviderFactory.getDefaultProvider = () => ({ isConfigured: () => false });
+        const unconfiguredResult = await NotificationDispatcher.dispatch("user-1", NotificationContent.generationComplete("42"), notificationChannels.EMAIL);
+        assert(unconfiguredResult.email.reason === "EMAIL_NOT_CONFIGURED" && unconfiguredResult.email.delivered === false, "EMAIL before mail credentials exist degrades to EMAIL_NOT_CONFIGURED (no throw)");
+
+        // The provider throwing must not escape into the caller's pipeline.
+        EmailProviderFactory.getDefaultProvider = () => ({ isConfigured: () => true });
+        EmailSender.sendNotificationEmail = async () => { throw new Error("mail server unreachable"); };
+        const failedResult = await NotificationDispatcher.dispatch("user-1", NotificationContent.generationComplete("42"), notificationChannels.EMAIL);
+        assert(failedResult.email.reason === "SEND_FAILED" && failedResult.email.delivered === false, "A throwing mail provider reports SEND_FAILED instead of propagating");
+
+        // A notification with no email block still produces a sendable message.
+        EmailSender.sendNotificationEmail = async (toEmailAddress, emailContent) => { sentContent = emailContent; };
+        await NotificationDispatcher.dispatch("user-1", { title: "Bare title", body: "Bare body" }, notificationChannels.EMAIL);
+        assert(sentContent.subject === "Bare title" && sentContent.introText === "Bare body", "A notification without an email block falls back to its in-app title + body");
+        assert(sentContent.footerText === NotificationContent.DEFAULT_EMAIL_FOOTER_TEXT, "The fallback email still carries the default footer");
+
+        // Every generation-completion builder must be email-ready.
+        for (const [builderName, notification] of [["generationComplete", NotificationContent.generationComplete("1")], ["deckAnalysisComplete", NotificationContent.deckAnalysisComplete("1")]])
+        {
+            const emailContent = NotificationContent.toEmailContent(notification);
+            assert(
+                emailContent.subject.length > 0 && emailContent.headingText.length > 0 && emailContent.introText.length > 0,
+                `${builderName} resolves to a complete email payload`);
+        }
+    }
+    finally
+    {
+        NotificationQueryEngine.insertNotification = originalInsert;
+        PushTokenQueryEngine.listTokensForUser = originalListTokens;
+        FirebaseMessagingClient.isConfigured = originalIsConfigured;
+        AuthenticationQueryEngine.getUserById = originalGetUserById;
+        EmailProviderFactory.getDefaultProvider = originalGetDefaultProvider;
+        EmailSender.sendNotificationEmail = originalSendNotificationEmail;
     }
 
     // Model round-trips.
@@ -453,6 +551,7 @@ async function main()
     runContentBuilderChecks();
     await runBroadcasterChecks();
     runWiredModuleSmoke();
+    await runEmailChannelChecks();
     await runDatabaseTier();
     await runLiveFcmTier();
 

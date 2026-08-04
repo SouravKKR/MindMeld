@@ -32,6 +32,19 @@ class SyncApplier
     // Deck's own list.
     static ENTITY_CHANNEL_ADDITIONAL_DATA_KEYS = ["askAiPopupLinks", "contentOverlays"];
 
+    // Decks that arrived in a chunked-drain cycle before their parent did.
+    // Keyed by deck id, carrying the raw incoming deck data.
+    //
+    // A deck can only be attached once its parent is in the local tree, so
+    // #applyDeckChangesInOrder used to treat "parent not found" as a genuine
+    // orphan and queue a DELETION tombstone for it — which is correct for a
+    // single-cycle pull, but destroys data mid-drain, where the parent may
+    // simply be scheduled for a later chunk. Unresolved decks are parked here
+    // instead and retried at the head of every subsequent cycle; the final
+    // (non-chunked) cycle applies the original tombstone rule to whatever is
+    // still unresolved, so genuine orphans are still cleaned up.
+    static #deferredOrphanDeckDataById = new Map();
+
     // ── Apply server changes ──────────────────────────────────────────
 
     /**
@@ -47,8 +60,15 @@ class SyncApplier
      * parents" path was self-reinforcing because the missing parent
      * was genuinely gone server-side and the catastrophic resync just
      * re-uploaded the orphan from stale local state.
+     *
+     * @param {boolean} [bDeferUnresolvedDecks=false] Pass true while a chunked
+     *   drain is still running (the server reported `morePending`). A missing
+     *   parent is then treated as "not delivered yet" and the deck is parked in
+     *   #deferredOrphanDeckDataById for the next cycle instead of being
+     *   tombstoned. The final cycle passes false, so anything still unresolved
+     *   goes through the normal orphan cleanup.
      */
-    static async applyServerChanges(changes, dirtyDeckIds, onProgress = null)
+    static async applyServerChanges(changes, dirtyDeckIds, onProgress = null, bDeferUnresolvedDecks = false)
     {
         const deckChanges          = [];
         const cardChanges          = [];
@@ -87,7 +107,7 @@ class SyncApplier
             }
         }
 
-        SyncApplier.#applyDeckChangesInOrder(deckChanges, dirtyDeckIds);
+        SyncApplier.#applyDeckChangesInOrder(deckChanges, dirtyDeckIds, bDeferUnresolvedDecks);
 
         const totalApplyableCount = cardChanges.length + studyMaterialChanges.length + mockTestChanges.length + popupLinkChanges.length + contentOverlayChanges.length;
 
@@ -562,6 +582,10 @@ class SyncApplier
         const incomingContentOverlays = Array.isArray(snapshot?.contentOverlays) ? snapshot.contentOverlays : [];
 
         console.log(`[SyncApplier] applyBulkSnapshot: ${incomingDecks.length} decks, ${incomingCards.length} cards, ${incomingStudyMaterials.length} study materials, ${incomingMockTests.length} mock tests, ${incomingPopupLinks.length} popup link(s), ${incomingContentOverlays.length} content overlay(s).`);
+
+        // The snapshot replaces the whole tree, so any deck parked by a drain
+        // that this bulk pull is superseding is stale by definition.
+        SyncApplier.clearDeferredOrphanDecks();
 
         // Snapshot the existing in-memory deck IDs so we can blow away
         // their on-disk entries in the same IDB transaction as the
@@ -1065,16 +1089,60 @@ class SyncApplier
     // ── Per-entity helpers (private) ──────────────────────────────────
 
     /**
+     * Drops every deck parked by #applyDeckChangesInOrder without applying or
+     * tombstoning it. Called when the drain that parked them is abandoned (a
+     * failed cycle, or a bulk snapshot replacing the tree wholesale) so stale
+     * deck data can never leak into an unrelated later cycle.
+     */
+    static clearDeferredOrphanDecks()
+    {
+        if (SyncApplier.#deferredOrphanDeckDataById.size > 0)
+        {
+            console.warn(`[SyncApplier] Discarding ${SyncApplier.#deferredOrphanDeckDataById.size} deferred deck(s) — the drain that parked them is no longer running.`);
+        }
+        SyncApplier.#deferredOrphanDeckDataById.clear();
+    }
+
+    /**
      * Applies the queued deck-data array in dependency order so a child
      * deck whose parent is in the same batch isn't created before its
      * parent. Orphans (whose parent exists neither locally nor in the
      * batch) are queued as deletion tombstones via SyncTransport — the
      * next push tells the server to remove them and the server-side
-     * cascade ensures every device converges on the same state.
+     * cascade ensures every device converges on the same state — unless
+     * bDeferUnresolvedDecks says the drain still has chunks to deliver, in
+     * which case they are parked for the next cycle instead.
      */
-    static #applyDeckChangesInOrder(deckDataArray, dirtyDeckIds)
+    static #applyDeckChangesInOrder(deckDataArray, dirtyDeckIds, bDeferUnresolvedDecks = false)
     {
-        const remaining = [...deckDataArray];
+        // Decks parked by an earlier chunk go back in at the head of the batch,
+        // then this cycle's decks overwrite any duplicate id — the incoming
+        // copy is always the fresher one. Taking ownership of the buffer here
+        // means a cycle that resolves everything leaves it empty without any
+        // separate bookkeeping.
+        const pendingDeckDataById = new Map(SyncApplier.#deferredOrphanDeckDataById);
+        SyncApplier.#deferredOrphanDeckDataById = new Map();
+
+        // Deck data with no usable id can't be keyed, and collapsing several of
+        // them onto a single `undefined` key would silently drop all but the
+        // last. They bypass the dedup and go straight into the batch, where the
+        // existing per-deck apply handles (and logs) them exactly as before.
+        const unkeyableDeckDataArray = [];
+
+        for (let deckIndex = 0; deckIndex < deckDataArray.length; deckIndex++)
+        {
+            const incomingDeckData = deckDataArray[deckIndex];
+            if (typeof incomingDeckData.id === "string" && incomingDeckData.id.length > 0)
+            {
+                pendingDeckDataById.set(incomingDeckData.id, incomingDeckData);
+            }
+            else
+            {
+                unkeyableDeckDataArray.push(incomingDeckData);
+            }
+        }
+
+        const remaining = [...pendingDeckDataById.values(), ...unkeyableDeckDataArray];
         let processedCount;
 
         do
@@ -1095,6 +1163,24 @@ class SyncApplier
             }
         }
         while (processedCount > 0 && remaining.length > 0);
+
+        if (remaining.length > 0 && bDeferUnresolvedDecks)
+        {
+            // Mid-drain: the parent may simply belong to a later chunk. Park
+            // these and retry them next cycle rather than tombstoning a deck
+            // (and, via the server-side cascade, every card under it) that is
+            // about to become attachable.
+            for (let remainingIndex = 0; remainingIndex < remaining.length; remainingIndex++)
+            {
+                const deferredDeckData = remaining[remainingIndex];
+                if (typeof deferredDeckData.id === "string" && deferredDeckData.id.length > 0)
+                {
+                    SyncApplier.#deferredOrphanDeckDataById.set(deferredDeckData.id, deferredDeckData);
+                }
+            }
+            console.warn(`[SyncApplier] ${remaining.length} deck(s) deferred to the next drain chunk — parent not delivered yet.`);
+            return;
+        }
 
         if (remaining.length > 0)
         {

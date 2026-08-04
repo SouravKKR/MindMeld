@@ -3,6 +3,7 @@ const TaskManager = require("../../Globals/Classes/Task/TaskManager");
 const { taskStatus } = require("../../Globals/Enumerations/TaskStatus");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const { appendPostPipelineProgress } = require("../Helpers/AppendPostPipelineProgress");
+const ProgressVisibilityFilter = require("../../Globals/Classes/Task/ProgressVisibilityFilter");
 
 /**
  * Recursively fetches a task and all its descendants from Redis,
@@ -83,6 +84,29 @@ async function handleGetProgress(request, response)
         return;
     }
 
+    // Fetched once, up front: the ownership gate below, the partialCompletion
+    // marker, and the paused / image-failure flags all read the same root task.
+    const rootTask = await TaskManager.getTask(taskId);
+
+    if (!rootTask)
+    {
+        response.sendStatusCode(httpStatus.NOT_FOUND);
+        return;
+    }
+
+    // Ownership. This endpoint used to check only that SOMEBODY was logged in,
+    // so any signed-in user who knew (or guessed) a task id was handed another
+    // user's pipeline — including the deck ids and failure reasons on it. The
+    // sibling /Activity/Tasks/Progress and /Generate/Pause both already gate on
+    // the task's own userId; this now matches them. Administrators are exempt so
+    // they can still diagnose a stuck run from a reported task id.
+    const ownerUserId = (typeof rootTask.getUserId === "function") ? (rootTask.getUserId() || "") : "";
+    if (ownerUserId !== user.getId() && !ProgressVisibilityFilter.isAdministrator(user))
+    {
+        response.sendStatusCode(httpStatus.FORBIDDEN);
+        return;
+    }
+
     const tree = await buildTaskTree(taskId);
 
     if (!tree)
@@ -105,7 +129,6 @@ async function handleGetProgress(request, response)
     // settler when one output type failed but others were kept) so the client
     // can offer "kept N, retry the rest" instead of a bare "Failed". Lives on
     // the root task's payload; null on every normal run.
-    const rootTask = await TaskManager.getTask(taskId);
     tree.partialCompletion = (rootTask && rootTask.getPayload && rootTask.getPayload()) ? (rootTask.getPayload().partialCompletion || null) : null;
 
     // Flag a user-initiated pause so the client shows a "paused — resume later"
@@ -129,6 +152,11 @@ async function handleGetProgress(request, response)
     // Surface how long the live tree stays viewable (Redis 5h TTL) so the client
     // can tell the user how long they can close the page and still resume to watch.
     tree.remainingTtlMillis = await TaskManager.getRemainingTtlMillis(taskId);
+
+    // Stamp the server-computed overall roll-up for everyone, and strip the
+    // per-task tree for everyone who is not an administrator. Runs last: every
+    // flag above is derived from the children this may remove.
+    ProgressVisibilityFilter.apply(tree, user);
 
     response.sendJson(tree);
 }

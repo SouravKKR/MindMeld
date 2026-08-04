@@ -19,7 +19,7 @@
 #
 # Every run is gated on browser suites driven against the freshly-built bundle
 # BEFORE anything is baked or shipped: the seven interactive tutorials on EVERY
-# environment, plus 25 critical user flows on PRODUCTION. Needs a local Redis +
+# environment, plus 27 critical user flows on PRODUCTION. Needs a local Redis +
 # MongoDB and TUTORIAL_TEST_SESSION_COOKIE in deployment.env — Deployment.md §1.1.1.
 #
 # Flags (same meaning as the legacy deploy.sh):
@@ -467,6 +467,13 @@ restore_base_node_access()
 #     Slower and more data-churning than the tour walk, so it gates the one
 #     environment where a regression reaches real users.
 #
+#   * Synchronisation       — PRODUCTION only. 19 cases across THREE independent
+#     devices (separate browser contexts, so separate device ids, sync logs and
+#     IndexedDB copies): push, cross-device pull, deletion propagation, offline
+#     queueing, a multi-chunk drain of a seeded 260-card library, and
+#     convergence. Every case is asserted against MongoDB as well as the screen,
+#     because a broken sync still renders a tidy "Synced ✓".
+#
 # Both need (see Deployment.md §1.1.1):
 #   - Redis + MongoDB reachable per Dock/.env  (the same stack local dev uses)
 #   - TUTORIAL_TEST_SESSION_COOKIE in deployment.env — a sessionId for a seeded,
@@ -556,6 +563,21 @@ run_browser_test_gates()
         log_info "Critical-flow gate skipped for '$ENVIRONMENT_NAME' (production only)."
     fi
 
+    # The sync suite is production-only for the same reason, and matters more
+    # than any of the others: sync is where a regression DESTROYS data rather
+    # than merely breaking a screen. It drives three independent devices, seeds
+    # a library large enough to force the server's chunked pull, and asserts
+    # every browser-visible outcome against MongoDB — so it is also the slowest
+    # of the three. Widen it to every environment by dropping the condition if
+    # the extra minutes are worth it on development/testing too.
+    if [ "$gate_status" -eq 0 ] && [ "$ENVIRONMENT_NAME" = "production" ]
+    then
+        run_browser_suite "Synchronisation" "Common/Testing/Main/run_sync_ui_tests.js" "$REPOSITORY_ROOT/Common/Reports/.results/sync-ui.json" "$base_url" || gate_status=1
+    elif [ "$gate_status" -eq 0 ]
+    then
+        log_info "Synchronisation gate skipped for '$ENVIRONMENT_NAME' (production only)."
+    fi
+
     if [ "$started_dock" -eq 1 ]
     then
         log_step "Stopping the browser-gate Dock..."
@@ -570,6 +592,13 @@ run_browser_test_gates()
 # Runs one Puppeteer suite and reads its verdict out of the result JSON.
 # A SKIPPED verdict fails the gate just like a FAIL: it means the suite never
 # proved the behaviour, which is not something to deploy on.
+#
+# Every suite is run under a hard `timeout`. A Puppeteer suite CAN hang — a wait
+# on something that never arrives (a sync modal that never clears, a page that
+# never settles) is an infinite loop, not a slow test — and a hung gate is worse
+# than a red one: the deploy waits on it forever, produces no result file, and
+# nobody learns anything. The ceiling is deliberately generous; it is a
+# backstop, not a performance budget. Override with BROWSER_SUITE_TIMEOUT_MINUTES.
 run_browser_suite()
 {
     local suite_label="$1"
@@ -577,13 +606,27 @@ run_browser_suite()
     local result_file="$3"
     local base_url="$4"
 
-    log_step "$suite_label — driving Chromium against the freshly-built bundle..."
+    local suite_timeout_minutes="${BROWSER_SUITE_TIMEOUT_MINUTES:-45}"
+
+    log_step "$suite_label — driving Chromium against the freshly-built bundle (${suite_timeout_minutes}m ceiling)..."
 
     local suite_exit=0
     (
         cd "$REPOSITORY_ROOT"
-        BASE_URL="$base_url" TEST_SESSION_COOKIE="$TUTORIAL_TEST_SESSION_COOKIE" VERBOSE=1 node "$suite_script"
-    ) || suite_exit=1
+        BASE_URL="$base_url" TEST_SESSION_COOKIE="$TUTORIAL_TEST_SESSION_COOKIE" VERBOSE=1 \
+            timeout --signal=KILL "${suite_timeout_minutes}m" node "$suite_script"
+    ) || suite_exit=$?
+
+    # 137 is SIGKILL, i.e. the timeout fired. Call that out specifically: a
+    # hang and a crash need completely different investigation.
+    if [ "$suite_exit" -eq 137 ] || [ "$suite_exit" -eq 124 ]
+    then
+        log_error "$suite_label: HUNG — killed after ${suite_timeout_minutes} minutes without finishing."
+        log_error "This is not a slow suite; something is waiting on a condition that never becomes true."
+        log_error "Check Redis and MongoDB latency first (the sync engine stalls the whole app when either is slow),"
+        log_error "then $result_file for the last case that reported."
+        return 1
+    fi
 
     if [ "$suite_exit" -ne 0 ]
     then

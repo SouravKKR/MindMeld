@@ -178,6 +178,33 @@ async function runAlwaysOnTier()
     assert(escapedHtml.includes('alt="CogniumLearn"') && escapedHtml.includes('alt="Cognium Labs"'), "Both logos carry alt text for image-blocking clients");
     assert(EmailTemplate.codeBlock("123456").includes("white-space: nowrap"), "Code block is pinned to a single line");
 
+    // The notification email (generation complete, and every notification of
+    // that shape). It has to be the SAME brand as the sign-in code email — that
+    // is the whole reason it goes through EmailTemplate rather than being
+    // hand-rolled at the call site.
+    const notificationHtml = EmailTemplate.buildNotificationEmail(
+        "Your study set is ready",
+        "The generation you started has finished.",
+        "",
+        "Open CogniumLearn",
+        EmailTemplate.CALL_TO_ACTION_URL,
+        "You're receiving this because you started an AI generation.");
+    assert(notificationHtml.includes(EmailTemplate.PRODUCT_LOGO_URL), "Notification email carries the CogniumLearn logo");
+    assert(notificationHtml.includes(EmailTemplate.COMPANY_LOGO_URL), "Notification email carries the Cognium Labs logo");
+    assert(notificationHtml.includes('alt="CogniumLearn"') && notificationHtml.includes('alt="Cognium Labs"'), "Notification email logos carry alt text");
+    assert(notificationHtml.includes(`href="${EmailTemplate.CALL_TO_ACTION_URL}"`), "Notification email links its action button at the app");
+    assert(EmailTemplate.CALL_TO_ACTION_URL.startsWith("https://") && !EmailTemplate.CALL_TO_ACTION_URL.includes("?"), "Action URL is absolute and carries no query string (the root route 404s with one)");
+
+    // An empty action label omits the button rather than rendering an empty one.
+    const buttonlessHtml = EmailTemplate.buildNotificationEmail("Heading", "Intro", "", "", "", "Footer");
+    assert(!buttonlessHtml.includes("<a href"), "Notification email omits the action button when no label is given");
+
+    // The action button is markup built from caller-supplied strings, so both
+    // the label and the href must be escaped.
+    const hostileButton = EmailTemplate.callToActionButton('Click "me" & <b>win</b>', 'https://x/?a="onmouseover=alert(1)');
+    assert(!hostileButton.includes("<b>") && hostileButton.includes("&lt;b&gt;"), "Action button escapes HTML in its label");
+    assert(!/href="[^"]*"onmouseover/.test(hostileButton), "Action button escapes quotes in its URL so it cannot break out of the href");
+
     // EmailSender composes + dispatches through the active provider. Swap the
     // selection seam for a capturing provider (the DI point EmailSender uses).
     const originalGetDefaultProvider = EmailProviderFactory.getDefaultProvider;
@@ -197,6 +224,22 @@ async function runAlwaysOnTier()
         assert(otpMessage.getSourceEmail() === "noreply@cogniumlearn.io", "OTP email source is filled from EMAIL_SOURCE_EMAIL");
         assert(otpMessage.getSubject() === "Your CogniumLearn sign-in code", "OTP email carries the sign-in subject");
         assert(otpMessage.getPlainTextBody().includes("654321") && otpMessage.getHtmlBody().includes("654321"), "OTP email contains the code in both bodies");
+
+        await EmailSender.sendNotificationEmail("learner@example.com",
+        {
+            subject: "Your CogniumLearn study set is ready",
+            headingText: "Your study set is ready",
+            introText: "The generation you started has finished.",
+            highlightText: "",
+            callToActionLabel: "Open CogniumLearn",
+            footerText: "You're receiving this because you started an AI generation."
+        });
+        const notificationMessage = capturingProvider.sentMessages[capturingProvider.sentMessages.length - 1];
+        assert(notificationMessage.getSubject() === "Your CogniumLearn study set is ready", "Notification email carries the supplied subject");
+        assert(notificationMessage.getRecipientEmail() === "learner@example.com", "Notification email is addressed to the given learner");
+        // A client that strips the styled anchor must still get somewhere to go.
+        assert(notificationMessage.getPlainTextBody().includes(EmailTemplate.CALL_TO_ACTION_URL), "Notification email repeats the action URL in the plain-text body");
+        assert(notificationMessage.getHtmlBody().includes(EmailTemplate.PRODUCT_LOGO_URL), "Dispatched notification email carries the branded HTML body");
 
         await EmailSender.sendOrgAdminVerificationEmail("admin@example.com", "111222", "Acme Institute");
         const orgMessage = capturingProvider.sentMessages[capturingProvider.sentMessages.length - 1];

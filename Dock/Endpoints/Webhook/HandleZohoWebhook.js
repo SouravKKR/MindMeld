@@ -18,10 +18,13 @@ const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
  * over the exact bytes Zoho signed, not a re-serialised JSON.
  *
  * The server-authoritative safety net mirroring HandleRazorpayWebhook: it
- * completes the SAME three flows — organization payments (creation / expansion),
- * credit purchases, and admin credit-deal payments — for buyers/admins who pay
- * and then close the tab before the in-page verify runs. Paid-deck purchases
- * remain verify-only by design and fall through to PAYMENT_ROW_NOT_FOUND.
+ * completes three of HandleRazorpayWebhook's four flows — organization payments
+ * (creation / expansion), credit purchases, and admin credit-deal payments — for
+ * buyers/admins who pay and then close the tab before the in-page verify runs.
+ * Paid-deck purchases are NOT yet settled here and fall through to
+ * PAYMENT_ROW_NOT_FOUND; the Razorpay handler settles them through
+ * PaidDeckPurchaseCompletionService, which is provider-agnostic, so extending
+ * this handler is the same branch with paymentProviders.ZOHO.
  *
  * Identity mapping: Zoho's payments_session_id is the providerOrderId every
  * pending row is keyed by; payment_id is the providerPaymentId. Both echo back

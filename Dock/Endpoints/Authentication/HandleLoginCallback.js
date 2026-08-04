@@ -14,6 +14,7 @@ const Logger = require("../../Globals/Classes/Logger");
 const LogTitles = require("../../Globals/Classes/Logging/LogTitles");
 const { logCategory } = require("../../Globals/Enumerations/LogCategory");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const PaidDeckDeepLinkCookie = require("../Helpers/PaidDeckDeepLinkCookie");
 
 async function handleLoginCallback(request, response)
 {
@@ -35,6 +36,9 @@ async function handleLoginCallback(request, response)
         console.warn("[HandleLoginCallback] Rejected callback: login state mismatch.");
         response.clearCookie("loginState");
         response.clearCookie("provider");
+        // A rejected callback must not leave a pending deck behind for whoever
+        // signs in next on this browser.
+        PaidDeckDeepLinkCookie.clear(response);
         response.setHeader("Location", App.getOrigin());
         response.sendStatusCode(httpStatus.FOUND);
         return;
@@ -117,6 +121,7 @@ async function handleLoginCallback(request, response)
         console.warn("[HandleLoginCallback] Rejected callback: email not on the access allowlist.");
         response.clearCookie("loginState");
         response.clearCookie("provider");
+        PaidDeckDeepLinkCookie.clear(response);
         response.setHeader("Location", App.getOrigin() + "?authError=ACCESS_NOT_ALLOWED");
         response.sendStatusCode(httpStatus.FOUND);
         return;
@@ -276,7 +281,14 @@ async function handleLoginCallback(request, response)
     response.clearCookie("loginState");
     response.clearCookie("provider");
 
-    response.setHeader("Location", App.getOrigin());
+    // Resume the paid-deck store page this visitor scanned before signing in.
+    // The cookie holds a deck ID and nothing else; the destination is composed
+    // from App.getOrigin() inside the helper, so this can never redirect
+    // off-origin. No pending deck (the ordinary case) falls back to the origin.
+    const pendingPaidDeckId = await PaidDeckDeepLinkCookie.takePendingDeckId(request, response);
+    const paidDeckResumeLocation = PaidDeckDeepLinkCookie.buildResumeLocation(pendingPaidDeckId);
+
+    response.setHeader("Location", paidDeckResumeLocation || App.getOrigin());
     response.sendStatusCode(httpStatus.FOUND);
 
 }

@@ -158,9 +158,31 @@ if [ -n "${CLOUDFLARE_TUNNEL_TOKEN:-}" ]
 then
     # Token-based (remotely-managed) tunnel: the hostname route is configured in the
     # Cloudflare dashboard, so the base node needs no config.yml or credentials JSON.
-    # `service install <token>` is idempotent — re-running rewrites the unit.
+    #
+    # `cloudflared service install` is NOT idempotent — it REFUSES when a service already
+    # exists. Swallowing that error (the old `2>/dev/null || true`) left the previous unit
+    # in place, so a ROTATED TOKEN COULD NEVER TAKE EFFECT: the node kept reconnecting to
+    # the tunnel it was first installed with, serving that tunnel's hostname, while the
+    # intended tunnel showed zero connectors in the dashboard and its hostname returned
+    # Cloudflare 1033/530. Observed on development 2026-08-04 (still serving the
+    # pre-rebrand hostname months after the rename).
+    #
+    # So: compare the token already baked into the unit and reinstall only when it differs
+    # — a full stop/uninstall/install on every deploy would add avoidable tunnel downtime.
     echo "    Using token-based (remotely-managed) tunnel."
-    cloudflared service install "$CLOUDFLARE_TUNNEL_TOKEN" 2>/dev/null || true
+    if grep -qF -- "$CLOUDFLARE_TUNNEL_TOKEN" /etc/systemd/system/cloudflared.service 2>/dev/null
+    then
+        echo "    cloudflared is already installed with this token."
+    else
+        echo "    Token differs from the installed service (or none installed) — reinstalling."
+        systemctl stop cloudflared 2>/dev/null || true
+        cloudflared service uninstall 2>/dev/null || true
+        systemctl disable cloudflared 2>/dev/null || true
+        rm -f /etc/systemd/system/cloudflared.service
+        rm -rf /etc/cloudflared
+        systemctl daemon-reload 2>/dev/null || true
+        cloudflared service install "$CLOUDFLARE_TUNNEL_TOKEN"
+    fi
     systemctl enable cloudflared 2>/dev/null || true
     systemctl restart cloudflared 2>/dev/null || true
 else

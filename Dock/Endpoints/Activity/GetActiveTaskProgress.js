@@ -3,6 +3,8 @@ const TaskHistoryQueryEngine = require("../../Globals/Classes/Database/TaskHisto
 const { taskStatus } = require("../../Globals/Enumerations/TaskStatus");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const { appendPostPipelineProgress } = require("../Helpers/AppendPostPipelineProgress");
+const ProgressVisibilityFilter = require("../../Globals/Classes/Task/ProgressVisibilityFilter");
+const { getUser } = require("../Helpers/GetUser");
 
 
 /**
@@ -83,6 +85,14 @@ class GetActiveTaskProgressEndpoint
             tree.imagePreparationFailed = !!(rootPayload && typeof rootPayload === "object" && rootPayload.error === TaskManager.IMAGE_PREPARATION_FAILED_REASON);
             tree.providerSlowdown = await TaskManager.isProviderSlowdownActive(taskId);
             tree.remainingTtlMillis = await TaskManager.getRemainingTtlMillis(taskId);
+
+            // Stamp the server-computed overall roll-up and, for everyone who is
+            // not an administrator, strip the per-task tree — identical treatment
+            // to /Generate/Progress, so reopening a live run from Activity shows
+            // exactly what the generation page showed. The role needs the User
+            // record, which the session alone does not carry.
+            ProgressVisibilityFilter.apply(tree, await getUser(request));
+
             response.sendJson(tree);
             return;
         }

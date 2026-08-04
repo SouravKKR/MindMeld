@@ -57,6 +57,47 @@ class EmailSender
         await EmailSender.send(emailMessage);
     }
 
+    /**
+     * Sends a user notification as email — the channel that still reaches
+     * someone who closed the tab, which is the whole point of telling users they
+     * can walk away from a long generation.
+     *
+     * Chooses no copy of its own: the content arrives pre-resolved from
+     * NotificationContent.toEmailContent(...) so the notification catalogue
+     * stays the single place wording lives. This method only composes and
+     * dispatches.
+     *
+     * @param {{subject: string, headingText: string, introText: string, highlightText: string, callToActionLabel: string, footerText: string}} emailContent
+     * @returns {Promise<void>}
+     */
+    static async sendNotificationEmail(toEmailAddress, emailContent)
+    {
+        const callToActionLabel = String(emailContent?.callToActionLabel ?? "").trim();
+
+        // The URL goes in the plain-text body too — a client that strips the
+        // styled anchor would otherwise leave a "come back and study" message
+        // with nothing to act on.
+        const plainTextBody = [
+            String(emailContent?.introText ?? ""),
+            String(emailContent?.highlightText ?? ""),
+            callToActionLabel.length > 0 ? `${callToActionLabel}: ${EmailTemplate.CALL_TO_ACTION_URL}` : "",
+            String(emailContent?.footerText ?? "")
+        ].filter(section => section.trim().length > 0).join("\n\n");
+
+        const htmlBody = EmailTemplate.buildNotificationEmail
+        (
+            String(emailContent?.headingText ?? ""),
+            String(emailContent?.introText ?? ""),
+            String(emailContent?.highlightText ?? ""),
+            callToActionLabel,
+            EmailTemplate.CALL_TO_ACTION_URL,
+            String(emailContent?.footerText ?? "")
+        );
+
+        const emailMessage = new EmailMessage("", toEmailAddress, String(emailContent?.subject ?? ""), plainTextBody, htmlBody);
+        await EmailSender.send(emailMessage);
+    }
+
     static async sendOrgAdminVerificationEmail(toEmailAddress, sixDigitCode, organizationName)
     {
         // Distinct subject + body from sendOtpEmail so the recipient knows

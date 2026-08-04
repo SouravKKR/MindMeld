@@ -9,6 +9,12 @@ import PaidDeckStudyGate from "../../../Globals/Classes/PaidDeckStudyGate.js";
 
 class MockTestPickerModal
 {
+    // TEMPORARY: the question paper PDF download is hidden while the export is
+    // being refined. The print preview itself still works — only the "Download
+    // PDF" button is withheld. This will be unhidden later; flip back to false
+    // to restore it (nothing else was removed).
+    static QUESTION_PAPER_DOWNLOAD_TEMPORARILY_HIDDEN = true;
+
     /**
      * Displays the mock test picker modal for a given deck.
      * Shows a card for each available mock test with Take Test, Print, and History actions.
@@ -482,18 +488,25 @@ class MockTestPickerModal
             loadingOverlay.remove();
         }
 
-        printDialog.querySelector(".mock-test-print-download-button").addEventListener("click", () =>
+        // Null while QUESTION_PAPER_DOWNLOAD_TEMPORARILY_HIDDEN is on — the
+        // button is not rendered. The handler below is kept intact so the
+        // download works again the moment the flag is flipped back.
+        const printDownloadButton = printDialog.querySelector(".mock-test-print-download-button");
+        if (printDownloadButton)
         {
-            // Reuse the blob we already built rather than calling
-            // MockTestSession.downloadPdf, which would re-run the full PDF
-            // generation pipeline a second time.
-            const downloadLink = document.createElement("a");
-            downloadLink.href = blobUrl;
-            downloadLink.download = `${mockTest.getTitle() || "Mock Test"}.pdf`;
-            document.body.appendChild(downloadLink);
-            downloadLink.click();
-            downloadLink.remove();
-        });
+            printDownloadButton.addEventListener("click", () =>
+            {
+                // Reuse the blob we already built rather than calling
+                // MockTestSession.downloadPdf, which would re-run the full PDF
+                // generation pipeline a second time.
+                const downloadLink = document.createElement("a");
+                downloadLink.href = blobUrl;
+                downloadLink.download = `${mockTest.getTitle() || "Mock Test"}.pdf`;
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                downloadLink.remove();
+            });
+        }
 
         // Mobile browsers (iOS Safari, Android Chrome) refuse to render
         // PDF blob: URLs in <iframe>, leaving the preview area blank.
@@ -530,10 +543,10 @@ class MockTestPickerModal
                     <div class="mock-test-print-modal-toolbar-title">${title}</div>
                     <div class="mock-test-print-modal-toolbar-meta">${metaText}</div>
                 </div>
-                <button class="mock-test-print-download-button">
+                ${MockTestPickerModal.QUESTION_PAPER_DOWNLOAD_TEMPORARILY_HIDDEN ? "" : `<button class="mock-test-print-download-button">
                     <img class="mock-test-print-download-icon" src="./Globals/Assets/Images/Icons/DownloadIcon.svg" alt="">
                     Download PDF
-                </button>
+                </button>`}
             </div>
             <div class="mock-test-print-modal-preview-area">
                 <iframe

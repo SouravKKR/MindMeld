@@ -1,0 +1,19 @@
+The Five-Phase Learning Lifecycle
+
+Acquire. Learning begins with acquisition: reading, listening, or watching. Material that has only been acquired is not yet retained. Acquisition establishes exposure, not memory, and mistaking the two is the most common reason a confident reader fails a test on what they just read.
+
+Encode. Encoding converts exposure into a retrievable trace. Spaced repetition belongs to the Encode phase: a flashcard reviewed at expanding intervals is re-encoded each time it is recalled, and each successful recall lengthens the next interval. A card recalled with difficulty is scheduled sooner; a card recalled easily is pushed further out.
+
+Consolidate. Consolidation stabilises encoded traces over hours and days, largely during sleep. Interleaving related topics during consolidation produces more durable retention than blocking a single topic, even though blocking feels more productive while it is happening. This gap between how learning feels and how well it works is called a desirable difficulty.
+
+Validate. Validation tests whether retention is real. Mock tests belong to the Validate phase, because a graded attempt under time pressure measures retrieval rather than recognition. Recognition is the sense that an answer looks familiar once seen; retrieval is producing it from nothing. Only retrieval predicts performance under examination conditions.
+
+Reflect. Reflection converts a validation result into a revised plan: which topics were weak, which intervals were too long, and which material must return to the Encode phase. A lifecycle without reflection repeats the same schedule regardless of evidence, which is how a learner can revise diligently for weeks and improve very little.
+
+Key terms
+
+Retrieval practice: producing an answer from memory rather than reviewing it.
+Expanding interval: a review schedule whose gaps lengthen after each success.
+Interleaving: mixing related topics within one session rather than blocking them.
+Recognition versus recall: knowing an answer looks right versus producing it unaided.
+Desirable difficulty: a study condition that feels harder but retains better.

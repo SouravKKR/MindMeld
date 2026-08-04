@@ -1,4 +1,5 @@
 import os
+import time
 
 from Globals.Enumerations.TaskStatus import TaskStatus
 from Globals.Classes.Task.TaskDescriptor import TaskDescriptor
@@ -6,7 +7,9 @@ from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Enumerations.TaskTypes import TaskTypes
 from Globals.Classes.Credits.CreditConfigurationStore import CreditConfigurationStore
 from Globals.Classes.Credits.CreditLedger import CreditLedger
+from Globals.Classes.Credits.CreditMeter import CreditMeter
 from Globals.Classes.Credits.TaskCreditCharger import TaskCreditCharger
+from Globals.Classes.Credits.TaskUsageReporter import TaskUsageReporter
 from Workflows.Workflow import Workflow
 
 
@@ -22,10 +25,65 @@ class TaskRunner:
     """
 
     @staticmethod
+    async def _resolve_owning_user_id(task_descriptor: TaskDescriptor) -> str:
+        """
+        Resolves the account a task's usage belongs to. Child tasks in a
+        generation tree are created without a userId — only the main task
+        carries it — so an absent id is inherited from the main task. Without
+        this a child task with a minimum-balance rule is wrongly denied
+        (INSUFFICIENT_CREDITS), and any per-task charge silently no-ops because
+        CreditLedger ignores an empty user.
+        """
+        user_id = task_descriptor.get_user_id()
+        if user_id:
+            return user_id
+
+        main_task_id = os.getenv("MAIN_TASK_ID")
+        if not main_task_id:
+            return ""
+
+        main_task = await TaskManager.get_task(main_task_id)
+        if main_task is None:
+            return ""
+
+        return main_task.get_user_id() or ""
+
+    @staticmethod
+    async def _is_paid_deck_generation(task_descriptor: TaskDescriptor) -> bool:
+        """
+        True when this task belongs to a paid-deck generation run.
+
+        Paid-deck generation is an ADMIN-side authoring operation — the operator
+        is producing catalogue content, not consuming the product — so it is
+        never charged. The flag lives on the run's GeneralGenerationSettings and
+        reaches tasks two different ways: the main task's payload IS the
+        settings JSON (see PrepareForGeneration.__init__), while some child
+        payloads carry a copy of the flag directly (PrepareImages reads
+        payload["paidDeckMode"]). Both are checked, because neither alone covers
+        every task in the tree.
+        """
+        own_payload = task_descriptor.get_payload() or {}
+        if own_payload.get("paidDeckMode") is True:
+            return True
+
+        main_task_id = os.getenv("MAIN_TASK_ID")
+        if not main_task_id or main_task_id == task_descriptor.get_id():
+            return False
+
+        main_task = await TaskManager.get_task(main_task_id)
+        if main_task is None:
+            return False
+
+        main_payload = main_task.get_payload() or {}
+        return main_payload.get("paidDeckMode") is True
+
+    @staticmethod
     async def _evaluate_credit_gate(task_descriptor: TaskDescriptor, task_type: TaskTypes) -> dict:
         """
         Decides what the credit subsystem should do for this task:
-          - {"action": "allow_free"}  — no rule configured → run unmetered.
+          - {"action": "allow_free", "reason": ...}  — no rule configured → run unmetered.
+          - {"action": "exempt", "reason": ...}  — chargeable in principle, but this
+            run is never billed (paid-deck authoring).
           - {"action": "deny", "error": ...}  — rule disabled (SERVICE_DISABLED) or
             the user lacks the minimum balance to run (INSUFFICIENT_CREDITS).
           - {"action": "charge", "charger": TaskCreditCharger}  — enabled rule.
@@ -33,34 +91,28 @@ class TaskRunner:
         falls back to allowing the task.
         """
         try:
+            # Checked FIRST, ahead of the rule lookup and the balance gate. A
+            # paid-deck run must not be refused for a balance it should never
+            # have needed, and the exemption is a property of the run rather
+            # than of the pricing configuration.
+            if await TaskRunner._is_paid_deck_generation(task_descriptor):
+                return {"action": "exempt", "reason": TaskUsageReporter.BILLING_NOTE_PAID_DECK}
+
             configuration = await CreditConfigurationStore.load()
             if configuration is None:
-                return {"action": "allow_free"}
+                return {"action": "allow_free", "reason": TaskUsageReporter.BILLING_NOTE_NO_RULE}
 
             rule = configuration.get_rule_for_task(int(task_type.value))
 
             # No rule configured at all → unmetered → run free.
             if rule is None:
-                return {"action": "allow_free"}
+                return {"action": "allow_free", "reason": TaskUsageReporter.BILLING_NOTE_NO_RULE}
 
             # Rule present but disabled → the service is denied, not free.
             if not rule.get_enabled():
                 return {"action": "deny", "error": "SERVICE_DISABLED"}
 
-            user_id = task_descriptor.get_user_id()
-
-            # Child tasks in a generation tree are created without a userId —
-            # only the main task carries it. Inherit it from the main task so
-            # both the balance gate below and per-task charging resolve the
-            # right account; without this a child task with a minimum-balance
-            # rule is wrongly denied (INSUFFICIENT_CREDITS), and any per-task
-            # charge silently no-ops because CreditLedger ignores an empty user.
-            if not user_id:
-                main_task_id = os.getenv("MAIN_TASK_ID")
-                if main_task_id:
-                    main_task = await TaskManager.get_task(main_task_id)
-                    if main_task is not None:
-                        user_id = main_task.get_user_id()
+            user_id = await TaskRunner._resolve_owning_user_id(task_descriptor)
 
             # Entry requirement: the user must already hold at least this much.
             minimum_to_run = rule.get_minimum_balance_to_run()
@@ -78,7 +130,7 @@ class TaskRunner:
             return {"action": "charge", "charger": charger}
         except Exception as credit_error:
             print(f"[Credits] gate evaluation failed: {credit_error}")
-            return {"action": "allow_free"}
+            return {"action": "allow_free", "reason": TaskUsageReporter.BILLING_NOTE_NO_RULE}
 
 
     @staticmethod
@@ -217,6 +269,14 @@ class TaskRunner:
             return
 
         task_type: TaskTypes = task_descriptor.get_type()
+        task_start_time = time.time()
+
+        # The meter is process-global and the long-lived Agent/Worker.py runs
+        # task after task in one interpreter, so without this the next task
+        # inherits the previous one's tokens and is billed for work it never
+        # did. Reset before the gate, so even a task that is denied leaves a
+        # clean meter behind it.
+        CreditMeter.reset()
 
         # Mark as in progress before any work begins so the frontend shows the correct state
         task_descriptor.set_status(TaskStatus.IN_PROGRESS)
@@ -266,6 +326,21 @@ class TaskRunner:
                     await credit_charger.settle(bFailed)
                 except Exception as settle_error:
                     print(f"[Credits] settle failed: {settle_error}")
+            else:
+                # Free task — unmetered (no spend rule) or exempt (paid-deck).
+                # It still made real model calls, so its usage is reported with
+                # credits = 0 and the reason it was not billed. Without this the
+                # spend is invisible: TaskCreditCharger.settle is the only other
+                # place an AI_REQUEST record is written, and it never runs here.
+                await TaskUsageReporter.report(
+                    user_id = await TaskRunner._resolve_owning_user_id(task_descriptor),
+                    task_id = task_descriptor.get_id(),
+                    task_type = int(task_type.value),
+                    start_time = task_start_time,
+                    credits_charged = 0,
+                    b_failed = bFailed,
+                    billing_note = credit_gate.get("reason", ""),
+                )
 
             if bFailed:
                 task_descriptor.set_status(TaskStatus.FAILED)

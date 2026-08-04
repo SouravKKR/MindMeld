@@ -5,6 +5,7 @@ import PaidDeckPurchaseFlow from "../../Globals/Classes/PaidDeckPurchaseFlow.js"
 import PaidDeckRegistry from "../../Globals/Classes/PaidDeckRegistry.js";
 import PaidDeckBadgeChip from "./Components/PaidDeckBadgeChip.js";
 import PaidDeckTreePreview from "./Components/PaidDeckTreePreview.js";
+import PaidDeckShareQrPanel from "./Components/PaidDeckShareQrPanel.js";
 import PaidDeckThumbnails from "../../Globals/Classes/PaidDeckThumbnails.js";
 import ManagePaidDeckCopiesDialog from "../Home/Components/ManagePaidDeckCopiesDialog.js";
 import LicenseConstants from "../../Globals/Constants/LicenseConstants.js";
@@ -53,6 +54,7 @@ class PaidDeckDetailsPage extends HTMLElement
         this.innerHTML = this.#renderPageMarkup();
 
         this.#mountTreePreview();
+        this.#mountShareQrPanel();
         this.#wireCallToActionButton();
     }
 
@@ -207,6 +209,11 @@ class PaidDeckDetailsPage extends HTMLElement
                     <h3 class="paid-deck-details-section-heading">What's inside</h3>
                     <paid-deck-tree-preview data-role="tree-preview"></paid-deck-tree-preview>
                 </section>
+
+                <section class="paid-deck-details-section">
+                    <h3 class="paid-deck-details-section-heading">Share this deck</h3>
+                    <paid-deck-share-qr-panel data-role="share-qr-panel"></paid-deck-share-qr-panel>
+                </section>
             </div>
         `;
     }
@@ -224,6 +231,23 @@ class PaidDeckDetailsPage extends HTMLElement
             // initialize() ran after connectedCallback already fired —
             // re-trigger its render. New elements don't hit this path.
             treePreviewElement.connectedCallback();
+        }
+    }
+
+    // A storefront page is only shareable if the listing is on the store, and
+    // everything reaching this page came out of a published-only query — so the
+    // panel is always mounted as published here. The admin panel is the one
+    // caller that can hand it an unpublished deck.
+    #mountShareQrPanel()
+    {
+        const sharePanelElement = this.querySelector('[data-role="share-qr-panel"]');
+        if (!sharePanelElement) return;
+        sharePanelElement.initialize(this.#deck.id, this.#deck.title || "", true);
+        if (sharePanelElement.isConnected)
+        {
+            // initialize() ran after connectedCallback already fired —
+            // re-trigger its render. New elements don't hit this path.
+            sharePanelElement.connectedCallback();
         }
     }
 

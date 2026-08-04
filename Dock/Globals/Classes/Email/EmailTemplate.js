@@ -19,6 +19,14 @@ class EmailTemplate
     static PRODUCT_LOGO_URL = `${EmailTemplate.ASSET_BASE_URL}/Globals/Assets/Images/Logos/CogniumLearnLogoEmail.png`;
     static COMPANY_LOGO_URL = `${EmailTemplate.ASSET_BASE_URL}/Globals/Assets/Images/Logos/CogniumLabsLogoEmail.png`;
 
+    // Where a notification email's action button points. The frontend is a
+    // Web-Component page stack with no URL-addressable routes — PageNavigator
+    // pushes history sentinels, not paths — so the app root is the deepest
+    // honest target today. Deliberately carries NO query string: the root route
+    // 404s when one is appended (packetron path normalisation), so a tracking
+    // parameter would have to go on /index.html instead.
+    static CALL_TO_ACTION_URL = EmailTemplate.ASSET_BASE_URL;
+
     static #CONTAINER_STYLE = "font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background-color: #ffffff; color: #1a1a1a;";
     static #BRAND_ROW_STYLE = "margin: 0 0 24px 0;";
     static #PRODUCT_LOGO_STYLE = "display: block; border: 0;";
@@ -39,6 +47,10 @@ class EmailTemplate
     // heading.
     static #QUOTE_STYLE = "font-size: 14px; line-height: 1.6; margin: 0 0 24px 0; padding: 16px 20px; background-color: #f5f5f7; border-left: 3px solid #1a1a1a; border-radius: 6px; color: #1a1a1a; white-space: pre-wrap;";
     static #HIGHLIGHT_STYLE = "font-size: 14px; line-height: 1.5; margin: 0 0 24px 0; padding: 14px 18px; background-color: #f0f7f2; border-radius: 6px; color: #1f5132; font-weight: 600;";
+    // A plain styled anchor rather than table/VML button chrome: it degrades to
+    // an ordinary link in every client, and the same URL is repeated in the
+    // plain-text body for the ones that strip styling entirely.
+    static #CALL_TO_ACTION_STYLE = "display: inline-block; padding: 12px 24px; margin: 0 0 24px 0; background-color: #1a1a1a; color: #ffffff; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600;";
 
     /**
      * Escapes a value for safe interpolation into email HTML. Every dynamic
@@ -126,6 +138,48 @@ class EmailTemplate
             EmailTemplate.paragraph(introText) +
             EmailTemplate.codeBlock(code) +
             EmailTemplate.footer(footerText) +
+            EmailTemplate.companySignature();
+
+        return EmailTemplate.wrap(innerHtml);
+    }
+
+    /**
+     * The single primary action of a notification email. Both the label and the
+     * URL are escaped — the URL lands in an href attribute, and escapeHtml
+     * already neutralises the quote characters that would break out of it.
+     */
+    static callToActionButton(labelText, targetUrl)
+    {
+        return `<a href="${EmailTemplate.escapeHtml(targetUrl)}" style="${EmailTemplate.#CALL_TO_ACTION_STYLE}">${EmailTemplate.escapeHtml(labelText)}</a>`;
+    }
+
+    /**
+     * The generic notification email — "your study set is ready" and every
+     * future notification of that shape. Third sibling of buildCodeEmail and
+     * buildSupportTicketEmail: same brandHeader() first and companySignature()
+     * last, so a completion email carries the CogniumLearn logo and the "by
+     * Cognium Labs" mark exactly like the sign-in code email does.
+     *
+     * Every argument is escaped by the helper it passes through, so callers hand
+     * over raw text. Empty highlight / action / footer values omit their block.
+     *
+     * @param {string} headingText
+     * @param {string} introText
+     * @param {string} highlightText emphasised one-liner ("" to omit)
+     * @param {string} callToActionLabel button label ("" to omit the button)
+     * @param {string} callToActionUrl where the button points
+     * @param {string} footerText
+     * @returns {string}
+     */
+    static buildNotificationEmail(headingText, introText, highlightText, callToActionLabel, callToActionUrl, footerText)
+    {
+        const innerHtml =
+            EmailTemplate.brandHeader() +
+            EmailTemplate.heading(headingText) +
+            EmailTemplate.paragraph(introText) +
+            (String(highlightText ?? "").trim().length > 0 ? EmailTemplate.highlight(highlightText) : "") +
+            (String(callToActionLabel ?? "").trim().length > 0 ? EmailTemplate.callToActionButton(callToActionLabel, callToActionUrl) : "") +
+            (String(footerText ?? "").trim().length > 0 ? EmailTemplate.footer(footerText) : "") +
             EmailTemplate.companySignature();
 
         return EmailTemplate.wrap(innerHtml);

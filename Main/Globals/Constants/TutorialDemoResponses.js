@@ -169,70 +169,52 @@ class TutorialDemoResponses
     }
 
     /**
-     * An ordered list of task-tree snapshots that climb from "queued" to
-     * a fully completed pipeline, each shaped like a /Generate/Progress
-     * payload for GenerationProgressComponent.update(). The last entry is
-     * terminal (every node COMPLETED) so the progress page shows its
-     * success banner. The root is intentionally NOT typed
-     * PREPARE_FOR_GENERATION-with-a-real-task so the page's credit-summary
-     * fetch is never attempted (the page also guards that on tutorial
-     * mode).
+     * An ordered list of progress snapshots that climb from "queued" to a fully
+     * completed pipeline, each shaped like a /Generate/Progress payload for
+     * GenerationProgressComponent.update(). The last entry is terminal so the
+     * progress page shows its success banner. The root is intentionally NOT
+     * typed PREPARE_FOR_GENERATION-with-a-real-task so the page's credit-summary
+     * fetch is never attempted (the page also guards that on tutorial mode).
      * @returns {object[]}
      */
     static getGenerationProgressSnapshots()
     {
-        const buildTree = (syllabusCompletion, flashcardCompletion, studyMaterialCompletion) =>
+        // Shaped like the payload a real (non-administrator) user receives from
+        // /Generate/Progress: the server's overall roll-up and no task tree. The
+        // tutorial has to show what the user will actually meet — demonstrating
+        // a per-task tree that only administrators ever see would teach a screen
+        // that does not exist for the person being taught.
+        const buildSnapshot = (syllabusCompletion, flashcardCompletion, studyMaterialCompletion) =>
         {
             const statusFor = (completion) =>
             {
                 if (completion >= 1) return taskStatus.COMPLETED;
-                if (completion > 0)  return taskStatus.IN_PROGRESS;
+                if (completion > 0) return taskStatus.IN_PROGRESS;
                 return taskStatus.NOT_STARTED;
             };
 
             const overallCompletion = (syllabusCompletion + flashcardCompletion + studyMaterialCompletion) / 3;
+            const overallStatus = statusFor(overallCompletion);
 
             return {
                 id: "tutorial-demo-root",
                 type: taskTypes.PREPARE_FOR_GENERATION,
-                status: statusFor(overallCompletion),
+                status: overallStatus,
                 completion: overallCompletion,
                 parentTaskId: null,
-                children:
-                [
-                    {
-                        id: "tutorial-demo-syllabus",
-                        type: taskTypes.PROCESS_SYLLABUS,
-                        status: statusFor(syllabusCompletion),
-                        completion: syllabusCompletion,
-                        parentTaskId: "tutorial-demo-root",
-                        children: []
-                    },
-                    {
-                        id: "tutorial-demo-flashcards",
-                        type: taskTypes.GENERATE_FLASHCARDS,
-                        status: statusFor(flashcardCompletion),
-                        completion: flashcardCompletion,
-                        parentTaskId: "tutorial-demo-root",
-                        children: []
-                    },
-                    {
-                        id: "tutorial-demo-study-material",
-                        type: taskTypes.GENERATE_STUDY_MATERIAL,
-                        status: statusFor(studyMaterialCompletion),
-                        completion: studyMaterialCompletion,
-                        parentTaskId: "tutorial-demo-root",
-                        children: []
-                    }
-                ]
+                overallCompletion: overallCompletion,
+                overallStatus: overallStatus,
+                isTerminal: overallStatus === taskStatus.COMPLETED,
+                failureMessage: null,
+                summaryOnly: true
             };
         };
 
         return [
-            buildTree(0.2, 0, 0),
-            buildTree(1, 0.4, 0),
-            buildTree(1, 1, 0.5),
-            buildTree(1, 1, 1)
+            buildSnapshot(0.2, 0, 0),
+            buildSnapshot(1, 0.4, 0),
+            buildSnapshot(1, 1, 0.5),
+            buildSnapshot(1, 1, 1)
         ];
     }
 

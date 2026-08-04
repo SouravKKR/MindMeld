@@ -88,6 +88,28 @@ generation-progress-component
     padding: 30px 0;
 }
 
+/* Shown in place of the task tree to everyone who does not get the tree. Sized
+   as an informational note rather than a banner — it tells the user they are
+   free to leave, it is not a warning. */
+.task-tree-summary-note
+{
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--secondary-text-color, #9a9a9a);
+    text-align: center;
+    padding: 4px 12px;
+}
+
+.task-tree-summary-note:first-child
+{
+    padding-top: 24px;
+}
+
+.task-tree-summary-note:last-child
+{
+    padding-bottom: 24px;
+}
+
 .task-node
 {
     display: flex;

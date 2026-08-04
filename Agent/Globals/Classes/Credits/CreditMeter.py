@@ -1,8 +1,14 @@
-# Process-global token accumulator. Each Agent subprocess runs exactly one
-# task, so a module-level counter cleanly captures that task's total LLM
-# token usage with no plumbing through the workflow call tree. GoogleEnterpriseAiProvider
-# and BatchSubmitter record into it after every call; TaskCreditCharger reads
-# the snapshot when it computes token-based costs.
+# Process-global token accumulator for the CURRENTLY-RUNNING task. A
+# module-level counter captures a task's total LLM token usage with no plumbing
+# through the workflow call tree. GoogleEnterpriseAiProvider, AnthropicProvider
+# and the cache-hit path record into it after every call; TaskCreditCharger
+# reads the snapshot when it computes token-based costs.
+#
+# "Process-global" is NOT "one task per process". The one-shot Agent/Main.py
+# launcher does run a single task, but Agent/Worker.py is a long-lived poller
+# that runs task after task in the same interpreter. TaskRunner.run_task
+# therefore calls reset() before every task — without it, a worker's second
+# task inherits the first task's tokens and is billed for work it never did.
 #
 # Two parallel totals are kept:
 #   - raw tokens        : the actual counts the provider reported (or, when
@@ -139,6 +145,43 @@ class CreditMeter:
                 "[CreditMeter] Provider returned no usage — billing this task "
                 "from chars/4 token estimates. (Logged once per process.)"
             )
+
+        CreditMeter.record(input_tokens, output_tokens, model)
+
+        return {"inputTokens": int(input_tokens), "outputTokens": int(output_tokens)}
+
+    @staticmethod
+    def record_cached_usage(usage_metadata: dict, model: str = None, fallback_input_text: str = None, fallback_output_text: str = None) -> dict:
+        """
+        Records the usage of an answer served from ResponseCache instead of the
+        provider.
+
+        A cache hit is billed exactly like a live call, and deliberately so. The
+        cache is an infrastructure optimisation that saves the PROVIDER cost,
+        not the user's price: the user asked for work and received the finished
+        work, so they pay for it. The key matters more than it looks — it is a
+        hash of model + prompt only, with no account in it, so the cache is
+        shared across every user. Billing a hit at zero would mean the first
+        person to generate a given syllabus pays and everyone after them
+        generates the same deck for free, forever. The most popular content
+        would be the least profitable.
+
+        Entries written before usage was persisted carry none, so each missing
+        dimension falls back to the same chars/4 estimate record_from_response
+        uses. An approximate charge is right; a zero charge is not.
+        """
+        usage_metadata = usage_metadata or {}
+
+        input_tokens = int(usage_metadata.get("inputTokens", 0) or 0)
+        output_tokens = int(usage_metadata.get("outputTokens", 0) or 0)
+
+        if input_tokens == 0 and fallback_input_text:
+            input_tokens = TokenSafeContent.estimate_token_count(fallback_input_text)
+        if output_tokens == 0 and fallback_output_text:
+            output_tokens = TokenSafeContent.estimate_token_count(fallback_output_text)
+
+        if input_tokens == 0 and output_tokens == 0:
+            return None
 
         CreditMeter.record(input_tokens, output_tokens, model)
 
