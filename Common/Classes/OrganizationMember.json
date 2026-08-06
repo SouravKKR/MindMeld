@@ -28,6 +28,32 @@
             "datatype": "string",
             "defaultValue": ""
         },
+        "delegatePowers":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "tags":
+        {
+            "datatype": "array<string>",
+            "defaultValue": []
+        },
+        "attributes":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        },
+        "attributesNormalised":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        },
+        "attributesComparable":
+        {
+            "datatype": "object",
+            "defaultValue": {}
+        },
         "addedAt":
         {
             "datatype": "date",

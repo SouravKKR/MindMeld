@@ -8,7 +8,7 @@ const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 /**
  * POST /Credits/Purchase/Verify
  *
- * Completes a credit purchase after Zoho Payments checkout. Only the
+ * Completes a credit purchase after Razorpay Checkout. Only the
  * payment-identifying fields are trusted from the client — the credit
  * quantity and amount come from the server-side pendingCreditOrders row
  * created at initiation. The grant itself is idempotent (referenceKey

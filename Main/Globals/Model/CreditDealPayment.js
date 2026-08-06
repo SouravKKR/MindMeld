@@ -26,9 +26,10 @@ class CreditDealPayment
     #hasInvoice;
     #createdByUserId;
     #createdAt;
+    #capturedAt;
     #additionalData;
 
-    constructor({targetType = 0, targetId = '', label = '', mode = 0, status = 0, amountMinor = 0, currency = 'INR', paymentProvider = 0, providerOrderId = '', providerPaymentId = '', invoiceFileName = '', invoiceMimeType = '', invoiceBucketPath = '', invoiceSizeBytes = 0, invoiceUploadedAt = new Date(), hasInvoice = false, createdByUserId = '', createdAt = new Date(), additionalData = {}} = {})
+    constructor({targetType = 0, targetId = '', label = '', mode = 0, status = 0, amountMinor = 0, currency = 'INR', paymentProvider = 0, providerOrderId = '', providerPaymentId = '', invoiceFileName = '', invoiceMimeType = '', invoiceBucketPath = '', invoiceSizeBytes = 0, invoiceUploadedAt = new Date(), hasInvoice = false, createdByUserId = '', createdAt = new Date(), capturedAt = new Date(), additionalData = {}} = {})
     {
         this.#id = crypto.randomUUID();
         this.setTargetType(targetType);
@@ -49,6 +50,7 @@ class CreditDealPayment
         this.setHasInvoice(hasInvoice);
         this.setCreatedByUserId(createdByUserId);
         this.setCreatedAt(createdAt);
+        this.setCapturedAt(capturedAt);
         this.setAdditionalData(additionalData);
     }
 
@@ -373,6 +375,28 @@ class CreditDealPayment
         this.#createdAt = value;
     }
 
+    getCapturedAt()
+    {
+        return this.#capturedAt;
+    }
+
+    setCapturedAt(value)
+    {
+        if (value !== null && value !== undefined)
+        {
+            value = value instanceof Date ? value : new Date(value);
+            if (isNaN(value.getTime()))
+            {
+                value = new Date();
+            }
+        }
+        else
+        {
+            value = new Date();
+        }
+        this.#capturedAt = value;
+    }
+
     getAdditionalData()
     {
         return this.#additionalData;
@@ -405,6 +429,7 @@ class CreditDealPayment
             hasInvoice: this.getHasInvoice(),
             createdByUserId: this.getCreatedByUserId(),
             createdAt: this.getCreatedAt() !== null ? this.getCreatedAt().toISOString() : null,
+            capturedAt: this.getCapturedAt() !== null ? this.getCapturedAt().toISOString() : null,
             additionalData: this.getAdditionalData(),
         };
     }
@@ -430,6 +455,7 @@ class CreditDealPayment
             hasInvoice: json.hasInvoice ?? null,
             createdByUserId: json.createdByUserId ?? null,
             createdAt: json.createdAt != null ? new Date(json.createdAt) : null,
+            capturedAt: json.capturedAt != null ? new Date(json.capturedAt) : null,
             additionalData: json.additionalData ?? null
         });
         instance._restoreId_id(json.id);

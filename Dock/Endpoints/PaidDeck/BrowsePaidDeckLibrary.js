@@ -2,6 +2,7 @@ const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnec
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const PaidDeckPricingEngine = require("../../Globals/Classes/Pricing/PaidDeckPricingEngine");
 const RegionResolver = require("../../Globals/Classes/Pricing/RegionResolver");
+const PaidDeckAudienceResolver = require("../../Globals/Classes/PaidDeck/PaidDeckAudienceResolver");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function browsePaidDeckLibrary(request, response)
@@ -20,6 +21,17 @@ async function browsePaidDeckLibrary(request, response)
     if (category)
     {
         filter.category = category;
+    }
+
+    // Restrict the listing to decks this caller is an audience for. An
+    // organization's decks belong to its members and to nobody else, so this
+    // clause is what keeps one institute's material out of another's students'
+    // catalogue. It fails closed: an unidentifiable caller is treated as the
+    // public and sees the public catalogue only.
+    const visibilityCondition = await PaidDeckAudienceResolver.buildVisibilityCondition(await PaidDeckAudienceResolver.resolveAudienceUser(request));
+    if (visibilityCondition)
+    {
+        Object.assign(filter, visibilityCondition);
     }
 
     const deckDocuments = await database

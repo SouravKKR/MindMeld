@@ -1,5 +1,6 @@
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
 const SyncQueryEngine = require("../Database/SyncQueryEngine");
+const PaidDeckScopeResolver = require("./PaidDeckScopeResolver");
 const { entityTypes } = require("../../Enumerations/EntityTypes");
 const { deckLicenseStatuses } = require("../../Enumerations/DeckLicenseStatuses");
 
@@ -66,34 +67,64 @@ class LapsedPaidDeckReaper
             .find({ userId: userId })
             .toArray();
 
-        const lapsedDeckIds = licenseDocuments
-            .filter((licenseDocument) => !LapsedPaidDeckReaper.isLicenseDocumentActive(licenseDocument, nowMilliseconds))
-            .map((licenseDocument) => licenseDocument.deckId)
-            .filter((deckId) => typeof deckId === "string" && deckId.length > 0);
+        // Grouped by the library each license seeded into, not by the user. A
+        // marketplace purchase's rows sit under the personal id and an
+        // organization-provided deck's under that organization's scope, so one
+        // query per user would tombstone the wrong rows — or, worse, miss the
+        // right ones and leave a member holding content the licence no longer
+        // covers.
+        const lapsedDeckIdsByScopeKey = new Map();
 
-        if (lapsedDeckIds.length === 0)
+        for (const licenseDocument of licenseDocuments)
+        {
+            if (LapsedPaidDeckReaper.isLicenseDocumentActive(licenseDocument, nowMilliseconds))
+            {
+                continue;
+            }
+
+            const deckId = licenseDocument.deckId;
+            if (typeof deckId !== "string" || deckId.length === 0)
+            {
+                continue;
+            }
+
+            const scopeKey = PaidDeckScopeResolver.resolveForLicense(licenseDocument, userId);
+            if (!lapsedDeckIdsByScopeKey.has(scopeKey))
+            {
+                lapsedDeckIdsByScopeKey.set(scopeKey, []);
+            }
+            lapsedDeckIdsByScopeKey.get(scopeKey).push(deckId);
+        }
+
+        if (lapsedDeckIdsByScopeKey.size === 0)
         {
             return 0;
         }
 
-        const lapsedDeckRows = await database
-            .collection(DatabaseConstants.DECKS_COLLECTION)
-            .find({ userId: userId, "data.additionalData.paidDeckId": { $in: lapsedDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
-            .toArray();
+        let tombstonedCount = 0;
 
-        const deletionChanges = lapsedDeckRows
-            .filter((row) => row?.data?.id)
-            .map((row) => ({ entityId: row.data.id, entityType: entityTypes.DECK }));
-
-        if (deletionChanges.length > 0)
+        for (const [scopeKey, lapsedDeckIds] of lapsedDeckIdsByScopeKey)
         {
-            // bulkRecordDeletions cascades each instance root to its cards /
-            // materials / mock tests / popups and both tombstones and deletes them.
-            await SyncQueryEngine.bulkRecordDeletions(userId, database, deletionChanges);
-            console.log(`[LapsedPaidDeckReaper] Tombstoned ${deletionChanges.length} lapsed paid-deck root(s) for user ${userId}.`);
+            const lapsedDeckRows = await database
+                .collection(DatabaseConstants.DECKS_COLLECTION)
+                .find({ userId: scopeKey, "data.additionalData.paidDeckId": { $in: lapsedDeckIds } }, { projection: { "data.id": 1, _id: 0 } })
+                .toArray();
+
+            const deletionChanges = lapsedDeckRows
+                .filter((row) => row?.data?.id)
+                .map((row) => ({ entityId: row.data.id, entityType: entityTypes.DECK }));
+
+            if (deletionChanges.length > 0)
+            {
+                // bulkRecordDeletions cascades each instance root to its cards /
+                // materials / mock tests / popups and both tombstones and deletes them.
+                await SyncQueryEngine.bulkRecordDeletions(scopeKey, database, deletionChanges);
+                console.log(`[LapsedPaidDeckReaper] Tombstoned ${deletionChanges.length} lapsed paid-deck root(s) in scope ${scopeKey}.`);
+                tombstonedCount = tombstonedCount + deletionChanges.length;
+            }
         }
 
-        return deletionChanges.length;
+        return tombstonedCount;
     }
 
     /**

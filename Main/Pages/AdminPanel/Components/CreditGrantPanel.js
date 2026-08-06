@@ -208,13 +208,13 @@ class CreditGrantPanel extends HTMLElement
                             <select class="credit-grant-select" data-field="targetType">
                                 <option value="${creditGrantTargetTypes.USER_EMAILS}" selected>Specific users (by email)</option>
                                 <option value="${creditGrantTargetTypes.USER_FILTER}">Users matching a filter</option>
-                                <option value="${creditGrantTargetTypes.ORGANIZATION}">Organization members</option>
+                                <option value="${creditGrantTargetTypes.ORGANIZATION_POOL}">Organization pool</option>
                             </select>
                         </label>
                         <label class="credit-grant-field">Amount (credits)
                             <input class="credit-grant-input" type="number" step="any" min="0" data-field="amount" placeholder="e.g. 100">
                         </label>
-                        <label class="credit-grant-field">Amount mode
+                        <label class="credit-grant-field" data-role="amount-mode-field">Amount mode
                             <select class="credit-grant-select" data-field="amountMode">
                                 <option value="${creditGrantAmountModes.PER_USER}" selected>Per user — each recipient gets this amount</option>
                                 <option value="${creditGrantAmountModes.TOTAL_SPLIT}">Total — split equally across recipients</option>
@@ -295,9 +295,16 @@ class CreditGrantPanel extends HTMLElement
             const targetType = Number(changeEvent.currentTarget.value);
             this.#own('[data-role="emails-section"]').style.display = targetType === creditGrantTargetTypes.USER_EMAILS ? "" : "none";
             this.#own('[data-role="filter-section"]').style.display = targetType === creditGrantTargetTypes.USER_FILTER ? "" : "none";
-            this.#own('[data-role="organization-section"]').style.display = targetType === creditGrantTargetTypes.ORGANIZATION ? "" : "none";
+            const bPoolTarget = targetType === creditGrantTargetTypes.ORGANIZATION_POOL;
+            this.#own('[data-role="organization-section"]').style.display = bPoolTarget ? "" : "none";
 
-            if (targetType === creditGrantTargetTypes.ORGANIZATION)
+            // A pool is a single recipient, so there is nothing for the amount
+            // to be divided between. Hidden rather than disabled: an
+            // "each recipient / split between them" choice that has no effect is
+            // worse than no choice at all.
+            this.#own('[data-role="amount-mode-field"]').style.display = bPoolTarget ? "none" : "";
+
+            if (bPoolTarget)
             {
                 await this.#ensureOrganizationsLoaded();
             }
@@ -422,7 +429,7 @@ class CreditGrantPanel extends HTMLElement
                 maximumBalance: isNaN(maximumBalance) ? null : maximumBalance
             };
         }
-        else if (targetType === creditGrantTargetTypes.ORGANIZATION)
+        else if (targetType === creditGrantTargetTypes.ORGANIZATION_POOL)
         {
             const organizationId = this.#own('[data-field="organizationId"]').value;
             if (!organizationId)
@@ -471,6 +478,14 @@ class CreditGrantPanel extends HTMLElement
 
         this.#renderPreviewResults(previewJson);
 
+        if (previewJson.poolPreview)
+        {
+            this.#stagedGrant = { grantKey: crypto.randomUUID(), payload: payload, preview: previewJson };
+            this.#own('[data-action="grant"]').disabled = false;
+            this.#setStatus(`Preview ready — ${CreditGrantPanel.#escape(previewJson.poolPreview.organizationName)}'s pool.`, false);
+            return;
+        }
+
         if (previewJson.recipientCount > 0 && previewJson.perUserAmount > 0)
         {
             this.#stagedGrant = { grantKey: crypto.randomUUID(), payload: payload, preview: previewJson };
@@ -490,6 +505,13 @@ class CreditGrantPanel extends HTMLElement
     #renderPreviewResults(preview)
     {
         const resultsContainer = this.#own('[data-role="preview-results"]');
+
+        if (preview.poolPreview)
+        {
+            resultsContainer.innerHTML = CreditGrantPanel.#renderPoolPreview(preview.poolPreview);
+            return;
+        }
+
         const recipients = preview.recipients || [];
         const unmatchedEmails = preview.unmatchedEmails || [];
 
@@ -534,11 +556,19 @@ class CreditGrantPanel extends HTMLElement
         }
 
         const preview = this.#stagedGrant.preview;
-        const confirmed = await DialogBox.confirm
-        (
-            "Grant credits",
-            `Grant ${CreditGrantPanel.#formatCredits(preview.perUserAmount)} credits to each of ${preview.recipientCount} user(s) — ${CreditGrantPanel.#formatCredits(preview.totalAmount)} credits total?`
-        );
+        const confirmed = preview.poolPreview
+            ? await DialogBox.confirm
+            (
+                "Top up this organisation's pool",
+                `Add ${CreditGrantPanel.#formatCredits(preview.poolPreview.amount)} credits to ${CreditGrantPanel.#escape(preview.poolPreview.organizationName)}'s pool, taking it from `
+                + `${CreditGrantPanel.#formatCredits(preview.poolPreview.balanceBefore)} to ${CreditGrantPanel.#formatCredits(preview.poolPreview.balanceAfter)}? `
+                + `The organisation decides who receives them and when.`
+            )
+            : await DialogBox.confirm
+            (
+                "Grant credits",
+                `Grant ${CreditGrantPanel.#formatCredits(preview.perUserAmount)} credits to each of ${preview.recipientCount} user(s) — ${CreditGrantPanel.#formatCredits(preview.totalAmount)} credits total?`
+            );
         if (!confirmed)
         {
             return;
@@ -613,8 +643,67 @@ class CreditGrantPanel extends HTMLElement
         }
     }
 
+    /**
+     * The pool preview: what the organisation holds now, what it would hold
+     * after, and the two things an admin needs warning about — a frozen pool
+     * cannot be handed out until the term is renewed, and an organisation with
+     * no members has nobody to hand it to yet.
+     */
+    static #renderPoolPreview(poolPreview)
+    {
+        const warnings = [];
+        if (poolPreview.frozen === true)
+        {
+            warnings.push("This organisation's term has ended, so its pool is frozen: the credits will sit there until the term is renewed. Extend the term with a credit deal to release them.");
+        }
+        if (Number(poolPreview.memberCount) === 0)
+        {
+            warnings.push("This organisation has no members yet, so there is nobody for it to distribute to.");
+        }
+
+        return `
+            <div class="credit-grant-table-wrap">
+                <table class="credit-grant-table">
+                    <thead>
+                        <tr><th>Organisation</th><th>Members</th><th>Pool now</th><th>Top-up</th><th>Pool after</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>${CreditGrantPanel.#escape(poolPreview.organizationName)}</td>
+                            <td>${Number(poolPreview.memberCount) || 0}</td>
+                            <td>${CreditGrantPanel.#formatCredits(poolPreview.balanceBefore)}</td>
+                            <td>+${CreditGrantPanel.#formatCredits(poolPreview.amount)}</td>
+                            <td>${CreditGrantPanel.#formatCredits(poolPreview.balanceAfter)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            ${warnings.map(warning => `<div class="credit-grant-warning">${CreditGrantPanel.#escape(warning)}</div>`).join("")}
+            <div class="credit-grant-summary">
+                The organisation's own administrators decide who receives these and when, from their Credits page.
+            </div>
+        `;
+    }
+
     #renderApplyOutcome(outcome)
     {
+        if (outcome.poolTopUp === true)
+        {
+            // A replay of a movement that never settled has no balance to
+            // report, so the copy says what is certain rather than printing a
+            // blank where a number should be.
+            const bBalanceKnown = typeof outcome.balanceAfter === "number";
+            const poolSummary = outcome.alreadyApplied
+                ? (bBalanceKnown
+                    ? `This top-up had already been applied — the pool still holds ${CreditGrantPanel.#formatCredits(outcome.balanceAfter)} credits. Nothing was added twice.`
+                    : "This top-up had already been recorded, so nothing was added twice. Re-open the organisation to see its current balance.")
+                : `Added ${CreditGrantPanel.#formatCredits(outcome.amount)} credits. The pool now holds ${CreditGrantPanel.#formatCredits(outcome.balanceAfter)}.`;
+
+            this.#own('[data-role="preview-results"]').innerHTML = `<div class="credit-grant-summary">${poolSummary}</div>`;
+            this.#setStatus(poolSummary, false);
+            return;
+        }
+
         const failedResults = (outcome.results || []).filter(result => !result.applied && !result.alreadyApplied);
 
         const summaryParts = [`Granted ${CreditGrantPanel.#formatCredits(outcome.perUserAmount)} credits to ${outcome.grantedCount} user(s) — ${CreditGrantPanel.#formatCredits(outcome.totalGranted)} total.`];

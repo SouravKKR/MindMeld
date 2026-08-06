@@ -4,6 +4,9 @@ const PeriodicAssignmentQueryEngine = require("./PeriodicAssignmentQueryEngine")
 const PeriodicAssignmentRecipientStore = require("./PeriodicAssignmentRecipientStore");
 const PeriodicSchedule = require("./PeriodicSchedule");
 const OrganizationMemberQueryEngine = require("../Organization/OrganizationMemberQueryEngine");
+const OrganizationQueryEngine = require("../Organization/OrganizationQueryEngine");
+const OrganizationCreditLedger = require("../Organization/OrganizationCreditLedger");
+const CreditGrantTargetResolver = require("./CreditGrantTargetResolver");
 const AuthenticationQueryEngine = require("../Database/AuthenticationQueryEngine");
 const NotificationDispatcher = require("../Notifications/NotificationDispatcher");
 const NotificationContent = require("../Notifications/NotificationContent");
@@ -11,6 +14,7 @@ const { notificationChannels } = require("../../Enumerations/NotificationChannel
 const { creditTransactionTypes } = require("../../Enumerations/CreditTransactionTypes");
 const { periodicScopeTypes } = require("../../Enumerations/PeriodicScopeTypes");
 const { periodicOnJoinModes } = require("../../Enumerations/PeriodicOnJoinModes");
+const { tagMatchModes } = require("../../Enumerations/TagMatchModes");
 
 
 /**
@@ -85,6 +89,14 @@ class PeriodicCreditReconciler
                 const organizationAssignments = await PeriodicAssignmentQueryEngine.listActiveByOrganizationId(membership.organizationId);
                 for (const assignment of organizationAssignments)
                 {
+                    // An organization-scoped assignment may target part of the
+                    // roster rather than all of it. The tag test happens here,
+                    // at gathering time, so a member the tags do not cover never
+                    // reaches the grant path at all.
+                    if (!await PeriodicCreditReconciler.#memberMatchesAssignmentTags(assignment, membership.organizationId, email))
+                    {
+                        continue;
+                    }
                     candidates.push({ assignment: assignment, membershipAddedAt: membership.addedAt });
                 }
             }
@@ -165,6 +177,109 @@ class PeriodicCreditReconciler
      * (the UI forbids TOTAL_SPLIT for dynamic membership); PEOPLE_SET may
      * split one pot across the fixed recipient list.
      */
+    /**
+     * Whether one member is covered by an assignment's tag selection.
+     *
+     * Decided through CreditGrantTargetResolver.filterMembersByTags — the same
+     * predicate the one-off distribution and its preview use — so a recurring
+     * plan and an ad-hoc grant written with identical tags reach identical
+     * people. Two implementations of "who does this tag mean" would drift.
+     */
+    static async #memberMatchesAssignmentTags(assignment, organizationId, email)
+    {
+        const tagFilter = typeof assignment.getTagFilter === "function" ? assignment.getTagFilter() : [];
+        const tagMatchMode = typeof assignment.getTagMatchMode === "function" ? assignment.getTagMatchMode() : tagMatchModes.EVERYONE;
+
+        if (tagMatchMode === tagMatchModes.EVERYONE || !Array.isArray(tagFilter) || tagFilter.length === 0)
+        {
+            return true;
+        }
+
+        const member = await OrganizationMemberQueryEngine.findMemberByUserIdOrEmail(organizationId, "", email);
+        if (!member)
+        {
+            return false;
+        }
+
+        return CreditGrantTargetResolver.filterMembersByTags([member], tagFilter, tagMatchMode).length === 1;
+    }
+
+    /**
+     * Takes one installment's credits out of the organization's pool before the
+     * member is credited.
+     *
+     * A people-set assignment has no organization behind it and is not funded
+     * this way — it is a super-admin gift, not an institute spending what it
+     * bought — so it passes straight through.
+     *
+     * The debit shares the installment's reference key, so a replayed reconcile
+     * is a no-op on the pool exactly as it is on the member's balance. A pool
+     * that cannot cover the installment refuses it, which is what stops an
+     * organization from handing out credits it never paid for.
+     */
+    static async #fundFromOrganizationPool(assignment, referenceKey, amount, email)
+    {
+        const organizationId = assignment.getOrganizationId();
+        if (assignment.getScopeType() !== periodicScopeTypes.ORGANIZATION || !organizationId || organizationId.length === 0)
+        {
+            return { ok: true, funded: false };
+        }
+
+        const debitResult = await OrganizationCreditLedger.debit
+        (
+            organizationId,
+            amount,
+            OrganizationCreditLedger.TRANSACTION_TYPE_DISTRIBUTION,
+            `poolFor:${referenceKey}`,
+            {
+                kind: "periodic",
+                periodicAssignmentId: assignment.getId(),
+                assignmentName: assignment.getName(),
+                recipientEmail: email
+            }
+        );
+
+        if (debitResult.applied || debitResult.alreadyApplied)
+        {
+            return { ok: true, funded: true, balanceAfter: debitResult.balanceAfter };
+        }
+
+        return { ok: false, funded: false, reason: debitResult.reason, balanceAfter: debitResult.balanceAfter };
+    }
+
+    /**
+     * Tells the organization a cycle was skipped for want of funds. Announced
+     * once per pool state rather than once per member, because a dry pool
+     * affects every recipient at the same moment and one notification per
+     * student would be a flood describing a single fact.
+     *
+     * A missed cycle is never back-paid: the next one runs normally once the
+     * pool is topped up.
+     */
+    static async #reportSkippedCycle(assignment, requiredAmount, funding)
+    {
+        try
+        {
+            const organizationId = assignment.getOrganizationId();
+            const organization = await OrganizationQueryEngine.getOrganizationById(organizationId);
+            if (!organization || !organization.getAdminUserId())
+            {
+                return;
+            }
+
+            await NotificationDispatcher.dispatch
+            (
+                organization.getAdminUserId(),
+                NotificationContent.organizationPoolEmpty(organization.getName(), requiredAmount, funding.balanceAfter ?? 0),
+                notificationChannels.IN_APP | notificationChannels.PUSH
+            );
+        }
+        catch (reportError)
+        {
+            console.warn(`[PeriodicCreditReconciler] Could not report a skipped cycle: ${reportError?.message || reportError}`);
+        }
+    }
+
     static #perUserAmount(assignment)
     {
         const denominator = assignment.getScopeType() === periodicScopeTypes.PEOPLE_SET
@@ -210,6 +325,14 @@ class PeriodicCreditReconciler
         if (grantsOnJoin && perUserAmount > 0)
         {
             const onJoinReferenceKey = `periodic:${assignmentId}:${email}:onjoin`;
+
+            const onJoinFunding = await PeriodicCreditReconciler.#fundFromOrganizationPool(assignment, onJoinReferenceKey, perUserAmount, email);
+            if (!onJoinFunding.ok)
+            {
+                await PeriodicCreditReconciler.#reportSkippedCycle(assignment, perUserAmount, onJoinFunding);
+                return creditsGranted;
+            }
+
             const onJoinOutcome = await CreditLedger.grant
             (
                 userId,
@@ -279,6 +402,20 @@ class PeriodicCreditReconciler
             }
 
             const referenceKey = `periodic:${assignmentId}:${email}:${period.periodKey}`;
+
+            // An organization-scoped installment is paid FROM that
+            // organization's pool. The pool is debited first: if it cannot
+            // cover the installment the member is not credited at all, rather
+            // than the organization handing out credits it never bought. The
+            // debit shares the installment's reference key, so a replay is a
+            // no-op on both sides.
+            const funding = await PeriodicCreditReconciler.#fundFromOrganizationPool(assignment, referenceKey, perUserAmount, email);
+            if (!funding.ok)
+            {
+                await PeriodicCreditReconciler.#reportSkippedCycle(assignment, perUserAmount, funding);
+                break;
+            }
+
             const outcome = await CreditLedger.grant
             (
                 userId,

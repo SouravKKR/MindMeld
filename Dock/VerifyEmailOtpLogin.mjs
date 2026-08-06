@@ -41,6 +41,7 @@ const EmailProviderFactory = require("./Globals/Classes/Email/EmailProviderFacto
 const SesEmailProvider = require("./Globals/Classes/Email/SesEmailProvider");
 const SmtpEmailProvider = require("./Globals/Classes/Email/SmtpEmailProvider");
 const EmailSender = require("./Globals/Classes/Email/EmailSender");
+const EmailSenderIdentities = require("./Globals/Classes/Email/EmailSenderIdentities");
 const { emailProviderTypes } = require("./Globals/Enumerations/EmailProviderTypes");
 
 let passedCount = 0;
@@ -153,6 +154,37 @@ async function runAlwaysOnTier()
     assert(commandInput.Content.Simple.Subject.Data === "Subject line" && commandInput.Content.Simple.Subject.Charset === "UTF-8", "SESv2 command Content.Simple.Subject maps with UTF-8 charset");
     assert(commandInput.Content.Simple.Body.Text.Data === "plain body" && commandInput.Content.Simple.Body.Html.Data === "<b>html body</b>", "SESv2 command Content.Simple.Body carries both text and HTML");
 
+    // The From display name — what the recipient actually sees in their inbox.
+    // The address stays the verified SES identity; only the name beside it
+    // varies per email type, so the formatting + safety rules are checked here
+    // rather than trusted to each transport.
+    const namedMessage = new EmailMessage("from@cogniumlearn.io", "user@example.com", "Subject line", "plain body", "", EmailSenderIdentities.SECURITY);
+    assert(namedMessage.getFormattedSourceAddress() === `"CogniumLearn Security" <from@cogniumlearn.io>`, "A display name formats as a quoted name beside the address");
+    assert(message.getFormattedSourceAddress() === "from@cogniumlearn.io", "A message with no display name sends from the bare address");
+    assert(sesProvider.buildSendEmailCommandInput(namedMessage).FromEmailAddress === `"CogniumLearn Security" <from@cogniumlearn.io>`, "SESv2 command FromEmailAddress carries the formatted display name");
+    assert(new SmtpEmailProvider().buildSendMailOptions(namedMessage).from === `"CogniumLearn Security" <from@cogniumlearn.io>`, "SMTP from field carries the formatted display name");
+
+    // Header injection: a newline in the name would let the name author append
+    // headers of their own, so control characters never survive.
+    const injectedNameMessage = namedMessage.withSenderName("Evil\r\nBcc: attacker@example.com");
+    assert(!injectedNameMessage.getFormattedSourceAddress().includes("\n") && !injectedNameMessage.getFormattedSourceAddress().includes("\r"), "Control characters are stripped from the display name");
+
+    // A quote in the name must not close the quoted string early.
+    const quotedNameMessage = namedMessage.withSenderName(`He said "hi" \\ bye`);
+    assert(quotedNameMessage.getFormattedSourceAddress() === `"He said \\"hi\\" \\\\ bye" <from@cogniumlearn.io>`, "Quotes and backslashes in the display name are escaped");
+
+    // Non-ASCII needs RFC 2047 encoding SES will not apply — drop the name
+    // rather than ship a garbled From header.
+    assert(namedMessage.withSenderName("CogniumLearn Sécurité").getFormattedSourceAddress() === "from@cogniumlearn.io", "A non-ASCII display name falls back to the bare address");
+
+    // Every identity is plain ASCII, so none of them can hit that fallback.
+    const allIdentities = [EmailSenderIdentities.DEFAULT, EmailSenderIdentities.SECURITY, EmailSenderIdentities.SUPPORT, EmailSenderIdentities.NOTIFICATIONS];
+    assert(allIdentities.every(identity => namedMessage.withSenderName(identity).getFormattedSourceAddress().includes("<")), "Every EmailSenderIdentities name survives formatting");
+
+    // withSourceEmail is how EmailSender fills the platform address in — it must
+    // not drop the identity the calling method already chose.
+    assert(namedMessage.withSourceEmail("other@cogniumlearn.io").getSenderName() === EmailSenderIdentities.SECURITY, "withSourceEmail preserves the display name");
+
     // Restore SES env.
     restoreEnv("SES_REGION", savedRegion);
     restoreEnv("SES_ACCESS_KEY_ID", savedAccessKeyId);
@@ -223,6 +255,8 @@ async function runAlwaysOnTier()
         assert(otpMessage.getRecipientEmail() === "learner@example.com", "OTP email is addressed to the requesting learner");
         assert(otpMessage.getSourceEmail() === "noreply@cogniumlearn.io", "OTP email source is filled from EMAIL_SOURCE_EMAIL");
         assert(otpMessage.getSubject() === "Your CogniumLearn sign-in code", "OTP email carries the sign-in subject");
+        assert(otpMessage.getSenderName() === EmailSenderIdentities.SECURITY, "OTP email is sent under the Security identity");
+        assert(otpMessage.getFormattedSourceAddress() === `"CogniumLearn Security" <noreply@cogniumlearn.io>`, "OTP email's From header pairs the Security name with the platform address");
         assert(otpMessage.getPlainTextBody().includes("654321") && otpMessage.getHtmlBody().includes("654321"), "OTP email contains the code in both bodies");
 
         await EmailSender.sendNotificationEmail("learner@example.com",
@@ -240,11 +274,30 @@ async function runAlwaysOnTier()
         // A client that strips the styled anchor must still get somewhere to go.
         assert(notificationMessage.getPlainTextBody().includes(EmailTemplate.CALL_TO_ACTION_URL), "Notification email repeats the action URL in the plain-text body");
         assert(notificationMessage.getHtmlBody().includes(EmailTemplate.PRODUCT_LOGO_URL), "Dispatched notification email carries the branded HTML body");
+        assert(notificationMessage.getSenderName() === EmailSenderIdentities.NOTIFICATIONS, "Notification email is sent under the product identity");
 
         await EmailSender.sendOrgAdminVerificationEmail("admin@example.com", "111222", "Acme Institute");
         const orgMessage = capturingProvider.sentMessages[capturingProvider.sentMessages.length - 1];
         assert(orgMessage.getSubject().includes("organization-admin"), "Org-admin email carries the distinct verification subject");
         assert(orgMessage.getHtmlBody().includes("Acme Institute"), "Org-admin email includes the organization name");
+        assert(orgMessage.getSenderName() === EmailSenderIdentities.SECURITY, "Org-admin verification email is sent under the Security identity");
+
+        // Support outcomes come from Support, not Security — the two must never
+        // collapse onto one name, or the inbox stops distinguishing them.
+        await EmailSender.sendSupportTicketResolvedEmail("reporter@example.com", "Cards not syncing", "Fixed in today's release.", 50);
+        const resolvedMessage = capturingProvider.sentMessages[capturingProvider.sentMessages.length - 1];
+        assert(resolvedMessage.getSenderName() === EmailSenderIdentities.SUPPORT, "Support-resolved email is sent under the Support identity");
+
+        await EmailSender.sendSupportTicketDeclinedEmail("reporter@example.com", "Cards not syncing", "");
+        const declinedMessage = capturingProvider.sentMessages[capturingProvider.sentMessages.length - 1];
+        assert(declinedMessage.getSenderName() === EmailSenderIdentities.SUPPORT, "Support-declined email is sent under the Support identity");
+        assert(EmailSenderIdentities.SECURITY !== EmailSenderIdentities.SUPPORT, "Security and Support identities are distinct names");
+
+        // An externally composed message that names no identity still gets one,
+        // so nothing ever goes out with a bare, unlabelled address.
+        await EmailSender.send(new EmailMessage("", "someone@example.com", "Ad-hoc subject", "body", ""));
+        const adHocMessage = capturingProvider.sentMessages[capturingProvider.sentMessages.length - 1];
+        assert(adHocMessage.getSenderName() === EmailSenderIdentities.DEFAULT, "A message with no identity is stamped with the default one");
 
         // No source anywhere -> a clear, actionable error rather than a silent send.
         delete process.env.EMAIL_SOURCE_EMAIL;

@@ -1,0 +1,11 @@
+const organizationPageSections =
+{
+  OVERVIEW: 0,
+  MEMBERS: 1,
+  PERMISSIONS: 2,
+  CREDITS: 3,
+  DECKS: 4,
+  REPORTS: 5,
+}
+
+module.exports = { organizationPageSections };

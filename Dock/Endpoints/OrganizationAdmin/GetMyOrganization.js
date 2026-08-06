@@ -1,36 +1,30 @@
-const OrganizationQueryEngine = require("../../Globals/Classes/Organization/OrganizationQueryEngine");
 const OrganizationDeckPerkQueryEngine = require("../../Globals/Classes/Organization/OrganizationDeckPerkQueryEngine");
 const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
-const { userRoles } = require("../../Globals/Enumerations/UserRoles");
+const OrganizationAuthorityResolver = require("../../Globals/Classes/Organization/OrganizationAuthorityResolver");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
-const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 
+/**
+ * GET /Organization/Get?organizationId=...
+ *
+ * The organization as its owner, a delegate or a super-admin sees it: the
+ * record itself, its marketplace deck perks (read-only to everyone here — those
+ * are commercial terms only a super-admin sets) and its members.
+ *
+ * The caller's own standing rides along so the page can render only the
+ * sections they may use. Standing is resolved from stored state, never from
+ * anything the client sent.
+ */
 async function getMyOrganization(request, response)
 {
     const queryParams = await request.getQueryParams();
     const organizationId = typeof queryParams?.organizationId === "string" ? queryParams.organizationId : "";
 
-    if (!organizationId)
+    const authority = await OrganizationAuthorityResolver.resolve(request.user, organizationId);
+    if (!authority.allowed)
     {
-        response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: ErrorCodes.MISSING_ORGANIZATION_ID });
-        return;
-    }
-
-    const organization = await OrganizationQueryEngine.getOrganizationById(organizationId);
-    if (!organization)
-    {
-        response.statusCode = httpStatus.NOT_FOUND;
-        response.sendJson({ success: false, error: ErrorCodes.ORG_NOT_FOUND });
-        return;
-    }
-
-    const user = request.user;
-    if (user.getRole() !== userRoles.ADMIN && organization.getAdminUserId() !== user.getId())
-    {
-        response.statusCode = httpStatus.FORBIDDEN;
-        response.sendJson({ success: false, error: ErrorCodes.NOT_ORG_ADMIN });
+        response.statusCode = OrganizationAuthorityResolver.statusForDenial(authority);
+        response.sendJson({ success: false, error: authority.reason });
         return;
     }
 
@@ -41,9 +35,15 @@ async function getMyOrganization(request, response)
     response.sendJson
     ({
         success: true,
-        organization: organization.toJson(),
+        organization: authority.organization.toJson(),
         perks: perks.map(perk => perk.toJson()),
-        members: members.map(member => member.toJson())
+        members: members.map(member => member.toJson()),
+        authority:
+        {
+            isSuperAdmin: authority.isSuperAdmin,
+            isOwner: authority.isOwner,
+            delegatePowers: authority.delegatePowers
+        }
     });
 }
 

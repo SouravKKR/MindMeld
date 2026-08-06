@@ -141,7 +141,7 @@ async function handleQueueDeckAnalysis(request, response)
     // evaluateForUser) so the admin feature-access override is loaded even on a
     // cold process where no other AI endpoint has run yet — keeping all gate
     // sites uniform. Refuse a lower tier before the credit preflight.
-    const analysisEntitlement = await PlanEntitlementGate.requireFeature(user.getId(), planFeatures.CURATED_STUDY);
+    const analysisEntitlement = await PlanEntitlementGate.requireFeatureForRequest(request, user.getId(), planFeatures.CURATED_STUDY);
     if (!analysisEntitlement.allowed)
     {
         response.statusCode = httpStatus.FORBIDDEN;

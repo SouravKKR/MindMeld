@@ -1,10 +1,12 @@
 import uuid
 from datetime import datetime
+from typing import List
 from Globals.Enumerations.OrganizationStatus import OrganizationStatus
+from Globals.Enumerations.PlanFeatures import PlanFeatures
 
 
 class Organization:
-    def __init__(self, name: str = None, admin_email: str = None, admin_user_id: str = '', status: OrganizationStatus = OrganizationStatus(0), currency: str = 'INR', creation_amount_minor: int = 0, max_members: int = 0, current_member_count: int = 0, creation_date: datetime = datetime.now(), activation_date: datetime = datetime.now(), additional_data: dict = {}) -> None:
+    def __init__(self, name: str = None, admin_email: str = None, admin_user_id: str = '', status: OrganizationStatus = OrganizationStatus(0), currency: str = 'INR', creation_amount_minor: int = 0, max_members: int = 0, current_member_count: int = 0, creation_date: datetime = datetime.now(), activation_date: datetime = datetime.now(), term_ends_at: datetime = datetime.now(), max_storage_grant_bytes_per_member: int = 0, max_credits_per_member_per_month: float = 0, max_published_decks: int = 0, grantable_features: List[PlanFeatures] = [], additional_data: dict = {}) -> None:
         self.__id = str(uuid.uuid4())
         self.set_name(name)
         self.set_admin_email(admin_email)
@@ -16,6 +18,11 @@ class Organization:
         self.set_current_member_count(current_member_count)
         self.set_creation_date(creation_date)
         self.set_activation_date(activation_date)
+        self.set_term_ends_at(term_ends_at)
+        self.set_max_storage_grant_bytes_per_member(max_storage_grant_bytes_per_member)
+        self.set_max_credits_per_member_per_month(max_credits_per_member_per_month)
+        self.set_max_published_decks(max_published_decks)
+        self.set_grantable_features(grantable_features)
         self.set_additional_data(additional_data)
 
     def get_id(self) -> str:
@@ -141,6 +148,67 @@ class Organization:
             value = datetime.now()
         self.__activation_date = value
 
+    def get_term_ends_at(self) -> datetime:
+        return self.__term_ends_at
+
+    def set_term_ends_at(self, value: datetime) -> None:
+        if value is not None:
+            if isinstance(value, str):
+                try:
+                    value = datetime.fromisoformat(value)
+                except ValueError:
+                    value = datetime.now()
+            elif not isinstance(value, datetime):
+                value = datetime.now()
+        else:
+            value = datetime.now()
+        self.__term_ends_at = value
+
+    def get_max_storage_grant_bytes_per_member(self) -> int:
+        return self.__max_storage_grant_bytes_per_member
+
+    def set_max_storage_grant_bytes_per_member(self, value: int) -> None:
+        if value is not None:
+            try:
+                value = int(value)
+                value = max(0, value)
+            except (ValueError, TypeError):
+                value = 0
+        self.__max_storage_grant_bytes_per_member = value
+
+    def get_max_credits_per_member_per_month(self) -> float:
+        return self.__max_credits_per_member_per_month
+
+    def set_max_credits_per_member_per_month(self, value: float) -> None:
+        if value is not None:
+            try:
+                value = float(value)
+                value = max(0, value)
+            except (ValueError, TypeError):
+                value = 0
+        self.__max_credits_per_member_per_month = value
+
+    def get_max_published_decks(self) -> int:
+        return self.__max_published_decks
+
+    def set_max_published_decks(self, value: int) -> None:
+        if value is not None:
+            try:
+                value = int(value)
+                value = max(0, value)
+            except (ValueError, TypeError):
+                value = 0
+        self.__max_published_decks = value
+
+    def get_grantable_features(self) -> List[PlanFeatures]:
+        return self.__grantable_features
+
+    def set_grantable_features(self, value: List[PlanFeatures]) -> None:
+        if value is not None:
+            if not isinstance(value, list):
+                value = None
+        self.__grantable_features = value
+
     def get_additional_data(self) -> dict:
         return self.__additional_data
 
@@ -164,6 +232,11 @@ class Organization:
             'currentMemberCount': self.get_current_member_count(),
             'creationDate': self.get_creation_date().isoformat() if self.get_creation_date() is not None else None,
             'activationDate': self.get_activation_date().isoformat() if self.get_activation_date() is not None else None,
+            'termEndsAt': self.get_term_ends_at().isoformat() if self.get_term_ends_at() is not None else None,
+            'maxStorageGrantBytesPerMember': self.get_max_storage_grant_bytes_per_member(),
+            'maxCreditsPerMemberPerMonth': self.get_max_credits_per_member_per_month(),
+            'maxPublishedDecks': self.get_max_published_decks(),
+            'grantableFeatures': [int(item.value) for item in self.get_grantable_features()] if self.get_grantable_features() is not None else None,
             'additionalData': self.get_additional_data(),
         }
 
@@ -180,6 +253,11 @@ class Organization:
             current_member_count=data.get('currentMemberCount'),
             creation_date=datetime.fromisoformat(data.get('creationDate')) if data.get('creationDate') is not None else None,
             activation_date=datetime.fromisoformat(data.get('activationDate')) if data.get('activationDate') is not None else None,
+            term_ends_at=datetime.fromisoformat(data.get('termEndsAt')) if data.get('termEndsAt') is not None else None,
+            max_storage_grant_bytes_per_member=data.get('maxStorageGrantBytesPerMember'),
+            max_credits_per_member_per_month=data.get('maxCreditsPerMemberPerMonth'),
+            max_published_decks=data.get('maxPublishedDecks'),
+            grantable_features=[PlanFeatures(v) for v in data.get('grantableFeatures')] if data.get('grantableFeatures') is not None else None,
             additional_data=data.get('additionalData')
         )
         if data.get('id') is not None:

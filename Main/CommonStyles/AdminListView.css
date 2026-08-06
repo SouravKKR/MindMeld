@@ -1,9 +1,23 @@
+/* The custom element itself, which had no rule at all and so defaulted to
+   `display: inline`. An inline box does not establish a width for the block
+   inside it, so the list sized itself against whatever its widest row needed —
+   a nowrap table header — and pushed the whole page wider than the phone it was
+   being read on. */
+admin-list-view
+{
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+}
+
 .admin-list-view
 {
     display: flex;
     flex-direction: column;
     gap: 12px;
     width: 100%;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .admin-list-toolbar
@@ -35,9 +49,20 @@
 .admin-list-filters
 {
     display: flex;
-    align-items: flex-end;
+    /* Top-aligned, so every filter's label sits on one line. Bottom-aligning
+       them made a three-row checkbox list drag the neighbouring range inputs
+       halfway down the row with their labels floating at different heights. */
+    align-items: flex-start;
     gap: 10px;
     flex-wrap: wrap;
+    /* The filter row is itself a flex ITEM of the toolbar, and a flex item
+       defaults to `min-width: auto` — it refuses to shrink below the widest
+       thing inside it. That is what pushed a phone's filter panel 28px past
+       the edge of the screen while every ancestor was already the right size.
+       Taking a full row of the toolbar rather than sharing one keeps the
+       filters legible when there are several of them. */
+    flex: 1 1 100%;
+    min-width: 0;
 }
 
 .admin-list-filter
@@ -45,6 +70,21 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+    /* A flex item defaults to `min-width: auto`, which means it will not shrink
+       below the intrinsic width of its contents. A range filter holds two
+       inputs and a separator, so on a phone it refused to shrink and ran off
+       the side of the screen. Growing from a 200px basis keeps the filters
+       tidy on a wide screen and lets them shrink on a narrow one. */
+    flex: 1 1 200px;
+    min-width: 0;
+}
+
+@media (max-width: 640px)
+{
+    .admin-list-filter
+    {
+        flex-basis: 100%;
+    }
 }
 
 .admin-list-limit
@@ -92,9 +132,13 @@
     cursor: default;
 }
 
+/* The table scrolls on its own axis. Without the clamp it is the table, not
+   the wrapper, that decides how wide the page is. */
 .admin-list-table-wrap
 {
     overflow-x: auto;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .admin-list-table

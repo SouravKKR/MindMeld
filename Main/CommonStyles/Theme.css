@@ -35,6 +35,11 @@
     --danger-background-color: rgba(244, 67, 54, 0.15);
     --danger-text-color: #f8a8a8;
     --success-color: #4caf50;
+    /* The success counterparts of the danger pair above. Referenced by
+       .admin-list-badge-success and the Settings page long before they were
+       declared here, so both rendered transparent with inherited text. */
+    --success-background-color: rgba(76, 175, 80, 0.15);
+    --success-text-color: #9fdca2;
     --accent-color: #2EB6E0;
     --accent-color-hover: #5CCCEC;
     --accent-background-color: rgba(46, 182, 224, 0.18);

@@ -240,10 +240,10 @@ class OrgAdminVerificationManager
     }
 
     /**
-     * Non-destructive check used by /Admin/Organizations/Create to
-     * accept a verification token without consuming it (consumption
-     * happens at activation time — either immediately for amount=0 or
-     * at VerifyCreationPayment / webhook for paid orgs).
+     * Non-destructive check used by /Admin/Organizations/Create to accept a
+     * verification token before the organization is written. Create consumes it
+     * itself once the row lands, so validation and consumption stay separate
+     * and a failed create never burns the token.
      */
     static async isTokenValid(rawEmail, verificationToken)
     {

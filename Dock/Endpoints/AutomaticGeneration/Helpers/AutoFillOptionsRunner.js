@@ -61,7 +61,7 @@ class AutoFillOptionsRunner
         // Plan entitlement: auto-filling generation options is part of the
         // automatic-generation feature (Pro tier). Refuse a lower tier before
         // the credit preflight so it sees an upgrade prompt, not a 402.
-        const autoFillEntitlement = await PlanEntitlementGate.requireFeature(userId, planFeatures.AUTOMATIC_GENERATION);
+        const autoFillEntitlement = await PlanEntitlementGate.requireFeatureForRequest(request, userId, planFeatures.AUTOMATIC_GENERATION);
         if (!autoFillEntitlement.allowed)
         {
             response.statusCode = httpStatus.FORBIDDEN;

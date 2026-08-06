@@ -1,3 +1,4 @@
+const OrganizationScopeResolver = require("../../Globals/Classes/Organization/OrganizationScopeResolver");
 const { PacketronRequest, PacketronResponse } = require("@gamiumgamers/packetron");
 const { getUser } = require("../Helpers/GetUser");
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
@@ -45,7 +46,14 @@ class BulkSnapshotEndpoint
             return;
         }
 
-        const userId   = user.getId();
+        // The same scope resolution the incremental sync performs, so a full
+        // snapshot of an organization view returns that view rather than the
+        // caller's personal library.
+        const scope    = await OrganizationScopeResolver.resolve(request, user.getId());
+        const userId   = scope.scopeKey;
+        // Licenses belong to the buyer, not to a library, so the content key is
+        // always looked up under the account id.
+        const personalUserId = user.getId();
         const database = await DatabaseConnector.getDatabase();
 
         const decksCollection          = database.collection(DatabaseConstants.DECKS_COLLECTION);
@@ -90,7 +98,7 @@ class BulkSnapshotEndpoint
             {
                 return paidContentKeyByDeckId.get(paidDeckId);
             }
-            const contentKeyBuffer = await KeyManagementService.getPaidDeckContentKeyBufferForUser(userId, paidDeckId);
+            const contentKeyBuffer = await KeyManagementService.getPaidDeckContentKeyBufferForUser(personalUserId, paidDeckId);
             paidContentKeyByDeckId.set(paidDeckId, contentKeyBuffer);
             return contentKeyBuffer;
         };

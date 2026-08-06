@@ -114,8 +114,15 @@ class OrganizationMemberQueryEngine
         const result = { added: [], alreadyMember: [], invalidEmail: [] };
         const validatedRows = [];
 
-        for (const rawEmail of rawEmails)
+        for (const rawEntry of rawEmails)
         {
+            // An entry is either a bare email (typed or pasted) or a normalised
+            // profile from an imported sheet. Accepting both keeps one insert
+            // path, so a member added by hand and one imported from a
+            // spreadsheet cannot end up shaped differently.
+            const bIsProfile = rawEntry !== null && typeof rawEntry === "object";
+            const rawEmail = bIsProfile ? rawEntry.email : rawEntry;
+
             const email = OrganizationMemberQueryEngine.#normaliseEmail(rawEmail);
             if (email.length === 0 || email.indexOf("@") < 0)
             {
@@ -129,6 +136,10 @@ class OrganizationMemberQueryEngine
                 email: email,
                 userId: "",
                 addedBy: typeof addedByUserId === "string" ? addedByUserId : "",
+                tags: bIsProfile && Array.isArray(rawEntry.tags) ? rawEntry.tags : [],
+                attributes: bIsProfile && rawEntry.attributes ? rawEntry.attributes : {},
+                attributesNormalised: bIsProfile && rawEntry.attributesNormalised ? rawEntry.attributesNormalised : {},
+                attributesComparable: bIsProfile && rawEntry.attributesComparable ? rawEntry.attributesComparable : {},
                 addedAt: new Date()
             });
             validatedRows.push({ email: email, member: member });
@@ -204,10 +215,15 @@ class OrganizationMemberQueryEngine
             return { removed: 0 };
         }
 
+        // Read before deleting: once the row is gone there is no way left to
+        // learn whose content has to be taken back.
+        const departingUserIds = await OrganizationMemberQueryEngine.#collectUserIds(collection, { id: memberId, organizationId: organizationId });
+
         const deleteResult = await collection.deleteOne({ id: memberId, organizationId: organizationId });
         if (deleteResult.deletedCount === 1)
         {
             await OrganizationQueryEngine.decrementMemberCountBy(organizationId, 1);
+            await OrganizationMemberQueryEngine.#withdrawOrganizationContent(organizationId, departingUserIds);
         }
         return { removed: deleteResult.deletedCount };
     }
@@ -226,6 +242,8 @@ class OrganizationMemberQueryEngine
             return { removed: 0, notFound: 0 };
         }
 
+        const departingUserIds = await OrganizationMemberQueryEngine.#collectUserIds(collection, { organizationId: organizationId, id: { $in: safeIds } });
+
         const deleteResult = await collection.deleteMany
         ({
             organizationId: organizationId,
@@ -235,9 +253,62 @@ class OrganizationMemberQueryEngine
         if (deleteResult.deletedCount > 0)
         {
             await OrganizationQueryEngine.decrementMemberCountBy(organizationId, deleteResult.deletedCount);
+            await OrganizationMemberQueryEngine.#withdrawOrganizationContent(organizationId, departingUserIds);
         }
 
         return { removed: deleteResult.deletedCount, notFound: safeIds.length - deleteResult.deletedCount };
+    }
+
+    /**
+     * The account ids behind the member rows a filter matches. Rows whose
+     * member never signed in have no account bound yet and are skipped — they
+     * hold no licences, so there is nothing of the organization's to take back.
+     */
+    static async #collectUserIds(collection, query)
+    {
+        const memberDocuments = await collection.find(query, { projection: { _id: 0, userId: 1 } }).toArray();
+        return memberDocuments
+            .map(document => document.userId)
+            .filter(userId => typeof userId === "string" && userId.length > 0);
+    }
+
+    /**
+     * Takes the organization's decks back from people who have just left it.
+     *
+     * Done HERE, inside the removal itself, rather than at the three endpoints
+     * that remove members: an offboarding step that each caller has to remember
+     * is one that a fourth caller will not, and the consequence — an ex-member
+     * still studying an institute's material indefinitely, their licence still
+     * ACTIVE so nothing else ever reclaims it — is silent.
+     *
+     * Best-effort and non-fatal. The removal itself has already succeeded and
+     * must not be reported as failed because the content teardown hit a
+     * problem; a licence left behind is picked up by the next explicit
+     * withdrawal, whereas a member wrongly reported as still present is acted on
+     * by a human.
+     */
+    static async #withdrawOrganizationContent(organizationId, departingUserIds)
+    {
+        if (departingUserIds.length === 0)
+        {
+            return;
+        }
+
+        // Lazily required: the withdrawal service reads the member roster, so a
+        // top-level require would close a cycle back into this class.
+        const OrganizationDeckWithdrawalService = require("./OrganizationDeckWithdrawalService");
+
+        for (const departingUserId of departingUserIds)
+        {
+            try
+            {
+                await OrganizationDeckWithdrawalService.withdrawAllForMember(organizationId, departingUserId);
+            }
+            catch (withdrawalError)
+            {
+                console.error(`[OrganizationMemberQueryEngine] Could not withdraw ${organizationId} content from ${departingUserId}: ${withdrawalError?.message || withdrawalError}`);
+            }
+        }
     }
 
     static async listMembers(organizationId)
@@ -329,8 +400,259 @@ class OrganizationMemberQueryEngine
             organizationId: row.organizationId,
             email: row.email,
             addedAt: row.addedAt instanceof Date ? row.addedAt : new Date(row.addedAt),
+            delegatePowers: Number.isInteger(row.delegatePowers) ? row.delegatePowers : 0,
             organization: row.organization
         }));
+    }
+
+    /**
+     * Applies an imported profile (tags + attributes) to members who already
+     * exist, REPLACING what they carried. The sheet is the source of truth: a
+     * tag removed from the sheet is removed from the member, because the
+     * alternative — merging — means a tag applied by mistake can never be
+     * corrected by re-importing a fixed sheet.
+     *
+     * Members absent from the sheet are untouched; removing people is a
+     * separate, explicit action.
+     *
+     * @param {string} organizationId
+     * @param {Array<{email: string, attributes: object, attributesNormalised: object, tags: string[]}>} normalisedProfiles
+     * @returns {Promise<{ updated: number }>}
+     */
+    static async replaceProfilesForExistingMembers(organizationId, normalisedProfiles)
+    {
+        const collection = await OrganizationMemberQueryEngine.#getCollection();
+        if (!collection || !Array.isArray(normalisedProfiles) || normalisedProfiles.length === 0)
+        {
+            return { updated: 0 };
+        }
+
+        const writeOperations = [];
+        for (const profile of normalisedProfiles)
+        {
+            const email = OrganizationMemberQueryEngine.#normaliseEmail(profile?.email);
+            if (email.length === 0)
+            {
+                continue;
+            }
+
+            writeOperations.push
+            ({
+                updateOne:
+                {
+                    filter: { organizationId: organizationId, email: email },
+                    update:
+                    {
+                        $set:
+                        {
+                            tags: profile.tags,
+                            attributes: profile.attributes,
+                            attributesNormalised: profile.attributesNormalised
+                        }
+                    }
+                }
+            });
+        }
+
+        if (writeOperations.length === 0)
+        {
+            return { updated: 0 };
+        }
+
+        const bulkResult = await collection.bulkWrite(writeOperations, { ordered: false });
+        return { updated: bulkResult.modifiedCount || 0 };
+    }
+
+    /**
+     * Every attribute key present on at least one member of this organization,
+     * and every tag in use. Drives the per-organization filter set: an
+     * institute that never uploads a "stream" column is never offered a stream
+     * filter, and one that invents "section" gets a section filter for free.
+     *
+     * @param {string} organizationId
+     * @returns {Promise<{ attributeKeys: string[], tags: string[] }>}
+     */
+    static async listProfileVocabulary(organizationId)
+    {
+        const database = await DatabaseConnector.getDatabase();
+        if (!database || typeof organizationId !== "string" || organizationId.length === 0)
+        {
+            return { attributeKeys: [], tags: [] };
+        }
+
+        const collection = database.collection(OrganizationMemberQueryEngine.#COLLECTION_NAME);
+
+        // One aggregation rather than a distinct() per key: $objectToArray turns
+        // each member's attribute map into rows so the keys can be unioned
+        // server-side instead of pulling every member back to count them.
+        const attributeKeyRows = await collection.aggregate
+        ([
+            { $match: { organizationId: organizationId } },
+            { $project: { attributePairs: { $objectToArray: { $ifNull: ["$attributes", {}] } } } },
+            { $unwind: "$attributePairs" },
+            { $group: { _id: "$attributePairs.k" } },
+            { $sort: { _id: 1 } }
+        ]).toArray();
+
+        const tags = await collection.distinct("tags", { organizationId: organizationId });
+
+        return {
+            attributeKeys: attributeKeyRows.map(row => row._id).filter(key => typeof key === "string" && key.length > 0),
+            tags: tags.filter(tag => typeof tag === "string" && tag.length > 0).sort()
+        };
+    }
+
+    /**
+     * Deletes every member matching a prepared Mongo filter, giving the seat
+     * count back. The filter is built by the caller from the same filter
+     * definitions the member list renders, so what is previewed and what is
+     * deleted come from one expression.
+     *
+     * @param {string} organizationId
+     * @param {object} additionalQuery a Mongo fragment already scoped by the caller
+     * @returns {Promise<{ removed: number }>}
+     */
+    static async removeMembersMatching(organizationId, additionalQuery)
+    {
+        const collection = await OrganizationMemberQueryEngine.#getCollection();
+        if (!collection)
+        {
+            return { removed: 0 };
+        }
+
+        const departingUserIds = await OrganizationMemberQueryEngine.#collectUserIds(collection, { ...additionalQuery, organizationId: organizationId });
+
+        const deleteResult = await collection.deleteMany
+        ({
+            ...additionalQuery,
+            organizationId: organizationId
+        });
+
+        if (deleteResult.deletedCount > 0)
+        {
+            await OrganizationQueryEngine.decrementMemberCountBy(organizationId, deleteResult.deletedCount);
+            await OrganizationMemberQueryEngine.#withdrawOrganizationContent(organizationId, departingUserIds);
+        }
+
+        return { removed: deleteResult.deletedCount };
+    }
+
+    /**
+     * The members a prepared filter matches, without deleting anything — the
+     * dry run behind the confirmation dialog. Returns the full count plus a
+     * bounded sample, so a filter that would remove 400 people says so before
+     * anyone presses the button.
+     *
+     * @param {string} organizationId
+     * @param {object} additionalQuery
+     * @param {number} sampleLimit
+     * @returns {Promise<{ matchedCount: number, sample: Array<OrganizationMember> }>}
+     */
+    static async previewMembersMatching(organizationId, additionalQuery, sampleLimit = 10)
+    {
+        const collection = await OrganizationMemberQueryEngine.#getCollection();
+        if (!collection)
+        {
+            return { matchedCount: 0, sample: [] };
+        }
+
+        const scopedQuery = { ...additionalQuery, organizationId: organizationId };
+        const matchedCount = await collection.countDocuments(scopedQuery);
+        const sampleDocuments = await collection
+            .find(scopedQuery, { projection: { _id: 0 } })
+            .limit(Math.max(1, sampleLimit))
+            .toArray();
+
+        return {
+            matchedCount: matchedCount,
+            sample: sampleDocuments.map(document => OrganizationMember.fromJson(document))
+        };
+    }
+
+    /**
+     * The membership row for one account in one organization, matched by the
+     * back-filled userId OR by email. Both are needed: membership is
+     * email-keyed and userId is only filled in at first login, so a member
+     * appointed before that would not be found by id alone.
+     *
+     * Used on the authorization hot path, so it is a single indexed lookup
+     * rather than a roster scan — resolving standing must not cost O(members)
+     * on every request to an organization.
+     *
+     * @param {string} organizationId
+     * @param {string} userId may be empty
+     * @param {string} rawEmail may be empty
+     * @returns {Promise<OrganizationMember|null>}
+     */
+    static async findMemberByUserIdOrEmail(organizationId, userId, rawEmail)
+    {
+        if (typeof organizationId !== "string" || organizationId.length === 0)
+        {
+            return null;
+        }
+
+        const email = OrganizationMemberQueryEngine.#normaliseEmail(rawEmail);
+        const identityConditions = [];
+
+        if (typeof userId === "string" && userId.length > 0)
+        {
+            identityConditions.push({ userId: userId });
+        }
+        if (email.length > 0)
+        {
+            identityConditions.push({ email: email });
+        }
+        if (identityConditions.length === 0)
+        {
+            return null;
+        }
+
+        const collection = await OrganizationMemberQueryEngine.#getCollection();
+        if (!collection)
+        {
+            return null;
+        }
+
+        const document = await collection.findOne
+        (
+            { organizationId: organizationId, $or: identityConditions },
+            { projection: { _id: 0 } }
+        );
+
+        return document ? OrganizationMember.fromJson(document) : null;
+    }
+
+    /**
+     * Sets the bitwise delegate powers on one membership row. Only the
+     * organization's owner (or a super-admin) may call this — the caller
+     * enforces that through OrganizationAuthorityResolver; this is the raw
+     * persistence write.
+     *
+     * @param {string} organizationId
+     * @param {string} memberId
+     * @param {number} delegatePowers an OrganizationDelegatePowers flag set
+     * @returns {Promise<{ updated: boolean }>}
+     */
+    static async setDelegatePowers(organizationId, memberId, delegatePowers)
+    {
+        if (!Number.isInteger(delegatePowers) || delegatePowers < 0)
+        {
+            return { updated: false };
+        }
+
+        const collection = await OrganizationMemberQueryEngine.#getCollection();
+        if (!collection)
+        {
+            return { updated: false };
+        }
+
+        const updateResult = await collection.updateOne
+        (
+            { id: memberId, organizationId: organizationId },
+            { $set: { delegatePowers: delegatePowers } }
+        );
+
+        return { updated: updateResult.matchedCount === 1 };
     }
 
     /**

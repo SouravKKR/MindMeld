@@ -328,10 +328,16 @@ class KeyManagementService
             ? options.grantSource
             : GrantSources.PURCHASE;
 
+        // Which library the seeded copy belongs in. Empty means the buyer's own,
+        // which is every marketplace purchase and every license issued before
+        // organization views existed.
+        const scopeKey = typeof options.scopeKey === "string" ? options.scopeKey : "";
+
         const license = new DeckLicense
         ({
             userId: userId,
             deckId: deckId,
+            scopeKey: scopeKey,
             status: deckLicenseStatuses.ACTIVE,
             keyVersion: keyVersion,
             wrappedKeyBlob: wrappedKeyBlob,

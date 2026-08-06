@@ -7,7 +7,6 @@ const RegionMetadata = require("../../Globals/Classes/Pricing/RegionMetadata");
 const LicenseExpiryResolver = require("../../Globals/Classes/Pricing/LicenseExpiryResolver");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const LicenseClientView = require("../../Globals/Classes/Security/LicenseClientView");
-const ZohoInvoiceService = require("../../Globals/Classes/Invoicing/ZohoInvoiceService");
 const NotificationDispatcher = require("../../Globals/Classes/Notifications/NotificationDispatcher");
 const NotificationContent = require("../../Globals/Classes/Notifications/NotificationContent");
 const Purchase = require("../../Globals/Model/Purchase");
@@ -16,6 +15,7 @@ const { seedProtectedContentForLicense } = require("./PaidDeckGrantHelpers");
 const { purchaseStatuses } = require("../../Globals/Enumerations/PurchaseStatuses");
 const { notificationChannels } = require("../../Globals/Enumerations/NotificationChannels");
 const { logCategory } = require("../../Globals/Enumerations/LogCategory");
+const Alerts = require("../../Globals/Classes/Alerts/Alerts");
 const Logger = require("../../Globals/Classes/Logger");
 const LogTitles = require("../../Globals/Classes/Logging/LogTitles");
 
@@ -62,12 +62,25 @@ class PaidDeckPurchaseCompletionService
         const providerOrderId = pendingOrder.providerOrderId;
         const userId = pendingOrder.userId;
 
+        // Checked BEFORE the grant claim, not after: a refund that arrived
+        // before this capture was provisioned found no licences to revoke, so
+        // the reversal row is the only thing standing between the buyer and a
+        // deck they have already been refunded for. Required lazily to keep the
+        // settlement services and the reversal service free of a require cycle.
+        const PaymentReversalService = require("../../Globals/Classes/Payments/PaymentReversalService");
+        if (await PaymentReversalService.hasReversalForOrder(providerOrderId))
+        {
+            console.warn(`[PaidDeckPurchaseCompletion] Refusing to grant order ${providerOrderId} — it has already been reversed.`);
+            await PendingOrderQueryEngine.markConsumed(providerOrderId, userId);
+            return { granted: false, alreadyProcessed: true, refusedAsReversed: true, licenses: [], deckIds: [], skippedDeckIds: [] };
+        }
+
         const claim = await PendingOrderQueryEngine.tryClaimForGrant(providerOrderId, userId);
         if (!claim.claimed)
         {
             // Already consumed, or the other settlement path is granting right
             // now. Either way this call must not grant again.
-            return { granted: false, alreadyProcessed: true, licenses: [], deckIds: [] };
+            return { granted: false, alreadyProcessed: true, licenses: [], deckIds: [], skippedDeckIds: [] };
         }
 
         try
@@ -93,6 +106,72 @@ class PaidDeckPurchaseCompletionService
             await PendingOrderQueryEngine.releaseGrantClaim(providerOrderId, userId);
             throw completionError;
         }
+    }
+
+    /**
+     * The share of the CAPTURED amount to record against one deck.
+     *
+     * The authority here is `pendingOrder.amountMinor` — the figure the buyer's
+     * card was actually charged — not anything recomputed at settlement time.
+     * The recomputed breakdown is used only to decide how a multi-deck basket
+     * divides, because the order total is a single number and a per-deck
+     * purchase row still has to carry a per-deck figure.
+     *
+     * Three cases, in order:
+     *   one deck        the whole order total, exactly. No arithmetic, so no
+     *                   rounding error can appear on the commonest purchase.
+     *   priced basket   split in proportion to the breakdown, with the LAST
+     *                   deck taking the remainder so the rows sum to the
+     *                   captured total to the minor unit. Distributing a
+     *                   rounding residue anywhere else would leave a basket
+     *                   whose parts do not add up to what was charged.
+     *   no basis        zero, matching the previous behaviour for a deck the
+     *                   pricing engine no longer knows about.
+     *
+     * Public rather than private: it is a pure function over four values with
+     * no state and no side effects, and the arithmetic (a proportional split
+     * whose parts must sum exactly to the captured total) is precisely the kind
+     * of thing worth asserting directly rather than only through a full
+     * settlement.
+     *
+     * @returns {number} minor units to record for this deck
+     */
+    static resolveChargedAmountMinor(pendingOrder, authoritativeDeckIds, deckBreakdown, serverPricing)
+    {
+        const capturedTotalMinor = Number(pendingOrder.amountMinor) || 0;
+
+        if (authoritativeDeckIds.length <= 1)
+        {
+            return capturedTotalMinor;
+        }
+
+        const breakdownTotalMinor = (serverPricing.breakdown || [])
+            .reduce((runningTotal, entry) => runningTotal + (Number(entry.finalPriceMinor) || 0), 0);
+
+        if (breakdownTotalMinor <= 0 || !deckBreakdown)
+        {
+            return 0;
+        }
+
+        const deckShareMinor = Number(deckBreakdown.finalPriceMinor) || 0;
+        const isLastDeck = authoritativeDeckIds[authoritativeDeckIds.length - 1] === deckBreakdown.deckId;
+
+        if (!isLastDeck)
+        {
+            return Math.round(capturedTotalMinor * deckShareMinor / breakdownTotalMinor);
+        }
+
+        // The last deck absorbs whatever rounding left over, so the per-deck
+        // rows always sum to the captured total.
+        let allocatedToOthersMinor = 0;
+        for (const otherDeckId of authoritativeDeckIds.slice(0, -1))
+        {
+            const otherEntry = (serverPricing.breakdown || []).find(entry => entry.deckId === otherDeckId);
+            const otherShareMinor = otherEntry ? (Number(otherEntry.finalPriceMinor) || 0) : 0;
+            allocatedToOthersMinor = allocatedToOthersMinor + Math.round(capturedTotalMinor * otherShareMinor / breakdownTotalMinor);
+        }
+
+        return capturedTotalMinor - allocatedToOthersMinor;
     }
 
     /**
@@ -136,6 +215,7 @@ class PaidDeckPurchaseCompletionService
         }
 
         const issuedLicenses = [];
+        const skippedDeckIds = [];
 
         for (const deckId of authoritativeDeckIds)
         {
@@ -151,21 +231,56 @@ class PaidDeckPurchaseCompletionService
             const expiryResolution = LicenseExpiryResolver.resolve(perkBreakdown);
             if (expiryResolution.status === LicenseExpiryResolver.STATUS_UNSPECIFIED)
             {
+                // The buyer HAS PAID for this deck and is not going to receive
+                // it. That is a customer-visible failure, not a housekeeping
+                // note, so it alerts rather than only writing a warning nobody
+                // reads — the order flips to CONSUMED either way, so nothing
+                // downstream will raise it later.
                 Logger.warning(logCategory.PURCHASE, LogTitles.PURCHASE_DECK, "Skipped granting a deck with no explicit license duration",
                 {
                     accountId: userId,
                     additionalData: { deckId: deckId, providerOrderId: providerOrderId }
                 });
+                await Alerts.raise
+                ({
+                    severity: Alerts.SEVERITY.ERROR,
+                    source: "PAID_DECK_SETTLEMENT",
+                    title: "A paid-for deck was withheld at settlement",
+                    message: `Deck ${deckId} was paid for on order ${providerOrderId} but has no configured licence duration, so it was NOT granted. The buyer has been charged and is missing this deck. Fix the deck's duration configuration, then re-grant it manually.`,
+                    metadata: { accountId: userId, deckId: deckId, providerOrderId: providerOrderId }
+                });
+                skippedDeckIds.push(deckId);
                 continue;
             }
 
             const purchaseAdditionalData = orgPerkActive
                 ? { organizationId: perkBreakdown.organizationId, perkType: "ORG_PERK", durationDays: perkBreakdown.durationDays }
                 : {};
-            // Recorded amount comes from the server pricing breakdown, never a
-            // client body.
-            const recordedAmountMinor = perkBreakdown ? (Number(perkBreakdown.finalPriceMinor) || 0) : 0;
-            const recordedCurrency = serverPricing.currency || pendingOrder.currency || "INR";
+            // The recorded amount is what the buyer was actually CHARGED, taken
+            // from the pending row written at checkout — not the price
+            // recomputed a moment ago.
+            //
+            // Re-pricing at settlement was subtly wrong: if the catalogue, an
+            // exchange rate or a discount moved between checkout and
+            // settlement, the Purchase row would state a figure the customer
+            // never paid. Every downstream use of that row — the receipt, the
+            // revenue report, a dispute response — would then be quoting a
+            // number that does not appear on the buyer's card statement.
+            //
+            // The recomputed breakdown is still used, but only for what it is
+            // genuinely authoritative about: licence DURATION and perk
+            // metadata, which are properties of the deck rather than of the
+            // money. A single-deck order is charged the order total; a
+            // multi-deck basket splits by the breakdown's proportions so the
+            // per-deck rows still sum to what was captured.
+            const recordedAmountMinor = PaidDeckPurchaseCompletionService.resolveChargedAmountMinor
+            (
+                pendingOrder,
+                authoritativeDeckIds,
+                perkBreakdown,
+                serverPricing
+            );
+            const recordedCurrency = pendingOrder.currency || serverPricing.currency || "INR";
 
             const purchase = new Purchase
             ({
@@ -247,31 +362,12 @@ class PaidDeckPurchaseCompletionService
             }
         }
 
-        // Invoice the paid acquisition — best-effort, never blocks the grant.
-        // Uses the server-recomputed total, never a client body.
-        if (ZohoInvoiceService.isEnabled() && Number(serverPricing.totalMinor) > 0)
-        {
-            try
-            {
-                const buyerEmail = user ? (user.getAdditionalData()?.email || "") : "";
-                const deckLabel = authoritativeDeckIds.length === 1 ? "CogniumLearn deck" : `CogniumLearn decks (${authoritativeDeckIds.length})`;
-                await ZohoInvoiceService.createPaidInvoice
-                ({
-                    email: buyerEmail,
-                    name: user && user.getDisplayName ? user.getDisplayName() : "",
-                    amountMinor: serverPricing.totalMinor,
-                    currency: serverPricing.currency || pendingOrder.currency || "INR",
-                    description: deckLabel,
-                    referenceNumber: providerPaymentId || providerOrderId
-                });
-            }
-            catch (invoiceError)
-            {
-                console.warn(`[PaidDeckPurchaseCompletion] Invoice step failed for order ${providerOrderId} (non-fatal): ${invoiceError?.message || invoiceError}`);
-            }
-        }
+        // No invoice is generated here. Invoicing is handled outside the
+        // application and attached manually for the record; the Purchase rows
+        // written above are the system's own record of the sale, and
+        // /PaidDecks/Purchases/Invoice renders a receipt from them on demand.
 
-        return { granted: true, alreadyProcessed: false, licenses: issuedLicenses, deckIds: authoritativeDeckIds };
+        return { granted: true, alreadyProcessed: false, licenses: issuedLicenses, deckIds: authoritativeDeckIds, skippedDeckIds: skippedDeckIds };
     }
 }
 

@@ -7,6 +7,7 @@ const paidDeckFilterTypes =
   ENUM: 4,
   BOOLEAN: 5,
   INSTITUTE_SELECT: 6,
+  STRING_RANGE: 7,
 }
 
 module.exports = { paidDeckFilterTypes };

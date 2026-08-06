@@ -31,10 +31,8 @@ class StripePaymentProvider extends PaymentProvider
         throw new Error("StripePaymentProvider.verifyPayment() is not yet implemented");
     }
 
-    async refund(paymentId, amountMinor)
-    {
-        throw new Error("StripePaymentProvider.refund() is not yet implemented");
-    }
+    // refund() is deliberately NOT implemented. This product does not offer
+    // refunds; the base class refuses for every provider. See RefundPolicy.js.
 }
 
 module.exports = StripePaymentProvider;

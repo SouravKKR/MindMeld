@@ -17,10 +17,10 @@
 #   SSH keys, bakebox) unsuffixed, and per-env values suffixed by environment
 #   (BASE_NODE_SSH_HOST_<ENV>, CLOUDFLARE_TUNNEL_TOKEN_<ENV>, ...), resolved per run.
 #
-# Every run is gated on browser suites driven against the freshly-built bundle
-# BEFORE anything is baked or shipped: the seven interactive tutorials on EVERY
-# environment, plus 27 critical user flows on PRODUCTION. Needs a local Redis +
-# MongoDB and TUTORIAL_TEST_SESSION_COOKIE in deployment.env — Deployment.md §1.1.1.
+# PRODUCTION deploys are gated on browser suites driven against the freshly-built
+# bundle BEFORE anything is baked or shipped: 7 tutorials + 27 critical flows + 19
+# sync cases (needs local Redis/MongoDB + TUTORIAL_TEST_SESSION_COOKIE). Development
+# and testing run NO gate: frontend build, then straight to the bake. §1.1.1.
 #
 # Flags (same meaning as the legacy deploy.sh):
 #   --skip-base-update  --skip-bake  --skip-frontend-build  --skip-tutorial-tests
@@ -450,16 +450,15 @@ restore_base_node_access()
 
 # ── Pre-deploy browser gates ─────────────────────────────────────────────────
 #
-# Two Puppeteer suites drive the REAL UI against the freshly-built bundle
-# before anything is baked or shipped:
+# Three Puppeteer suites drive the REAL UI against the freshly-built bundle
+# before anything is baked or shipped. ALL THREE ARE PRODUCTION-ONLY:
 #
-#   * Tutorial walkthrough  — EVERY environment. The guided tours click real
-#     tiles, menu entries, popups and editors, which makes them the first thing
-#     a frontend change breaks, and the breakage is invisible in code review: a
-#     renamed class, a new intermediate popup, or a page that mounts one element
-#     differently is enough to strand a user mid-tour. The Beginners tour also
-#     auto-plays on first launch, so a broken tour is the first thing a new user
-#     sees.
+#   * Tutorial walkthrough  — the guided tours click real tiles, menu entries,
+#     popups and editors, which makes them the first thing a frontend change
+#     breaks, and the breakage is invisible in code review: a renamed class, a
+#     new intermediate popup, or a page that mounts one element differently is
+#     enough to strand a user mid-tour. The Beginners tour also auto-plays on
+#     first launch, so a broken tour is the first thing a new user sees.
 #
 #   * Critical user flows   — PRODUCTION only. 25 everyday operations (create /
 #     rename / nest / delete decks, author and edit cards and study materials,
@@ -481,6 +480,20 @@ restore_base_node_access()
 #     create and delete decks on whatever account they run as.
 run_browser_test_gates()
 {
+    # Production is the ONLY environment these run on. Development and testing
+    # exist to be deployed to often and exercised by hand; paying the gates'
+    # wall-clock on every roll-out there discourages exactly that, and a
+    # regression caught on them reaches nobody but us. Production is the one
+    # environment where a regression reaches real users, so it is the one that
+    # pays. Accepted cost: a broken tour is not caught until the production
+    # deploy that ships it — run the suites by hand (the run-browser-gates
+    # skill) after a frontend change if that signal is wanted earlier.
+    if [ "$ENVIRONMENT_NAME" != "production" ]
+    then
+        log_info "Browser gates are production-only — skipping them for '$ENVIRONMENT_NAME' (Deployment.md §1.1.1)."
+        return 0
+    fi
+
     if [ "$SKIP_TUTORIAL_TESTS" -eq 1 ]
     then
         log_warning "Skipping the browser test gates (--skip-tutorial-tests). Frontend regressions in the guided tours and everyday flows will NOT be caught."
@@ -493,14 +506,6 @@ run_browser_test_gates()
         log_error "Set it to a sessionId for a seeded, terms-accepted LOCAL test account (see Deployment.md §1.1.1),"
         log_error "or pass --skip-tutorial-tests to deploy without the gates."
         return 1
-    fi
-
-    # Build first so the suites exercise the exact bundle this deploy ships,
-    # and tell update_base_node not to build it a second time.
-    if [ "$SKIP_FRONTEND_BUILD" -eq 0 ]
-    then
-        build_frontend || return 1
-        SKIP_FRONTEND_BUILD=1
     fi
 
     local test_directory="$REPOSITORY_ROOT/Common/Testing/Main"
@@ -553,29 +558,21 @@ run_browser_test_gates()
 
     run_browser_suite "Tutorial walkthrough" "Common/Testing/Main/run_tutorial_ui_tests.js" "$REPOSITORY_ROOT/Common/Reports/.results/tutorial-ui.json" "$base_url" || gate_status=1
 
-    # The critical-flow suite is production-only: it writes and deletes a lot
-    # more than the tour walk, and it is the last line before real users.
-    if [ "$gate_status" -eq 0 ] && [ "$ENVIRONMENT_NAME" = "production" ]
+    # The critical-flow suite writes and deletes a lot more than the tour walk,
+    # and it is the last line before real users.
+    if [ "$gate_status" -eq 0 ]
     then
         run_browser_suite "Critical user flows" "Common/Testing/Main/run_critical_flow_tests.js" "$REPOSITORY_ROOT/Common/Reports/.results/critical-flow-ui.json" "$base_url" || gate_status=1
-    elif [ "$gate_status" -eq 0 ]
-    then
-        log_info "Critical-flow gate skipped for '$ENVIRONMENT_NAME' (production only)."
     fi
 
-    # The sync suite is production-only for the same reason, and matters more
-    # than any of the others: sync is where a regression DESTROYS data rather
-    # than merely breaking a screen. It drives three independent devices, seeds
-    # a library large enough to force the server's chunked pull, and asserts
-    # every browser-visible outcome against MongoDB — so it is also the slowest
-    # of the three. Widen it to every environment by dropping the condition if
-    # the extra minutes are worth it on development/testing too.
-    if [ "$gate_status" -eq 0 ] && [ "$ENVIRONMENT_NAME" = "production" ]
+    # The sync suite matters more than any of the others: sync is where a
+    # regression DESTROYS data rather than merely breaking a screen. It drives
+    # three independent devices, seeds a library large enough to force the
+    # server's chunked pull, and asserts every browser-visible outcome against
+    # MongoDB — so it is also the slowest of the three.
+    if [ "$gate_status" -eq 0 ]
     then
         run_browser_suite "Synchronisation" "Common/Testing/Main/run_sync_ui_tests.js" "$REPOSITORY_ROOT/Common/Reports/.results/sync-ui.json" "$base_url" || gate_status=1
-    elif [ "$gate_status" -eq 0 ]
-    then
-        log_info "Synchronisation gate skipped for '$ENVIRONMENT_NAME' (production only)."
     fi
 
     if [ "$started_dock" -eq 1 ]
@@ -709,8 +706,6 @@ update_base_node()
     log_step "Verifying SSH to the '$ENVIRONMENT_NAME' base node ($base_node_target)..."
     wait_for_ssh "$base_node_target"
 
-    if [ "$SKIP_FRONTEND_BUILD" -eq 0 ]; then build_frontend; else log_warning "Skipping frontend build (--skip-frontend-build)."; fi
-
     log_step "Uploading the Agent + Dock contexts to the base node..."
     local agent_archive dock_archive
     agent_archive="$(mktemp -t cogniumlearn-agent-context.XXXXXX.tar.gz)"
@@ -816,8 +811,23 @@ main()
         ensure_base_node_access || exit 1
     fi
 
-    # Gate SECOND: a broken tour or flow should cost nothing but the run itself —
-    # no bakebox spun up, no image captured, nothing shipped to the base node.
+    # The frontend is built on EVERY environment, here rather than inside the
+    # gates or update_base_node. Three reasons: the production suites must drive
+    # the exact bundle that ships; update_base_node must not rebuild it; and
+    # building here keeps the Windows "file changed as we read it" tar race away
+    # from a freshly-rewritten Dock/Static, which is what happens when the build
+    # sits immediately before build_dock_context.
+    if [ "$SKIP_FRONTEND_BUILD" -eq 0 ]
+    then
+        build_frontend || exit 1
+        SKIP_FRONTEND_BUILD=1
+    else
+        log_warning "Skipping frontend build (--skip-frontend-build)."
+    fi
+
+    # Gate SECOND (production only): a broken tour or flow should cost nothing
+    # but the run itself — no bakebox spun up, no image captured, nothing
+    # shipped to the base node.
     run_browser_test_gates || exit 1
 
     if [ "$SKIP_BAKE" -eq 1 ]

@@ -1,71 +1,81 @@
 {
     "name": "Organization",
     "relativePath": "Globals/Model",
-    "members":
-    {
-        "id":
-        {
+    "members": {
+        "id": {
             "datatype": "string",
             "id": true
         },
-        "name":
-        {
+        "name": {
             "datatype": "string",
             "minLength": 1,
             "maxLength": 256
         },
-        "adminEmail":
-        {
+        "adminEmail": {
             "datatype": "string",
             "minLength": 3,
             "maxLength": 320
         },
-        "adminUserId":
-        {
+        "adminUserId": {
             "datatype": "string",
             "defaultValue": ""
         },
-        "status":
-        {
+        "status": {
             "datatype": "enum:OrganizationStatus",
             "defaultValue": 0
         },
-        "currency":
-        {
+        "currency": {
             "datatype": "string",
             "defaultValue": "INR",
             "maxLength": 8
         },
-        "creationAmountMinor":
-        {
+        "creationAmountMinor": {
             "datatype": "int",
             "defaultValue": 0,
             "min": 0
         },
-        "maxMembers":
-        {
+        "maxMembers": {
             "datatype": "int",
             "defaultValue": 0,
             "min": 0
         },
-        "currentMemberCount":
-        {
+        "currentMemberCount": {
             "datatype": "int",
             "defaultValue": 0,
             "min": 0
         },
-        "creationDate":
-        {
+        "creationDate": {
             "datatype": "date",
             "defaultValue": "now"
         },
-        "activationDate":
-        {
+        "activationDate": {
             "datatype": "date",
             "defaultValue": "now"
         },
-        "additionalData":
-        {
+        "termEndsAt": {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
+        "maxStorageGrantBytesPerMember": {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "maxCreditsPerMemberPerMonth": {
+            "datatype": "float",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "maxPublishedDecks": {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "grantableFeatures": {
+            "datatype": "array<enum:PlanFeatures>",
+            "defaultValue": []
+        },
+        "additionalData": {
             "datatype": "object",
             "defaultValue": {}
         }

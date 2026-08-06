@@ -1,34 +1,83 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
-import PaymentCheckout from "../../../Globals/Classes/Payments/PaymentCheckout.js";
+import { planFeatures } from "../../../Globals/Enumerations/PlanFeatures.js";
+import OrganizationErrorMessages from "../../../Globals/Classes/Organization/OrganizationErrorMessages.js";
 import { organizationStatus } from "../../../Globals/Enumerations/OrganizationStatus.js";
 import { organizationDeckPerkTypes } from "../../../Globals/Enumerations/OrganizationDeckPerkTypes.js";
 
 /**
  * OrganizationDetailsDialog
  *
- * Super-admin view + edit for a single organization: shows payments,
- * lets the admin update the perk set, and exposes the "Expand
- * capacity" flow (provider checkout, Razorpay today). Member management is handled by
- * the org admin's own tab; this dialog stays focused on the deal terms
- * and lifecycle.
+ * Super-admin view + edit for a single organization: rename, member capacity,
+ * and the marketplace deck perks its members receive. Member management,
+ * permissions, credits and the deck shelf live on the organization's own page —
+ * this dialog stays focused on what only a super-admin may change.
  *
- * Resolves true when the caller should refresh its list (perks updated
- * or capacity expanded), false on a pure cancel.
+ * Every save reports its outcome next to the control that triggered it and
+ * disables that control while the request is in flight, so a failure can never
+ * be mistaken for a silent success. The shared error banner sits at the TOP of
+ * the dialog: it used to sit below the tables, where a tall dialog pushed it
+ * out of view entirely and a rejected save looked like nothing had happened.
+ *
+ * Resolves true when the caller should refresh its list, false on a pure close.
  */
 class OrganizationDetailsDialog
 {
+    // The features an agreement can include, in the order they are sold rather
+    // than enum order, with the wording a person buying them would use. Kept
+    // beside the dialog that offers them so the two never disagree.
+    static GRANTABLE_FEATURE_DESCRIPTIONS =
+    [
+        { featureValue: planFeatures.ASK_AI, label: "Ask AI" },
+        { featureValue: planFeatures.CHAT, label: "Chat with a deck" },
+        { featureValue: planFeatures.AUTOMATIC_GENERATION, label: "Generate with AI" },
+        { featureValue: planFeatures.CURATED_STUDY, label: "Curated study material" },
+        { featureValue: planFeatures.MOCK_TEST_EVALUATION, label: "Mock-test evaluation" },
+        { featureValue: planFeatures.IMAGE_GENERATION, label: "Image generation" },
+        { featureValue: planFeatures.MONTHLY_FREE_DECK, label: "Monthly free deck" }
+    ];
+
+    static #escapeHtml(rawString)
+    {
+        if (rawString === null || rawString === undefined)
+        {
+            return "";
+        }
+        return String(rawString)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+    }
+
+    static #describeStatus(statusValue)
+    {
+        if (statusValue === organizationStatus.PENDING_PAYMENT)
+        {
+            return "Pending";
+        }
+        if (statusValue === organizationStatus.ACTIVE)
+        {
+            return "Active";
+        }
+        if (statusValue === organizationStatus.SUSPENDED)
+        {
+            return "Suspended";
+        }
+        return String(statusValue);
+    }
+
     static async show(organizationId)
     {
         const detailsResponse = await fetch(`/Admin/Organizations/Get?organizationId=${encodeURIComponent(organizationId)}`);
         if (!detailsResponse.ok)
         {
-            await DialogBox.alert("Could not load organization", `HTTP ${detailsResponse.status}`);
+            await DialogBox.alert("Could not load organization", OrganizationErrorMessages.describe(null, detailsResponse.status));
             return false;
         }
         const detailsJson = await detailsResponse.json();
         if (!detailsJson.success)
         {
-            await DialogBox.alert("Could not load organization", detailsJson.error || "Unknown");
+            await DialogBox.alert("Could not load organization", OrganizationErrorMessages.describe(detailsJson.error, detailsResponse.status));
             return false;
         }
 
@@ -55,83 +104,119 @@ class OrganizationDetailsDialog
             perkValue: perk.perkValue,
             durationDays: perk.durationDays
         }));
+        const payments = Array.isArray(detailsJson.payments) ? detailsJson.payments : [];
 
         return new Promise((resolve) =>
         {
-            const escape = (rawString) =>
-            {
-                if (rawString === null || rawString === undefined) return "";
-                return String(rawString)
-                    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-            };
-
-            const statusLabel = (statusValue) =>
-            {
-                if (statusValue === organizationStatus.PENDING_PAYMENT) return "Pending payment";
-                if (statusValue === organizationStatus.ACTIVE) return "Active";
-                if (statusValue === organizationStatus.SUSPENDED) return "Suspended";
-                return String(statusValue);
-            };
+            const escapeHtml = OrganizationDetailsDialog.#escapeHtml;
 
             const dialog = DialogBox.modal
             (`
                 <div class="admin-panel-add-dialog organization-details-dialog">
-                    <h2 class="admin-panel-add-title">${escape(organization.name)}</h2>
+                    <h2 class="admin-panel-add-title">${escapeHtml(organization.name)}</h2>
                     <p class="admin-panel-add-subtitle">
-                        Admin: <strong>${escape(organization.adminEmail)}</strong> ·
-                        Status: <strong>${escape(statusLabel(organization.status))}</strong> ·
+                        Owner: <strong>${escapeHtml(organization.adminEmail)}</strong> ·
+                        Status: <strong>${escapeHtml(OrganizationDetailsDialog.#describeStatus(organization.status))}</strong> ·
                         Members: <strong>${organization.currentMemberCount} / ${organization.maxMembers}</strong> ·
-                        Currency: <strong>${escape(organization.currency)}</strong>
+                        Currency: <strong>${escapeHtml(organization.currency)}</strong>
                     </p>
 
-                    <h3>Manage</h3>
-                    <div class="organization-expansion-row">
-                        <label>Rename <input type="text" class="organization-rename-input" maxlength="256" value="${escape(organization.name)}"></label>
-                        <button type="button" class="organization-rename">Save name</button>
-                    </div>
-                    <div class="organization-expansion-row">
-                        <label>Set max members (can't go below current ${organization.currentMemberCount}) <input type="number" class="organization-maxmembers-input" min="${organization.currentMemberCount}" value="${organization.maxMembers}"></label>
-                        <button type="button" class="organization-setmax">Save cap</button>
-                    </div>
-                    <p class="admin-panel-add-subtitle">Recurring credit cycles for this organization are created and terminated on the Credits → Periodic Assignments tab.</p>
-
-                    <h3>Paid-deck perks</h3>
-                    <div class="organization-perks-table" data-role="perks-table"></div>
-                    <button type="button" class="organization-add-perk">+ Add deck perk</button>
-                    <button type="button" class="organization-save-perks">Save perks</button>
-                    <p class="admin-panel-add-subtitle">Adding a FREE perk auto-mints licenses for every existing member with an account. Existing licenses are not affected by removing perks here.</p>
-
-                    <h3>Expand capacity</h3>
-                    <div class="organization-expansion-row">
-                        <label>Additional members <input type="number" class="organization-expansion-count" min="1" value="10"></label>
-                        <label>Amount (minor units — e.g. 100 = 1.00; 0 = free) <input type="number" class="organization-expansion-amount" min="0" value="0"></label>
-                        <button type="button" class="organization-expand">Expand</button>
-                    </div>
-
-                    <h3>Payment history</h3>
-                    <table class="admin-panel-table">
-                        <thead><tr><th>Kind</th><th>Status</th><th>Amount</th><th>Created</th></tr></thead>
-                        <tbody>
-                            ${(detailsJson.payments || []).map(payment => `
-                                <tr>
-                                    <td>${payment.kind === 0 ? "CREATION" : "EXPANSION"}</td>
-                                    <td>${payment.status}</td>
-                                    <td>${payment.amountMinor} ${escape(payment.currency)}</td>
-                                    <td>${new Date(payment.createdAt).toLocaleString()}</td>
-                                </tr>
-                            `).join("")}
-                        </tbody>
-                    </table>
-
                     <div class="admin-panel-add-error" data-role="error" hidden></div>
+
+                    <h3 class="organization-section-heading">Details</h3>
+                    <div class="organization-form-grid">
+                        <label class="admin-panel-add-field">
+                            <span>Name</span>
+                            <input type="text" class="organization-rename-input" maxlength="256" value="${escapeHtml(organization.name)}">
+                        </label>
+                    </div>
+                    <div class="organization-form-actions">
+                        <button type="button" class="organization-secondary-button organization-rename">Save name</button>
+                    </div>
+                    <p class="organization-action-status" data-role="rename-status"></p>
+
+                    <div class="organization-form-grid">
+                        <label class="admin-panel-add-field">
+                            <span>Member capacity (at least ${organization.currentMemberCount}, the current member count)</span>
+                            <input type="number" class="organization-maxmembers-input" min="${organization.currentMemberCount}" value="${organization.maxMembers}">
+                        </label>
+                    </div>
+                    <div class="organization-form-actions">
+                        <button type="button" class="organization-secondary-button organization-setmax">Save capacity</button>
+                    </div>
+                    <p class="organization-action-status" data-role="capacity-status"></p>
+
+                    <h3 class="organization-section-heading">Entitlement ceilings</h3>
+                    <p class="admin-panel-add-subtitle">
+                        The platform's side of this organization's agreement. Everything they then configure
+                        for themselves &mdash; their permission rules, their storage grants, the decks they
+                        publish &mdash; is clamped to these, on write and again on read, so lowering one takes
+                        effect immediately.
+                    </p>
+                    <div class="organization-form-grid">
+                        <label class="admin-panel-add-field">
+                            <span>Storage each member may be granted (MB)</span>
+                            <input type="number" min="0" step="1" class="organization-storage-ceiling-input"
+                                   value="${Math.round((Number(organization.maxStorageGrantBytesPerMember) || 0) / (1024 * 1024))}">
+                        </label>
+                        <label class="admin-panel-add-field">
+                            <span>Credits any one member may receive per month (0 = no cap)</span>
+                            <input type="number" min="0" step="0.1" class="organization-monthly-cap-input"
+                                   value="${Number(organization.maxCreditsPerMemberPerMonth) || 0}">
+                        </label>
+                        <label class="admin-panel-add-field">
+                            <span>Decks they may publish to their members</span>
+                            <input type="number" min="0" step="1" class="organization-published-decks-input"
+                                   value="${Number(organization.maxPublishedDecks) || 0}">
+                        </label>
+                    </div>
+                    <p class="admin-panel-add-subtitle">AI features their permission rules may grant. A feature left unticked can never be reached by a rule, however that rule is written.</p>
+                    <div class="organization-grantable-features" data-role="grantable-features"></div>
+                    <div class="organization-form-actions">
+                        <button type="button" class="admin-panel-add-submit organization-save-limits">Save ceilings</button>
+                    </div>
+                    <p class="organization-action-status" data-role="limits-status"></p>
+
+                    <h3 class="organization-section-heading">Marketplace deck perks</h3>
+                    <p class="admin-panel-add-subtitle">These discount CogniumLearn marketplace decks for this organization's members. A FREE perk auto-mints licences for every existing member who has an account; removing a perk never revokes a licence already issued.</p>
+                    <div class="organization-perks-table" data-role="perks-table"></div>
+                    <div class="organization-form-actions">
+                        <button type="button" class="organization-secondary-button organization-add-perk">+ Add deck perk</button>
+                        <button type="button" class="admin-panel-add-submit organization-save-perks">Save perks</button>
+                    </div>
+                    <p class="organization-action-status" data-role="perks-status"></p>
+
+                    ${payments.length > 0 ? `
+                        <h3 class="organization-section-heading">Payment history</h3>
+                        <p class="admin-panel-add-subtitle">Historical only — creating and expanding an organization is free.</p>
+                        <div class="organization-table-scroll">
+                            <table class="admin-panel-table">
+                                <thead><tr><th>Kind</th><th>Status</th><th>Amount</th><th>Created</th></tr></thead>
+                                <tbody>
+                                    ${payments.map(payment => `
+                                        <tr>
+                                            <td>${payment.kind === 0 ? "Creation" : "Expansion"}</td>
+                                            <td>${escapeHtml(payment.status)}</td>
+                                            <td>${payment.amountMinor} ${escapeHtml(payment.currency)}</td>
+                                            <td>${new Date(payment.createdAt).toLocaleString()}</td>
+                                        </tr>
+                                    `).join("")}
+                                </tbody>
+                            </table>
+                        </div>
+                    ` : ""}
+
                     <div class="admin-panel-add-actions">
-                        <button type="button" class="admin-panel-add-cancel">Close</button>
+                        <button type="button" class="admin-panel-add-cancel organization-close">Close</button>
                     </div>
                 </div>
             `);
 
             const perksTable = dialog.querySelector('[data-role="perks-table"]');
             const errorElement = dialog.querySelector('[data-role="error"]');
+            const renameStatus = dialog.querySelector('[data-role="rename-status"]');
+            const capacityStatus = dialog.querySelector('[data-role="capacity-status"]');
+            const perksStatus = dialog.querySelector('[data-role="perks-status"]');
             let dialogChangedSomething = false;
             const perkRows = initialPerks.slice();
 
@@ -145,40 +230,107 @@ class OrganizationDetailsDialog
                 }
                 errorElement.textContent = message;
                 errorElement.hidden = false;
+                errorElement.scrollIntoView({ block: "nearest" });
+            };
+
+            const showActionStatus = (statusElement, message, bSucceeded) =>
+            {
+                statusElement.textContent = message || "";
+                statusElement.classList.toggle("organization-action-status-success", bSucceeded === true);
+                statusElement.classList.toggle("organization-action-status-failure", bSucceeded === false);
+            };
+
+            /**
+             * Runs one save: disables its button, shows a pending label, then
+             * reports the outcome beside the control. Returns the parsed body so
+             * the caller can use the server's own numbers in its success line.
+             */
+            const runSave = async (button, statusElement, pendingLabel, performRequest) =>
+            {
+                const originalLabel = button.textContent;
+                showError(null);
+                showActionStatus(statusElement, "", null);
+                button.disabled = true;
+                button.textContent = pendingLabel;
+
+                try
+                {
+                    const response = await performRequest();
+                    const responseJson = await response.json().catch(() => ({}));
+                    if (!response.ok || responseJson.success === false)
+                    {
+                        const message = OrganizationErrorMessages.describe(responseJson.error, response.status);
+                        showError(message);
+                        showActionStatus(statusElement, message, false);
+                        return null;
+                    }
+                    dialogChangedSomething = true;
+                    return responseJson;
+                }
+                catch (requestError)
+                {
+                    const message = requestError.message || "The request could not be sent.";
+                    showError(message);
+                    showActionStatus(statusElement, message, false);
+                    return null;
+                }
+                finally
+                {
+                    button.disabled = false;
+                    button.textContent = originalLabel;
+                }
             };
 
             const renderPerks = () =>
             {
                 if (perkRows.length === 0)
                 {
-                    perksTable.innerHTML = `<p class="admin-panel-add-subtitle">No perks. Members pay regular prices.</p>`;
+                    perksTable.innerHTML = `<p class="admin-panel-add-subtitle">No perks. Members pay the regular price for every marketplace deck.</p>`;
                     return;
                 }
+
                 perksTable.innerHTML = `
-                    <table class="admin-panel-table">
-                        <thead><tr><th>Deck</th><th>Perk type</th><th>Value (price in minor units, or % for discount)</th><th>Duration (days, 0=forever)</th><th></th></tr></thead>
-                        <tbody>
-                            ${perkRows.map((row, rowIndex) => `
-                                <tr data-perk-index="${rowIndex}">
-                                    <td>
-                                        <select class="organization-perk-deck" data-perk-index="${rowIndex}">
-                                            ${paidDecksCatalogue.map(deck => `<option value="${escape(deck.id)}" ${row.deckId === deck.id ? "selected" : ""}>${escape(deck.title)}</option>`).join("")}
-                                        </select>
-                                    </td>
-                                    <td>
-                                        <select class="organization-perk-type" data-perk-index="${rowIndex}">
-                                            <option value="${organizationDeckPerkTypes.FREE}" ${row.perkType === organizationDeckPerkTypes.FREE ? "selected" : ""}>FREE</option>
-                                            <option value="${organizationDeckPerkTypes.FIXED_OVERRIDE}" ${row.perkType === organizationDeckPerkTypes.FIXED_OVERRIDE ? "selected" : ""}>FIXED override</option>
-                                            <option value="${organizationDeckPerkTypes.PERCENTAGE_DISCOUNT}" ${row.perkType === organizationDeckPerkTypes.PERCENTAGE_DISCOUNT ? "selected" : ""}>PERCENT discount</option>
-                                        </select>
-                                    </td>
-                                    <td><input type="number" class="organization-perk-value" data-perk-index="${rowIndex}" value="${row.perkValue}" min="0"></td>
-                                    <td><input type="number" class="organization-perk-duration" data-perk-index="${rowIndex}" value="${row.durationDays}" min="0"></td>
-                                    <td><button type="button" class="organization-perk-remove" data-perk-index="${rowIndex}">Remove</button></td>
-                                </tr>
-                            `).join("")}
-                        </tbody>
-                    </table>
+                    <div class="organization-table-scroll">
+                        <table class="admin-panel-table">
+                            <thead><tr><th>Deck</th><th>Perk type</th><th>Value</th><th>Days</th><th></th></tr></thead>
+                            <tbody>
+                                ${perkRows.map((row, rowIndex) =>
+                                {
+                                    // A perk can outlive the deck it points at (the deck was
+                                    // deleted, or unpublished out of the catalogue). Rendering
+                                    // the select without a matching option silently showed the
+                                    // FIRST deck while the row still carried the old id, so
+                                    // saving rewrote the perk to a deck nobody chose. Keep the
+                                    // stored id and say so instead.
+                                    const bDeckIsInCatalogue = paidDecksCatalogue.some(deck => deck.id === row.deckId);
+                                    const missingOption = bDeckIsInCatalogue
+                                        ? ""
+                                        : `<option value="${escapeHtml(row.deckId)}" selected>Unavailable deck (${escapeHtml(row.deckId)})</option>`;
+                                    return `
+                                        <tr data-perk-index="${rowIndex}">
+                                            <td>
+                                                <select class="organization-perk-deck" data-perk-index="${rowIndex}">
+                                                    ${missingOption}
+                                                    ${paidDecksCatalogue.map(deck => `<option value="${escapeHtml(deck.id)}" ${row.deckId === deck.id ? "selected" : ""}>${escapeHtml(deck.title)}</option>`).join("")}
+                                                </select>
+                                                ${bDeckIsInCatalogue ? "" : `<span class="organization-perk-warning">This deck is no longer in the catalogue.</span>`}
+                                            </td>
+                                            <td>
+                                                <select class="organization-perk-type" data-perk-index="${rowIndex}">
+                                                    <option value="${organizationDeckPerkTypes.FREE}" ${row.perkType === organizationDeckPerkTypes.FREE ? "selected" : ""}>FREE</option>
+                                                    <option value="${organizationDeckPerkTypes.FIXED_OVERRIDE}" ${row.perkType === organizationDeckPerkTypes.FIXED_OVERRIDE ? "selected" : ""}>FIXED override</option>
+                                                    <option value="${organizationDeckPerkTypes.PERCENTAGE_DISCOUNT}" ${row.perkType === organizationDeckPerkTypes.PERCENTAGE_DISCOUNT ? "selected" : ""}>PERCENT discount</option>
+                                                </select>
+                                            </td>
+                                            <td><input type="number" class="organization-perk-value" data-perk-index="${rowIndex}" value="${row.perkValue}" min="0"></td>
+                                            <td><input type="number" class="organization-perk-duration" data-perk-index="${rowIndex}" value="${row.durationDays}" min="0"></td>
+                                            <td><button type="button" class="organization-secondary-button organization-perk-remove" data-perk-index="${rowIndex}">Remove</button></td>
+                                        </tr>
+                                    `;
+                                }).join("")}
+                            </tbody>
+                        </table>
+                    </div>
                 `;
 
                 for (const select of perksTable.querySelectorAll(".organization-perk-deck"))
@@ -202,7 +354,8 @@ class OrganizationDetailsDialog
                     input.addEventListener("input", (inputEvent) =>
                     {
                         const rowIndex = Number(inputEvent.currentTarget.dataset.perkIndex);
-                        perkRows[rowIndex].perkValue = parseInt(inputEvent.currentTarget.value || "0", 10);
+                        const parsedValue = parseInt(inputEvent.currentTarget.value, 10);
+                        perkRows[rowIndex].perkValue = Number.isInteger(parsedValue) ? parsedValue : 0;
                     });
                 }
                 for (const input of perksTable.querySelectorAll(".organization-perk-duration"))
@@ -210,7 +363,8 @@ class OrganizationDetailsDialog
                     input.addEventListener("input", (inputEvent) =>
                     {
                         const rowIndex = Number(inputEvent.currentTarget.dataset.perkIndex);
-                        perkRows[rowIndex].durationDays = parseInt(inputEvent.currentTarget.value || "0", 10);
+                        const parsedValue = parseInt(inputEvent.currentTarget.value, 10);
+                        perkRows[rowIndex].durationDays = Number.isInteger(parsedValue) ? parsedValue : 0;
                     });
                 }
                 for (const button of perksTable.querySelectorAll(".organization-perk-remove"))
@@ -224,13 +378,96 @@ class OrganizationDetailsDialog
                 }
             };
 
+            // ── Entitlement ceilings ──────────────────────────────────────
+            const grantableFeaturesHost = dialog.querySelector('[data-role="grantable-features"]');
+            const selectedFeatureValues = new Set((organization.grantableFeatures || []).map(featureValue => Number(featureValue)));
+
+            for (const featureDescription of OrganizationDetailsDialog.GRANTABLE_FEATURE_DESCRIPTIONS)
+            {
+                const featureLabel = document.createElement("label");
+                featureLabel.className = "organization-permission-tag";
+
+                const featureCheckbox = document.createElement("input");
+                featureCheckbox.type = "checkbox";
+                featureCheckbox.checked = selectedFeatureValues.has(featureDescription.featureValue);
+                featureCheckbox.addEventListener("change", () =>
+                {
+                    if (featureCheckbox.checked)
+                    {
+                        selectedFeatureValues.add(featureDescription.featureValue);
+                    }
+                    else
+                    {
+                        selectedFeatureValues.delete(featureDescription.featureValue);
+                    }
+                });
+
+                const featureText = document.createElement("span");
+                featureText.textContent = featureDescription.label;
+
+                featureLabel.appendChild(featureCheckbox);
+                featureLabel.appendChild(featureText);
+                grantableFeaturesHost.appendChild(featureLabel);
+            }
+
+            const limitsStatus = dialog.querySelector('[data-role="limits-status"]');
+            const saveLimitsButton = dialog.querySelector(".organization-save-limits");
+
+            saveLimitsButton.addEventListener("click", async () =>
+            {
+                const storageMegabytes = Number(dialog.querySelector(".organization-storage-ceiling-input").value);
+                const monthlyCap = Number(dialog.querySelector(".organization-monthly-cap-input").value);
+                const publishedDeckCap = Number(dialog.querySelector(".organization-published-decks-input").value);
+
+                if (!Number.isFinite(storageMegabytes) || storageMegabytes < 0
+                    || !Number.isFinite(monthlyCap) || monthlyCap < 0
+                    || !Number.isFinite(publishedDeckCap) || publishedDeckCap < 0)
+                {
+                    limitsStatus.classList.add("organization-action-status-failure");
+                    limitsStatus.textContent = "Every ceiling has to be zero or more.";
+                    return;
+                }
+
+                const responseJson = await runSave(saveLimitsButton, limitsStatus, "Saving…", () => fetch("/Admin/Organizations/SetLimits",
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify
+                    ({
+                        organizationId: organization.id,
+                        maxStorageGrantBytesPerMember: Math.round(storageMegabytes) * 1024 * 1024,
+                        maxCreditsPerMemberPerMonth: monthlyCap,
+                        maxPublishedDecks: Math.round(publishedDeckCap),
+                        grantableFeatures: Array.from(selectedFeatureValues)
+                    })
+                }));
+
+                if (!responseJson)
+                {
+                    return;
+                }
+
+                // Kept in step locally so re-opening the dialog without a reload
+                // shows what was actually saved rather than what was typed.
+                organization.maxStorageGrantBytesPerMember = Math.round(storageMegabytes) * 1024 * 1024;
+                organization.maxCreditsPerMemberPerMonth = monthlyCap;
+                organization.maxPublishedDecks = Math.round(publishedDeckCap);
+                organization.grantableFeatures = Array.from(selectedFeatureValues);
+
+                limitsStatus.classList.remove("organization-action-status-failure");
+                limitsStatus.classList.add("organization-action-status-success");
+                limitsStatus.textContent = responseJson.rulesReclamped > 0
+                    ? `Saved. ${responseJson.rulesReclamped} existing permission rule(s) were re-checked against the new ceilings.`
+                    : "Saved.";
+            });
+
             renderPerks();
 
             dialog.querySelector(".organization-add-perk").addEventListener("click", () =>
             {
                 if (paidDecksCatalogue.length === 0)
                 {
-                    showError("No paid decks available — upload one first.");
+                    showError("No marketplace decks available — upload one first.");
                     return;
                 }
                 perkRows.push
@@ -243,166 +480,98 @@ class OrganizationDetailsDialog
                 renderPerks();
             });
 
-            dialog.querySelector(".organization-save-perks").addEventListener("click", async () =>
+            const savePerksButton = dialog.querySelector(".organization-save-perks");
+            savePerksButton.addEventListener("click", async () =>
             {
-                showError(null);
-                const response = await fetch("/Admin/Organizations/UpdatePerks",
+                const responseJson = await runSave(savePerksButton, perksStatus, "Saving…", () => fetch("/Admin/Organizations/UpdatePerks",
                 {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ organizationId: organization.id, perks: perkRows })
-                });
-                const responseJson = await response.json().catch(() => ({}));
-                if (!response.ok || responseJson.success === false)
+                }));
+
+                if (!responseJson)
                 {
-                    showError(responseJson.error || `HTTP ${response.status}`);
                     return;
                 }
-                dialogChangedSomething = true;
-                await DialogBox.alert("Perks saved", `Replaced ${responseJson.replaced} perk${responseJson.replaced === 1 ? "" : "s"}. Auto-assigned ${responseJson.autoAssignedDecks || 0} deck license${(responseJson.autoAssignedDecks || 0) === 1 ? "" : "s"} to existing members.`);
+
+                const replacedCount = responseJson.replaced || 0;
+                const autoAssignedCount = responseJson.autoAssignedDecks || 0;
+                showActionStatus
+                (
+                    perksStatus,
+                    `Saved ${replacedCount} perk${replacedCount === 1 ? "" : "s"}. Auto-assigned ${autoAssignedCount} deck licence${autoAssignedCount === 1 ? "" : "s"} to existing members.`,
+                    true
+                );
             });
 
-            dialog.querySelector(".organization-rename").addEventListener("click", async () =>
+            const renameButton = dialog.querySelector(".organization-rename");
+            renameButton.addEventListener("click", async () =>
             {
-                showError(null);
                 const newName = dialog.querySelector(".organization-rename-input").value.trim();
                 if (newName.length === 0 || newName.length > 256)
                 {
                     showError("Enter a name between 1 and 256 characters.");
+                    showActionStatus(renameStatus, "Enter a name between 1 and 256 characters.", false);
                     return;
                 }
-                const response = await fetch("/Admin/Organizations/Rename",
+
+                const responseJson = await runSave(renameButton, renameStatus, "Saving…", () => fetch("/Admin/Organizations/Rename",
                 {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ organizationId: organization.id, name: newName })
-                });
-                const responseJson = await response.json().catch(() => ({}));
-                if (!response.ok || responseJson.success === false)
+                }));
+
+                if (!responseJson)
                 {
-                    showError(responseJson.error || `HTTP ${response.status}`);
                     return;
                 }
+
                 organization.name = newName;
-                dialogChangedSomething = true;
-                await DialogBox.alert("Renamed", `The organization is now "${newName}".`);
+                dialog.querySelector(".admin-panel-add-title").textContent = newName;
+                showActionStatus(renameStatus, `Renamed to "${newName}".`, true);
             });
 
-            dialog.querySelector(".organization-setmax").addEventListener("click", async () =>
+            const setMaxMembersButton = dialog.querySelector(".organization-setmax");
+            setMaxMembersButton.addEventListener("click", async () =>
             {
-                showError(null);
-                const newMax = parseInt(dialog.querySelector(".organization-maxmembers-input").value || "0", 10);
-                if (!Number.isInteger(newMax) || newMax <= 0)
+                const newMaximumMembers = parseInt(dialog.querySelector(".organization-maxmembers-input").value, 10);
+                if (!Number.isInteger(newMaximumMembers) || newMaximumMembers <= 0)
                 {
-                    showError("Enter a positive member cap.");
+                    showError("Enter a member capacity above zero.");
+                    showActionStatus(capacityStatus, "Enter a member capacity above zero.", false);
                     return;
                 }
-                const response = await fetch("/Admin/Organizations/SetMaxMembers",
+
+                const responseJson = await runSave(setMaxMembersButton, capacityStatus, "Saving…", () => fetch("/Admin/Organizations/SetMaxMembers",
                 {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ organizationId: organization.id, maxMembers: newMax })
-                });
-                const responseJson = await response.json().catch(() => ({}));
-                if (!response.ok || responseJson.success === false)
+                    body: JSON.stringify({ organizationId: organization.id, maxMembers: newMaximumMembers })
+                }));
+
+                if (!responseJson)
                 {
-                    showError(responseJson.error || `HTTP ${response.status}`);
                     return;
                 }
-                dialogChangedSomething = true;
-                await DialogBox.alert("Member cap updated", `New cap: ${newMax}.`);
+
+                organization.maxMembers = newMaximumMembers;
+                showActionStatus(capacityStatus, `Capacity is now ${newMaximumMembers}.`, true);
             });
 
-            dialog.querySelector(".organization-expand").addEventListener("click", async () =>
+            dialog.querySelector(".organization-close").addEventListener("click", () =>
             {
-                showError(null);
-                const additionalMembers = parseInt(dialog.querySelector(".organization-expansion-count").value || "0", 10);
-                const amountMinor = parseInt(dialog.querySelector(".organization-expansion-amount").value || "0", 10);
-
-                if (additionalMembers <= 0 || amountMinor < 0)
-                {
-                    showError("Additional members must be > 0 and amount >= 0.");
-                    return;
-                }
-
-                const initiateResponse = await fetch("/Admin/Organizations/InitiateExpansion",
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify
-                    ({
-                        organizationId: organization.id,
-                        additionalMembers: additionalMembers,
-                        amountMinor: amountMinor
-                    })
-                });
-                const initiateJson = await initiateResponse.json().catch(() => ({}));
-                if (!initiateResponse.ok || initiateJson.success === false)
-                {
-                    showError(initiateJson.error || `HTTP ${initiateResponse.status}`);
-                    return;
-                }
-
-                if (!initiateJson.requiresPayment)
-                {
-                    dialogChangedSomething = true;
-                    await DialogBox.alert("Capacity extended", `New cap: ${initiateJson.newMaxMembers}.`);
-                    dialog.close();
-                    resolve(true);
-                    return;
-                }
-
-                const checkoutContext = initiateJson.order?.checkoutContext;
-                if (!checkoutContext || !PaymentCheckout.isAvailable(initiateJson.provider))
-                {
-                    showError("Checkout not available — reload the page and try again.");
-                    return;
-                }
-
-                let checkoutResult;
-                try
-                {
-                    checkoutResult = await PaymentCheckout.open(initiateJson.provider, checkoutContext, { description: `Capacity expansion: +${additionalMembers}` });
-                }
-                catch (checkoutError)
-                {
-                    showError(checkoutError.message || "Checkout failed.");
-                    return;
-                }
-
-                if (!checkoutResult)
-                {
-                    showError("Payment cancelled. Capacity is unchanged until payment clears.");
-                    return;
-                }
-
-                try
-                {
-                    await fetch("/Admin/Organizations/VerifyExpansionPayment",
-                    {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify
-                        ({
-                            organizationId: organization.id,
-                            providerOrderId: checkoutResult.providerOrderId,
-                            providerPaymentId: checkoutResult.providerPaymentId,
-                            signature: checkoutResult.signature
-                        })
-                    });
-                }
-                catch (verifyError)
-                {
-                    // Webhook will reconcile.
-                }
-                dialogChangedSomething = true;
                 dialog.close();
-                resolve(true);
+                resolve(dialogChangedSomething);
             });
 
-            dialog.querySelector(".admin-panel-add-cancel").addEventListener("click", () =>
+            // DialogBox.modal's own X — and the Escape key, which PopupStack
+            // routes to it — closes the element without settling this promise.
+            // The caller awaits this to decide whether to refresh its list, so
+            // without this the list silently never refreshed after an edit.
+            dialog.querySelector(".close-button").addEventListener("click", () =>
             {
-                dialog.close();
                 resolve(dialogChangedSomething);
             });
         });

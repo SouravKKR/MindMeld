@@ -44,7 +44,6 @@ const PUBLIC_ROUTES = [
 // the automated suite — POSTing junk to a live payment webhook is unsafe. They
 // are documented in DockTests.txt as the explicit non-static public exception.
 //   POST /Webhooks/Razorpay  -> 200 (validates an HMAC signature, not a cookie)
-//   POST /Webhooks/Zoho      -> 200 (validates a Zoho payment signature, not a cookie)
 
 // Must reject an anonymous request with 401 or 403 (never 200, never 5xx).
 const PROTECTED_ROUTES = [
@@ -107,6 +106,21 @@ const PROTECTED_ROUTES = [
     { method: "POST", path: "/Organization/Members/Remove" },
     { method: "POST", path: "/Organization/Members/BulkAdd" },
     { method: "POST", path: "/Organization/Members/BulkRemove" },
+    { method: "POST", path: "/Organization/Rename" },
+    { method: "POST", path: "/Organization/Members/SetDelegatePowers" },
+    { method: "POST", path: "/Organization/Members/Import" },
+    { method: "POST", path: "/Organization/Members/RemoveByFilter" },
+    { method: "GET", path: "/Organization/Lists/Metadata" },
+    { method: "POST", path: "/Organization/Lists/Query" },
+    { method: "GET", path: "/Organization/Credits/Overview" },
+    { method: "GET", path: "/Organization/Credits/SpendReport" },
+    { method: "POST", path: "/Organization/Credits/Deals/Verify" },
+    { method: "POST", path: "/Organization/Credits/Distribute/Preview" },
+    { method: "POST", path: "/Organization/Credits/Distribute/Apply" },
+    { method: "POST", path: "/Organization/Credits/Periodic/Create" },
+    { method: "GET", path: "/Organization/Credits/Periodic/List" },
+    { method: "POST", path: "/Organization/Credits/Periodic/Terminate" },
+    { method: "POST", path: "/Admin/Credits/Deals/CreateForOrganization" },
     { method: "GET", path: "/Admin/ShadowStats" },
     { method: "GET", path: "/Admin/PaidDecks/List" },
     { method: "POST", path: "/Admin/PaidDecks/Upload" },
@@ -132,12 +146,9 @@ const PROTECTED_ROUTES = [
     { method: "POST", path: "/Admin/Organizations/SendAdminVerificationOtp" },
     { method: "POST", path: "/Admin/Organizations/VerifyAdminVerificationOtp" },
     { method: "POST", path: "/Admin/Organizations/Create" },
-    { method: "POST", path: "/Admin/Organizations/VerifyCreationPayment" },
     { method: "GET", path: "/Admin/Organizations/List" },
     { method: "GET", path: "/Admin/Organizations/Get" },
     { method: "POST", path: "/Admin/Organizations/UpdatePerks" },
-    { method: "POST", path: "/Admin/Organizations/InitiateExpansion" },
-    { method: "POST", path: "/Admin/Organizations/VerifyExpansionPayment" },
     { method: "POST", path: "/Admin/Organizations/Delete" },
     { method: "GET", path: "/Admin/RateLimits/List" },
     { method: "GET", path: "/Admin/Audit/List" },

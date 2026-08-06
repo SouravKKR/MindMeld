@@ -1,0 +1,44 @@
+{
+    "name": "OrganizationCreditPool",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "organizationId":
+        {
+            "datatype": "string"
+        },
+        "balance":
+        {
+            "datatype": "float",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "lifetimeGranted":
+        {
+            "datatype": "float",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "lifetimeDistributed":
+        {
+            "datatype": "float",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "frozen":
+        {
+            "datatype": "boolean",
+            "defaultValue": false
+        },
+        "updatedAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        }
+    }
+}

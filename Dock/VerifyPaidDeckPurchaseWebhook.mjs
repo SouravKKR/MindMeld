@@ -319,15 +319,32 @@ async function runRoutingTier()
     }
 
     // Regression: an event we do not act on is ignored before any lookup.
+    // Deliberately NOT payment.failed — that one now has a branch of its own
+    // (it records the declined attempt), so using it here would assert the
+    // opposite of the current, intended behaviour.
     {
         const { response, observed } = await invokeWebhook
         ({
             pendingDeckOrder: buildPendingDeckOrder(),
-            rawBodyOverride: JSON.stringify({ event: "payment.failed", payload: {} })
+            rawBodyOverride: JSON.stringify({ event: "settlement.processed", payload: {} })
         });
 
         assert(response.body?.reason === "EVENT_IGNORED", "Unrelated events are still ignored");
         assert(observed.completeCalls.length === 0, "Unrelated events never call the completion service");
+    }
+
+    // A decline is not "unrelated": it is recorded so support and card-testing
+    // detection have something to look at. Without this it existed only as a
+    // console line in the buyer's own browser.
+    {
+        const { response, observed } = await invokeWebhook
+        ({
+            pendingDeckOrder: buildPendingDeckOrder(),
+            rawBodyOverride: JSON.stringify({ event: "payment.failed", payload: { payment: { entity: { id: "pay_harness_failed", order_id: "order_verify_harness", amount: 49900, currency: "INR" } } } })
+        });
+
+        assert(response.body?.attemptRecorded === true, "A declined payment is recorded rather than discarded");
+        assert(observed.completeCalls.length === 0, "A declined payment never provisions anything");
     }
 }
 

@@ -226,8 +226,75 @@ class NotificationContent
         return {
             type: notificationTypes.ORGANIZATION,
             title: "You've joined an organization",
-            body: `You were added to ${label} on CogniumLearn.`,
+            // The disclosure lives in the notification itself rather than only
+            // in a policy page, because this is the moment a member's spending
+            // becomes visible to someone else. They are told once, plainly, at
+            // the point it starts being true.
+            body: `You were added to ${label} on CogniumLearn. They can give you credits, set which AI features you get inside their view, and see how many credits you spend and on what.`,
             data: { target: "organization", organizationName: label }
+        };
+    }
+
+    /**
+     * Sent to the owner when credits they paid for land in the pool.
+     */
+    static organizationCreditsPurchased(organizationName, creditsAdded)
+    {
+        const label = (typeof organizationName === "string" && organizationName.trim().length > 0) ? organizationName.trim() : "your organization";
+        const credits = Number(creditsAdded) || 0;
+        return {
+            type: notificationTypes.ORGANIZATION,
+            title: "Credits added",
+            body: `${credits} credits are now in ${label}'s pool, ready to distribute.`,
+            data: { target: "organization", organizationName: label, creditsAdded: credits }
+        };
+    }
+
+    /**
+     * Sent to the owner and delegates as the contract term runs out. The pool is
+     * not lost at the end of a term — it freezes — so the message says what
+     * actually stops rather than implying the credits disappear.
+     */
+    static organizationTermEnding(organizationName, daysRemaining)
+    {
+        const label = (typeof organizationName === "string" && organizationName.trim().length > 0) ? organizationName.trim() : "your organization";
+        const days = Number(daysRemaining) || 0;
+        return {
+            type: notificationTypes.ORGANIZATION,
+            title: days <= 1 ? "Credit term ends tomorrow" : `Credit term ends in ${days} days`,
+            body: `${label}'s credit term ends soon. Unused credits are kept and become available again when it is renewed, but distributions pause until then.`,
+            data: { target: "organization", organizationName: label, daysRemaining: days }
+        };
+    }
+
+    /**
+     * Sent once when the term has lapsed and the pool has been frozen.
+     */
+    static organizationTermExpired(organizationName)
+    {
+        const label = (typeof organizationName === "string" && organizationName.trim().length > 0) ? organizationName.trim() : "your organization";
+        return {
+            type: notificationTypes.ORGANIZATION,
+            title: "Credit term ended",
+            body: `${label}'s credit term has ended, so distributions are paused. Any unused credits are kept and become available again on renewal. Members keep everything already given to them.`,
+            data: { target: "organization", organizationName: label }
+        };
+    }
+
+    /**
+     * Sent when a recurring distribution could not run because the pool could
+     * not cover it. Names the shortfall so the top-up can be the right size.
+     */
+    static organizationPoolEmpty(organizationName, requiredCredits, availableCredits)
+    {
+        const label = (typeof organizationName === "string" && organizationName.trim().length > 0) ? organizationName.trim() : "your organization";
+        const required = Number(requiredCredits) || 0;
+        const available = Number(availableCredits) || 0;
+        return {
+            type: notificationTypes.ORGANIZATION,
+            title: "Recurring credits were skipped",
+            body: `${label}'s pool holds ${available} credits but this cycle needed ${required}, so nothing was given out. Top up and the next cycle runs normally — this one is not back-paid.`,
+            data: { target: "organization", organizationName: label, requiredCredits: required, availableCredits: available }
         };
     }
 

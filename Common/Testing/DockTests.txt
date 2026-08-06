@@ -196,7 +196,7 @@ Folder "Static-only isolation guarantee":
     rejected (401/403), proving the cookie is validated against the store.
 
 Intentional public exception NOT exercised by the suite:
-  - POST /Webhooks/Razorpay and POST /Webhooks/Zoho are session-less but signed
+  - POST /Webhooks/Razorpay is session-less but signed
     (each validates a payment-provider signature, not a cookie) and side-effecting,
     so the automated suite does not POST to them. They are the non-static
     unauthenticated routes, documented here. (The OAuth flow endpoints /Login,

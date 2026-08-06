@@ -1,5 +1,7 @@
 const CreditGrantTargetResolver = require("../../Globals/Classes/Credits/CreditGrantTargetResolver");
 const CreditGrantExecutor = require("../../Globals/Classes/Credits/CreditGrantExecutor");
+const OrganizationPoolGrantService = require("../../Globals/Classes/Credits/OrganizationPoolGrantService");
+const { creditGrantTargetTypes } = require("../../Globals/Enumerations/CreditGrantTargetTypes");
 const { creditGrantAmountModes } = require("../../Globals/Enumerations/CreditGrantAmountModes");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
@@ -12,6 +14,11 @@ const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
  * CreditLedger with type ADMIN_ADJUSTMENT. The client-supplied grantKey makes
  * the whole operation idempotent: replaying the same grantKey grants nothing
  * twice, so a timed-out apply can be retried safely.
+ *
+ * An ORGANIZATION_POOL target credits that organization's pool instead, which
+ * is how an institute is topped up: it buys credits as a block and decides
+ * itself who gets them. Idempotent on the same grantKey through the pool
+ * ledger's reference key, so a retried apply credits once.
  *
  * Body: { target: { targetType, emails?, filter?, organizationId? }, amount, amountMode, grantKey, reason? }
  */
@@ -38,17 +45,62 @@ async function applyCreditGrant(request, response)
         return;
     }
 
-    if (!Object.values(creditGrantAmountModes).includes(amountMode) || amountMode === creditGrantAmountModes.UNKNOWN)
-    {
-        response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: ErrorCodes.INVALID_AMOUNT_MODE });
-        return;
-    }
-
     if (typeof grantKey !== "string" || grantKey.trim().length < 8 || grantKey.length > 128)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: ErrorCodes.INVALID_GRANT_KEY });
+        return;
+    }
+
+    // Checked BEFORE the amount-mode validation, which a pool grant has no use
+    // for: one recipient means there is nothing to divide.
+    if (target.targetType === creditGrantTargetTypes.ORGANIZATION_POOL)
+    {
+        const poolResult = await OrganizationPoolGrantService.apply
+        ({
+            organizationId: typeof target.organizationId === "string" ? target.organizationId : "",
+            amountCredits: amount,
+            grantKey: grantKey.trim(),
+            reason: reason,
+            grantedByUserId: request.user ? request.user.getId() : ""
+        });
+
+        if (!poolResult.success)
+        {
+            response.statusCode = httpStatus.BAD_REQUEST;
+            response.sendJson({ error: poolResult.error });
+            return;
+        }
+
+        response.statusCode = httpStatus.OK;
+        response.sendJson
+        ({
+            success: true,
+            // An explicit marker rather than leaving the client to infer the
+            // shape from which fields are present. `balanceAfter` is null when
+            // the replayed movement never settled, and inferring from it would
+            // then send the panel down the recipient-summary path and render
+            // "granted undefined credits to undefined users".
+            poolTopUp: true,
+            organizationId: target.organizationId,
+            amount: poolResult.amount,
+            balanceAfter: poolResult.balanceAfter,
+            alreadyApplied: poolResult.alreadyApplied === true,
+            // Zeroed on purpose rather than omitted: the panel reads these to
+            // report an outcome, and a missing count would render as "undefined
+            // recipients credited".
+            grantedCount: 0,
+            alreadyAppliedCount: 0,
+            failedCount: 0,
+            unmatchedEmails: []
+        });
+        return;
+    }
+
+    if (!Object.values(creditGrantAmountModes).includes(amountMode) || amountMode === creditGrantAmountModes.UNKNOWN)
+    {
+        response.statusCode = httpStatus.BAD_REQUEST;
+        response.sendJson({ error: ErrorCodes.INVALID_AMOUNT_MODE });
         return;
     }
 

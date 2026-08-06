@@ -434,6 +434,12 @@ class DatabaseConnector
         await paidDecksCollection.createIndex({ isPublished: 1, category: 1 });
         await paidDecksCollection.createIndex({ isPublished: 1, basePriceMinor: 1 });
         await paidDecksCollection.createIndex({ isPublished: 1, tags: 1 });
+
+        // Audience. Every catalogue read now carries an audienceOrganizationId
+        // clause, and the shelf queries by (organization, published) — without
+        // these, both become collection scans as the catalogue grows.
+        await paidDecksCollection.createIndex({ audienceOrganizationId: 1, isPublished: 1, publishedAt: -1 });
+        await paidDecksCollection.createIndex({ audienceOrganizationId: 1, audienceTags: 1 });
         await paidDecksCollection.createIndex({ sellerId: 1 });
         // Bundle navigation: "give me all bundles that include this deck".
         await paidDecksCollection.createIndex({ parentBundleIds: 1 });
@@ -640,6 +646,32 @@ class DatabaseConnector
         await organizationMembersCollection.createIndex({ id: 1 }, { unique: true });
         await organizationMembersCollection.createIndex({ organizationId: 1, email: 1 }, { unique: true });
         await organizationMembersCollection.createIndex({ email: 1 });
+        // Authorization resolves a caller's standing on every request to an
+        // organization, matching their membership row by back-filled userId.
+        // Without this the $or half of that lookup is a collection scan.
+        await organizationMembersCollection.createIndex({ organizationId: 1, userId: 1 });
+        // Tag targeting drives member filtering, credit distribution and the
+        // permission rules, so it is a multikey lookup on every one of those
+        // paths rather than an occasional report.
+        await organizationMembersCollection.createIndex({ organizationId: 1, tags: 1 });
+
+        // ── Organization permission rules ──────────────────────────────────────
+        // Read on every feature check inside an organization view, so the
+        // per-organization lookup is indexed rather than a collection scan.
+        const organizationPermissionRulesCollection = database.collection(DatabaseConstants.ORGANIZATION_PERMISSION_RULES_COLLECTION);
+        await organizationPermissionRulesCollection.createIndex({ id: 1 }, { unique: true });
+        await organizationPermissionRulesCollection.createIndex({ organizationId: 1 });
+
+        // ── Organization credit pool ───────────────────────────────────────────
+        // One pool per organization, and a movement log whose unique
+        // referenceKey is what makes a replayed payment webhook or a retried
+        // distribution credit exactly once.
+        const organizationCreditPoolsCollection = database.collection(DatabaseConstants.ORGANIZATION_CREDIT_POOLS_COLLECTION);
+        await organizationCreditPoolsCollection.createIndex({ organizationId: 1 }, { unique: true });
+
+        const organizationCreditTransactionsCollection = database.collection(DatabaseConstants.ORGANIZATION_CREDIT_TRANSACTIONS_COLLECTION);
+        await organizationCreditTransactionsCollection.createIndex({ referenceKey: 1 }, { unique: true });
+        await organizationCreditTransactionsCollection.createIndex({ organizationId: 1, createdAt: -1 });
 
         // ── Organization deck perks ────────────────────────────────────────────
         // The deal terms — at most one perk row per (org, paidDeckId).
@@ -653,7 +685,7 @@ class DatabaseConnector
         // Short-lived (1h) record proving the super-admin completed the
         // emailed-OTP step for a given email. Two phases: code-hash phase
         // (rate-limited like login OTPs), then verification-token phase
-        // (consumed by Create / VerifyCreationPayment). Single row per
+        // (consumed by Create). Single row per
         // email at a time; TTL purges stale rows on the absolute expiry.
         const orgAdminVerificationsCollection = database.collection(DatabaseConstants.ORG_ADMIN_VERIFICATIONS_COLLECTION);
         await orgAdminVerificationsCollection.createIndex({ email: 1 }, { unique: true });

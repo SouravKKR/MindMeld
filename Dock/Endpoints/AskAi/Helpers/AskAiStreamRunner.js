@@ -86,7 +86,7 @@ class AskAiStreamRunner
         // the check is applied here too so an admin can restrict it via the
         // feature-access override. Refuse with FEATURE_NOT_IN_PLAN (403) before
         // the credit preflight when the tier does not include it.
-        const askAiEntitlement = await PlanEntitlementGate.requireFeature(userId, planFeatures.ASK_AI);
+        const askAiEntitlement = await PlanEntitlementGate.requireFeatureForRequest(request, userId, planFeatures.ASK_AI);
         if (!askAiEntitlement.allowed)
         {
             response.statusCode = httpStatus.FORBIDDEN;
@@ -115,6 +115,26 @@ class AskAiStreamRunner
             response.statusCode = httpStatus.BAD_REQUEST;
             response.end(validationError);
             return;
+        }
+
+        // Deck-level Chat is its own entitlement, checked here because it can
+        // only be identified once the body is parsed — contextKind DECK is what
+        // distinguishes a chat from an in-study Ask AI.
+        //
+        // Until now planFeatures.CHAT appeared in every tier's feature list and
+        // was enforced nowhere, so an administrator (or an organization) that
+        // switched chat off found it still working. Gating the cheap planning
+        // call alone would not have been enough: the answer arrives through this
+        // stream, and a client could simply skip the planner.
+        if (requestBody.contextKind === "DECK")
+        {
+            const chatEntitlement = await PlanEntitlementGate.requireFeatureForRequest(request, userId, planFeatures.CHAT);
+            if (!chatEntitlement.allowed)
+            {
+                response.statusCode = httpStatus.FORBIDDEN;
+                response.sendJson({ error: chatEntitlement.reason, currentTier: chatEntitlement.currentTier, requiredTier: chatEntitlement.requiredTier });
+                return;
+            }
         }
 
         // One idempotency key per HTTP request: the close handler is the only

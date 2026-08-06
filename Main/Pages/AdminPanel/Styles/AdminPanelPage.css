@@ -1771,3 +1771,311 @@ dialog-box:has(.paid-deck-replace-form)
         flex-direction: column;
     }
 }
+
+/* Organization dialogs ---------------------------------------
+   These hold tables (perks, payments) inside what was sized as a plain
+   480px form, with no scrolling anywhere in the chain. On a real
+   organization the dialog grew taller than the viewport, and because
+   `dialog-box` is fixed and centred with no max-height, the Close button
+   and the error banner were clipped off the bottom edge — a refused save
+   looked exactly like nothing happening. Sizing + scrolling here mirrors
+   the paid-deck upload rules above. */
+
+dialog-box:has(.organization-details-dialog),
+dialog-box:has(.create-organization-dialog),
+dialog-box:has(.add-members-dialog)
+{
+    max-width: min(96vw, 900px);
+    width: min(96vw, 900px);
+}
+
+.organization-details-dialog,
+.create-organization-dialog,
+.add-members-dialog
+{
+    max-width: none;
+    width: 100%;
+    max-height: calc(90vh - 80px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 4px 18px 4px 4px;
+}
+
+.organization-section-heading
+{
+    margin: 6px 0 0 0;
+    font-size: 15px;
+}
+
+/* Every table inside an organization dialog scrolls on its own axis, so a
+   five-column perk row can never widen the dialog past the viewport. */
+.organization-table-scroll
+{
+    overflow-x: auto;
+    width: 100%;
+}
+
+.organization-table-scroll .admin-panel-table
+{
+    min-width: 560px;
+}
+
+.organization-inline-row
+{
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.organization-inline-field
+{
+    flex: 1 1 260px;
+    min-width: 0;
+}
+
+.organization-otp-row
+{
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.organization-otp-status
+{
+    color: var(--secondary-text-color);
+    font-size: 12px;
+}
+
+.organization-otp-verify-row .organization-inline-row input
+{
+    flex: 0 1 160px;
+}
+
+/* The organisation dialogs use the same form layout as the Organization page,
+   but they are not inside `.organization-page-section`, so the shared control
+   rules are repeated for this scope. Without them a dialog's selects and
+   buttons pick their own heights and a row of both reads as ragged. */
+.organization-details-dialog select,
+.create-organization-dialog select,
+.add-members-dialog select
+{
+    min-height: 38px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-size: 13px;
+    box-sizing: border-box;
+    width: 100%;
+    cursor: pointer;
+}
+
+.organization-details-dialog .admin-panel-add-field input,
+.organization-details-dialog .organization-secondary-button,
+.organization-details-dialog .admin-panel-add-submit
+{
+    min-height: 38px;
+}
+
+.organization-details-dialog .organization-secondary-button,
+.organization-details-dialog .admin-panel-add-submit
+{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.organization-details-dialog .organization-section-heading
+{
+    margin-top: 14px;
+}
+
+/* The features an agreement includes, as chips rather than a column of
+   checkboxes: there are seven of them and they read as a set, not a form. */
+.organization-grantable-features
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+/* Chip styling lives here too, because the organization dialogs are the only
+   place outside the Organization page that uses it and the page's own
+   stylesheet is not guaranteed to have loaded first. */
+.organization-grantable-features .organization-permission-tag
+{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    font-size: 12px;
+    color: var(--primary-text-color);
+    cursor: pointer;
+}
+
+.organization-grantable-features .organization-permission-tag input[type="checkbox"]
+{
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    cursor: pointer;
+}
+
+.organization-fieldset
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* Secondary action inside an organization dialog. Outline rather than
+   border, because Theme.css's global `button:hover { border: none }` would
+   otherwise strip the frame and shift the hit-box on hover. */
+.organization-secondary-button
+{
+    padding: 9px 14px;
+    border-radius: 8px;
+    border: none;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.organization-secondary-button:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.organization-secondary-button:disabled
+{
+    opacity: 0.45;
+    cursor: default;
+}
+
+.organization-perks-table select,
+.organization-perks-table input
+{
+    padding: 7px 8px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-family: inherit;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 90px;
+}
+
+.organization-perks-table select:focus,
+.organization-perks-table input:focus
+{
+    outline-color: var(--outline-color-strong);
+}
+
+.organization-perk-warning
+{
+    display: block;
+    margin-top: 4px;
+    color: var(--danger-text-color);
+    font-size: 11px;
+    line-height: 1.3;
+}
+
+/* Per-action outcome line. A save reports beside the control that ran it,
+   so success is as visible as failure and neither depends on the shared
+   banner being in view. */
+.organization-action-status
+{
+    margin: 0;
+    min-height: 16px;
+    font-size: 12px;
+    line-height: 1.3;
+    color: var(--secondary-text-color);
+}
+
+.organization-action-status-success
+{
+    color: var(--success-text-color);
+}
+
+.organization-action-status-failure
+{
+    color: var(--danger-text-color);
+}
+
+@media (max-width: 600px)
+{
+    dialog-box:has(.organization-details-dialog),
+    dialog-box:has(.create-organization-dialog),
+    dialog-box:has(.add-members-dialog)
+    {
+        max-width: 96vw;
+        width: 96vw;
+    }
+
+    .organization-details-dialog,
+    .create-organization-dialog,
+    .add-members-dialog
+    {
+        max-height: calc(92vh - 60px);
+        padding-right: 8px;
+    }
+
+    .organization-inline-row
+    {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .organization-secondary-button,
+    .organization-inline-row .admin-panel-add-submit
+    {
+        width: 100%;
+    }
+
+    .organization-table-scroll .admin-panel-table
+    {
+        min-width: 480px;
+        font-size: 13px;
+    }
+}
+
+/* Organization chooser (what an org admin sees on this screen) ---------- */
+
+.admin-panel-status
+{
+    padding: 16px;
+    border-radius: 8px;
+    background-color: var(--secondary-background-color);
+    color: var(--secondary-text-color);
+    font-size: 14px;
+}
+
+.admin-panel-organization-link
+{
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    border: none;
+}
+
+.admin-panel-organization-link:hover
+{
+    background-color: var(--tertiary-background-color);
+}

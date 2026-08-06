@@ -693,20 +693,31 @@ Do these in order. Step 1.1 is on your dev workstation; 1.3 onward are on Linode
      and confirm it blocks new work but not running work. Then revert
      `DOCK_USE_TASK_QUEUE`/`BURST_DRY_RUN` for normal dev.
 
-## 1.1.1 The browser test gates (run before every deploy)
+## 1.1.1 The browser test gates (production deploys only)
 
-Every `deploy-environment.sh` run drives the real UI in a real Chromium against
-the freshly-built bundle **before anything is baked or shipped**, and aborts the
-deployment if it does not come back clean. Three suites, gated differently:
+Every **production** `deploy-environment.sh` run drives the real UI in a real
+Chromium against the freshly-built bundle **before anything is baked or shipped**,
+and aborts the deployment if it does not come back clean. Three suites:
 
 | Suite | Runs on | What it proves |
 |---|---|---|
-| **Tutorial walkthrough** — `Common/Testing/Main/run_tutorial_ui_tests.js` | **every** environment (development, testing, production) | All seven guided tours walk start to finish; every step's spotlight exposes a real, clickable element; no step teleports the user between pages. |
+| **Tutorial walkthrough** — `Common/Testing/Main/run_tutorial_ui_tests.js` | **production only** | All seven guided tours walk start to finish; every step's spotlight exposes a real, clickable element; no step teleports the user between pages. |
 | **Critical user flows** — `Common/Testing/Main/run_critical_flow_tests.js` | **production only** | 27 everyday operations still work by hand (below), including that the credit ledger still charges. |
 | **Synchronisation** — `Common/Testing/Main/run_sync_ui_tests.js` | **production only** | 19 sync behaviours across three independent devices (below), each asserted against MongoDB as well as the screen. |
 
+**Development and testing deploys run no browser gate at all** — they ship
+straight from the frontend build to the bake. That is deliberate: those
+environments exist to *find* breakage by being deployed to and used, and paying
+the gate's wall-clock on every dev roll-out discourages deploying there often.
+Production is the one environment where a regression reaches real users, so it is
+the one that pays for the gate. The consequence to accept knowingly: a frontend
+change that strands a user mid-tour will not be caught until the production
+deploy that ships it — run the suites by hand (or the **`run-browser-gates`**
+skill) after a frontend change if you want that signal earlier.
+
 All three are gated by the same `--skip-tutorial-tests` flag and the same
-`TUTORIAL_TEST_SESSION_COOKIE` prerequisite.
+`TUTORIAL_TEST_SESSION_COOKIE` prerequisite, and on development/testing neither
+the cookie nor a local Redis/MongoDB is needed, since no suite runs.
 
 ### The 19 synchronisation cases
 
@@ -872,19 +883,22 @@ tour auto-plays on first launch.
 
 **What a run does:**
 
-1. Builds the production frontend (so the suites test the exact bundle that will
-   ship, and `update_base_node` does not rebuild it).
+1. Builds the production frontend. This happens on **every** environment, before
+   and independently of the gates, so the suites test the exact bundle that will
+   ship and `update_base_node` does not rebuild it. (Building up front also keeps
+   the Windows `tar` race away from the freshly-written `Dock/Static`.)
 2. Starts a local Dock if one isn't already answering (installing Puppeteer into
    `Common/Testing/Main` on first use).
-3. Runs the tutorial walkthrough; on production, then runs the critical-flow
-   suite. Both load the app with `?tutorialE2E=1` — for the tours that is the
+3. Runs the tutorial walkthrough, then the critical-flow and synchronisation
+   suites. All three load the app with `?tutorialE2E=1` — for the tours that is the
    control seam, for the flow suite it only suppresses first-launch autoplay so
    the tour overlay does not swallow the suite's clicks.
 4. Stops the Dock it started and fails the deploy unless every suite reports
    `PASS`. A `SKIPPED` result **also fails the gate** — a skipped run proves
    nothing.
 
-**Prerequisites (one-time):**
+**Prerequisites (one-time; needed only for a production deploy or a hand-run
+suite — a development/testing deploy needs none of them):**
 
 - **Redis + MongoDB reachable per `Dock/.env`** — the same local stack
   `npm run web` uses.
@@ -944,9 +958,10 @@ above the server's `MAX_PULL_PER_COLLECTION`).
 > and the suite reports "seam not found". The gate starts its own Dock after
 > building for exactly this reason.
 
-`--skip-tutorial-tests` bypasses both gates. It exists for infrastructure-only
-roll-outs (a config or scaling change with no frontend delta); do not use it to
-push past a red suite.
+`--skip-tutorial-tests` bypasses all three gates. Since they are production-only,
+the flag is a no-op on development and testing. It exists for infrastructure-only
+production roll-outs (a config or scaling change with no frontend delta); do not
+use it to push past a red suite.
 
 ## 1.1.2 Node reachability — power state + firewall allow-list (automatic)
 
@@ -1739,13 +1754,15 @@ It performs every step of §1.10 + §2.2 automatically:
 0. **Checks the node is reachable (§1.1.2)** — boots the environment's Linode if
    it is powered off, and grants this machine temporary SSH access if its public
    IP is not on the firewall's allow-list. Both are reverted when the run ends.
-0. **Gates on the browser test suites (§1.1.1)** — builds the production
-   frontend, then drives it in a real Chromium: the seven interactive tutorials
-   on **every** environment, plus the 27 critical user flows on **production**.
-   Nothing is created or shipped until they pass; a failure aborts before a
-   single Linode is spun up. Needs `TUTORIAL_TEST_SESSION_COOKIE` in
-   `deployment.env` plus a local Redis + MongoDB. Bypass with
-   `--skip-tutorial-tests` only for infrastructure-only roll-outs.
+0. **Builds the production frontend** on every environment, then — on
+   **production only** — **gates on the browser test suites (§1.1.1)**, driving
+   that bundle in a real Chromium: the seven interactive tutorials, the 27
+   critical user flows and the 19 synchronisation cases. Nothing is created or
+   shipped until they pass; a failure aborts before a single Linode is spun up.
+   Needs `TUTORIAL_TEST_SESSION_COOKIE` in `deployment.env` plus a local Redis +
+   MongoDB. **Development and testing skip the gates entirely** and go straight
+   from the build to the bake. Bypass on production with `--skip-tutorial-tests`
+   only for infrastructure-only roll-outs.
 1. Creates a throwaway Debian 12 **bakebox** Linode (tagged `cogniumlearn-bakebox`).
 2. Uploads the `Agent/` build context (the venv, caches and `*.env` secrets are
    excluded — they never leave your dev box).
@@ -1782,9 +1799,9 @@ field is documented inline in that file.
 
 | Flag | Effect |
 |------|--------|
-| *(none)* | Tutorial gate → full bake → roll-out → cleanup. |
+| *(none)* | Frontend build → browser gates (**production only**) → full bake → roll-out → cleanup. |
 | `--skip-base-update` | Bake + capture only; don't touch the base node or delete old images. |
-| `--skip-tutorial-tests` | Skip the §1.1.1 browser gates. Infrastructure-only roll-outs; never to push past a red suite. |
+| `--skip-tutorial-tests` | Skip the §1.1.1 browser gates. Production-only in effect (a no-op on development/testing, which never run them). Infrastructure-only roll-outs; never to push past a red suite. |
 | `--keep-node-running` | Leave a base node that was booted for this deploy (§1.1.2) running afterwards instead of returning it to `offline`. |
 | `--cleanup-bakeboxes` | Delete stray `cogniumlearn-bakebox` Linodes from a failed run, then exit. |
 
@@ -1820,10 +1837,11 @@ Most changes (endpoints, frontend, Dock classes) only need a redeploy of the bas
 node. The frontend has to be **bundled + obfuscated** into `Dock/Static/` first.
 
 > **Run the tutorial walkthrough suite (§1.1.1) before shipping a frontend
-> change this way.** The automated roll-out in §2.0 gates on it for you; this
-> manual path does not, and a frontend change is exactly what breaks the guided
-> tours. After `npm run setup`, restart your local Dock (it indexes
-> `Dock/Static/` at boot) and run:
+> change this way.** The automated roll-out in §2.0 gates on it for you **only on
+> production**; this manual path and every development/testing deploy do not, and
+> a frontend change is exactly what breaks the guided tours. After
+> `npm run setup`, restart your local Dock (it indexes `Dock/Static/` at boot) and
+> run:
 > ```bash
 > TEST_SESSION_COOKIE=<local-session-id> node Common/Testing/Main/run_tutorial_ui_tests.js
 > ```

@@ -1,11 +1,12 @@
 const OrganizationQueryEngine = require("../../Globals/Classes/Organization/OrganizationQueryEngine");
 const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
 const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/OrganizationAutoAssigner");
+const OrganizationAuthorityResolver = require("../../Globals/Classes/Organization/OrganizationAuthorityResolver");
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
 const NotificationDispatcher = require("../../Globals/Classes/Notifications/NotificationDispatcher");
 const NotificationContent = require("../../Globals/Classes/Notifications/NotificationContent");
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
-const { userRoles } = require("../../Globals/Enumerations/UserRoles");
+const { organizationDelegatePowers } = require("../../Globals/Enumerations/OrganizationDelegatePowers");
 const { notificationChannels } = require("../../Globals/Enumerations/NotificationChannels");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
@@ -17,12 +18,6 @@ async function addOrganizationMember(request, response)
     const organizationId = typeof body?.organizationId === "string" ? body.organizationId : "";
     const submittedEmail = typeof body?.email === "string" ? body.email.trim() : "";
 
-    if (!organizationId)
-    {
-        response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: ErrorCodes.MISSING_ORGANIZATION_ID });
-        return;
-    }
     if (!submittedEmail || submittedEmail.indexOf("@") < 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
@@ -30,21 +25,16 @@ async function addOrganizationMember(request, response)
         return;
     }
 
-    const organization = await OrganizationQueryEngine.getOrganizationById(organizationId);
-    if (!organization)
+    const authority = await OrganizationAuthorityResolver.requirePower(request.user, organizationId, organizationDelegatePowers.MANAGE_MEMBERS);
+    if (!authority.allowed)
     {
-        response.statusCode = httpStatus.NOT_FOUND;
-        response.sendJson({ success: false, error: ErrorCodes.ORG_NOT_FOUND });
+        response.statusCode = OrganizationAuthorityResolver.statusForDenial(authority);
+        response.sendJson({ success: false, error: authority.reason });
         return;
     }
 
     const user = request.user;
-    if (user.getRole() !== userRoles.ADMIN && organization.getAdminUserId() !== user.getId())
-    {
-        response.statusCode = httpStatus.FORBIDDEN;
-        response.sendJson({ success: false, error: ErrorCodes.NOT_ORG_ADMIN });
-        return;
-    }
+    const organization = authority.organization;
     if (organization.getStatus() !== organizationStatus.ACTIVE)
     {
         response.statusCode = httpStatus.CONFLICT;

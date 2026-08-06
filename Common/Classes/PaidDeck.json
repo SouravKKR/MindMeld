@@ -96,6 +96,16 @@
             "datatype": "boolean",
             "defaultValue": false
         },
+        "audienceOrganizationId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "audienceTags":
+        {
+            "datatype": "array<string>",
+            "defaultValue": []
+        },
         "publishedAt":
         {
             "datatype": "date",

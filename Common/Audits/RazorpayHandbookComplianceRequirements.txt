@@ -1,0 +1,441 @@
+Report: Common/Reports/RazorpayHandbookComplianceReport.pdf
+Renderer: Common/Scripts/RenderRazorpayHandbookAudit.py
+
+Source: "Razorpay Integration & Security Handbook — Orders API + Standard Checkout for SaaS"
+(version 05 August 2026). The bracketed identifiers (A1, B2, D3 ...) are the handbook's own
+stable attack ids and MUST be carried into the report rows so findings stay cross-referencable
+with the source document.
+
+This file is the complete, reproducible specification of the audit. Everything the report
+contains is derivable from it: the surface to read, the controls to judge, the tables to
+build, the vocabulary to use, and the shape of the document. Re-running the audit from this
+file alone must produce the same report.
+
+=============================================================================
+A. AUDITED SURFACE — read all of this before judging any control
+=============================================================================
+
+Audit the whole payment surface. Razorpay is now the SOLE payment provider: it creates
+every order, settles every flow and is the only provider for recurring plan subscriptions.
+Zoho Payments and Zoho Invoice were removed; only the ZOHO enum member survives as a
+deliberate tombstone so historical rows stay attributable, and PaymentProviderFactory
+rejects it explicitly as a retired provider. Stripe and PayPal are unimplemented stubs.
+Verify these claims each run rather than assuming them — a provider quietly returning is
+exactly the kind of drift this audit exists to catch.
+
+  Provider layer      Dock/Globals/Classes/Payments/*  (PaymentProvider, RazorpayPaymentProvider,
+                      PaymentProviderFactory, RazorpayPlanRegistry, RazorpayPlanRecord,
+                      PaymentEnvironmentValidator, PaymentAccessPolicy, SettlementAmountGuard,
+                      CheckoutReceiptIdentifier, RefundPolicy, PaymentReversalService,
+                      PendingPaymentReconciler, PaymentRequestSchema,
+                      and the Stripe/Paypal stubs)
+  Order creation      Dock/Endpoints/Credits/InitiateCreditPurchase.js
+                      Dock/Endpoints/PaidDeck/InitiatePurchase.js
+                      Dock/Endpoints/Subscription/SubscriptionInitiationHelper.js
+                      Dock/Endpoints/Subscription/InitiateSubscription.js
+                      Dock/Endpoints/Subscription/ChangeSubscriptionPlan.js
+                      Dock/Endpoints/Admin/Deals/CreateDealPayment.js
+  Verification        Dock/Endpoints/Credits/VerifyCreditPurchase.js
+                      Dock/Endpoints/PaidDeck/VerifyPurchase.js
+                      Dock/Endpoints/Subscription/VerifySubscription.js
+                      Dock/Endpoints/Admin/Deals/VerifyDealPayment.js
+  Webhooks            Dock/Endpoints/Webhook/HandleRazorpayWebhook.js
+                      Dock/Endpoints/HandleWebhookEndpoints.js
+                      Dock/Globals/Classes/Plans/SubscriptionWebhookProcessor.js
+  Settlement/ledger   Dock/Globals/Classes/Credits/CreditPurchaseCompletionService.js
+                      Dock/Endpoints/PaidDeck/PaidDeckPurchaseCompletionService.js
+                      Dock/Globals/Classes/Credits/CreditLedger.js
+                      Dock/Globals/Classes/Database/PendingCreditOrderQueryEngine.js
+                      Dock/Globals/Classes/Database/PendingOrderQueryEngine.js
+                      Dock/Globals/Classes/Database/WebhookEventQueryEngine.js
+                      Dock/Globals/Classes/Database/PaymentAttemptQueryEngine.js
+                      Dock/Globals/Classes/Database/TimeToLiveIndexReconciler.js
+                      Dock/Globals/Classes/Credits/CreditDealPaymentQueryEngine.js
+                      Dock/Globals/Classes/Plans/PlanSubscriptionService.js, PlanReconciler.js
+  Pricing/eligibility Dock/Globals/Classes/Pricing/*  (RegionResolver, RegionMetadata,
+                      PaidDeckPricingEngine, CurrencyConverter, LicenseExpiryResolver)
+                      Dock/Globals/Classes/Credits/CreditPurchasePricingEngine.js
+                      Dock/Globals/Classes/Plans/PlanMetadata.js, PlanTierResolver.js
+                      Dock/Globals/Classes/Coupons/CouponCheckoutService.js
+  Reads/receipts      Dock/Endpoints/PaidDeck/GetPurchaseInvoice.js, GetMyPurchases.js
+                      Dock/Endpoints/Credits/GetCreditPurchaseOptions.js
+                      Dock/Endpoints/Admin/GetRevenueStats.js
+  Browser             Main/Globals/Classes/Payments/RazorpayCheckout.js, PaymentCheckout.js;
+                      Main/Globals/Classes/Advertising/AdvertisementLoader.js;
+                      Main/index.html and Main/login.html script tags
+  Perimeter           Dock/Endpoints/Plugins/SecurityHeaders.js, NoCache.js, EnsureLogin.js,
+                      EnsureAdmin.js, EnsurePaymentAccess.js,
+                      EnsurePaymentRequestSchema.js, EnsureRateLimit.js;
+                      Dock/index.js boot sequence
+                      Dock/Endpoints/Security/ReceiveCspReport.js
+  Alerting            Dock/Globals/Classes/Alerts/Alerts.js, Database/AlertQueryEngine.js
+  Configuration       Dock/.env.example and every Dock/.<environment>.env present
+  Tests/docs          Dock/VerifyRazorpaySignatures.mjs
+                      Dock/VerifyPaymentSettlementReliability.mjs
+                      Dock/VerifyPaymentAdversarial.mjs
+                      Dock/VerifyPaymentLifecycle.mjs
+                      Common/Testing/PaymentAdversarialChecklist.md
+                      Common/Testing/DockTests.txt
+                      Common/ReadmeFiles/PaymentIncidentRunbook.md
+                      Common/ReadmeFiles/PaymentPageScriptInventory.md
+
+Also check for the ABSENCE of things: a CI directory, a script manifest, an internal
+ledger-versus-accounting comparison. An absent control is a finding and must be searched
+for explicitly, not inferred from silence.
+
+Two absences from earlier runs are now filled and must be verified rather than assumed:
+PendingPaymentReconciler (the sweep that settles captured-but-unsettled orders) is started
+in Dock/index.js and also runs once at boot, and the refund path is deliberately absent per
+section B2. Pending-order rows are retained 14 days, and the retention is applied through
+TimeToLiveIndexReconciler because a plain createIndex cannot change an existing TTL — check
+that the reconciler is still in the path, since a regression there would silently restore
+the old expiry while the source claimed otherwise.
+
+=============================================================================
+B. STANDING SCOPE EXCLUSION
+=============================================================================
+
+CI-based secret scanning, dependency/CVE scanning, and public-source key monitoring
+(E1 tooling, E5, E9, part 9.10 "leaked secrets in public sources") are deliberately out of
+scope by the repository owner's decision. Report their true status, but always mark the
+action as excluded rather than recommending them. Do not silently drop them — a reader must
+be able to see they were considered and consciously deferred.
+
+=============================================================================
+B2. STANDING PRODUCT POLICY — NO REFUNDS
+=============================================================================
+
+CogniumLearn does not offer refunds. This is a commercial decision by the
+repository owner, and it changes how a whole cluster of controls must be judged.
+Judge them as follows, and do NOT simply mark them "not applicable" — the policy
+makes half of them MORE important, not less:
+
+  Controls that become NOT APPLICABLE, because the flow does not exist:
+    68  a controlled internal refund tool
+    103 [F4] refunds audited and reconciled against approvals
+    106 [F7] the refund path is idempotent / to original instrument / approval-gated
+  For each, the correct evidence is that the capability is absent BY DESIGN and
+  enforced in code — PaymentProvider.refund() refuses for every provider and no
+  provider re-implements it — not merely that nobody got round to building it.
+  An audit that reports "no refund path exists" without noting that its absence
+  is deliberate and enforced has understated the control.
+
+  Controls that REMAIN FULLY IN SCOPE, because a refund can still happen without
+  being offered — a chargeback, a bank reversal, a manual dashboard refund:
+    50  refund.processed is subscribed and handled
+    102 [F3] a refund revokes the entitlement it paid for
+    108 [G1] refunds and chargebacks revoke or downgrade entitlement automatically
+    109 [G2] a refund mid-provisioning cannot leave an account paid-and-refunded but active
+  Judge these on the code in Dock/Globals/Classes/Payments/PaymentReversalService.js
+  and the refund branch of HandleRazorpayWebhook.js. A no-refund policy is a
+  reason to treat an observed refund as an ALERTABLE EXCEPTION, never a reason to
+  ignore the event.
+
+  Verify each run that the policy is still enforced rather than assumed:
+  RefundPolicy.REFUNDS_OFFERED is false, PaymentProvider.refund() throws, and no
+  subclass declares its own refund method.
+
+Tax invoicing (control 66) is likewise handled outside the application by the
+owner's decision, and the in-app receipt does not claim to be a GST tax invoice.
+
+=============================================================================
+B3. STANDING PRODUCT POLICY — PAYMENTS ARE ADMIN-ONLY OUTSIDE PRODUCTION
+=============================================================================
+
+Production is the only environment in which an ordinary signed-in user may
+reach a checkout. In local, development, testing and any other name, payment
+routes are restricted to administrators by PaymentAccessPolicy, enforced by the
+EnsurePaymentAccess plugin on every money-moving route.
+
+Judge this as a compensating control under E6 and B9, not as a separate
+control of its own. Specifically, when assessing the key-mode gate (control 97,
+E6), record that a mis-copied env file now has a blast radius of administrators
+rather than every user pointed at that environment.
+
+Verify each run rather than assuming:
+  - PaymentAccessPolicy.configure() is called in Dock/index.js BEFORE any route
+    is registered, and the policy refuses everyone (administrators included)
+    while unconfigured;
+  - every route that can create, verify or settle a payment carries
+    ensurePaymentAccess — currently the two credit routes, the two paid-deck
+    routes, three subscription routes and /Organization/Credits/Deals/Verify;
+  - /Webhooks/Razorpay is NOT gated (the provider carries no session, and gating
+    it would break settlement);
+  - /Subscription/Cancel is NOT gated (it takes no payment, and blocking it
+    would strand a non-admin who already holds a subscription there).
+
+Note also that Dock/.production.env carries BLANK Razorpay credentials by
+design. A real production node renders its secrets from Google Secret Manager
+into COGNIUMLEARN_SECRETS_DIRECTORY and never reads that file; the deploy script
+excludes every .env from the upload; and no env file has ever been committed.
+An audit that finds keys back in that file should treat it as a regression.
+
+=============================================================================
+C. CONTROLS TO JUDGE
+=============================================================================
+
+PART 0 — MENTAL MODEL
+1) Provisioning happens only after a payment is captured, never on authorized alone.
+2) Orders are created server-side through the Orders API; only the order id reaches the browser.
+3) The client is never a source of truth; a server-held record binds every order to its buyer.
+4) Webhooks are treated as an authoritative settlement signal, independent of the browser.
+5) Every settlement path is idempotent by construction, not by luck.
+6) Money is integers in the currency subunit everywhere; no floats in any money path. Judge the
+   storage type actually used (BSON double vs integer vs decimal) and whether it is exact at
+   this product's price points.
+
+PART 1 — PREREQUISITES
+7) Test and live modes are isolated, and the key mode in use matches the environment.
+8) The API key secret is server-only: absent from the frontend bundle, git, logs, error responses.
+9) Secrets come from a manager or a rendered env file, never a committed one.
+10) Key rotation is a configuration change rather than a code change; note whether a restart is required.
+11) Required payment methods are enabled with the provider (dashboard-side; state it as such).
+
+PART 2 — YOUR OWN DATA MODEL
+12) An order ledger records what the customer intended to buy, before the provider is called.
+13) A payment-attempt record exists, including failed attempts and their error codes.
+14) Every webhook delivery is recorded with a unique event id.
+15) The order receipt is deterministic, so a retried initiation maps to one logical order.
+16) The raw provider payload is retained for dispute evidence and debugging.
+
+PART 3 — ORDER CREATION
+17) The client sends an identifier (plan, quantity, deck ids), never an amount. [A1]
+18) A strict request schema rejects unknown fields rather than ignoring them. [A1]
+19) The local record is written BEFORE the remote provider call.
+20) Provider notes carry correlation identifiers only, are advisory, and hold no PII or secrets.
+21) Provider failures return a generic error; provider internals never reach the client.
+22) An existing unpaid order is reused instead of creating duplicates. [A6]
+
+PART 4 — CHECKOUT IN THE BROWSER
+23) Standard Checkout (hosted iframe) is used; no custom card form exists anywhere.
+24) The handler callback is used rather than callback_url.
+25) Success, failure and dismissal are three distinct states; dismissal is not an error.
+26) The order id returned by the widget is never trusted over the server's own.
+27) The integration model keeps PCI scope at the lightest attestation tier, and the report
+    explains why that choice is defensible.
+28) A justified inventory of every script on the payment page exists. [PCI DSS 6.4.3]
+29) Tamper detection runs on the payment page and reaches a human. [PCI DSS 11.6.1]
+30) Subresource Integrity is used wherever a script can actually be pinned.
+
+PART 5 — PAYMENT SIGNATURE VERIFICATION
+31) HMAC verification is mandatory and fail-closed on every verify path.
+32) The HMAC is built from the stored order id, never the one in the request body. [C2]
+33) The order lookup is scoped to the authenticated account. [B2]
+34) Comparison is constant-time with a preceding length check. [C3]
+35) Field types are validated before any value reaches a Buffer or an HMAC. [C1]
+36) Subscription signatures use the reversed field order and a distinct code path.
+37) Amount, currency and order are re-asserted against the stored record before fulfilment. [C4]
+
+PART 6 — WEBHOOKS
+38) The HMAC is computed over the raw request body, never a re-serialised one. [D2]
+39) The body is parsed only after verification succeeds.
+40) The webhook secret is a separate value from the API key secret.
+41) An unverified delivery is rejected and nothing is processed. [D1]
+42) Duplicate deliveries are gated on a unique event id. [D3]
+43) Out-of-order delivery is tolerated; no handler assumes ordering.
+44) The event type is read from the body, and entities from the documented payload paths.
+45) Ownership is re-checked against a server-held record, never provisioned from notes alone.
+46) IP allowlisting is not relied on as a security boundary. [D8]
+47) The endpoint acks quickly; heavy work does not block the response. [D4]
+48) A body-size limit applies before HMAC computation. [D4]
+49) Both the current and previous webhook secrets are accepted during a rotation window. [E2]
+50) refund.processed is subscribed and handled.
+51) payment.failed is subscribed and handled.
+52) Unknown event types return 2xx and never crash-loop. [D7]
+
+PART 7 — FULFILMENT, CAPTURE, RECONCILIATION
+53) Fulfilment is idempotent and serialised against concurrent settlement. [B3]
+54) One provisioning path is shared by the verify leg and the webhook.
+55) Auto-capture is enabled, and provisioning is gated on captured. [C5]
+56) A scheduled reconciliation job repairs orders the webhook never settled.
+57) Alerting exists for orders stuck in a pending state.
+58) Alerting exists for webhook signature failures.
+59) Alerting exists for amount mismatches.
+60) Alerting exists for captured payments with no matching local order. [B8]
+61) Internal reconciliation of the ledger against accounting records is automated.
+62) External reconciliation of settlements against the bank is defined and owned.
+
+PART 8 — SAAS SPECIFICS
+63) Recurring billing is a deliberate integration, with a swappable entitlement layer.
+64) Indian regulatory reality is respected: AFA at mandate setup, pre-debit notice, mandate
+    caps, and grace periods rather than a midnight cut-off.
+65) No raw card numbers are stored anywhere, in any form.
+66) Tax invoicing is compliant for the jurisdiction being billed (GSTIN, HSN/SAC, place of supply).
+67) Proration on upgrade is computed server-side; a paid order is never repriced.
+68) A controlled internal refund tool exists rather than raw dashboard access.
+69) Tokenisation, if offered, binds tokens to a customer and merchant and stores no PANs.
+70) 3D Secure is provider-handled, and its distinct failure modes are classified separately
+    from genuine declines.
+
+PART 9 — THREAT MODEL (every id below must appear as its own row)
+71) [A1] Amount tampering is structurally impossible.
+72) [A2] Currency and price region cannot be selected by the buyer to their advantage.
+73) [A3] Quantities and amounts are bounded, integer and positive before the provider is called.
+74) [A4] Coupon redemption is atomic, once-per-user, and released when checkout fails to launch.
+75) [A5] Cross-tenant order creation is impossible; identity always comes from the session.
+76) [A6] Order-creation flooding is rate limited and requires authentication.
+77) [A7] Order ids stay out of URLs, referrers and third-party analytics.
+78) [A8] The purchase is frozen into the order; fulfilment never reads a live cart.
+79) [A9] Plan eligibility is authorised separately from pricing; internal or zero-priced plans
+    are unreachable from a public entry point.
+80) [B1] A forged success callback provisions nothing.
+81) [B2] A signature cannot be replayed across accounts or consumed twice.
+82) [B3] Concurrent submission cannot double-fulfil.
+83) [B4] The payment page is defended against XSS by an ENFORCED policy that actually blocks
+    injected script — judge the enforced policy, not a report-only candidate.
+84) [B5] Frontend supply chain is controlled: pinned dependencies, no tag managers, chat
+    widgets or session-replay scripts on the payment path.
+85) [B6] State-changing payment endpoints are CSRF-protected.
+86) [B7] The payment page is not framable by others.
+87) [B8] A cloned checkout using the public key id cannot provision, and is detected.
+88) [B9] No state change is reachable from a public route without a captured payment. Enumerate
+    the routes and ask of each what stops an unauthenticated caller.
+89) [B10] The full security-header baseline is present on deployed payment responses.
+90) [C1] Verification cannot be omitted, weakened, type-confused or bypassed.
+91) [C6] Payment identifiers cannot reach a query as an operator or an injection, including in
+    admin tooling and exports.
+92) [D5] Provider-supplied strings are treated as hostile on output, including CSV export.
+93) [D6] Untrusted payload JSON is never deep-merged into application objects.
+94) [E1] Key secret compromise paths are closed off, and rotation is documented.
+95) [E3] Dashboard access is treated as production infrastructure.
+96) [E4] TLS is enforced end to end with certificate validation intact.
+97) [E6] A test key in production, or a live key outside it, refuses to start.
+98) [E7] Payment payloads do not leak PII into logs or third-party error trackers.
+99) [E8] Endpoint compromise is acknowledged as a path around every other secrets control.
+100) [F1] Card testing is deterred: authentication before checkout, rate limits, velocity signals.
+101) [F2] Chargeback evidence is captured at purchase time.
+102) [F3] A refund revokes the entitlement it paid for.
+103) [F4] Refunds are audited and reconciled against approvals.
+104) [F5] Billing-sensitive account changes are protected against account takeover.
+105) [F6] Trial and free-tier eligibility resists plus-addressing and disposable domains.
+106) [F7] The refund path is idempotent, to the original instrument, approval-gated, and its
+     identifiers are non-enumerable.
+107) [F8] Business rules are enforced server-side at the moment of the state change, from
+     server-held time and eligibility, and re-checked at fulfilment.
+108) [G1] Refunds and chargebacks revoke or downgrade entitlement automatically.
+109) [G2] A refund landing mid-provisioning cannot leave an account paid-and-refunded but active.
+110) [G3] No card data is retained; payment metadata retention is deliberate.
+111) [G4] Every payment, order, invoice and receipt READ is scoped to the authenticated account,
+     with non-sequential identifiers and authenticated file delivery.
+
+PART 9.10 — CONTINUOUS MONITORING
+112) Leaked-secret monitoring in public sources. (Excluded — see section B.)
+113) Client-side script integrity monitoring on deployed bundles.
+114) Brand and credential exposure monitoring.
+115) The handbook's indicator list has somewhere to fire; state which indicators alert today.
+
+PART 10 — TESTING
+116) Test mode is used for development and cannot be confused with live.
+117) Local webhook testing is possible through a tunnel.
+118) A functional matrix covers the happy path, client edge cases, reliability and money movement.
+119) Signature verification has a regression test asserting that tampering is rejected, and the
+     test is demonstrably non-vacuous against the pre-fix behaviour.
+120) An adversarial checklist has been run against a production-like environment.
+
+PART 11 — GO-LIVE
+121) A runbook exists for "payment succeeded but the customer has no access".
+122) A secret-rotation procedure is documented and has been rehearsed.
+123) Every payment-related read endpoint is covered by an authorisation test.
+124) Live-mode configuration is verified: keys, webhook registration, auto-capture, callback
+     domains, settlement account, published refund policy.
+
+PART 12 — KNOWN PITFALLS
+125) None of the handbook's seventeen ranked pitfalls is present in the current code. Each is
+     judged individually with a present / absent / partly verdict.
+
+=============================================================================
+D. REQUIRED REPORT STRUCTURE
+=============================================================================
+
+Build the document in this order. Each numbered block is a section of the PDF.
+
+ 1. Cover block — title, subtitle, date, gold rule (per PdfTheme).
+ 2. Opening callout — what the report is and that no code was modified during the audit.
+ 3. "Scope, method and how to read this report" — the audited surface from section A as a
+    bullet list, then the Status and Action vocabularies as a table (section E).
+ 4. A callout stating which provider is actually live, verified from the factory and the
+    subscription helper, so no reader assumes Razorpay is dormant.
+ 5. One section per handbook part (0 through 12), each a four-column finding table:
+        Handbook control | Status | Evidence in this repository | Action
+    Part 9 is split into its own sections for [A], [B], [C], [D], [E], and [F]+[G].
+ 6. Part 9.9 priority table — all fifteen handbook controls with this repository's status,
+    followed by a callout interpreting the score.
+ 7. Part 9.10 monitoring table.
+ 8. Part 11 go-live checklist table.
+ 9. Part 12 pitfall table with a present/absent verdict per pitfall.
+10. Gap register — every unaccomplished or partially accomplished control, ordered by the
+    damage a realistic failure would cause, with columns:
+        Ref | Gap and why it matters | Recommended fix | Leave as is? | Action
+    The "Leave as is?" column must give an explicit judgement, not a restatement of severity.
+11. Overall assessment — the weighted dimension table (section F), a callout carrying the
+    headline rating and the shape of the weakness, and a short "if only three things are
+    done" paragraph.
+12. Closing line stating exactly what source state the audit was derived from: branch, commit,
+    and whether the working tree was clean. If it was not clean, say which audited files
+    differed and that they were audited as they exist on disk.
+
+=============================================================================
+E. VOCABULARY — status and action are independent judgements
+=============================================================================
+
+Status answers "does the code meet what the handbook asks for?"
+  Accomplished           The control exists and was verified against the current source.
+  Partially accomplished It exists with a material gap, or is met by a weaker compensating
+                         mechanism.
+  Unaccomplished         No implementation exists in the repository.
+  Not applicable         A dashboard setting, an organisational process, or a flow this
+                         product does not have. Mark this ONLY where the product's shape
+                         genuinely makes the control moot — never merely because it is
+                         unimplemented.
+
+Action answers "what should we do about it?" and must be exactly one of:
+  Needs immediate action Money, entitlements or personal data are at risk today.
+  Change recommended     A real weakness or fragility; schedule it.
+  No action needed       Verified working, or an accepted trade-off correct for this product.
+  N/A, no action needed  Reserved for Not-applicable controls, so a reader can distinguish
+                         "we did it" from "it does not apply here".
+
+A control may be unaccomplished and still need no action; it may be accomplished and still
+warrant a change. Do not let one column imply the other.
+
+Where a control is split between code and a provider-dashboard setting, say so explicitly
+rather than marking it accomplished on the strength of the code half alone.
+
+=============================================================================
+F. RATING
+=============================================================================
+
+Score these dimensions out of 10, each with a one-line basis citing evidence, then aggregate
+to a single headline rating weighted as shown. Weight by what actually causes loss, not by
+control count — a missing access control outranks a missing document.
+
+  Tamper and forgery resistance        Very high
+  Idempotency and concurrency          Very high
+  Authorisation and tenancy            High
+  Correctness under failure            High
+  Post-payment lifecycle               High
+  Client-side and transport security   Medium
+  Secrets and configuration            Medium
+  Monitoring and detection             Medium
+  Testing                              Medium
+
+=============================================================================
+G. RE-RUN DISCIPLINE
+=============================================================================
+
+Per Common/Audits/Audit.txt, delete the previous PDF before re-auditing and re-derive every
+finding from the current source. Do not carry forward, restate or "update" the prior report's
+rows, and do not treat an earlier conclusion as still true because it was true last time.
+This matters here specifically: remediation passes change the answers, and a diff-based
+re-read anchors on where the risk used to live rather than where it lives now.
+
+Verify claims rather than repeating them. In particular, re-check each run:
+  - which payment provider the factory actually defaults to, and that no retired
+    provider has been resurrected;
+  - whether the working tree is clean, and audit what is on disk either way;
+  - whether every env file present would pass the boot-time key-mode gate;
+  - that any test harness cited actually runs and passes, by running it;
+  - that no advertising, analytics or tag-manager script has returned to
+    Main/index.html or Main/login.html, and that AdvertisementLoader still has no
+    caller other than HomePage;
+  - that the no-refund policy of section B2 is still enforced in code.

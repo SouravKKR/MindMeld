@@ -2,6 +2,7 @@ import User from "../Model/User.js";
 import UserIdentityManager from "../Classes/UserIdentityManager.js";
 import UserIdentityConstants from "../Constants/UserIdentityConstants.js";
 import OfflineSessionManager from "../Classes/Authentication/OfflineSessionManager.js";
+import OrganizationContextRegistry from "../Classes/Organization/OrganizationContextRegistry.js";
 import BadgeCelebrationController from "../Classes/Streak/BadgeCelebrationController.js";
 import MilestoneBadgeCelebrationController from "../Classes/Metrics/MilestoneBadgeCelebrationController.js";
 
@@ -59,6 +60,11 @@ class AuthenticationEvents
             window["sessionState"] = null;
             await OfflineSessionManager.clearCachedSession();
 
+            // Drop the institutes with the account, so the next person to sign
+            // in on this device never sees the previous one's views offered.
+            await OrganizationContextRegistry.clear();
+            await UserIdentityManager.setOrganizationContext(UserIdentityConstants.ANONYMOUS_IDENTITY, "");
+
             document.querySelectorAll("profile-component").forEach((component) =>
             {
                 if (typeof component.refresh === "function")
@@ -89,7 +95,8 @@ class AuthenticationEvents
             const userJson = await response.json();
             const user = User.fromJson(userJson);
 
-            await UserIdentityManager.setIdentity(user.getId());
+            await OrganizationContextRegistry.setContexts(userJson.organizationContexts);
+            await AuthenticationEvents.#restoreViewForUser(user);
             window.dispatchEvent(new CustomEvent(AuthenticationEvents.ON_USER_LOGGED_IN, {
                 detail: { user, sessionState: AuthenticationEvents.SESSION_STATE_FRESH }
             }));
@@ -111,7 +118,11 @@ class AuthenticationEvents
 
         if (cachedUser)
         {
-            await UserIdentityManager.setIdentity(cachedUser.getId());
+            // Offline: the server could not confirm the membership, so the last
+            // known list stands in. A view that has since been revoked collapses
+            // back to the personal one as soon as /GetUser answers again.
+            await OrganizationContextRegistry.loadStoredContexts();
+            await AuthenticationEvents.#restoreViewForUser(cachedUser);
             window.dispatchEvent(new CustomEvent(AuthenticationEvents.ON_USER_LOGGED_IN, {
                 detail: { user: cachedUser, sessionState: AuthenticationEvents.SESSION_STATE_STALE_OFFLINE }
             }));
@@ -125,6 +136,24 @@ class AuthenticationEvents
 
         await UserIdentityManager.setIdentity(UserIdentityConstants.ANONYMOUS_IDENTITY);
         window.dispatchEvent(new CustomEvent(AuthenticationEvents.ON_USER_LOGGED_OUT));
+    }
+
+    /**
+     * Puts the user back in the library they were last looking at.
+     *
+     * A reload must not silently move someone between libraries: a member who
+     * left the app inside their institute's view and came back to their own
+     * would think their organization's decks had been deleted. The stored view
+     * is honoured only while it is still one the server just listed for this
+     * account, so a membership that ended resolves cleanly to the personal view
+     * instead of a namespace nothing will ever sync.
+     */
+    static async #restoreViewForUser(user)
+    {
+        const storedContextId = await UserIdentityManager.readStoredOrganizationContextId();
+        const bStillAMember = storedContextId.length > 0 && OrganizationContextRegistry.findContext(storedContextId) !== null;
+
+        await UserIdentityManager.setOrganizationContext(user.getId(), bStillAMember ? storedContextId : "");
     }
 
     /**
@@ -171,6 +200,14 @@ class AuthenticationEvents
         // live measurement on the window for the Settings storage meter to read.
         // Null when the server couldn't measure it this time.
         window["storageUsage"] = userJson.storageUsage || null;
+
+        // The institute may have changed what this member is entitled to since
+        // boot, and a removed membership must stop offering its view.
+        await OrganizationContextRegistry.setContexts(userJson.organizationContexts);
+        if (UserIdentityManager.isOrganizationContext() && OrganizationContextRegistry.findContext(UserIdentityManager.getOrganizationContextId()) === null)
+        {
+            await UserIdentityManager.setOrganizationContext(user.getId(), "");
+        }
 
         sessionStorage.setItem("user", JSON.stringify(user.toJson()));
         window["user"] = user;

@@ -1,0 +1,690 @@
+/* OrganizationPage ------------------------------------------------------
+   A full page rather than a dialog, because this surface holds members,
+   permissions, credits, decks and reports — more than any modal can carry.
+   The layout is a left rail plus one section, collapsing to a horizontal
+   scroller above the section on narrow screens. */
+
+organization-page
+{
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.organization-page-body
+{
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr);
+    gap: 24px;
+    padding: 24px;
+    box-sizing: border-box;
+    align-items: start;
+    /* Capped and centred. Without this the section takes the full width of a
+       2560px monitor, every `flex: 1 1 260px` field grows to ~1000px, and a
+       form of four fields reads as four unrelated bars with their labels a
+       screen apart. A form is easier to read narrow than wide. */
+    max-width: 1280px;
+    /* `width: 100%` is load-bearing, not decoration. The page element is a
+       COLUMN flex container, and an auto cross-axis margin on a flex item
+       cancels the stretch that would otherwise size it — leaving the body to
+       shrink-fit its content, which on a 1440px screen came out at 924px and
+       collapsed the form grid to a single column. A definite width restores
+       the stretch; the auto margins then only centre it. */
+    width: 100%;
+    margin: 0 auto;
+}
+
+.organization-page-status
+{
+    grid-column: 1 / -1;
+    padding: 16px;
+    border-radius: 8px;
+    background-color: var(--secondary-background-color);
+    color: var(--secondary-text-color);
+    font-size: 14px;
+}
+
+.organization-page-status-error
+{
+    background-color: var(--danger-background-color);
+    color: var(--danger-text-color);
+}
+
+.organization-page-rail
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    position: sticky;
+    top: calc(var(--header-height) + 12px);
+}
+
+.organization-page-rail-item
+{
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: none;
+    background-color: transparent;
+    color: var(--secondary-text-color);
+    font-family: inherit;
+    font-size: 14px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.organization-page-rail-item:hover
+{
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+}
+
+.organization-page-rail-item-active
+{
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+}
+
+.organization-page-section
+{
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* EVERY section element, matched by position rather than by tag name.
+   The section elements are custom elements, which default to `display: inline`
+   — an inline box wrapping block children lays its own inline fragments out
+   around them, which is how the credits section ended up with stray button
+   text at the far left of the page and no space between anything. Listing the
+   tags individually is what let two later sections miss the rule entirely, so
+   the rule is now written so a new section cannot be forgotten. */
+.organization-page-section > *
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+.organization-section-title
+{
+    margin: 0;
+    font-size: 20px;
+}
+
+/* ── Form controls ────────────────────────────────────────────────────────
+   `<select>` was never styled alongside `<input>` and `<textarea>`, so every
+   dropdown on this page rendered as an unstyled native control: no padding, no
+   radius, and full-bleed width next to fields that had all three. */
+.organization-page-section select,
+.organization-shelf-body select
+{
+    /* One height across inputs, selects and buttons. Native controls each pick
+       their own, so a row holding a select beside a button was visibly ragged. */
+    min-height: 38px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-size: 13px;
+    box-sizing: border-box;
+    width: 100%;
+    cursor: pointer;
+}
+
+.organization-page-section select:focus
+{
+    outline-color: var(--outline-color-strong);
+}
+
+/* A multi-select is a list, not a dropdown: it needs room to show its options
+   and must not stretch to the height of whatever sits beside it. */
+.organization-page-section select[multiple]
+{
+    padding: 4px;
+    /* Three options plus padding. Taller than that and it is the only thing
+       setting the height of its grid row, leaving a visible hole under whatever
+       sits beside it. */
+    min-height: 76px;
+    cursor: default;
+}
+
+.organization-page-section select[multiple] option
+{
+    padding: 5px 7px;
+    border-radius: 4px;
+}
+
+.organization-page-section .admin-panel-add-field input,
+.organization-page-section .admin-panel-add-field textarea
+{
+    min-height: 38px;
+}
+
+.organization-page-section .organization-secondary-button,
+.organization-page-section .admin-panel-add-submit,
+.organization-shelf-body .organization-secondary-button,
+.organization-shelf-body .admin-panel-add-submit
+{
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* A heading belongs to what follows it, so the space above it is larger than
+   the space below. The section's uniform gap cannot say that on its own, and
+   without it a heading floats between two blocks reading as part of neither. */
+/* Positive margins only. An earlier version subtracted from the section's own
+   gap to tighten a heading against its subtitle, which works right up until the
+   heading is rendered somewhere WITHOUT that gap — the delegates block builds
+   into a plain host div, and there the negative margin dropped the heading on
+   top of the text below it. Additive spacing cannot invert like that. */
+.organization-section-heading
+{
+    margin-top: 12px;
+    margin-bottom: 6px;
+}
+
+/* A status line that has nothing to say still reserved its height and still
+   took a gap on each side of it — about fifty pixels of nothing between the
+   summary cards and the first heading. */
+.organization-page-section .organization-action-status:empty
+{
+    display: none;
+}
+
+/* Explanatory prose caps its measure — full-width body text on a 1280px page is
+   a line long enough that the eye loses the start of the next one — and sits
+   with the group it introduces rather than adrift between two. */
+.organization-page-section .admin-panel-add-subtitle
+{
+    max-width: 78ch;
+}
+
+/* ── Form layout ──────────────────────────────────────────────────────────
+   Fields in a responsive grid rather than a flex row: a flex row with
+   `flex: 1 1 260px` items divides ALL the spare width between however many
+   fields are on it, so two fields on a wide screen become two enormous bars
+   and three become three. A grid track has a maximum, so a field stays a
+   field. */
+.organization-form-grid
+{
+    display: grid;
+    /* auto-FILL, not auto-fit. Both lay out as many tracks as fit; the
+       difference is what happens to the tracks nothing occupies. auto-fit
+       collapses them, so a form with ONE field stretches that field across the
+       whole grid — which is how a delegate picker ended up 760px wide with its
+       label stranded at the far left. auto-fill keeps the empty tracks, so a
+       field is a field whether it has neighbours or not.
+
+       `1fr` inside a capped container rather than a hard track maximum: a fixed
+       maximum makes the column count brittle — at 652px of space, two 320px
+       tracks plus a gap miss by four pixels and the whole form drops to one
+       column. */
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px 16px;
+    align-items: start;
+    max-width: 760px;
+}
+
+/* A field that deliberately wants the room — a long free-text value — asks for
+   it rather than every field being wide by default. */
+.organization-form-grid .organization-form-field-wide
+{
+    grid-column: 1 / -1;
+    max-width: 480px;
+}
+
+/* A control that is taller than a text field — a multi-select showing its
+   options — takes two tracks. Left in one it forces the row to its own height
+   and every neighbour sits above a hole. */
+.organization-form-grid .organization-form-field-tall
+{
+    grid-column: span 2;
+}
+
+@media (max-width: 640px)
+{
+    .organization-form-grid .organization-form-field-tall
+    {
+        grid-column: span 1;
+    }
+}
+
+/* Actions live on their own row beneath the fields they act on. Sharing a row
+   with the fields is what stranded "Preview" a thousand pixels from the amount
+   it previews. */
+.organization-form-actions
+{
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+/* An empty multi-select is an invisible dead end — a scrollbar and nothing
+   else, which is what the tag picker showed for an organisation that had not
+   imported tags yet. */
+.organization-field-empty
+{
+    padding: 10px 12px;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--secondary-text-color);
+}
+
+.organization-summary-grid
+{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
+}
+
+.organization-summary-card
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background-color: var(--secondary-background-color);
+    outline: 1px solid var(--outline-color-subtle);
+    outline-offset: -1px;
+    min-width: 0;
+}
+
+.organization-summary-label
+{
+    font-size: 12px;
+    color: var(--secondary-text-color);
+}
+
+.organization-summary-value
+{
+    font-size: 15px;
+    color: var(--primary-text-color);
+    overflow-wrap: anywhere;
+}
+
+/* The toolbar no longer borrows its layout from a shared inline row, so it
+   states its own: the seat count on the left, the actions on the right, both
+   wrapping rather than overflowing. */
+.organization-members-toolbar
+{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.organization-members-table td
+{
+    vertical-align: top;
+}
+
+/* The member list is mounted into a plain host div, which would otherwise size
+   itself to the widest thing inside it rather than to the column it sits in. */
+.organization-page-section [data-role="list-host"]
+{
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* Several blocks are built into a plain host div after the section's own markup
+   has rendered — the delegate editor, the distribution preview, the recurring
+   list. A bare div has no gap, so their contents stacked flush against each
+   other while everything around them breathed. Giving the hosts the same column
+   layout as a section means one rule covers all of them, and a host added later
+   inherits it. */
+.organization-page-section [data-role="powers-host"],
+.organization-page-section [data-role="preview"],
+.organization-page-section [data-role="recurring-list"],
+.organization-page-section [data-role="perks"],
+.organization-page-section [data-role="rows-host"]
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+/* An empty host must not contribute a gap of its own, or the section shows a
+   hole where a block it never rendered would have been. */
+.organization-page-section [data-role="powers-host"]:empty,
+.organization-page-section [data-role="preview"]:empty,
+.organization-page-section [data-role="recurring-list"]:empty,
+.organization-page-section [data-role="perks"]:empty
+{
+    display: none;
+}
+
+ /* Chips that sit together, not a grid stretched across the section. As an
+    auto-fit grid the four powers were spread the full width of the page with
+    a hundred pixels of nothing between each label and its box, which reads as
+    four unrelated controls rather than one set of four choices. */
+.organization-power-grid
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.organization-power-toggle
+{
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 12px;
+    border-radius: 999px;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    font-size: 12px;
+    color: var(--primary-text-color);
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.organization-power-toggle:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+/* A ticked power is the state an administrator scans for, so it is legible
+   without reading the label — the ring alone is too quiet at this size. */
+.organization-power-toggle:has(input:checked)
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.organization-power-toggle input[type="checkbox"]
+{
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    cursor: pointer;
+}
+
+/* ── Narrow screens ───────────────────────────────────────────────────────
+   The rail becomes a horizontal scroller above the section, every field takes
+   the full width, and every action becomes a full-width tap target. Two
+   breakpoints rather than one: a tablet still fits a two-up form grid, a phone
+   does not. */
+@media (max-width: 1000px)
+{
+    .organization-page-body
+    {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 16px;
+        padding: 16px;
+    }
+
+    .organization-page-rail
+    {
+        position: static;
+        flex-direction: row;
+        gap: 6px;
+        overflow-x: auto;
+        white-space: nowrap;
+        padding-bottom: 6px;
+        /* The scroller must not be mistaken for the page bottom, and a bare
+           row of buttons on a dark background reads as exactly that. */
+        border-bottom: 1px solid var(--outline-color-subtle);
+    }
+
+    .organization-page-rail-item
+    {
+        flex: 0 0 auto;
+    }
+
+    .organization-form-grid
+    {
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    }
+}
+
+@media (max-width: 640px)
+{
+    .organization-page-body
+    {
+        gap: 14px;
+        padding: 12px;
+    }
+
+    .organization-page-section > *
+    {
+        gap: 14px;
+    }
+
+    /* One field per row. Two 160px fields side by side on a phone truncate
+       both their labels and neither is readable. */
+    .organization-form-grid
+    {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .organization-summary-grid
+    {
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    }
+
+    /* Full width, and tall enough to hit. A 10px-padded button is a 34px
+       target, under the ~44px a thumb actually needs. */
+    .organization-form-actions,
+    .organization-section-actions,
+    .organization-members-toolbar
+    {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .organization-form-actions > button,
+    .organization-section-actions > button,
+    .organization-members-toolbar .admin-panel-add-submit,
+    .organization-members-toolbar .organization-secondary-button
+    {
+        width: 100%;
+        min-height: 44px;
+    }
+
+    .organization-page-rail-item
+    {
+        min-height: 40px;
+    }
+
+    .organization-section-title
+    {
+        font-size: 18px;
+    }
+}
+
+/* ── Permissions section ──────────────────────────────────────────────────
+   A rule is a small form in its own right (name, audience, tags, a feature
+   matrix and a storage field), so each one is boxed. Without the box the
+   fields of two adjacent rules read as one long form and it stops being
+   obvious which audience a checkbox belongs to. */
+organization-permissions-section
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+.organization-section-header
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.organization-section-actions
+{
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.organization-permission-rules
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.organization-permission-rule
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    border-radius: 10px;
+    background-color: var(--secondary-background-color);
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    min-width: 0;
+}
+
+.organization-permission-rule-header
+{
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.organization-permission-rule-header .admin-panel-add-field
+{
+    flex: 1 1 260px;
+    min-width: 0;
+}
+
+.organization-permission-rule-tags
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.organization-permission-tag
+{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.organization-permission-tag input[type="checkbox"]
+{
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    cursor: pointer;
+}
+
+/* auto-fit rather than a fixed column count: the matrix has to stay readable
+   between the rail-beside-content desktop layout and a 375px phone. */
+.organization-permission-rule-features
+{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 10px;
+}
+
+.organization-permission-feature
+{
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px;
+    border-radius: 8px;
+    background-color: var(--primary-background-color);
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    cursor: pointer;
+    min-width: 0;
+}
+
+.organization-permission-feature:has(input:disabled)
+{
+    cursor: default;
+    opacity: 0.7;
+}
+
+.organization-permission-feature input[type="checkbox"]
+{
+    width: 15px;
+    height: 15px;
+    margin: 2px 0 0 0;
+    flex: 0 0 auto;
+    cursor: pointer;
+}
+
+.organization-permission-feature-body
+{
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.organization-permission-feature-title
+{
+    font-size: 13px;
+    color: var(--primary-text-color);
+}
+
+.organization-permission-feature-note
+{
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--secondary-text-color);
+}
+
+.organization-permission-rule-hint
+{
+    font-size: 11px;
+    color: var(--secondary-text-color);
+}
+
+@media (max-width: 640px)
+{
+    .organization-permission-rule-features
+    {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .organization-permission-rule
+    {
+        padding: 12px;
+    }
+
+    .organization-permission-rule-header
+    {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .organization-permission-rule-header .organization-secondary-button
+    {
+        width: 100%;
+        min-height: 44px;
+    }
+}

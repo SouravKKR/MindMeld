@@ -4,6 +4,7 @@ import DateRangeFilterInput from "../Pages/PaidDeckLibrary/Components/DateRangeF
 import MultiSelectFilterInput from "../Pages/PaidDeckLibrary/Components/MultiSelectFilterInput.js";
 import EnumFilterInput from "../Pages/PaidDeckLibrary/Components/EnumFilterInput.js";
 import BooleanFilterInput from "../Pages/PaidDeckLibrary/Components/BooleanFilterInput.js";
+import StringRangeFilterInput from "../Pages/PaidDeckLibrary/Components/StringRangeFilterInput.js";
 import { paidDeckFilterTypes } from "../Globals/Enumerations/PaidDeckFilterTypes.js";
 
 /**
@@ -33,6 +34,8 @@ class AdminListFilterInputFactory
                 return new EnumFilterInput(metadata, onChangeCallback);
             case paidDeckFilterTypes.BOOLEAN:
                 return new BooleanFilterInput(metadata, onChangeCallback);
+            case paidDeckFilterTypes.STRING_RANGE:
+                return new StringRangeFilterInput(metadata, onChangeCallback);
             default:
                 console.warn(`[AdminListFilterInputFactory] Unsupported filter type ${metadata.type} for key ${metadata.key}`);
                 return null;

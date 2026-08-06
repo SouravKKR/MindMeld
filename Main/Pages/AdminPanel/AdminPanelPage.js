@@ -15,6 +15,7 @@ import AdminLogsPanel from "./Components/AdminLogsPanel.js";
 import CouponsPanel from "./Components/CouponsPanel.js";
 import PlanFeaturesPanel from "./Components/PlanFeaturesPanel.js";
 import SupportTicketDetailsDialog from "./Components/SupportTicketDetailsDialog.js";
+import PageNavigator from "../../Globals/Classes/PageNavigator.js";
 import { userRoles } from "../../Globals/Enumerations/UserRoles.js";
 import { adminPanelTabs } from "../../Globals/Enumerations/AdminPanelTabs.js";
 import { adminListTypes } from "../../Globals/Enumerations/AdminListTypes.js";
@@ -102,13 +103,22 @@ class AdminPanelPage extends HTMLElement
             { tab: adminPanelTabs.LOGS, label: "Logs" },
             { tab: adminPanelTabs.SUPPORT_TICKETS, label: "Support" }
         ];
-        const organizationAdminTabs =
-        [
-            { tab: adminPanelTabs.ORGANIZATION_MEMBERS, label: "Members" }
-        ];
-        const visibleTabs = isSuperAdmin ? superAdminTabs : organizationAdminTabs;
+        // An organization admin administers their organization on the
+        // Organization page, not here — this screen is super-admin tooling and
+        // is titled as such. They are shown a chooser instead of a tab strip.
+        if (!isSuperAdmin)
+        {
+            this.innerHTML = `
+                <header-component title="Admin Panel"></header-component>
+                <div class="admin-panel-content" data-role="content"></div>
+            `;
+            await this.#renderOrganizationChooser(this.querySelector('[data-role="content"]'));
+            return;
+        }
 
-        this.#activeTab = isSuperAdmin ? adminPanelTabs.DECKS : adminPanelTabs.ORGANIZATION_MEMBERS;
+        const visibleTabs = superAdminTabs;
+
+        this.#activeTab = adminPanelTabs.DECKS;
 
         this.innerHTML = `
             <header-component title="Admin Panel"></header-component>
@@ -128,6 +138,60 @@ class AdminPanelPage extends HTMLElement
         }
 
         this.#renderTab();
+    }
+
+    /**
+     * What an organization admin sees here: a link through to each organization
+     * they administer. Everything they can actually do lives on that page,
+     * where owner and delegate powers are resolved per organization.
+     */
+    async #renderOrganizationChooser(content)
+    {
+        content.innerHTML = `<div class="admin-panel-status">Loading…</div>`;
+
+        let organizations = [];
+        try
+        {
+            const response = await fetch("/Organization/Mine/List");
+            const responseJson = await response.json().catch(() => ({}));
+            if (!response.ok || responseJson.success === false)
+            {
+                content.innerHTML = `<div class="admin-panel-status">Could not load your organizations.</div>`;
+                return;
+            }
+            organizations = Array.isArray(responseJson.organizations) ? responseJson.organizations : [];
+        }
+        catch (loadError)
+        {
+            content.innerHTML = `<div class="admin-panel-status">Could not load your organizations.</div>`;
+            return;
+        }
+
+        if (organizations.length === 0)
+        {
+            content.innerHTML = `<div class="admin-panel-status">You don't currently administer any organizations.</div>`;
+            return;
+        }
+
+        content.innerHTML = `
+            <p class="admin-panel-add-subtitle">Choose an organization to manage. You can also reach these from your profile menu.</p>
+            <div class="organization-summary-grid">
+                ${organizations.map(organization => `
+                    <button type="button" class="organization-summary-card admin-panel-organization-link" data-organization-id="${AdminPanelPage.#escape(organization.id)}">
+                        <span class="organization-summary-value">${AdminPanelPage.#escape(organization.name)}</span>
+                        <span class="organization-summary-label">${organization.currentMemberCount} / ${organization.maxMembers} members${organization.isOwner ? " · Owner" : " · Delegate"}</span>
+                    </button>
+                `).join("")}
+            </div>
+        `;
+
+        for (const linkButton of content.querySelectorAll(".admin-panel-organization-link"))
+        {
+            linkButton.addEventListener("click", (clickEvent) =>
+            {
+                PageNavigator.open("organization-page", clickEvent.currentTarget.dataset.organizationId);
+            });
+        }
     }
 
     async #renderTab()
@@ -1437,7 +1501,7 @@ class AdminPanelPage extends HTMLElement
             <p class="admin-panel-pricing-note">
                 Creating an organization sends an email-OTP to the appointed admin —
                 share the code with them, type it back here, then take payment via
-                Zoho Payments (or set the amount to 0 to skip payment). Organizations
+                Razorpay (or set the amount to 0 to skip payment). Organizations
                 stay in PENDING_PAYMENT until the payment confirms; the webhook handles
                 close-tab-mid-checkout automatically.
             </p>
@@ -1457,18 +1521,27 @@ class AdminPanelPage extends HTMLElement
             listKey: adminListTypes.ORGANIZATIONS,
             rowActions:
             [
-                { actionKey: "view", label: "View / edit" },
+                { actionKey: "view", label: "Terms" },
+                { actionKey: "manage", label: "Manage" },
                 { actionKey: "delete", label: "Delete" }
             ],
             onRowAction: async (actionKey, rowId, row) =>
             {
                 if (actionKey === "view")
                 {
+                    // Commercial terms only a super-admin sets: name, capacity
+                    // and the marketplace deck perks.
                     const refreshed = await OrganizationDetailsDialog.show(rowId);
                     if (refreshed)
                     {
                         this.#refreshCurrentList();
                     }
+                }
+                else if (actionKey === "manage")
+                {
+                    // Everything the organization itself administers, on the
+                    // same page its own owner and delegates use.
+                    PageNavigator.open("organization-page", rowId);
                 }
                 else if (actionKey === "delete")
                 {

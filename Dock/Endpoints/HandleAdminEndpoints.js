@@ -41,16 +41,16 @@ const { setLogConfiguration } = require("./Admin/Logs/SetLogConfiguration");
 const { sendAdminVerificationOtp } = require("./Organization/SendAdminVerificationOtp");
 const { verifyAdminVerificationOtp } = require("./Organization/VerifyAdminVerificationOtp");
 const { createOrganization } = require("./Organization/CreateOrganization");
-const { verifyCreationPayment } = require("./Organization/VerifyCreationPayment");
 const { listOrganizations } = require("./Organization/ListOrganizations");
 const { getOrganization } = require("./Organization/GetOrganization");
 const { updateOrganizationPerks } = require("./Organization/UpdateOrganizationPerks");
-const { initiateOrganizationExpansion } = require("./Organization/InitiateOrganizationExpansion");
-const { verifyOrganizationExpansionPayment } = require("./Organization/VerifyOrganizationExpansionPayment");
 const { deleteOrganization } = require("./Organization/DeleteOrganization");
 const { listAlerts } = require("./Admin/Alerts/ListAlerts");
 const { acknowledgeAlert } = require("./Admin/Alerts/AcknowledgeAlert");
 const { deleteAlert } = require("./Admin/Alerts/DeleteAlert");
+const { listReconciliations } = require("./Admin/Reconciliation/ListReconciliations");
+const { recordAccountingTotals } = require("./Admin/Reconciliation/RecordAccountingTotals");
+const { exportJournal } = require("./Admin/Reconciliation/ExportJournal");
 const { listRateLimitEvents } = require("./Admin/RateLimits/ListRateLimitEvents");
 const { listAdminAuditEvents } = require("./Admin/Audit/ListAdminAuditEvents");
 const { takedownContent } = require("./Admin/Content/TakedownContent");
@@ -65,12 +65,14 @@ const { terminatePeriodicAssignment } = require("./Admin/Periodic/TerminatePerio
 const { deletePeriodicAssignment } = require("./Admin/Periodic/DeletePeriodicAssignment");
 const { getPeriodicAssignmentReport } = require("./Admin/Periodic/GetPeriodicAssignmentReport");
 const { createDealPayment } = require("./Admin/Deals/CreateDealPayment");
+const { createOrganizationCreditDeal } = require("./Admin/Deals/CreateOrganizationCreditDeal");
 const { verifyDealPayment } = require("./Admin/Deals/VerifyDealPayment");
 const { uploadDealInvoice } = require("./Admin/Deals/UploadDealInvoice");
 const { downloadDealInvoice } = require("./Admin/Deals/DownloadDealInvoice");
 const { listDealPayments } = require("./Admin/Deals/ListDealPayments");
 const { renameOrganization } = require("./Organization/RenameOrganization");
 const { setOrganizationMaxMembers } = require("./Organization/SetOrganizationMaxMembers");
+const { setOrganizationEntitlementLimits } = require("./Organization/SetOrganizationEntitlementLimits");
 const { createPromoCode } = require("./Admin/PromoCodes/CreatePromoCode");
 const { createPromoCodesBulk } = require("./Admin/PromoCodes/CreatePromoCodesBulk");
 const { setPromoCodeEnabled } = require("./Admin/PromoCodes/SetPromoCodeEnabled");
@@ -411,15 +413,6 @@ function handleAdminEndpoints(server)
 
     server.handle
     ({
-        routePath: `/Admin/Organizations/VerifyCreationPayment`,
-        handler: verifyCreationPayment,
-        flags: PacketronHandlerFlags.JSON_BODY,
-        method: PacketronRequestMethod.POST,
-        plugins: [ensureAdmin]
-    });
-
-    server.handle
-    ({
         routePath: `/Admin/Organizations/List`,
         handler: listOrganizations,
         method: PacketronRequestMethod.GET,
@@ -438,24 +431,6 @@ function handleAdminEndpoints(server)
     ({
         routePath: `/Admin/Organizations/UpdatePerks`,
         handler: updateOrganizationPerks,
-        flags: PacketronHandlerFlags.JSON_BODY,
-        method: PacketronRequestMethod.POST,
-        plugins: [ensureAdmin]
-    });
-
-    server.handle
-    ({
-        routePath: `/Admin/Organizations/InitiateExpansion`,
-        handler: initiateOrganizationExpansion,
-        flags: PacketronHandlerFlags.JSON_BODY,
-        method: PacketronRequestMethod.POST,
-        plugins: [ensureAdmin]
-    });
-
-    server.handle
-    ({
-        routePath: `/Admin/Organizations/VerifyExpansionPayment`,
-        handler: verifyOrganizationExpansionPayment,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureAdmin]
@@ -485,6 +460,43 @@ function handleAdminEndpoints(server)
         handler: setOrganizationMaxMembers,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // The platform's side of an organization's agreement: the ceilings every
+    // rule it writes for itself is clamped to.
+    server.handle
+    ({
+        routePath: `/Admin/Organizations/SetLimits`,
+        handler: setOrganizationEntitlementLimits,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Financial reconciliation (daily three-way match + accounting hop) ───
+    server.handle
+    ({
+        routePath: `/Admin/Reconciliation/List`,
+        handler: listReconciliations,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Reconciliation/RecordAccountingTotals`,
+        handler: recordAccountingTotals,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Reconciliation/ExportJournal`,
+        handler: exportJournal,
+        method: PacketronRequestMethod.GET,
         plugins: [ensureAdmin]
     });
 
@@ -653,6 +665,15 @@ function handleAdminEndpoints(server)
     });
 
     // ── Credits (deal payments + invoices — bookkeeping, non-gating) ───────
+    server.handle
+    ({
+        routePath: `/Admin/Credits/Deals/CreateForOrganization`,
+        handler: createOrganizationCreditDeal,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
     server.handle
     ({
         routePath: `/Admin/Credits/Deals/Create`,

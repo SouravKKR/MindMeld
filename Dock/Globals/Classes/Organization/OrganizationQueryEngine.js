@@ -274,9 +274,9 @@ class OrganizationQueryEngine
     }
 
     /**
-     * Extends maxMembers by additionalMembers. Called from the
-     * VerifyExpansionPayment handler after Razorpay confirms. No cap
-     * (other than int-32 overflow which is not a realistic concern).
+     * Extends maxMembers by additionalMembers. Raising the cap is free, so
+     * this is a plain super-admin action with no cap (other than int-32
+     * overflow, which is not a realistic concern).
      */
     static async extendMaxMembers(organizationId, additionalMembers)
     {
@@ -296,6 +296,180 @@ class OrganizationQueryEngine
             { id: organizationId },
             { $inc: { maxMembers: additionalMembers } }
         );
+    }
+
+    /**
+     * The ceilings a super-admin sells an organization, in one write.
+     *
+     * These four are the platform's side of the agreement — the most storage it
+     * may grant each member, the most credits any member may receive in a
+     * month, how many decks it may publish, and which AI features its rules are
+     * allowed to reach. Everything the organization then configures for itself
+     * is clamped to them, on write and again on read, so lowering a ceiling
+     * takes effect immediately without needing a migration over stored rules.
+     *
+     * Written together because they are agreed together: a partial application
+     * would leave an organization sold a feature it has no storage to use, and
+     * whoever set it would have no way to tell which half landed.
+     *
+     * Absent fields are left alone, so a caller may adjust one ceiling without
+     * having to restate the rest and risk clearing them by omission.
+     *
+     * @param {string} organizationId
+     * @param {object} limits
+     * @returns {Promise<{ updated: boolean, applied: object }>}
+     */
+    static async setEntitlementLimits(organizationId, limits)
+    {
+        const collection = await OrganizationQueryEngine.#getCollection();
+        if (!collection || typeof organizationId !== "string" || organizationId.length === 0)
+        {
+            return { updated: false, applied: {} };
+        }
+
+        const updates = {};
+
+        if (Number.isInteger(limits?.maxStorageGrantBytesPerMember) && limits.maxStorageGrantBytesPerMember >= 0)
+        {
+            updates.maxStorageGrantBytesPerMember = limits.maxStorageGrantBytesPerMember;
+        }
+        if (Number.isFinite(limits?.maxCreditsPerMemberPerMonth) && limits.maxCreditsPerMemberPerMonth >= 0)
+        {
+            updates.maxCreditsPerMemberPerMonth = limits.maxCreditsPerMemberPerMonth;
+        }
+        if (Number.isInteger(limits?.maxPublishedDecks) && limits.maxPublishedDecks >= 0)
+        {
+            updates.maxPublishedDecks = limits.maxPublishedDecks;
+        }
+        if (Array.isArray(limits?.grantableFeatures))
+        {
+            updates.grantableFeatures = limits.grantableFeatures;
+        }
+
+        if (Object.keys(updates).length === 0)
+        {
+            return { updated: false, applied: {} };
+        }
+
+        const result = await collection.updateOne({ id: organizationId }, { $set: updates });
+        return { updated: result.matchedCount === 1, applied: updates };
+    }
+
+    /**
+     * Moves the contract term's end date. Set when a credit deal is created and
+     * again when one is paid, so the term and the money move together — a
+     * renewal is a purchase, not a separate administrative act.
+     *
+     * @param {string} organizationId
+     * @param {Date} termEndsAt
+     */
+    static async setTermEndsAt(organizationId, termEndsAt)
+    {
+        const collection = await OrganizationQueryEngine.#getCollection();
+        if (!collection || !(termEndsAt instanceof Date) || isNaN(termEndsAt.getTime()))
+        {
+            return { updated: false };
+        }
+
+        const result = await collection.updateOne
+        (
+            { id: organizationId },
+            { $set: { termEndsAt: termEndsAt.toISOString() } }
+        );
+        return { updated: result.matchedCount === 1 };
+    }
+
+    /**
+     * Organizations whose term has already ended but whose pool is still
+     * spendable. The term scheduler freezes exactly these.
+     *
+     * The stored termEndsAt is an ISO string (the codegen models serialise
+     * dates that way), so the comparison is string-to-string — ISO-8601 sorts
+     * chronologically, and comparing a stored string against a Date would match
+     * nothing at all.
+     *
+     * @param {Date} now
+     * @returns {Promise<Array<Organization>>}
+     */
+    static async listOrganizationsWithLapsedTerm(now = new Date())
+    {
+        const collection = await OrganizationQueryEngine.#getCollection();
+        if (!collection)
+        {
+            return [];
+        }
+
+        const epochIsoString = new Date(0).toISOString();
+        const nowIsoString = now.toISOString();
+
+        const documents = await collection
+            .find({ termEndsAt: { $gt: epochIsoString, $lte: nowIsoString } }, { projection: { _id: 0 } })
+            .toArray();
+
+        return documents.map(document => Organization.fromJson(document));
+    }
+
+    /**
+     * Organizations whose term ends inside the given window — the ones worth
+     * warning before it lapses.
+     */
+    static async listOrganizationsWithTermEndingBetween(fromDate, toDate)
+    {
+        const collection = await OrganizationQueryEngine.#getCollection();
+        if (!collection)
+        {
+            return [];
+        }
+
+        const documents = await collection
+            .find({ termEndsAt: { $gt: fromDate.toISOString(), $lte: toDate.toISOString() } }, { projection: { _id: 0 } })
+            .toArray();
+
+        return documents.map(document => Organization.fromJson(document));
+    }
+
+    /**
+     * Records that a term-expiry warning for this many days has been sent, so a
+     * scheduler that ticks several times a day announces each threshold once.
+     *
+     * @param {string} organizationId
+     * @param {number} thresholdDays
+     */
+    static async recordAnnouncedTermThreshold(organizationId, thresholdDays)
+    {
+        const collection = await OrganizationQueryEngine.#getCollection();
+        if (!collection || !Number.isInteger(thresholdDays))
+        {
+            return { updated: false };
+        }
+
+        const result = await collection.updateOne
+        (
+            { id: organizationId },
+            { $addToSet: { "additionalData.announcedTermThresholds": thresholdDays } }
+        );
+        return { updated: result.matchedCount === 1 };
+    }
+
+    /**
+     * Clears the announced-warning record, so a renewed term warns again as it
+     * approaches instead of staying silent because the previous term already
+     * announced those thresholds.
+     */
+    static async clearAnnouncedTermThresholds(organizationId)
+    {
+        const collection = await OrganizationQueryEngine.#getCollection();
+        if (!collection)
+        {
+            return { updated: false };
+        }
+
+        const result = await collection.updateOne
+        (
+            { id: organizationId },
+            { $unset: { "additionalData.announcedTermThresholds": "" } }
+        );
+        return { updated: result.matchedCount === 1 };
     }
 
     /**
@@ -390,8 +564,38 @@ class OrganizationQueryEngine
         const adminUserId = typeof target.adminUserId === "string" ? target.adminUserId : "";
         const adminEmail = typeof target.adminEmail === "string" ? target.adminEmail : "";
 
+        // Take the organization's decks back from every member BEFORE the
+        // roster is dropped: the withdrawal walks holders one at a time, and
+        // once the member rows are gone there is nothing left to walk. An
+        // organization that vanished while its material stayed on people's
+        // devices would leave content nobody can withdraw and nobody owns.
+        try
+        {
+            const OrganizationDeckWithdrawalService = require("./OrganizationDeckWithdrawalService");
+            const OrganizationDeckQueryEngine = require("./OrganizationDeckQueryEngine");
+
+            for (const organizationDeck of await OrganizationDeckQueryEngine.listDecksForOrganization(organizationId))
+            {
+                await OrganizationDeckWithdrawalService.withdraw(organizationId, organizationDeck.getId());
+            }
+
+            // The listings go with the organization. Their master content is
+            // left in place rather than purged here — it is encrypted, it is
+            // unreachable without a listing pointing at it, and deleting
+            // gigabytes of assets inside a request that a human is waiting on
+            // is the wrong place for it.
+            await database
+                .collection(DatabaseConstants.PAID_DECKS_COLLECTION)
+                .deleteMany({ audienceOrganizationId: organizationId });
+        }
+        catch (deckTeardownError)
+        {
+            console.error(`[OrganizationQueryEngine] Deck teardown failed for ${organizationId}: ${deckTeardownError?.message || deckTeardownError}`);
+        }
+
         await database.collection(OrganizationQueryEngine.#MEMBERS_COLLECTION_NAME).deleteMany({ organizationId: organizationId });
         await database.collection(OrganizationQueryEngine.#PERKS_COLLECTION_NAME).deleteMany({ organizationId: organizationId });
+        await database.collection(DatabaseConstants.ORGANIZATION_PERMISSION_RULES_COLLECTION).deleteMany({ organizationId: organizationId });
         if (adminEmail.length > 0)
         {
             // The verification token is keyed by email, not orgId — purge

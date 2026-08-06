@@ -1,6 +1,8 @@
 import uuid
 from datetime import datetime
+from typing import List
 from Globals.Enumerations.PeriodicScopeTypes import PeriodicScopeTypes
+from Globals.Enumerations.TagMatchModes import TagMatchModes
 from Globals.Enumerations.CreditGrantAmountModes import CreditGrantAmountModes
 from Globals.Enumerations.PeriodicScheduleTypes import PeriodicScheduleTypes
 from Globals.Enumerations.PeriodicOnJoinModes import PeriodicOnJoinModes
@@ -8,12 +10,14 @@ from Globals.Enumerations.PeriodicAssignmentStatuses import PeriodicAssignmentSt
 
 
 class PeriodicCreditAssignment:
-    def __init__(self, name: str = None, scope_type: PeriodicScopeTypes = PeriodicScopeTypes(0), organization_id: str = '', people_emails: list = [], amount: float = 0, amount_mode: CreditGrantAmountModes = CreditGrantAmountModes(1), schedule_type: PeriodicScheduleTypes = PeriodicScheduleTypes(0), interval_days: int = 0, day_of_week: int = 0, day_of_month: int = 1, on_join_mode: PeriodicOnJoinModes = PeriodicOnJoinModes(0), start_at: datetime = datetime.now(), has_valid_until: bool = False, valid_until: datetime = datetime.now(), status: PeriodicAssignmentStatuses = PeriodicAssignmentStatuses(0), terminated_at: datetime = datetime.now(), created_by_user_id: str = '', created_at: datetime = datetime.now(), additional_data: dict = {}) -> None:
+    def __init__(self, name: str = None, scope_type: PeriodicScopeTypes = PeriodicScopeTypes(0), organization_id: str = '', people_emails: list = [], tag_filter: List[str] = [], tag_match_mode: TagMatchModes = TagMatchModes(0), amount: float = 0, amount_mode: CreditGrantAmountModes = CreditGrantAmountModes(1), schedule_type: PeriodicScheduleTypes = PeriodicScheduleTypes(0), interval_days: int = 0, day_of_week: int = 0, day_of_month: int = 1, on_join_mode: PeriodicOnJoinModes = PeriodicOnJoinModes(0), start_at: datetime = datetime.now(), has_valid_until: bool = False, valid_until: datetime = datetime.now(), status: PeriodicAssignmentStatuses = PeriodicAssignmentStatuses(0), terminated_at: datetime = datetime.now(), created_by_user_id: str = '', created_at: datetime = datetime.now(), additional_data: dict = {}) -> None:
         self.__id = str(uuid.uuid4())
         self.set_name(name)
         self.set_scope_type(scope_type)
         self.set_organization_id(organization_id)
         self.set_people_emails(people_emails)
+        self.set_tag_filter(tag_filter)
+        self.set_tag_match_mode(tag_match_mode)
         self.set_amount(amount)
         self.set_amount_mode(amount_mode)
         self.set_schedule_type(schedule_type)
@@ -71,6 +75,25 @@ class PeriodicCreditAssignment:
             if not isinstance(value, list):
                 value = None
         self.__people_emails = value
+
+    def get_tag_filter(self) -> List[str]:
+        return self.__tag_filter
+
+    def set_tag_filter(self, value: List[str]) -> None:
+        if value is not None:
+            if not isinstance(value, list):
+                value = None
+        self.__tag_filter = value
+
+    def get_tag_match_mode(self) -> TagMatchModes:
+        return self.__tag_match_mode
+
+    def set_tag_match_mode(self, value: TagMatchModes) -> None:
+        if value is not None:
+            valid_values = list(TagMatchModes)
+            if value not in valid_values:
+                value = valid_values[0] if valid_values else None
+        self.__tag_match_mode = value
 
     def get_amount(self) -> float:
         return self.__amount
@@ -257,6 +280,8 @@ class PeriodicCreditAssignment:
             'scopeType': int(self.get_scope_type().value) if self.get_scope_type() is not None else None,
             'organizationId': self.get_organization_id(),
             'peopleEmails': self.get_people_emails(),
+            'tagFilter': self.get_tag_filter(),
+            'tagMatchMode': int(self.get_tag_match_mode().value) if self.get_tag_match_mode() is not None else None,
             'amount': self.get_amount(),
             'amountMode': int(self.get_amount_mode().value) if self.get_amount_mode() is not None else None,
             'scheduleType': int(self.get_schedule_type().value) if self.get_schedule_type() is not None else None,
@@ -281,6 +306,8 @@ class PeriodicCreditAssignment:
             scope_type=PeriodicScopeTypes(data.get('scopeType')) if data.get('scopeType') is not None else None,
             organization_id=data.get('organizationId'),
             people_emails=data.get('peopleEmails'),
+            tag_filter=data.get('tagFilter'),
+            tag_match_mode=TagMatchModes(data.get('tagMatchMode')) if data.get('tagMatchMode') is not None else None,
             amount=data.get('amount'),
             amount_mode=CreditGrantAmountModes(data.get('amountMode')) if data.get('amountMode') is not None else None,
             schedule_type=PeriodicScheduleTypes(data.get('scheduleType')) if data.get('scheduleType') is not None else None,

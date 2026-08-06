@@ -1,4 +1,6 @@
 import DeckOptionsContextMenu from "./DeckOptionsContextMenu.js";
+import UserIdentityManager from "../../../Globals/Classes/UserIdentityManager.js";
+import OrganizationContextRegistry from "../../../Globals/Classes/Organization/OrganizationContextRegistry.js";
 import DeckEvents from "../../../Globals/Events/DeckEvents.js";
 import Deck from "../../../Globals/Model/Deck.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
@@ -548,9 +550,22 @@ class DeckTile extends HTMLElement
         watermarkElement.src = ownerProfilePictureUrl;
         watermarkElement.draggable = false;
         watermarkElement.alt = "";
-        watermarkElement.title = bPaidDeck
-            ? "You own this deck. Paid decks can't be exported."
-            : "AI-generated for you. Generated decks can't be exported.";
+        // Inside an organization view the mark means "this belongs to the
+        // institute's library", not "this is yours" — saying "you own this"
+        // there would be plainly wrong, since the organization provides it and
+        // can withdraw it.
+        const organizationContextId = UserIdentityManager.getOrganizationContextId();
+        if (organizationContextId.length > 0)
+        {
+            const organizationName = OrganizationContextRegistry.getOrganizationName(organizationContextId);
+            watermarkElement.title = `Provided by ${organizationName}. Decks in this view can't be exported.`;
+        }
+        else
+        {
+            watermarkElement.title = bPaidDeck
+                ? "You own this deck. Paid decks can't be exported."
+                : "AI-generated for you. Generated decks can't be exported.";
+        }
         this.appendChild(watermarkElement);
     }
 

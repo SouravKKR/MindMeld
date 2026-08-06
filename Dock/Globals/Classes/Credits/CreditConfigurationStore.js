@@ -57,7 +57,11 @@ class CreditConfigurationStore
         // estimator and TaskCreditCharger read the same configured policy.
         const bAddedGenerationRules = configuration.ensureGenerationTaskRules();
 
-        if (!document || bAddedAskAiRules || bAddedAutoFillRule || bAddedGenerationRules)
+        // Purchases are pack-only, so an environment with no packs configured
+        // could not sell credits at all. Backfilled with the standard ladder.
+        const bAddedCreditPacks = configuration.ensureDefaultCreditPacks();
+
+        if (!document || bAddedAskAiRules || bAddedAutoFillRule || bAddedGenerationRules || bAddedCreditPacks)
         {
             await collection.updateOne
             (

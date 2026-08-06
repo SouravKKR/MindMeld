@@ -4,6 +4,7 @@ Audits to run:
 2) Common/Audits/TechnicalRequirements.txt
 3) Common/Audits/CodeQualityRequirements.txt
 4) Common/Audits/LegalComplianceRequirements.txt
+5) Common/Audits/RazorpayHandbookComplianceRequirements.txt
 
 Instructions:
 - Generate the PDF reports based on the paths given in the individual files.

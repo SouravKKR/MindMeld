@@ -23,6 +23,13 @@ class CreditLedger
     // duplicating the literal.
     static TRANSACTION_STATUS_APPLIED = "applied";
 
+    // How many times a clawback re-derives the recoverable amount when a
+    // concurrent spend beats it to the balance. Three is enough for any
+    // realistic contention (a reversal is rare, and a spend racing one rarer
+    // still) and bounded so a pathological write loop cannot spin. See
+    // clawBack().
+    static MAXIMUM_CLAWBACK_ATTEMPTS = 3;
+
     // additionalData keys owned exclusively by the credit subsystem. The
     // generic /UpdateUserAdditionalData merge MUST refuse these so a client
     // cannot set its own balance, spend history, or billing baseline.
@@ -145,6 +152,154 @@ class CreditLedger
         await CreditLedger.#evaluateRewardMilestones(userId, lifetimeSpent);
 
         return { applied: true, alreadyApplied: false, rejected: false, amount: roundedAmount, balanceAfter: balanceAfter };
+    }
+
+    /**
+     * Takes back credits a reversed payment had bought, down to a floor of zero.
+     *
+     * Deliberately NOT `charge` with a floor, even though that looks like the
+     * same operation. `charge` is a SINGLE guarded attempt: it reads nothing,
+     * refuses atomically if the balance cannot cover the amount, and marks its
+     * claim row REJECTED. For a spend that is exactly right — the user simply
+     * cannot afford it. For a clawback it is wrong twice over:
+     *
+     *   A caller must first READ the balance to know how much is recoverable,
+     *   and a spend landing between that read and the write makes the guarded
+     *   update match nothing. The clawback then recovers ZERO while reporting a
+     *   shortfall computed from the stale read.
+     *
+     *   Retrying does not help, because the referenceKey has already been
+     *   consumed by the rejected claim. A second call returns alreadyApplied
+     *   with applied=false, so the credits are never recovered — not on this
+     *   delivery of the refund webhook, and not on any later one either.
+     *
+     * So the recoverable amount is re-derived inside a bounded compare-and-set
+     * loop, exactly as OrganizationCreditLedger.clawBack does for a pool. The
+     * claim is inserted once for the full amount (a redelivered webhook is a
+     * no-op) and resolved afterwards with what was ACTUALLY recovered.
+     *
+     * A partial recovery is deliberate: refusing because the user has since
+     * spent the credits would leave the FULL amount in place rather than the
+     * unrecoverable remainder. What could not be taken is returned as a
+     * shortfall for a human to decide on, never as a negative balance the user
+     * was never told about.
+     *
+     * @param {string} userId
+     * @param {number} amountCredits positive magnitude the reversed payment bought
+     * @param {string} referenceKey stable idempotency key
+     * @param {object} metadata audit context
+     * @returns {Promise<{applied: boolean, alreadyApplied: boolean, clawedBack: number, shortfall: number, balanceAfter: number|null}>}
+     */
+    static async clawBack(userId, amountCredits, referenceKey, metadata = {})
+    {
+        const roundedAmount = CreditLedger.#round(amountCredits);
+        if (!userId || !referenceKey || roundedAmount <= 0)
+        {
+            return { applied: false, alreadyApplied: false, clawedBack: 0, shortfall: 0, balanceAfter: null };
+        }
+
+        const database = await DatabaseConnector.getDatabase();
+        if (!database)
+        {
+            return { applied: false, alreadyApplied: false, clawedBack: 0, shortfall: 0, balanceAfter: null };
+        }
+
+        const transactionsCollection = database.collection(DatabaseConstants.CREDIT_TRANSACTIONS_COLLECTION);
+        const usersCollection = database.collection(DatabaseConstants.USERS_COLLECTION);
+
+        try
+        {
+            await transactionsCollection.insertOne
+            ({
+                referenceKey: referenceKey,
+                userId: userId,
+                type: creditTransactionTypes.REFUND,
+                amount: -roundedAmount,
+                status: CreditLedger.#STATUS_PENDING,
+                metadata: metadata || {},
+                createdAt: new Date(),
+            });
+        }
+        catch (insertError)
+        {
+            if (insertError && insertError.code === CreditLedger.#DUPLICATE_KEY_ERROR_CODE)
+            {
+                const existing = await transactionsCollection.findOne({ referenceKey: referenceKey });
+
+                // `clawedBack` is what THIS call moved, which on a redelivery is
+                // nothing. Reporting the original figure would read as a second
+                // recovery to every caller, and the reversal alert would then
+                // tell an operator the credits had been taken twice.
+                return {
+                    applied: existing?.status === CreditLedger.#STATUS_APPLIED,
+                    alreadyApplied: true,
+                    clawedBack: 0,
+                    previouslyClawedBack: existing?.status === CreditLedger.#STATUS_APPLIED ? Math.abs(existing.amount) : 0,
+                    shortfall: 0,
+                    balanceAfter: existing?.balanceAfter ?? null
+                };
+            }
+            throw insertError;
+        }
+
+        let clawedBack = 0;
+        let balanceAfter = null;
+
+        for (let attemptIndex = 0; attemptIndex < CreditLedger.MAXIMUM_CLAWBACK_ATTEMPTS; attemptIndex = attemptIndex + 1)
+        {
+            const currentUser = await usersCollection.findOne({ id: userId }, { projection: { "additionalData.credits": 1 } });
+            const availableCredits = Math.max(CreditLedger.#round(currentUser?.additionalData?.credits) || 0, 0);
+            const recoverableCredits = Math.min(roundedAmount, availableCredits);
+
+            if (recoverableCredits <= 0)
+            {
+                balanceAfter = currentUser ? (currentUser.additionalData?.credits ?? null) : null;
+                break;
+            }
+
+            const updateResult = await usersCollection.findOneAndUpdate
+            (
+                {
+                    id: userId,
+                    "additionalData.credits": { $gte: recoverableCredits }
+                },
+                {
+                    // No lifetimeCreditsSpent increment: this is money coming
+                    // back out, not credits the user spent on anything.
+                    $inc: { "additionalData.credits": -recoverableCredits }
+                },
+                { returnDocument: "after" }
+            );
+
+            const updatedDocument = updateResult?.value || updateResult;
+            if (updatedDocument)
+            {
+                clawedBack = recoverableCredits;
+                balanceAfter = updatedDocument.additionalData?.credits ?? null;
+                break;
+            }
+            // Lost the race to a concurrent spend — re-read and take whatever
+            // is left.
+        }
+
+        const shortfall = CreditLedger.#round(roundedAmount - clawedBack);
+
+        await transactionsCollection.updateOne
+        (
+            { referenceKey: referenceKey },
+            {
+                $set:
+                {
+                    status: clawedBack > 0 ? CreditLedger.#STATUS_APPLIED : CreditLedger.#STATUS_REJECTED,
+                    amount: -clawedBack,
+                    shortfall: shortfall,
+                    balanceAfter: balanceAfter,
+                    resolvedAt: new Date()
+                }
+            }
+        );
+
+        return { applied: clawedBack > 0, alreadyApplied: false, clawedBack: clawedBack, shortfall: shortfall, balanceAfter: balanceAfter };
     }
 
     /**

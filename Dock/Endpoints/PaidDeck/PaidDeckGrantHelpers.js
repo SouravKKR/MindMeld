@@ -4,6 +4,8 @@ const LicenseConstants = require("../../Globals/Constants/LicenseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const PaidDeckContentFingerprint = require("../../Globals/Classes/PaidDeck/PaidDeckContentFingerprint");
 const { deckLicenseStatuses } = require("../../Globals/Enumerations/DeckLicenseStatuses");
+const PaidDeckScopeResolver = require("../../Globals/Classes/PaidDeck/PaidDeckScopeResolver");
+const PaidDeckAudienceResolver = require("../../Globals/Classes/PaidDeck/PaidDeckAudienceResolver");
 const { entityTypes } = require("../../Globals/Enumerations/EntityTypes");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
@@ -17,7 +19,7 @@ const USER_ROOT_DECK_ID = "0";
  * into the buyer's normal collections collides with any deck the buyer already
  * owns that shares those ids (most commonly the author buying their own deck,
  * but possible whenever ids overlap) — which trips the unique
- * userId_1_data.id_1 index. Deriving the id from (paidDeckId, userId, masterId)
+ * userId_1_data.id_1 index. Deriving the id from (paidDeckId, scopeKey, masterId)
  * makes the buyer's copy collision-free AND deterministic, so a re-seed
  * produces identical ids (idempotent). Internal references (deck.parent,
  * card/material/mockTest.deckId) are remapped through the SAME function so the
@@ -30,7 +32,7 @@ const USER_ROOT_DECK_ID = "0";
  * copies fold the instanceId into the hash so their entire subtree gets a
  * distinct, collision-free id space.
  */
-function remapPaidEntityId(masterEntityId, userId, paidDeckId, instanceId)
+function remapPaidEntityId(masterEntityId, scopeKey, paidDeckId, instanceId)
 {
     if (typeof masterEntityId !== "string" || masterEntityId.length === 0)
     {
@@ -40,8 +42,8 @@ function remapPaidEntityId(masterEntityId, userId, paidDeckId, instanceId)
         || instanceId === null
         || instanceId === LicenseConstants.PAID_DECK_FIRST_INSTANCE_ID;
     const hashInput = isFirstInstance
-        ? `${paidDeckId}|${userId}|${masterEntityId}`
-        : `${paidDeckId}|${userId}|${instanceId}|${masterEntityId}`;
+        ? `${paidDeckId}|${scopeKey}|${masterEntityId}`
+        : `${paidDeckId}|${scopeKey}|${instanceId}|${masterEntityId}`;
     const digest = crypto.createHash("sha256").update(hashInput).digest("hex");
     return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
 }
@@ -55,7 +57,7 @@ function remapPaidEntityId(masterEntityId, userId, paidDeckId, instanceId)
  * root matches the existing legacy rows because FIRST_INSTANCE_ID reuses the
  * legacy hash). Does NOT persist — the caller persists once after seeding.
  */
-function registerInstanceOnLicense(license, deckId, userId, masterRootDeckId, instanceId, instanceLabel)
+function registerInstanceOnLicense(license, deckId, scopeKey, masterRootDeckId, instanceId, instanceLabel)
 {
     const additionalData = (license.getAdditionalData() && typeof license.getAdditionalData() === "object")
         ? license.getAdditionalData()
@@ -67,13 +69,13 @@ function registerInstanceOnLicense(license, deckId, userId, masterRootDeckId, in
         instances.push
         ({
             instanceId: LicenseConstants.PAID_DECK_FIRST_INSTANCE_ID,
-            rootDeckId: remapPaidEntityId(masterRootDeckId, userId, deckId, LicenseConstants.PAID_DECK_FIRST_INSTANCE_ID),
+            rootDeckId: remapPaidEntityId(masterRootDeckId, scopeKey, deckId, LicenseConstants.PAID_DECK_FIRST_INSTANCE_ID),
             label: "Copy 1",
             createdAt: new Date().toISOString()
         });
     }
 
-    const remappedRootDeckId = remapPaidEntityId(masterRootDeckId, userId, deckId, instanceId);
+    const remappedRootDeckId = remapPaidEntityId(masterRootDeckId, scopeKey, deckId, instanceId);
     instances = instances.filter((entry) => entry && entry.instanceId !== instanceId);
     instances.push
     ({
@@ -110,12 +112,12 @@ function removeInstanceFromLicense(license, instanceId)
  * a re-seed / delete of the original copy still sweeps them; additional copies
  * match only their own tagged rows and never touch siblings.
  */
-function buildPaidInstanceRowFilter(userId, deckId, instanceId)
+function buildPaidInstanceRowFilter(scopeKey, deckId, instanceId)
 {
     if (instanceId === LicenseConstants.PAID_DECK_FIRST_INSTANCE_ID)
     {
         return {
-            userId: userId,
+            userId: scopeKey,
             "data.additionalData.paidDeckId": deckId,
             $or:
             [
@@ -125,7 +127,7 @@ function buildPaidInstanceRowFilter(userId, deckId, instanceId)
         };
     }
     return {
-        userId: userId,
+        userId: scopeKey,
         "data.additionalData.paidDeckId": deckId,
         "data.additionalData.paidDeckInstanceId": instanceId
     };
@@ -211,6 +213,11 @@ function stampSeededContentVersion(license, instanceId, contentVersion)
  */
 async function seedProtectedContentForLicense(database, userId, deckId, license, instanceId = LicenseConstants.PAID_DECK_FIRST_INSTANCE_ID, instanceLabel = "Copy 1")
 {
+    // Where this copy's rows live. Read from the license rather than assumed to
+    // be the personal id, so an organization-scoped grant seeds into that
+    // organization's view and stays out of the buyer's own library.
+    const scopeKey = PaidDeckScopeResolver.resolveForLicense(license, userId);
+
     const paidDeckDocument = await database
         .collection(DatabaseConstants.PAID_DECKS_COLLECTION)
         .findOne({ id: deckId });
@@ -245,7 +252,7 @@ async function seedProtectedContentForLicense(database, userId, deckId, license,
 
         // Idempotent re-seed: drop any prior rows for THIS copy only — never
         // the sibling copies (the filter is instance-scoped).
-        const priorRowsFilter = buildPaidInstanceRowFilter(userId, deckId, instanceId);
+        const priorRowsFilter = buildPaidInstanceRowFilter(scopeKey, deckId, instanceId);
         await Promise.all(Object.values(collectionByEntityType).map((collection) => collection.deleteMany(priorRowsFilter)));
 
         const seedTimestamp = new Date();
@@ -272,7 +279,7 @@ async function seedProtectedContentForLicense(database, userId, deckId, license,
                 // Remap to a per-buyer, per-copy id so this copy never collides
                 // with another deck the buyer owns NOR with their other copies of
                 // the same deck. All three references thread the same instanceId.
-                entityData.id = remapPaidEntityId(entity.entityId, userId, deckId, instanceId);
+                entityData.id = remapPaidEntityId(entity.entityId, scopeKey, deckId, instanceId);
 
                 if (entity.entityType === entityTypes.DECK)
                 {
@@ -281,13 +288,13 @@ async function seedProtectedContentForLicense(database, userId, deckId, license,
                     // id of their (also-remapped) parent deck.
                     entityData.parent = (entity.entityId === rootDeckId)
                         ? USER_ROOT_DECK_ID
-                        : remapPaidEntityId(entityData.parent, userId, deckId, instanceId);
+                        : remapPaidEntityId(entityData.parent, scopeKey, deckId, instanceId);
                 }
                 else
                 {
                     // Card / study material / mock test: re-point deckId at the
                     // remapped id of its owning deck.
-                    entityData.deckId = remapPaidEntityId(entityData.deckId, userId, deckId, instanceId);
+                    entityData.deckId = remapPaidEntityId(entityData.deckId, scopeKey, deckId, instanceId);
                 }
 
                 // Stamp the paid tag on every entity so the sync layer encrypts
@@ -315,7 +322,7 @@ async function seedProtectedContentForLicense(database, userId, deckId, license,
                     entityData.additionalData.paidDeckInstanceLabel = instanceLabel;
                 }
 
-                targetBuffer.push({ userId: userId, data: entityData, serverUpdatedAt: seedTimestamp });
+                targetBuffer.push({ userId: scopeKey, data: entityData, serverUpdatedAt: seedTimestamp });
             }
         }
 
@@ -338,7 +345,7 @@ async function seedProtectedContentForLicense(database, userId, deckId, license,
 
     // Record this copy on the license registry and bump rotatedAt so the next
     // /Sync/Licenses pull re-delivers the updated instances array to the client.
-    registerInstanceOnLicense(license, deckId, userId, rootDeckId, instanceId, instanceLabel);
+    registerInstanceOnLicense(license, deckId, scopeKey, rootDeckId, instanceId, instanceLabel);
     stampSeededContentVersion(license, instanceId, resolveDeckContentVersion(paidDeckDocument));
     license.setRotatedAt(new Date());
 
@@ -357,15 +364,22 @@ async function seedProtectedContentForLicense(database, userId, deckId, license,
             license.setServerWrappedContentKeyBase64(serverWrap.ciphertextBase64);
             license.setContentKeyVersion(1);
 
-            const existingPasswordedLicense = await database
-                .collection(DatabaseConstants.DECK_LICENSES_COLLECTION)
-                .findOne
-                ({
-                    userId: userId,
-                    deckId: { $ne: deckId },
-                    status: deckLicenseStatuses.ACTIVE,
-                    passwordHash: { $exists: true, $ne: "" }
-                });
+            // An organization's deck has no password and must never acquire
+            // one: it is provided by the institute, unlocks automatically, and
+            // copying the member's marketplace password here would leave a
+            // licence that LOOKS password-protected while nothing ever asks for
+            // that password — an unlock path that can only fail.
+            const existingPasswordedLicense = PaidDeckAudienceResolver.isOrganizationDeck(paidDeckDocument)
+                ? null
+                : await database
+                    .collection(DatabaseConstants.DECK_LICENSES_COLLECTION)
+                    .findOne
+                    ({
+                        userId: userId,
+                        deckId: { $ne: deckId },
+                        status: deckLicenseStatuses.ACTIVE,
+                        passwordHash: { $exists: true, $ne: "" }
+                    });
 
             if (existingPasswordedLicense)
             {

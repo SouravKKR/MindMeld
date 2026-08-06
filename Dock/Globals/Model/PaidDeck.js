@@ -22,13 +22,15 @@ class PaidDeck
     #assetBlobId;
     #keyVersion;
     #isPublished;
+    #audienceOrganizationId;
+    #audienceTags;
     #publishedAt;
     #featureBadges;
     #extraTags;
     #contentSummary;
     #additionalData;
 
-    constructor({title = null, description = '', sellerId = '', thumbnailUrl = '', category = '', tags = [], basePriceMinor = 0, currency = 'INR', durationDays = 0, isPerpetual = false, granularity = 0, bundleChildIds = [], parentBundleIds = [], assetBlobId = '', keyVersion = 1, isPublished = false, publishedAt = new Date(), featureBadges = [], extraTags = [], contentSummary = {}, additionalData = {}} = {})
+    constructor({title = null, description = '', sellerId = '', thumbnailUrl = '', category = '', tags = [], basePriceMinor = 0, currency = 'INR', durationDays = 0, isPerpetual = false, granularity = 0, bundleChildIds = [], parentBundleIds = [], assetBlobId = '', keyVersion = 1, isPublished = false, audienceOrganizationId = '', audienceTags = [], publishedAt = new Date(), featureBadges = [], extraTags = [], contentSummary = {}, additionalData = {}} = {})
     {
         this.#id = crypto.randomUUID();
         this.setTitle(title);
@@ -47,6 +49,8 @@ class PaidDeck
         this.setAssetBlobId(assetBlobId);
         this.setKeyVersion(keyVersion);
         this.setIsPublished(isPublished);
+        this.setAudienceOrganizationId(audienceOrganizationId);
+        this.setAudienceTags(audienceTags);
         this.setPublishedAt(publishedAt);
         this.setFeatureBadges(featureBadges);
         this.setExtraTags(extraTags);
@@ -344,6 +348,37 @@ class PaidDeck
         this.#isPublished = value;
     }
 
+    getAudienceOrganizationId()
+    {
+        return this.#audienceOrganizationId;
+    }
+
+    setAudienceOrganizationId(value)
+    {
+        if (value !== null)
+        {
+            value = String(value);
+        }
+        this.#audienceOrganizationId = value;
+    }
+
+    getAudienceTags()
+    {
+        return this.#audienceTags;
+    }
+
+    setAudienceTags(value)
+    {
+        if (value !== null)
+        {
+            if (!Array.isArray(value))
+            {
+                value = null;
+            }
+        }
+        this.#audienceTags = value;
+    }
+
     getPublishedAt()
     {
         return this.#publishedAt;
@@ -440,6 +475,8 @@ class PaidDeck
             assetBlobId: this.getAssetBlobId(),
             keyVersion: this.getKeyVersion(),
             isPublished: this.getIsPublished(),
+            audienceOrganizationId: this.getAudienceOrganizationId(),
+            audienceTags: this.getAudienceTags(),
             publishedAt: this.getPublishedAt() !== null ? this.getPublishedAt().toISOString() : null,
             featureBadges: this.getFeatureBadges() !== null ? this.getFeatureBadges().map(item => Number(item)) : null,
             extraTags: this.getExtraTags(),
@@ -467,6 +504,8 @@ class PaidDeck
             assetBlobId: json.assetBlobId ?? null,
             keyVersion: json.keyVersion ?? null,
             isPublished: json.isPublished ?? null,
+            audienceOrganizationId: json.audienceOrganizationId ?? null,
+            audienceTags: json.audienceTags ?? null,
             publishedAt: json.publishedAt != null ? new Date(json.publishedAt) : null,
             featureBadges: json.featureBadges ?? null,
             extraTags: json.extraTags ?? null,

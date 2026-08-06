@@ -7,15 +7,25 @@ class OrganizationMember
     #email;
     #userId;
     #addedBy;
+    #delegatePowers;
+    #tags;
+    #attributes;
+    #attributesNormalised;
+    #attributesComparable;
     #addedAt;
 
-    constructor({organizationId = null, email = null, userId = '', addedBy = '', addedAt = new Date()} = {})
+    constructor({organizationId = null, email = null, userId = '', addedBy = '', delegatePowers = 0, tags = [], attributes = {}, attributesNormalised = {}, attributesComparable = {}, addedAt = new Date()} = {})
     {
         this.#id = crypto.randomUUID();
         this.setOrganizationId(organizationId);
         this.setEmail(email);
         this.setUserId(userId);
         this.setAddedBy(addedBy);
+        this.setDelegatePowers(delegatePowers);
+        this.setTags(tags);
+        this.setAttributes(attributes);
+        this.setAttributesNormalised(attributesNormalised);
+        this.setAttributesComparable(attributesComparable);
         this.setAddedAt(addedAt);
     }
 
@@ -88,6 +98,75 @@ class OrganizationMember
         this.#addedBy = value;
     }
 
+    getDelegatePowers()
+    {
+        return this.#delegatePowers;
+    }
+
+    setDelegatePowers(value)
+    {
+        if (value !== null)
+        {
+            value = parseInt(value, 10);
+            if (isNaN(value))
+            {
+                value = 0;
+            }
+            else
+            {
+                value = Math.max(value, 0);
+            }
+        }
+        this.#delegatePowers = value;
+    }
+
+    getTags()
+    {
+        return this.#tags;
+    }
+
+    setTags(value)
+    {
+        if (value !== null)
+        {
+            if (!Array.isArray(value))
+            {
+                value = null;
+            }
+        }
+        this.#tags = value;
+    }
+
+    getAttributes()
+    {
+        return this.#attributes;
+    }
+
+    setAttributes(value)
+    {
+        this.#attributes = value;
+    }
+
+    getAttributesNormalised()
+    {
+        return this.#attributesNormalised;
+    }
+
+    setAttributesNormalised(value)
+    {
+        this.#attributesNormalised = value;
+    }
+
+    getAttributesComparable()
+    {
+        return this.#attributesComparable;
+    }
+
+    setAttributesComparable(value)
+    {
+        this.#attributesComparable = value;
+    }
+
     getAddedAt()
     {
         return this.#addedAt;
@@ -118,6 +197,11 @@ class OrganizationMember
             email: this.getEmail(),
             userId: this.getUserId(),
             addedBy: this.getAddedBy(),
+            delegatePowers: this.getDelegatePowers(),
+            tags: this.getTags(),
+            attributes: this.getAttributes(),
+            attributesNormalised: this.getAttributesNormalised(),
+            attributesComparable: this.getAttributesComparable(),
             addedAt: this.getAddedAt() !== null ? this.getAddedAt().toISOString() : null,
         };
     }
@@ -129,6 +213,11 @@ class OrganizationMember
             email: json.email ?? null,
             userId: json.userId ?? null,
             addedBy: json.addedBy ?? null,
+            delegatePowers: json.delegatePowers ?? null,
+            tags: json.tags ?? null,
+            attributes: json.attributes ?? null,
+            attributesNormalised: json.attributesNormalised ?? null,
+            attributesComparable: json.attributesComparable ?? null,
             addedAt: json.addedAt != null ? new Date(json.addedAt) : null
         });
         instance._restoreId_id(json.id);

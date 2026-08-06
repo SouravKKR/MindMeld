@@ -6,6 +6,7 @@ const { creditDealTargetTypes } = require("../../../Globals/Enumerations/CreditD
 const { creditDealPaymentModes } = require("../../../Globals/Enumerations/CreditDealPaymentModes");
 const { creditDealPaymentStatuses } = require("../../../Globals/Enumerations/CreditDealPaymentStatuses");
 const ErrorCodes = require("../../../Globals/Constants/ErrorCodes");
+const PaymentProvider = require("../../../Globals/Classes/Payments/PaymentProvider");
 const { httpStatus } = require("../../../Globals/Enumerations/HttpStatus");
 
 /**
@@ -84,10 +85,14 @@ async function createDealPayment(request, response)
 
     if (mode === creditDealPaymentModes.ON_SPOT_RAZORPAY)
     {
-        if (!(amountMinor > 0))
+        // The same band the buyer-facing endpoints enforce. This path only
+        // checked `> 0` and accepted a parsed float, so the one endpoint whose
+        // caller can name an arbitrary amount was also the one with the
+        // weakest bound on it.
+        if (!PaymentProvider.isChargeableAmount(amountMinor))
         {
             response.statusCode = httpStatus.BAD_REQUEST;
-            response.sendJson({ error: ErrorCodes.INVALID_AMOUNT });
+            response.sendJson({ error: ErrorCodes.AMOUNT_OUT_OF_RANGE });
             return;
         }
 
@@ -113,7 +118,12 @@ async function createDealPayment(request, response)
         {
             console.error(`[CreateDealPayment] On-spot order creation failed: ${orderError?.message || orderError}`);
             response.statusCode = httpStatus.BAD_GATEWAY;
-            response.sendJson({ error: ErrorCodes.PAYMENT_NOT_VERIFIED, reason: orderError?.message });
+            // The provider's own error text stays server-side. An administrator
+            // is a trusted audience, but provider internals crossing the
+            // boundary is still provider internals crossing the boundary — and
+            // the two buyer-facing endpoints already do this correctly, so the
+            // inconsistency was the real defect.
+            response.sendJson({ error: ErrorCodes.EXCEPTION });
             return;
         }
 

@@ -96,6 +96,71 @@ class PaidDeckSession
         return { success: true, contentKeyVersion: contentKeyVersion };
     }
 
+    /**
+     * Unlocks a deck an organization provides, with no password.
+     *
+     * These decks have no password because there is nobody to have chosen one:
+     * the institute supplies the deck, so a passphrase would be a secret the
+     * member never set and the institute could not reset. The server returns the
+     * content key for this session instead — still only inside the ECDH
+     * envelope, still held here as a non-extractable key that dies with the page,
+     * and still refused unless the member holds an active licence AND is still
+     * on that organization's roster, which the server re-checks on every call.
+     *
+     * Returns { success: false, error: "PASSWORD_REQUIRED" } when the deck turns
+     * out to be a marketplace deck after all, so the caller falls through to the
+     * password prompt rather than silently failing.
+     *
+     * @param {string} deckId
+     * @returns {Promise<{ success: boolean, contentKeyVersion?: number, error?: string }>}
+     */
+    static async unlockOrganizationDeck(deckId)
+    {
+        const transportResult = await EcdhTransport.fetchProtected(PaidDeckSession.#UNLOCK_ENDPOINT,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ deckId: deckId })
+        });
+
+        if (!transportResult.ok)
+        {
+            const errorCode = transportResult?.error?.error || `HTTP_${transportResult.status}`;
+            return { success: false, error: errorCode };
+        }
+
+        const innerJson = transportResult.json;
+
+        // The server decides which branch a deck is on, from the deck's own
+        // audience. A response without the organization marker means this is a
+        // marketplace deck and a password is genuinely needed.
+        if (innerJson.organizationUnlock !== true || typeof innerJson.contentKeyBase64 !== "string")
+        {
+            return { success: false, error: "PASSWORD_REQUIRED" };
+        }
+
+        const contentKeyRawBytes = PaidDeckSession.#base64ToBytes(innerJson.contentKeyBase64);
+
+        const contentCryptoKey = await crypto.subtle.importKey
+        (
+            "raw",
+            contentKeyRawBytes,
+            { name: "AES-GCM" },
+            // Non-extractable, exactly as on the password path: the key can
+            // decrypt in this page and can never be read back out of it.
+            false,
+            ["encrypt", "decrypt"]
+        );
+
+        contentKeyRawBytes.fill(0);
+
+        const contentKeyVersion = Number(innerJson.contentKeyVersion) || 0;
+        PaidDeckSession.#unlockedContentKeysByDeckId.set(deckId, contentCryptoKey);
+        PaidDeckSession.#contentKeyVersionByDeckId.set(deckId, contentKeyVersion);
+
+        return { success: true, contentKeyVersion: contentKeyVersion };
+    }
+
     static isUnlocked(deckId)
     {
         return PaidDeckSession.#unlockedContentKeysByDeckId.has(deckId);

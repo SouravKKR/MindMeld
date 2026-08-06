@@ -1,6 +1,7 @@
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
+const PaidDeckAudienceResolver = require("../../Globals/Classes/PaidDeck/PaidDeckAudienceResolver");
 const DeckLicense = require("../../Globals/Model/DeckLicense");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
@@ -13,6 +14,15 @@ const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
  * envelope on top of HTTPS.
  *
  * Body: { deckId, password }
+ *
+ * An ORGANIZATION deck takes a different branch: it has no password, because
+ * the institute provides it rather than selling it, and a password would be a
+ * secret the member never chose and the institute could not reset. The content
+ * key is instead returned for this session directly — still only inside the
+ * ECDH envelope, still never persisted by the client, and still gated on an
+ * active licence AND live membership re-checked here rather than inferred from
+ * the licence. Everything else about the deck is unchanged: encrypted at rest,
+ * encrypted on the sync wire, immutable on push, export-blocked, copy-guarded.
  *
  * Steps:
  *   1. Look up the user's active license for this deck.
@@ -52,13 +62,6 @@ async function unlockPaidDeckSession(request, response)
         return;
     }
 
-    if (typeof passwordString !== "string" || passwordString.length === 0)
-    {
-        response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ error: ErrorCodes.MISSING_PASSWORD });
-        return;
-    }
-
     const userId = session.getUserId();
     const license = await KeyManagementService.getLicense(userId, deckId);
 
@@ -66,6 +69,27 @@ async function unlockPaidDeckSession(request, response)
     {
         response.statusCode = httpStatus.FORBIDDEN;
         response.sendJson({ error: ErrorCodes.NO_ACTIVE_LICENSE });
+        return;
+    }
+
+    // The audience is read from the DECK, never from the request: a client
+    // claiming "this one needs no password" would otherwise skip the password
+    // check on a marketplace deck it merely holds a licence for.
+    const database = await DatabaseConnector.getDatabase();
+    const paidDeckDocument = await database
+        .collection(DatabaseConstants.PAID_DECKS_COLLECTION)
+        .findOne({ id: deckId }, { projection: { _id: 0, id: 1, audienceOrganizationId: 1 } });
+
+    if (PaidDeckAudienceResolver.isOrganizationDeck(paidDeckDocument))
+    {
+        await unlockOrganizationDeck(request, response, license, paidDeckDocument, deckId);
+        return;
+    }
+
+    if (typeof passwordString !== "string" || passwordString.length === 0)
+    {
+        response.statusCode = httpStatus.BAD_REQUEST;
+        response.sendJson({ error: ErrorCodes.MISSING_PASSWORD });
         return;
     }
 
@@ -141,6 +165,73 @@ async function unlockPaidDeckSession(request, response)
         contentKeyVersion: license.getContentKeyVersion(),
         pbkdf2Iterations: require("../../Globals/Constants/LicenseConstants").PAID_DECK_PASSWORD_PBKDF2_ITERATIONS
     });
+}
+
+/**
+ * The passwordless branch, for a deck an organization provides.
+ *
+ * Membership is re-checked against the stored roster rather than trusted from
+ * the licence, so a member removed from the institute stops being able to
+ * unlock immediately — before the lapsed-licence sweeper has run and before
+ * their next sync tears the content down. Losing access should not have to wait
+ * for a scheduler.
+ *
+ * The content key is unwrapped from the server KEK and returned raw INSIDE the
+ * ECDH envelope. That is the same confidentiality the password branch relies on
+ * for its own wrapped key; the difference is only that no user secret is mixed
+ * in, which is honest — for a deck the institute supplies there is no user
+ * secret to mix in, and inventing one would be security theatre that the member
+ * would then have to be prompted for.
+ */
+async function unlockOrganizationDeck(request, response, license, paidDeckDocument, deckId)
+{
+    const user = await PaidDeckAudienceResolver.resolveAudienceUser(request);
+    const audienceOrganizationId = PaidDeckAudienceResolver.readAudienceOrganizationId(paidDeckDocument);
+    const membership = await PaidDeckAudienceResolver.requireActiveMembership(audienceOrganizationId, user);
+
+    if (!membership.member)
+    {
+        response.statusCode = httpStatus.FORBIDDEN;
+        response.sendJson({ error: ErrorCodes.ACCESS_NOT_ALLOWED });
+        return;
+    }
+
+    if (license.getServerWrappedContentKeyBase64().length === 0)
+    {
+        response.statusCode = httpStatus.INTERNAL_SERVER_ERROR;
+        response.sendJson({ error: ErrorCodes.LICENSE_MISSING_SERVER_WRAP });
+        return;
+    }
+
+    let contentKeyBytes = null;
+    try
+    {
+        contentKeyBytes = KeyManagementService.unwrapPaidDeckContentKeyWithServerKek
+        (
+            license.getServerWrappedIvBase64(),
+            license.getServerWrappedContentKeyBase64(),
+            deckId
+        );
+
+        response.statusCode = httpStatus.OK;
+        response.sendJson
+        ({
+            deckId: deckId,
+            organizationUnlock: true,
+            organizationId: audienceOrganizationId,
+            contentKeyBase64: contentKeyBytes.toString("base64"),
+            contentKeyVersion: license.getContentKeyVersion()
+        });
+    }
+    finally
+    {
+        // Zeroed whether or not the response was written, so the key does not
+        // linger in a buffer this process still holds.
+        if (contentKeyBytes)
+        {
+            contentKeyBytes.fill(0);
+        }
+    }
 }
 
 module.exports = { unlockPaidDeckSession };

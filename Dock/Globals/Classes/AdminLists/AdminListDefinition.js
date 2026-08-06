@@ -28,6 +28,7 @@ class AdminListDefinition
     #listKey;
     #collectionName;
     #customQueryBuilder;
+    #baseQuery;
     #searchableFields;
     #searchPlaceholder;
     #filters;
@@ -39,7 +40,7 @@ class AdminListDefinition
     #limitOptions;
     #rowIdField;
 
-    constructor({ listKey, collectionName = null, customQueryBuilder = null, searchableFields = [], searchPlaceholder = "Search…", filters = [], columns = [], rowMapper = null, defaultSort = null, sortableFields = [], defaultLimit = AdminListDefinition.DEFAULT_LIMIT, limitOptions = AdminListDefinition.DEFAULT_LIMIT_OPTIONS, rowIdField = "id" } = {})
+    constructor({ listKey, collectionName = null, customQueryBuilder = null, baseQuery = null, searchableFields = [], searchPlaceholder = "Search…", filters = [], columns = [], rowMapper = null, defaultSort = null, sortableFields = [], defaultLimit = AdminListDefinition.DEFAULT_LIMIT, limitOptions = AdminListDefinition.DEFAULT_LIMIT_OPTIONS, rowIdField = "id" } = {})
     {
         if (listKey === undefined || listKey === null)
         {
@@ -54,6 +55,7 @@ class AdminListDefinition
         this.#listKey = listKey;
         this.#collectionName = collectionName;
         this.#customQueryBuilder = customQueryBuilder;
+        this.#baseQuery = (baseQuery && typeof baseQuery === "object") ? baseQuery : null;
         this.#searchableFields = Array.isArray(searchableFields) ? searchableFields : [];
         this.#searchPlaceholder = searchPlaceholder;
         this.#filters = Array.isArray(filters) ? filters : [];
@@ -69,6 +71,17 @@ class AdminListDefinition
     getListKey()
     {
         return this.#listKey;
+    }
+
+    /**
+     * A server-supplied query fragment that is $and-ed into every page and
+     * count for this list. It is NOT expressed as a filter, so no client
+     * payload can widen or drop it — which is what makes a per-organization
+     * list safe to serve from a shared runner.
+     */
+    getBaseQuery()
+    {
+        return this.#baseQuery;
     }
 
     getCollectionName()

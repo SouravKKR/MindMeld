@@ -104,6 +104,11 @@
             "datatype": "date",
             "defaultValue": "now"
         },
+        "capturedAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        },
         "additionalData":
         {
             "datatype": "object",

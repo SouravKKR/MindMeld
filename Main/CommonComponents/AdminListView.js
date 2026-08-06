@@ -95,6 +95,21 @@ class AdminListView extends HTMLElement
 
     async #loadMetadata()
     {
+        // A custom metadata source lets a list keep the server-built filter set
+        // — columns, tag options, per-attribute ranges — while still fetching
+        // its pages through a custom endpoint. Without it, any list on a custom
+        // fetcher was forced to declare its columns client-side and got no
+        // filters at all.
+        if (typeof this.#config.customMetadataFetcher === "function")
+        {
+            const customMetadata = await this.#config.customMetadataFetcher();
+            return {
+                ...customMetadata,
+                searchEnabled: this.#config.searchEnabled !== undefined ? !!this.#config.searchEnabled : !!customMetadata.searchEnabled,
+                rowIdField: this.#config.rowIdField || customMetadata.rowIdField || "id"
+            };
+        }
+
         if (typeof this.#config.customFetcher === "function")
         {
             return {
@@ -582,6 +597,25 @@ class AdminListView extends HTMLElement
         {
             this.#fetchPage();
         }
+    }
+
+    /**
+     * The search text currently applied. Exposed so a caller can act on the
+     * SAME selection the list is showing — filtered removal has to mean exactly
+     * what is on screen, or a confirmation dialog is describing one set while
+     * the server deletes another.
+     */
+    getSearchValue()
+    {
+        return this.#searchText;
+    }
+
+    /**
+     * The filter values currently applied, as the server expects them.
+     */
+    getFilterValues()
+    {
+        return { ...this.#filterValues };
     }
 
     getSelectedRowIds()

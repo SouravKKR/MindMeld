@@ -13,6 +13,7 @@ class DeckLicense
     #id;
     #userId;
     #deckId;
+    #scopeKey;
     #status;
     #keyVersion;
     #wrappedKeyBlob;
@@ -30,11 +31,12 @@ class DeckLicense
     #contentKeyVersion;
     #additionalData;
 
-    constructor({userId = null, deckId = null, status = 1, keyVersion = 1, wrappedKeyBlob = '', issuedAt = new Date(), rotatedAt = new Date(), expiresAt = new Date(0), grantSource = 'PURCHASE', downloadedContentVersion = 0, passwordHash = '', passwordSalt = '', passwordWrappedContentKeyBase64 = '', passwordWrappedIvBase64 = '', serverWrappedContentKeyBase64 = '', serverWrappedIvBase64 = '', contentKeyVersion = 0, additionalData = {}} = {})
+    constructor({userId = null, deckId = null, scopeKey = '', status = 1, keyVersion = 1, wrappedKeyBlob = '', issuedAt = new Date(), rotatedAt = new Date(), expiresAt = new Date(0), grantSource = 'PURCHASE', downloadedContentVersion = 0, passwordHash = '', passwordSalt = '', passwordWrappedContentKeyBase64 = '', passwordWrappedIvBase64 = '', serverWrappedContentKeyBase64 = '', serverWrappedIvBase64 = '', contentKeyVersion = 0, additionalData = {}} = {})
     {
         this.#id = crypto.randomUUID();
         this.setUserId(userId);
         this.setDeckId(deckId);
+        this.setScopeKey(scopeKey);
         this.setStatus(status);
         this.setKeyVersion(keyVersion);
         this.setWrappedKeyBlob(wrappedKeyBlob);
@@ -84,6 +86,20 @@ class DeckLicense
             value = String(value);
         }
         this.#deckId = value;
+    }
+
+    getScopeKey()
+    {
+        return this.#scopeKey;
+    }
+
+    setScopeKey(value)
+    {
+        if (value !== null)
+        {
+            value = String(value);
+        }
+        this.#scopeKey = value;
     }
 
     getStatus()
@@ -368,6 +384,7 @@ class DeckLicense
             id: this.getId(),
             userId: this.getUserId(),
             deckId: this.getDeckId(),
+            scopeKey: this.getScopeKey(),
             status: this.getStatus() !== null ? Number(this.getStatus()) : null,
             keyVersion: this.getKeyVersion(),
             wrappedKeyBlob: this.getWrappedKeyBlob(),
@@ -392,6 +409,7 @@ class DeckLicense
         const instance = new DeckLicense({
             userId: json.userId ?? null,
             deckId: json.deckId ?? null,
+            scopeKey: json.scopeKey ?? null,
             status: json.status ?? null,
             keyVersion: json.keyVersion ?? null,
             wrappedKeyBlob: json.wrappedKeyBlob ?? null,

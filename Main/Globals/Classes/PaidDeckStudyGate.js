@@ -1,4 +1,6 @@
 import PaidDeckSession from "./Crypto/PaidDeckSession.js";
+import PaidDeckRegistry from "./PaidDeckRegistry.js";
+import OrganizationContextIdentity from "./Organization/OrganizationContextIdentity.js";
 import Deck from "../Model/Deck.js";
 import DialogBox from "../../CommonComponents/DialogBox.js";
 import ProgressDialog from "../../CommonComponents/ProgressDialog.js";
@@ -41,28 +43,73 @@ class PaidDeckStudyGate
 
         if (!PaidDeckSession.isUnlocked(paidDeckId))
         {
-            const enteredPassword = await DialogBox.prompt
-            (
-                "Unlock paid deck",
-                "Enter this deck's password to study it. You'll only be asked once this session.",
-                "password"
-            );
+            // A deck an organization provides has no password and must not be
+            // prompted for one. The licence carries the library its copy lives
+            // in, so an organization-scoped licence is a reliable HINT that the
+            // passwordless path applies — used to skip a needless round trip for
+            // a marketplace deck, never to decide the outcome. The server reads
+            // the audience off the deck itself and is the only authority; when
+            // the licence is unknown we probe rather than assume, because
+            // prompting for a password that does not exist is a dead end the
+            // user cannot get out of.
+            const knownLicense = PaidDeckRegistry.getLicense(paidDeckId);
+            const bMayBeOrganizationDeck = !knownLicense || PaidDeckStudyGate.#isOrganizationScopedLicense(knownLicense);
 
-            if (typeof enteredPassword !== "string" || enteredPassword.length === 0)
-            {
-                return false;
-            }
+            const organizationUnlockResult = bMayBeOrganizationDeck
+                ? await PaidDeckSession.unlockOrganizationDeck(paidDeckId)
+                : { success: false, error: "PASSWORD_REQUIRED" };
 
-            const unlockResult = await PaidDeckSession.unlock(paidDeckId, enteredPassword);
-            if (!unlockResult || unlockResult.success !== true)
+            if (!organizationUnlockResult || organizationUnlockResult.success !== true)
             {
-                await DialogBox.alert("Couldn't unlock", "That password didn't work for this deck. Please try again.");
-                return false;
+                if (organizationUnlockResult && organizationUnlockResult.error !== "PASSWORD_REQUIRED")
+                {
+                    // A refusal that is not "this one needs a password" means
+                    // the licence or the membership no longer holds. Prompting
+                    // for a password here would ask the user to fix something
+                    // that is not theirs to fix.
+                    await DialogBox.alert
+                    (
+                        "Can't open this deck",
+                        "This deck is no longer available to you. If it came from your organisation, it may have been withdrawn."
+                    );
+                    return false;
+                }
+
+                const enteredPassword = await DialogBox.prompt
+                (
+                    "Unlock paid deck",
+                    "Enter this deck's password to study it. You'll only be asked once this session.",
+                    "password"
+                );
+
+                if (typeof enteredPassword !== "string" || enteredPassword.length === 0)
+                {
+                    return false;
+                }
+
+                const unlockResult = await PaidDeckSession.unlock(paidDeckId, enteredPassword);
+                if (!unlockResult || unlockResult.success !== true)
+                {
+                    await DialogBox.alert("Couldn't unlock", "That password didn't work for this deck. Please try again.");
+                    return false;
+                }
             }
         }
 
         await PaidDeckStudyGate.#decryptSubtree(deck);
         return true;
+    }
+
+    /**
+     * Whether a licence's copy lives in an organization's library rather than
+     * the holder's own. Mirrors OrganizationScopeResolver's key format, which
+     * is why the separator is compared through OrganizationContextIdentity
+     * rather than spelled out again here.
+     */
+    static #isOrganizationScopedLicense(license)
+    {
+        const scopeKey = license && typeof license === "object" ? license.scopeKey : "";
+        return OrganizationContextIdentity.isOrganizationIdentity(scopeKey);
     }
 
     /**

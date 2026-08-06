@@ -1,5 +1,7 @@
 const CreditGrantTargetResolver = require("../../Globals/Classes/Credits/CreditGrantTargetResolver");
 const CreditGrantExecutor = require("../../Globals/Classes/Credits/CreditGrantExecutor");
+const OrganizationPoolGrantService = require("../../Globals/Classes/Credits/OrganizationPoolGrantService");
+const { creditGrantTargetTypes } = require("../../Globals/Enumerations/CreditGrantTargetTypes");
 const { creditGrantAmountModes } = require("../../Globals/Enumerations/CreditGrantAmountModes");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
@@ -11,6 +13,12 @@ const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
  * concrete recipient list and computes the per-user amount, without touching
  * any balance. The admin panel shows this before the confirm step so the
  * blast radius (and any unmatched emails) is explicit.
+ *
+ * An ORGANIZATION_POOL target takes a different branch: there is one recipient
+ * and it is a pool, so the amount is taken verbatim and `amountMode` — which
+ * exists to divide an amount between recipients — does not apply and is not
+ * validated. The preview reports the pool's balance before and after instead of
+ * a recipient list.
  *
  * Body: { target: { targetType, emails?, filter?, organizationId? }, amount, amountMode }
  */
@@ -32,6 +40,26 @@ async function previewCreditGrant(request, response)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: ErrorCodes.INVALID_AMOUNT });
+        return;
+    }
+
+    if (target.targetType === creditGrantTargetTypes.ORGANIZATION_POOL)
+    {
+        const poolResult = await OrganizationPoolGrantService.preview
+        (
+            typeof target.organizationId === "string" ? target.organizationId : "",
+            amount
+        );
+
+        if (!poolResult.success)
+        {
+            response.statusCode = httpStatus.BAD_REQUEST;
+            response.sendJson({ error: poolResult.error });
+            return;
+        }
+
+        response.statusCode = httpStatus.OK;
+        response.sendJson({ poolPreview: poolResult.preview, recipientCount: 0, recipients: [], unmatchedEmails: [] });
         return;
     }
 

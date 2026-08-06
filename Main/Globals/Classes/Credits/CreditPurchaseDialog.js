@@ -25,7 +25,6 @@ class CreditPurchaseDialog
 
         const minimumCredits = Math.max(options.minimumPurchaseCredits || 1, options.minimumCreditsForCharge || 1, 1);
         const packs = Array.isArray(options.packs) ? options.packs.filter(pack => pack.credits >= minimumCredits) : [];
-        const initialCredits = packs.length > 0 ? packs[0].credits : minimumCredits;
 
         const balanceValue = window["user"]?.getAdditionalData()?.credits;
         const balanceLine = typeof balanceValue === "number"
@@ -170,8 +169,8 @@ class CreditPurchaseDialog
             ${baseFallbackNote}
             ${packsHtml}
             <div class="credit-purchase-custom">
-                <label>Credits
-                    <input class="credit-purchase-quantity" type="number" step="1" min="${minimumCredits}" value="${initialCredits}">
+                <label>Coupon code (optional)
+                    <input class="credit-purchase-coupon" type="text" autocomplete="off" spellcheck="false" placeholder="Enter a code">
                 </label>
                 <div class="credit-purchase-total" data-role="total"></div>
             </div>
@@ -185,7 +184,11 @@ class CreditPurchaseDialog
         return await new Promise((resolve) =>
         {
             const dialog = DialogBox.modal(dialogHtml);
-            const quantityInput = dialog.querySelector(".credit-purchase-quantity");
+            const couponInput = dialog.querySelector(".credit-purchase-coupon");
+            // Packs are the only purchasable quantities, so the selection is a
+            // pack rather than a typed number. A free-entry box asked every
+            // buyer to pick a figure they had no basis for choosing.
+            let selectedPackCredits = packs.length > 0 ? packs[0].credits : null;
             const totalLabel = dialog.querySelector('[data-role="total"]');
             const hintLabel = dialog.querySelector('[data-role="hint"]');
             const payButton = dialog.querySelector('[data-role="pay"]');
@@ -203,32 +206,30 @@ class CreditPurchaseDialog
 
             const evaluateSelection = () =>
             {
-                const quantity = parseFloat(quantityInput.value);
-                const isValidQuantity = Number.isInteger(quantity) && quantity >= minimumCredits;
-
                 for (const packButton of dialog.querySelectorAll(".credit-purchase-pack"))
                 {
-                    packButton.classList.toggle("selected", Number(packButton.dataset.packCredits) === quantity);
+                    packButton.classList.toggle("selected", Number(packButton.dataset.packCredits) === selectedPackCredits);
                 }
 
-                if (!isValidQuantity)
+                const selectedPack = packs.find(pack => pack.credits === selectedPackCredits);
+
+                if (!selectedPack)
                 {
                     totalLabel.innerHTML = "";
                     payButton.disabled = true;
                     payButton.textContent = "Pay";
-                    hintLabel.textContent = `Enter a whole number of at least ${minimumCredits} credits.`;
+                    hintLabel.textContent = packs.length === 0
+                        ? "Credit packs aren't available right now. Please try again later."
+                        : "Choose a pack.";
                     return;
                 }
 
-                // A quantity matching a pack uses the pack's server-computed
-                // (discounted) price; anything else is quantity × unit price.
-                const matchingPack = packs.find(pack => pack.credits === quantity);
-                const totalAmount = matchingPack
-                    ? matchingPack.amountMinor / 100
-                    : quantity * options.unitPrice;
+                // The pack's price is computed server-side, discount included,
+                // so what is shown here is what will be charged.
+                const totalAmount = selectedPack.amountMinor / 100;
 
                 totalLabel.innerHTML = `Total: <strong>${CreditPurchaseDialog.#escape(options.currency)} ${totalAmount.toFixed(2)}</strong>`;
-                hintLabel.textContent = "";
+                hintLabel.textContent = "A coupon discount, if any, is applied at checkout.";
                 payButton.disabled = false;
                 payButton.textContent = `Pay ${options.currency} ${totalAmount.toFixed(2)}`;
             };
@@ -237,21 +238,18 @@ class CreditPurchaseDialog
             {
                 packButton.addEventListener("click", () =>
                 {
-                    quantityInput.value = packButton.dataset.packCredits;
+                    selectedPackCredits = Number(packButton.dataset.packCredits);
                     evaluateSelection();
                 });
             }
 
-            quantityInput.addEventListener("input", evaluateSelection);
-
             payButton.addEventListener("click", () =>
             {
-                const quantity = parseFloat(quantityInput.value);
-                if (!Number.isInteger(quantity) || quantity < minimumCredits)
+                if (!packs.some(pack => pack.credits === selectedPackCredits))
                 {
                     return;
                 }
-                settle({ credits: quantity });
+                settle({ credits: selectedPackCredits, couponCode: couponInput.value.trim() });
                 dialog.close();
             });
 

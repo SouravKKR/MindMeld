@@ -1,29 +1,40 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
-import PaymentCheckout from "../../../Globals/Classes/Payments/PaymentCheckout.js";
+import OrganizationErrorMessages from "../../../Globals/Classes/Organization/OrganizationErrorMessages.js";
 import { organizationDeckPerkTypes } from "../../../Globals/Enumerations/OrganizationDeckPerkTypes.js";
 
 /**
  * CreateOrganizationDialog
  *
- * Multi-step modal that drives the super-admin's organization-create
- * flow:
- *   1) Form          — name, admin email, currency, amount, maxMembers,
- *                      per-deck perks editor.
- *   2) Verification  — server sends an OTP to the appointed admin email;
- *                      super-admin types the code (received out-of-band)
- *                      back into the form, server returns a one-shot
- *                      verificationToken.
- *   3) Create        — Posts to /Admin/Organizations/Create. If amount
- *                      is 0, the org goes ACTIVE immediately. Otherwise the
- *                      provider checkout opens (mirroring the existing
- *                      paid-deck purchase flow). On success, the
- *                      verify-creation-payment endpoint is called.
+ * Two-step modal driving the super-admin's organization-create flow:
+ *   1) Verification — the server emails a one-time code to the appointed owner;
+ *      the super-admin types it back in and the server returns a one-shot
+ *      verificationToken.
+ *   2) Setup + create — name, currency, member capacity and the per-deck perk
+ *      editor, posted to /Admin/Organizations/Create.
  *
- * Returns true to the caller when an organization is created (or its
- * payment cleared), prompting the parent page to refresh.
+ * Creating an organization is free, so there is no amount field, no checkout and
+ * no pending state: the organization is ACTIVE the moment it is created. Money
+ * is only ever taken for the credits an organization buys, which is a separate
+ * negotiated deal.
+ *
+ * Resolves true when an organization was created, prompting the parent page to
+ * refresh; false when the dialog was cancelled.
  */
 class CreateOrganizationDialog
 {
+    static #escapeHtml(rawString)
+    {
+        if (rawString === null || rawString === undefined)
+        {
+            return "";
+        }
+        return String(rawString)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+    }
+
     static async show()
     {
         let paidDecksCatalogue = [];
@@ -38,7 +49,7 @@ class CreateOrganizationDialog
         }
         catch (loadError)
         {
-            // Non-fatal — the admin can still create an org without perks.
+            // Non-fatal — an organization can be created without perks.
             paidDecksCatalogue = [];
         }
 
@@ -48,7 +59,9 @@ class CreateOrganizationDialog
             (`
                 <div class="admin-panel-add-dialog create-organization-dialog">
                     <h2 class="admin-panel-add-title">Create organization</h2>
-                    <p class="admin-panel-add-subtitle">Collect the deal details, verify the admin email, then take payment (or skip if free).</p>
+                    <p class="admin-panel-add-subtitle">Verify the owner's email, then set up the organization. Creating one is free — credits are sold separately.</p>
+
+                    <div class="admin-panel-add-error" data-role="error" hidden></div>
 
                     <label class="admin-panel-add-field">
                         <span>Organization name</span>
@@ -56,20 +69,22 @@ class CreateOrganizationDialog
                     </label>
 
                     <label class="admin-panel-add-field">
-                        <span>Admin email</span>
+                        <span>Owner email</span>
                         <input type="email" class="organization-admin-email" autocomplete="off" placeholder="admin@acme.edu">
                     </label>
 
                     <div class="admin-panel-add-field organization-otp-row">
-                        <button type="button" class="organization-send-otp">Send verification code</button>
+                        <button type="button" class="organization-secondary-button organization-send-otp">Send verification code</button>
                         <span class="organization-otp-status" data-role="otp-status"></span>
                     </div>
 
-                    <label class="admin-panel-add-field" data-role="otp-input-row" hidden>
+                    <div class="admin-panel-add-field organization-otp-verify-row" data-role="otp-input-row" hidden>
                         <span>Verification code (6 digits)</span>
-                        <input type="text" class="organization-otp-code" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="123456">
-                        <button type="button" class="organization-verify-otp">Verify code</button>
-                    </label>
+                        <div class="organization-inline-row">
+                            <input type="text" class="organization-otp-code" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="123456">
+                            <button type="button" class="organization-secondary-button organization-verify-otp">Verify code</button>
+                        </div>
+                    </div>
 
                     <div class="organization-fieldset" data-role="post-verification" hidden>
                         <label class="admin-panel-add-field">
@@ -77,25 +92,20 @@ class CreateOrganizationDialog
                             <input type="text" class="organization-currency" value="INR" maxlength="8">
                         </label>
                         <label class="admin-panel-add-field">
-                            <span>Creation fee (minor units — e.g. 100 = 1.00; 0 = no payment)</span>
-                            <input type="number" class="organization-amount-minor" value="0" min="0">
-                        </label>
-                        <label class="admin-panel-add-field">
                             <span>Member capacity</span>
                             <input type="number" class="organization-max-members" value="50" min="1">
                         </label>
 
                         <div class="admin-panel-add-field">
-                            <span>Paid-deck perks</span>
+                            <span>Marketplace deck perks</span>
                             <div class="organization-perks-table" data-role="perks-table"></div>
-                            <button type="button" class="organization-add-perk">+ Add deck perk</button>
-                            <p class="admin-panel-add-subtitle">Perk types: FREE (auto-assigned to members), FIXED override (price in minor units), PERCENT discount (0–100). durationDays = 0 means forever.</p>
+                            <button type="button" class="organization-secondary-button organization-add-perk">+ Add deck perk</button>
+                            <p class="admin-panel-add-subtitle">Perks discount CogniumLearn marketplace decks for this organization's members. FREE is auto-assigned; FIXED is a price in minor units; PERCENT is 0–100. Duration 0 means forever.</p>
                         </div>
                     </div>
 
-                    <div class="admin-panel-add-error" data-role="error" hidden></div>
                     <div class="admin-panel-add-actions">
-                        <button type="button" class="admin-panel-add-cancel">Cancel</button>
+                        <button type="button" class="admin-panel-add-cancel organization-cancel">Cancel</button>
                         <button type="button" class="admin-panel-add-submit organization-create" disabled>Create organization</button>
                     </div>
                 </div>
@@ -110,7 +120,6 @@ class CreateOrganizationDialog
             const verifyOtpButton = dialog.querySelector(".organization-verify-otp");
             const postVerificationBlock = dialog.querySelector('[data-role="post-verification"]');
             const currencyInput = dialog.querySelector(".organization-currency");
-            const amountInput = dialog.querySelector(".organization-amount-minor");
             const maxMembersInput = dialog.querySelector(".organization-max-members");
             const perksTable = dialog.querySelector('[data-role="perks-table"]');
             const addPerkButton = dialog.querySelector(".organization-add-perk");
@@ -130,40 +139,43 @@ class CreateOrganizationDialog
                 }
                 errorElement.textContent = message;
                 errorElement.hidden = false;
+                errorElement.scrollIntoView({ block: "nearest" });
             };
 
             const renderPerks = () =>
             {
                 if (perkRows.length === 0)
                 {
-                    perksTable.innerHTML = `<p class="admin-panel-add-subtitle">No perks yet — members will pay the regular price for every deck.</p>`;
+                    perksTable.innerHTML = `<p class="admin-panel-add-subtitle">No perks yet — members pay the regular price for every marketplace deck.</p>`;
                     return;
                 }
                 perksTable.innerHTML = `
-                    <table class="admin-panel-table">
-                        <thead><tr><th>Deck</th><th>Perk type</th><th>Value (price in minor units, or % for discount)</th><th>Duration (days, 0 = forever)</th><th></th></tr></thead>
-                        <tbody>
-                            ${perkRows.map((row, rowIndex) => `
-                                <tr data-perk-index="${rowIndex}">
-                                    <td>
-                                        <select class="organization-perk-deck" data-perk-index="${rowIndex}">
-                                            ${paidDecksCatalogue.map(deck => `<option value="${escape(deck.id)}" ${row.deckId === deck.id ? "selected" : ""}>${escape(deck.title)}</option>`).join("")}
-                                        </select>
-                                    </td>
-                                    <td>
-                                        <select class="organization-perk-type" data-perk-index="${rowIndex}">
-                                            <option value="${organizationDeckPerkTypes.FREE}" ${row.perkType === organizationDeckPerkTypes.FREE ? "selected" : ""}>FREE</option>
-                                            <option value="${organizationDeckPerkTypes.FIXED_OVERRIDE}" ${row.perkType === organizationDeckPerkTypes.FIXED_OVERRIDE ? "selected" : ""}>FIXED override</option>
-                                            <option value="${organizationDeckPerkTypes.PERCENTAGE_DISCOUNT}" ${row.perkType === organizationDeckPerkTypes.PERCENTAGE_DISCOUNT ? "selected" : ""}>PERCENT discount</option>
-                                        </select>
-                                    </td>
-                                    <td><input type="number" class="organization-perk-value" data-perk-index="${rowIndex}" value="${row.perkValue}" min="0"></td>
-                                    <td><input type="number" class="organization-perk-duration" data-perk-index="${rowIndex}" value="${row.durationDays}" min="0"></td>
-                                    <td><button type="button" class="organization-perk-remove" data-perk-index="${rowIndex}">Remove</button></td>
-                                </tr>
-                            `).join("")}
-                        </tbody>
-                    </table>
+                    <div class="organization-table-scroll">
+                        <table class="admin-panel-table">
+                            <thead><tr><th>Deck</th><th>Perk type</th><th>Value</th><th>Days</th><th></th></tr></thead>
+                            <tbody>
+                                ${perkRows.map((row, rowIndex) => `
+                                    <tr data-perk-index="${rowIndex}">
+                                        <td>
+                                            <select class="organization-perk-deck" data-perk-index="${rowIndex}">
+                                                ${paidDecksCatalogue.map(deck => `<option value="${CreateOrganizationDialog.#escapeHtml(deck.id)}" ${row.deckId === deck.id ? "selected" : ""}>${CreateOrganizationDialog.#escapeHtml(deck.title)}</option>`).join("")}
+                                            </select>
+                                        </td>
+                                        <td>
+                                            <select class="organization-perk-type" data-perk-index="${rowIndex}">
+                                                <option value="${organizationDeckPerkTypes.FREE}" ${row.perkType === organizationDeckPerkTypes.FREE ? "selected" : ""}>FREE</option>
+                                                <option value="${organizationDeckPerkTypes.FIXED_OVERRIDE}" ${row.perkType === organizationDeckPerkTypes.FIXED_OVERRIDE ? "selected" : ""}>FIXED override</option>
+                                                <option value="${organizationDeckPerkTypes.PERCENTAGE_DISCOUNT}" ${row.perkType === organizationDeckPerkTypes.PERCENTAGE_DISCOUNT ? "selected" : ""}>PERCENT discount</option>
+                                            </select>
+                                        </td>
+                                        <td><input type="number" class="organization-perk-value" data-perk-index="${rowIndex}" value="${row.perkValue}" min="0"></td>
+                                        <td><input type="number" class="organization-perk-duration" data-perk-index="${rowIndex}" value="${row.durationDays}" min="0"></td>
+                                        <td><button type="button" class="organization-secondary-button organization-perk-remove" data-perk-index="${rowIndex}">Remove</button></td>
+                                    </tr>
+                                `).join("")}
+                            </tbody>
+                        </table>
+                    </div>
                 `;
 
                 for (const select of perksTable.querySelectorAll(".organization-perk-deck"))
@@ -187,7 +199,8 @@ class CreateOrganizationDialog
                     input.addEventListener("input", (inputEvent) =>
                     {
                         const rowIndex = Number(inputEvent.currentTarget.dataset.perkIndex);
-                        perkRows[rowIndex].perkValue = parseInt(inputEvent.currentTarget.value || "0", 10);
+                        const parsedValue = parseInt(inputEvent.currentTarget.value, 10);
+                        perkRows[rowIndex].perkValue = Number.isInteger(parsedValue) ? parsedValue : 0;
                     });
                 }
                 for (const input of perksTable.querySelectorAll(".organization-perk-duration"))
@@ -195,7 +208,8 @@ class CreateOrganizationDialog
                     input.addEventListener("input", (inputEvent) =>
                     {
                         const rowIndex = Number(inputEvent.currentTarget.dataset.perkIndex);
-                        perkRows[rowIndex].durationDays = parseInt(inputEvent.currentTarget.value || "0", 10);
+                        const parsedValue = parseInt(inputEvent.currentTarget.value, 10);
+                        perkRows[rowIndex].durationDays = Number.isInteger(parsedValue) ? parsedValue : 0;
                     });
                 }
                 for (const button of perksTable.querySelectorAll(".organization-perk-remove"))
@@ -209,20 +223,13 @@ class CreateOrganizationDialog
                 }
             };
 
-            const escape = (rawString) =>
-            {
-                if (rawString === null || rawString === undefined) return "";
-                return String(rawString)
-                    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-            };
-
             renderPerks();
 
             addPerkButton.addEventListener("click", () =>
             {
                 if (paidDecksCatalogue.length === 0)
                 {
-                    showError("No paid decks available — upload at least one paid deck before configuring perks.");
+                    showError("No marketplace decks available — upload at least one before configuring perks.");
                     return;
                 }
                 perkRows.push
@@ -241,7 +248,7 @@ class CreateOrganizationDialog
                 const rawName = nameInput.value.trim();
                 if (rawEmail.length === 0 || rawEmail.indexOf("@") < 0)
                 {
-                    showError("Enter a valid admin email first.");
+                    showError("Enter a valid owner email first.");
                     return;
                 }
                 if (rawName.length === 0)
@@ -263,7 +270,7 @@ class CreateOrganizationDialog
                     const responseJson = await response.json().catch(() => ({}));
                     if (!response.ok || responseJson.success === false)
                     {
-                        showError(responseJson.error || `HTTP ${response.status}`);
+                        showError(OrganizationErrorMessages.describe(responseJson.error, response.status));
                         return;
                     }
                     otpStatus.textContent = `Code sent to ${rawEmail}. Have them read you the 6-digit code.`;
@@ -272,7 +279,7 @@ class CreateOrganizationDialog
                 }
                 catch (sendError)
                 {
-                    showError(sendError.message || "Could not send verification code.");
+                    showError(sendError.message || "Could not send the verification code.");
                 }
                 finally
                 {
@@ -304,18 +311,18 @@ class CreateOrganizationDialog
                     const responseJson = await response.json().catch(() => ({}));
                     if (!response.ok || responseJson.success === false)
                     {
-                        showError(responseJson.error || `HTTP ${response.status}`);
+                        showError(OrganizationErrorMessages.describe(responseJson.error, response.status));
                         return;
                     }
                     verificationToken = responseJson.verificationToken;
-                    otpStatus.textContent = "Verified — proceed to organization setup below.";
+                    otpStatus.textContent = "Verified — finish the setup below.";
                     otpInputRow.hidden = true;
                     postVerificationBlock.hidden = false;
                     createButton.disabled = false;
                 }
                 catch (verifyError)
                 {
-                    showError(verifyError.message || "Could not verify code.");
+                    showError(verifyError.message || "Could not verify the code.");
                 }
                 finally
                 {
@@ -324,9 +331,17 @@ class CreateOrganizationDialog
                 }
             });
 
-            dialog.querySelector(".admin-panel-add-cancel").addEventListener("click", () =>
+            dialog.querySelector(".organization-cancel").addEventListener("click", () =>
             {
                 dialog.close();
+                resolve(false);
+            });
+
+            // DialogBox.modal's own X — and the Escape key, which PopupStack
+            // routes to it — closes the element without settling this promise,
+            // leaving the caller awaiting forever.
+            dialog.querySelector(".close-button").addEventListener("click", () =>
+            {
                 resolve(false);
             });
 
@@ -335,18 +350,17 @@ class CreateOrganizationDialog
                 showError(null);
                 if (!verificationToken)
                 {
-                    showError("Verify the admin email first.");
+                    showError("Verify the owner's email first.");
                     return;
                 }
                 const name = nameInput.value.trim();
                 const adminEmail = adminEmailInput.value.trim().toLowerCase();
                 const currency = currencyInput.value.trim().toUpperCase() || "INR";
-                const amountMinor = parseInt(amountInput.value || "0", 10);
-                const maxMembers = parseInt(maxMembersInput.value || "0", 10);
+                const maxMembers = parseInt(maxMembersInput.value, 10);
 
-                if (name.length === 0 || adminEmail.length === 0 || maxMembers <= 0 || amountMinor < 0)
+                if (name.length === 0 || adminEmail.length === 0 || !Number.isInteger(maxMembers) || maxMembers <= 0)
                 {
-                    showError("Fill every field — name, admin email, capacity > 0, amount >= 0.");
+                    showError("Fill every field — name, owner email, and a member capacity above zero.");
                     return;
                 }
 
@@ -365,7 +379,6 @@ class CreateOrganizationDialog
                             adminEmail: adminEmail,
                             verificationToken: verificationToken,
                             currency: currency,
-                            amountMinor: amountMinor,
                             maxMembers: maxMembers,
                             deckPerks: perkRows
                         })
@@ -373,80 +386,18 @@ class CreateOrganizationDialog
                     const createJson = await createResponse.json().catch(() => ({}));
                     if (!createResponse.ok || createJson.success === false)
                     {
-                        showError(createJson.error || `HTTP ${createResponse.status}`);
+                        showError(OrganizationErrorMessages.describe(createJson.error, createResponse.status));
                         createButton.disabled = false;
                         createButton.textContent = "Create organization";
                         return;
                     }
 
-                    if (!createJson.requiresPayment)
-                    {
-                        dialog.close();
-                        resolve(true);
-                        return;
-                    }
-
-                    // Payment path — open the checkout exactly as the
-                    // paid-deck library page does.
-                    const checkoutContext = createJson.order?.checkoutContext;
-                    if (!checkoutContext || !PaymentCheckout.isAvailable(createJson.provider))
-                    {
-                        showError("Checkout not available — reload the page and try again.");
-                        createButton.disabled = false;
-                        createButton.textContent = "Create organization";
-                        return;
-                    }
-
-                    let checkoutResult;
-                    try
-                    {
-                        checkoutResult = await PaymentCheckout.open(createJson.provider, checkoutContext, { description: `Organization: ${name}` });
-                    }
-                    catch (checkoutError)
-                    {
-                        showError(checkoutError.message || "Checkout failed.");
-                        createButton.disabled = false;
-                        createButton.textContent = "Create organization";
-                        return;
-                    }
-
-                    if (!checkoutResult)
-                    {
-                        showError("Payment cancelled. The organization will remain in PENDING_PAYMENT until payment clears.");
-                        createButton.disabled = false;
-                        createButton.textContent = "Create organization";
-                        return;
-                    }
-
-                    try
-                    {
-                        const verifyResponse = await fetch("/Admin/Organizations/VerifyCreationPayment",
-                        {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify
-                            ({
-                                organizationId: createJson.organizationId,
-                                providerOrderId: checkoutResult.providerOrderId,
-                                providerPaymentId: checkoutResult.providerPaymentId,
-                                signature: checkoutResult.signature
-                            })
-                        });
-                        if (!verifyResponse.ok)
-                        {
-                            await DialogBox.alert("Payment captured but verify failed", "The provider says the payment succeeded; our verification call did not. The webhook will reconcile this within a few seconds — refresh the list to confirm.");
-                        }
-                    }
-                    catch (verifyError)
-                    {
-                        await DialogBox.alert("Payment verify error", verifyError.message || String(verifyError));
-                    }
                     dialog.close();
                     resolve(true);
                 }
                 catch (createError)
                 {
-                    showError(createError.message || "Could not create organization.");
+                    showError(createError.message || "Could not create the organization.");
                     createButton.disabled = false;
                     createButton.textContent = "Create organization";
                 }

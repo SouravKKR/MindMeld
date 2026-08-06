@@ -1,6 +1,6 @@
-const OrganizationQueryEngine = require("../../Globals/Classes/Organization/OrganizationQueryEngine");
 const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
-const { userRoles } = require("../../Globals/Enumerations/UserRoles");
+const OrganizationAuthorityResolver = require("../../Globals/Classes/Organization/OrganizationAuthorityResolver");
+const { organizationDelegatePowers } = require("../../Globals/Enumerations/OrganizationDelegatePowers");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
@@ -11,12 +11,6 @@ async function bulkRemoveOrganizationMembers(request, response)
     const organizationId = typeof body?.organizationId === "string" ? body.organizationId : "";
     const memberIds = Array.isArray(body?.memberIds) ? body.memberIds : [];
 
-    if (!organizationId)
-    {
-        response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: ErrorCodes.MISSING_ORGANIZATION_ID });
-        return;
-    }
     if (memberIds.length === 0)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
@@ -24,19 +18,11 @@ async function bulkRemoveOrganizationMembers(request, response)
         return;
     }
 
-    const organization = await OrganizationQueryEngine.getOrganizationById(organizationId);
-    if (!organization)
+    const authority = await OrganizationAuthorityResolver.requirePower(request.user, organizationId, organizationDelegatePowers.MANAGE_MEMBERS);
+    if (!authority.allowed)
     {
-        response.statusCode = httpStatus.NOT_FOUND;
-        response.sendJson({ success: false, error: ErrorCodes.ORG_NOT_FOUND });
-        return;
-    }
-
-    const user = request.user;
-    if (user.getRole() !== userRoles.ADMIN && organization.getAdminUserId() !== user.getId())
-    {
-        response.statusCode = httpStatus.FORBIDDEN;
-        response.sendJson({ success: false, error: ErrorCodes.NOT_ORG_ADMIN });
+        response.statusCode = OrganizationAuthorityResolver.statusForDenial(authority);
+        response.sendJson({ success: false, error: authority.reason });
         return;
     }
 

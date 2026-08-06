@@ -10,10 +10,11 @@ class DeckLicense:
     # already-expired timestamp.
     FOREVER = datetime.fromtimestamp(0)
 
-    def __init__(self, user_id: str = None, deck_id: str = None, status: DeckLicenseStatuses = DeckLicenseStatuses(1), key_version: int = 1, wrapped_key_blob: str = '', issued_at: datetime = datetime.now(), rotated_at: datetime = datetime.now(), expires_at: datetime = datetime.fromtimestamp(0), grant_source: str = 'PURCHASE', downloaded_content_version: int = 0, password_hash: str = '', password_salt: str = '', password_wrapped_content_key_base64: str = '', password_wrapped_iv_base64: str = '', server_wrapped_content_key_base64: str = '', server_wrapped_iv_base64: str = '', content_key_version: int = 0, additional_data: dict = {}) -> None:
+    def __init__(self, user_id: str = None, deck_id: str = None, scope_key: str = '', status: DeckLicenseStatuses = DeckLicenseStatuses(1), key_version: int = 1, wrapped_key_blob: str = '', issued_at: datetime = datetime.now(), rotated_at: datetime = datetime.now(), expires_at: datetime = datetime.fromtimestamp(0), grant_source: str = 'PURCHASE', downloaded_content_version: int = 0, password_hash: str = '', password_salt: str = '', password_wrapped_content_key_base64: str = '', password_wrapped_iv_base64: str = '', server_wrapped_content_key_base64: str = '', server_wrapped_iv_base64: str = '', content_key_version: int = 0, additional_data: dict = {}) -> None:
         self.__id = str(uuid.uuid4())
         self.set_user_id(user_id)
         self.set_deck_id(deck_id)
+        self.set_scope_key(scope_key)
         self.set_status(status)
         self.set_key_version(key_version)
         self.set_wrapped_key_blob(wrapped_key_blob)
@@ -49,6 +50,14 @@ class DeckLicense:
         if value is not None:
             value = str(value)
         self.__deck_id = value
+
+    def get_scope_key(self) -> str:
+        return self.__scope_key
+
+    def set_scope_key(self, value: str) -> None:
+        if value is not None:
+            value = str(value)
+        self.__scope_key = value
 
     def get_status(self) -> DeckLicenseStatuses:
         return self.__status
@@ -225,6 +234,7 @@ class DeckLicense:
             'id': self.get_id(),
             'userId': self.get_user_id(),
             'deckId': self.get_deck_id(),
+            'scopeKey': self.get_scope_key(),
             'status': int(self.get_status().value) if self.get_status() is not None else None,
             'keyVersion': self.get_key_version(),
             'wrappedKeyBlob': self.get_wrapped_key_blob(),
@@ -248,6 +258,7 @@ class DeckLicense:
         instance = cls(
             user_id=data.get('userId'),
             deck_id=data.get('deckId'),
+            scope_key=data.get('scopeKey'),
             status=DeckLicenseStatuses(data.get('status')) if data.get('status') is not None else None,
             key_version=data.get('keyVersion'),
             wrapped_key_blob=data.get('wrappedKeyBlob'),

@@ -219,7 +219,7 @@ async function handleGenerate(request, response)
     // the user sees an upgrade prompt rather than an out-of-credits message.
     // Re-authorized server-side against the stored plan; the client is never
     // trusted.
-    const generationEntitlement = await PlanEntitlementGate.requireFeature(userId, planFeatures.AUTOMATIC_GENERATION);
+    const generationEntitlement = await PlanEntitlementGate.requireFeatureForRequest(request, userId, planFeatures.AUTOMATIC_GENERATION);
     if (!generationEntitlement.allowed)
     {
         response.statusCode = httpStatus.FORBIDDEN;
@@ -284,7 +284,7 @@ async function handleGenerate(request, response)
         }));
     if (runWillGenerateImages)
     {
-        const imageEntitlement = await PlanEntitlementGate.requireFeature(userId, planFeatures.IMAGE_GENERATION);
+        const imageEntitlement = await PlanEntitlementGate.requireFeatureForRequest(request, userId, planFeatures.IMAGE_GENERATION);
         if (!imageEntitlement.allowed)
         {
             response.statusCode = httpStatus.FORBIDDEN;

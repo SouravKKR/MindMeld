@@ -111,6 +111,21 @@ class PlanSubscriptionService
         const { razorpayPaymentId, currentPeriodStartMs, currentPeriodEndMs } = cycle || {};
         const tier = subscription.getPlanTier();
 
+        // A refund for this exact charge may already have arrived. Razorpay
+        // delivers `subscription.charged` and `refund.processed` independently,
+        // so "refunded before we ever provisioned it" is an ordinary ordering,
+        // not a pathological one — and provisioning anyway would leave an
+        // account paid, refunded and fully active, which is precisely the state
+        // the reversal exists to prevent. Required lazily: PaymentReversalService
+        // reaches back into this class to roll entitlement back, so a top-level
+        // require would be a cycle.
+        const PaymentReversalService = require("../Payments/PaymentReversalService");
+        if (await PaymentReversalService.hasReversalForPayment(razorpayPaymentId))
+        {
+            console.warn(`[PlanSubscriptionService] Refusing to provision subscription charge ${razorpayPaymentId} — it has already been reversed.`);
+            return { applied: false, refusedAsReversed: true };
+        }
+
         const monthlyCredits = PlanMetadata.getMonthlyCredits(tier);
         if (monthlyCredits > 0 && razorpayPaymentId)
         {
@@ -138,6 +153,64 @@ class PlanSubscriptionService
             : subscriptionStatuses.ACTIVE;
 
         return await PlanSubscriptionService.applyActivation(subscription, { currentPeriodStartMs: currentPeriodStartMs, currentPeriodEndMs: currentPeriodEndMs }, statusToSet);
+    }
+
+    /**
+     * Rolls entitlement back to where the reversed cycle started.
+     *
+     * This is the ONLY path in this class allowed to SHORTEN planExpiresAt.
+     * Everywhere else the never-shorten rule protects a paying customer from a
+     * late or out-of-order webhook cutting their access; here the customer has
+     * taken the money back, so honouring the period that charge bought would
+     * mean giving away exactly what was refunded.
+     *
+     * The new expiry is the cycle's START, not "now": the cycle was paid for by
+     * the charge that has just been reversed, so none of it survives. Any
+     * expiry EARLIER than that is left alone — a subscription already lapsed
+     * for another reason must not be silently extended by a reversal.
+     *
+     * Status becomes CANCELLED. A reversed charge is not a payment failure
+     * awaiting retry (that is PENDING/HALTED, which deliberately preserve
+     * access); it is a customer who has undone the transaction.
+     *
+     * @param {UserSubscription} subscription
+     * @returns {Promise<{applied: boolean}>}
+     */
+    static async applyChargeReversal(subscription)
+    {
+        if (!subscription)
+        {
+            return { applied: false };
+        }
+
+        const userId = subscription.getUserId();
+        const cycleStartAt = subscription.getCurrentPeriodStartAt();
+
+        const AuthenticationQueryEngine = require("../Database/AuthenticationQueryEngine");
+        const existingUser = await AuthenticationQueryEngine.getUserById(userId);
+        const existingExpiry = existingUser ? PlanTierResolver.getExpiresAt(existingUser) : null;
+
+        const cycleStartMilliseconds = (cycleStartAt !== null && cycleStartAt !== undefined) ? Number(cycleStartAt) : null;
+
+        // Take the EARLIER of the two. A stored expiry already behind the cycle
+        // start means access had ended for some other reason, and moving it
+        // forward would turn a reversal into an extension.
+        const rolledBackExpiry = (existingExpiry !== null && cycleStartMilliseconds !== null)
+            ? Math.min(existingExpiry, cycleStartMilliseconds)
+            : (cycleStartMilliseconds !== null ? cycleStartMilliseconds : existingExpiry);
+
+        await PlanSubscriptionService.#applyEntitlement(userId,
+        {
+            planExpiresAt: rolledBackExpiry,
+            planStatus: subscriptionStatuses.CANCELLED
+        });
+
+        await UserSubscriptionQueryEngine.patchByProviderSubscriptionId(subscription.getProviderSubscriptionId(),
+        {
+            status: subscriptionStatuses.CANCELLED
+        });
+
+        return { applied: true };
     }
 
     /**

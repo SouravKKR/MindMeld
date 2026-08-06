@@ -16,6 +16,11 @@
         {
             "datatype": "string"
         },
+        "scopeKey":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
         "status":
         {
             "datatype": "enum:DeckLicenseStatuses",

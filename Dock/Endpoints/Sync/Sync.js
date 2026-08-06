@@ -10,6 +10,7 @@ const StorageCreditAssessor = require("../../Globals/Classes/Credits/StorageCred
 const StorageQuotaEnforcer = require("../../Globals/Classes/Storage/StorageQuotaEnforcer");
 const SyncPayloadValidator = require("../../Globals/Classes/Sync/SyncPayloadValidator");
 const LapsedPaidDeckReaper = require("../../Globals/Classes/PaidDeck/LapsedPaidDeckReaper");
+const OrganizationScopeResolver = require("../../Globals/Classes/Organization/OrganizationScopeResolver");
 const AutoAnalysisDeckFields = require("../../Globals/Classes/Analysis/AutoAnalysisDeckFields");
 const CuratedStudyMaterialFields = require("../../Globals/Classes/Analysis/CuratedStudyMaterialFields");
 const AiGeneratedDeckFields = require("../../Globals/Classes/Security/AiGeneratedDeckFields");
@@ -91,7 +92,28 @@ async function handleSync(request, response)
     }
 
     const body = await request.getBody();
-    const userId = user.getId();
+
+    // The scope this request reads and writes in. In the personal view it IS
+    // the user id; inside an organization view it is a distinct namespace, so
+    // the two libraries are separate sets of rows rather than one set filtered
+    // two ways — which is what makes it impossible for a surface that forgot to
+    // filter to leak one into the other.
+    //
+    // Every per-user collection treats this value as an opaque owner key, so
+    // nothing downstream needed to change. The claim is re-authorised against
+    // stored membership inside the resolver; an unauthorised one silently falls
+    // back to the personal scope.
+    const scope = await OrganizationScopeResolver.resolve(request, user.getId());
+    const userId = scope.scopeKey;
+
+    // Three things are properties of the PERSON rather than of the view, and
+    // must keep using the account id even inside an organization: the sync lock
+    // (one engine per device, whichever view it is showing — LockSync acquires
+    // it under the account id, so resolving it per view would reject every
+    // organization-view push as unlocked), the storage cap (one plan, one meter,
+    // measured across every scope the account owns), and paid-deck licensing
+    // (licenses are held by the buyer, not by a library).
+    const personalUserId = user.getId();
     const deviceId = body.deviceId;
     // Coerce the cursor to a safe number so it can never smuggle a query
     // operator into `new Date(lastSync)` / the pull's serverUpdatedAt range.
@@ -138,7 +160,7 @@ async function handleSync(request, response)
     // path treats a non-2xx chunk response as a hard failure, resets
     // pendingChanges-removal (so the user's records aren't lost), and
     // the next debounced cycle re-races for the lock cleanly.
-    const lockState = await TaskManager.getSyncLockState(userId);
+    const lockState = await TaskManager.getSyncLockState(personalUserId);
     if (!lockState.bIsLocked || lockState.holderDeviceId !== deviceId)
     {
         console.warn(`[Sync] Rejecting push from device ${deviceId} — lock is ${lockState.bIsLocked ? "held by " + lockState.holderDeviceId : "not held"}.`);
@@ -194,11 +216,11 @@ async function handleSync(request, response)
         || byType[entityTypes.ASK_AI_POPUP_LINK].length > 0
         || byType[entityTypes.CONTENT_OVERLAY].length > 0;
 
-    if (hasUpserts && !(await StorageQuotaEnforcer.isWithinQuota(userId)))
+    if (hasUpserts && !(await StorageQuotaEnforcer.isWithinQuota(personalUserId)))
     {
         console.warn(`[Sync] Rejecting push from user ${userId} — storage quota exceeded.`);
         response.statusCode = httpStatus.PAYLOAD_TOO_LARGE;
-        response.sendJson({ error: ErrorCodes.STORAGE_QUOTA_EXCEEDED, limitBytes: await StorageQuotaEnforcer.getLimitBytes(userId) });
+        response.sendJson({ error: ErrorCodes.STORAGE_QUOTA_EXCEEDED, limitBytes: await StorageQuotaEnforcer.getLimitBytes(personalUserId) });
         return;
     }
 
@@ -336,7 +358,7 @@ async function handleSync(request, response)
         {
             return paidContentKeyByDeckId.get(paidDeckId);
         }
-        const contentKeyBuffer = await KeyManagementService.getPaidDeckContentKeyBufferForUser(userId, paidDeckId);
+        const contentKeyBuffer = await KeyManagementService.getPaidDeckContentKeyBufferForUser(personalUserId, paidDeckId);
         paidContentKeyByDeckId.set(paidDeckId, contentKeyBuffer);
         return contentKeyBuffer;
     };
@@ -356,7 +378,7 @@ async function handleSync(request, response)
         // this same response and the client drops its now-unlicensed copy. The
         // ExpiredLicenseSweeper does the same on a schedule so cleanup never has
         // to wait for the user to sync; both share LapsedPaidDeckReaper.
-        await LapsedPaidDeckReaper.reapForUser(db, userId);
+        await LapsedPaidDeckReaper.reapForUser(db, personalUserId);
 
         const pullConfig =
         [

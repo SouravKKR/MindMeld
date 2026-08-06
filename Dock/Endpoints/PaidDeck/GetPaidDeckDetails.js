@@ -3,6 +3,7 @@ const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const PaidDeckPricingEngine = require("../../Globals/Classes/Pricing/PaidDeckPricingEngine");
 const RegionResolver = require("../../Globals/Classes/Pricing/RegionResolver");
 const PaidDeckDeepLinkCookie = require("../Helpers/PaidDeckDeepLinkCookie");
+const PaidDeckAudienceResolver = require("../../Globals/Classes/PaidDeck/PaidDeckAudienceResolver");
 const { getSession } = require("../Helpers/GetSession");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
@@ -60,6 +61,17 @@ async function getPaidDeckDetails(request, response)
         // Deliberately the same response for "no such deck" and "exists but is
         // still a draft". Distinguishing them would turn this endpoint into an
         // enumeration oracle for unpublished deck IDs.
+        response.statusCode = httpStatus.NOT_FOUND;
+        response.sendJson({ error: ErrorCodes.PAID_DECK_NOT_FOUND });
+        return;
+    }
+
+    // A deck published to ONE organization is invisible to everyone else,
+    // including through a share link. Answered with the same NOT_FOUND for the
+    // same reason the draft case is: a distinct response would tell an outsider
+    // that an institute's deck exists.
+    if (!(await PaidDeckAudienceResolver.isVisibleTo(deckDocument, await PaidDeckAudienceResolver.resolveAudienceUser(request))))
+    {
         response.statusCode = httpStatus.NOT_FOUND;
         response.sendJson({ error: ErrorCodes.PAID_DECK_NOT_FOUND });
         return;

@@ -71,6 +71,14 @@ class AdminListQueryRunner
     {
         const queryParts = [];
 
+        // The definition's own scope first, so it can never be dropped by an
+        // absent or malformed client filter.
+        const baseQuery = definition.getBaseQuery();
+        if (baseQuery)
+        {
+            queryParts.push(baseQuery);
+        }
+
         // Free-text search across the declared searchable fields, expressed
         // through the same TextSearchFilter the paid-deck search uses.
         const searchableFields = definition.getSearchableFields();

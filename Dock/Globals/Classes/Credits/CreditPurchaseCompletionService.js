@@ -1,7 +1,5 @@
 const CreditLedger = require("./CreditLedger");
 const PendingCreditOrderQueryEngine = require("../Database/PendingCreditOrderQueryEngine");
-const AuthenticationQueryEngine = require("../Database/AuthenticationQueryEngine");
-const ZohoInvoiceService = require("../Invoicing/ZohoInvoiceService");
 const { creditTransactionTypes } = require("../../Enumerations/CreditTransactionTypes");
 const Logger = require("../Logger");
 const LogTitles = require("../Logging/LogTitles");
@@ -14,9 +12,8 @@ const { notificationChannels } = require("../../Enumerations/NotificationChannel
  * CreditPurchaseCompletionService
  *
  * The ONE place a verified credit payment turns into credits. Called by both
- * VerifyCreditPurchase (buyer's browser) and the payment-provider webhook (Zoho
- * today; server to server), so the two paths cannot diverge — whichever arrives
- * first grants;
+ * VerifyCreditPurchase (buyer's browser) and the Razorpay webhook (server to
+ * server), so the two paths cannot diverge — whichever arrives first grants and
  * the other becomes an idempotent no-op.
  *
  * Idempotency layers, in order:
@@ -52,6 +49,20 @@ class CreditPurchaseCompletionService
     {
         const referenceKey = CreditPurchaseCompletionService.buildReferenceKey(pendingCreditOrder.providerOrderId);
 
+        // The money for this order may already have gone back. A refund and a
+        // capture are independent provider events, so "refunded before we
+        // provisioned it" is an ordinary ordering rather than a pathological
+        // one, and granting anyway would leave the buyer paid, refunded and
+        // holding the credits. Required lazily to keep the settlement services
+        // and the reversal service free of a require cycle.
+        const PaymentReversalService = require("../Payments/PaymentReversalService");
+        if (await PaymentReversalService.hasReversalForOrder(pendingCreditOrder.providerOrderId))
+        {
+            console.warn(`[CreditPurchaseCompletionService] Refusing to grant order ${pendingCreditOrder.providerOrderId} — it has already been reversed.`);
+            await PendingCreditOrderQueryEngine.markConsumed(pendingCreditOrder.providerOrderId, pendingCreditOrder.userId);
+            return { granted: false, alreadyProcessed: true, refusedAsReversed: true, creditsGranted: 0, balanceAfter: null };
+        }
+
         const grantResult = await CreditLedger.grant
         (
             pendingCreditOrder.userId,
@@ -80,15 +91,16 @@ class CreditPurchaseCompletionService
 
         await PendingCreditOrderQueryEngine.markConsumed(pendingCreditOrder.providerOrderId, pendingCreditOrder.userId);
 
-        // Invoice exactly once — only on the FIRST grant for this order (a
-        // replay from the other path lands as alreadyApplied and must not
-        // re-invoice). Best-effort: ZohoInvoiceService never throws, but the
-        // user lookup might, so the whole block is guarded — a failure here
-        // never affects the credits that were just granted.
+        // Log exactly once — only on the FIRST grant for this order (a replay
+        // from the other path lands as alreadyApplied and must not re-log).
+        //
+        // No invoice is generated here. Invoicing is handled outside the
+        // application and attached manually for the record, so settlement's job
+        // ends at the ledger entry and the structured purchase log below, which
+        // together carry everything an invoice would need: buyer, quantity,
+        // amount, currency, provider references and timestamp.
         if (grantResult.applied === true && grantResult.alreadyApplied !== true)
         {
-            await CreditPurchaseCompletionService.#generateInvoice(pendingCreditOrder, providerPaymentId);
-
             Logger.info(logCategory.PURCHASE, LogTitles.PURCHASE_CREDITS, "Credits purchased",
             {
                 accountId: pendingCreditOrder.userId,
@@ -131,37 +143,6 @@ class CreditPurchaseCompletionService
         };
     }
 
-    static async #generateInvoice(pendingCreditOrder, providerPaymentId)
-    {
-        try
-        {
-            if (!ZohoInvoiceService.isEnabled())
-            {
-                return;
-            }
-
-            const user = await AuthenticationQueryEngine.getUserById(pendingCreditOrder.userId);
-            const email = user ? (user.getAdditionalData()?.email || "") : "";
-            if (!email)
-            {
-                return;
-            }
-
-            await ZohoInvoiceService.createPaidInvoice
-            ({
-                email: email,
-                name: user.getDisplayName ? user.getDisplayName() : "",
-                amountMinor: pendingCreditOrder.amountMinor,
-                currency: pendingCreditOrder.currency,
-                description: `${pendingCreditOrder.credits} CogniumLearn credits`,
-                referenceNumber: providerPaymentId || pendingCreditOrder.providerOrderId
-            });
-        }
-        catch (invoiceError)
-        {
-            console.warn(`[CreditPurchaseCompletionService] Invoice step failed for order ${pendingCreditOrder.providerOrderId} (non-fatal): ${invoiceError?.message || invoiceError}`);
-        }
-    }
 }
 
 module.exports = CreditPurchaseCompletionService;

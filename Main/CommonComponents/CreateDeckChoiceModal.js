@@ -1,4 +1,5 @@
 import DialogBox from "./DialogBox.js";
+import UserIdentityManager from "../Globals/Classes/UserIdentityManager.js";
 import { deckCreationOptions } from "../Globals/Enumerations/DeckCreationOptions.js";
 
 /**
@@ -64,6 +65,46 @@ class CreateDeckChoiceModal
         });
     }
 
+    /**
+     * The marketplace option, or nothing at all inside an organization view.
+     *
+     * A purchase is a personal transaction that lands in the personal library,
+     * so offering it from a view whose decks the institute supplies would take
+     * the buyer to a deck they then could not find. The page itself refuses to
+     * open in this view as well — hiding an entry point is a courtesy, not a
+     * control.
+     */
+    static #getMarketplaceOptionMarkup()
+    {
+        if (UserIdentityManager.isOrganizationContext())
+        {
+            // Inside an organisation's view the equivalent surface is that
+            // organisation's shelf: free decks it provides, in the library the
+            // member is actually looking at. Offered in the marketplace's place
+            // rather than alongside it, so the option in this slot is always
+            // "get a ready-made deck from wherever that comes from here".
+            return `
+                    <button class="create-deck-choice-option create-deck-choice-buy" data-choice="${deckCreationOptions.BROWSE_ORGANIZATION_SHELF}">
+                        <span class="create-deck-choice-option-icon">🏫</span>
+                        <span class="create-deck-choice-option-body">
+                            <span class="create-deck-choice-option-title">Decks from your organisation</span>
+                            <span class="create-deck-choice-option-description">Free decks your institute provides, ready to study</span>
+                        </span>
+                    </button>
+        `;
+        }
+
+        return `
+                    <button class="create-deck-choice-option create-deck-choice-buy" data-choice="${deckCreationOptions.BROWSE_PAID_LIBRARY}">
+                        <span class="create-deck-choice-option-icon">🛍️</span>
+                        <span class="create-deck-choice-option-body">
+                            <span class="create-deck-choice-option-title">Browse paid decks</span>
+                            <span class="create-deck-choice-option-description">Curated decks ready to study, instantly</span>
+                        </span>
+                    </button>
+        `;
+    }
+
     static #getMarkup()
     {
         return `
@@ -85,13 +126,7 @@ class CreateDeckChoiceModal
                             <span class="create-deck-choice-option-description">Load a .emmd deck exported from CogniumLearn</span>
                         </span>
                     </button>
-                    <button class="create-deck-choice-option create-deck-choice-buy" data-choice="${deckCreationOptions.BROWSE_PAID_LIBRARY}">
-                        <span class="create-deck-choice-option-icon">🛍️</span>
-                        <span class="create-deck-choice-option-body">
-                            <span class="create-deck-choice-option-title">Browse paid decks</span>
-                            <span class="create-deck-choice-option-description">Curated decks ready to study, instantly</span>
-                        </span>
-                    </button>
+                    ${CreateDeckChoiceModal.#getMarketplaceOptionMarkup()}
                 </div>
             </div>
         `;

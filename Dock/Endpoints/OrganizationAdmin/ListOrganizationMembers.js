@@ -1,35 +1,26 @@
-const OrganizationQueryEngine = require("../../Globals/Classes/Organization/OrganizationQueryEngine");
 const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
-const { userRoles } = require("../../Globals/Enumerations/UserRoles");
+const OrganizationAuthorityResolver = require("../../Globals/Classes/Organization/OrganizationAuthorityResolver");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
-const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 
+/**
+ * GET /Organization/Members/List?organizationId=...
+ *
+ * Readable by anyone with standing in the organization — owner, delegate or
+ * super-admin. Changing the roster needs the MANAGE_MEMBERS power; merely
+ * seeing who is in it does not, because every delegate surface (credits,
+ * permissions) is expressed in terms of these people.
+ */
 async function listOrganizationMembers(request, response)
 {
     const queryParams = await request.getQueryParams();
     const organizationId = typeof queryParams?.organizationId === "string" ? queryParams.organizationId : "";
 
-    if (!organizationId)
+    const authority = await OrganizationAuthorityResolver.resolve(request.user, organizationId);
+    if (!authority.allowed)
     {
-        response.statusCode = httpStatus.BAD_REQUEST;
-        response.sendJson({ success: false, error: ErrorCodes.MISSING_ORGANIZATION_ID });
-        return;
-    }
-
-    const organization = await OrganizationQueryEngine.getOrganizationById(organizationId);
-    if (!organization)
-    {
-        response.statusCode = httpStatus.NOT_FOUND;
-        response.sendJson({ success: false, error: ErrorCodes.ORG_NOT_FOUND });
-        return;
-    }
-
-    const user = request.user;
-    if (user.getRole() !== userRoles.ADMIN && organization.getAdminUserId() !== user.getId())
-    {
-        response.statusCode = httpStatus.FORBIDDEN;
-        response.sendJson({ success: false, error: ErrorCodes.NOT_ORG_ADMIN });
+        response.statusCode = OrganizationAuthorityResolver.statusForDenial(authority);
+        response.sendJson({ success: false, error: authority.reason });
         return;
     }
 
@@ -40,8 +31,8 @@ async function listOrganizationMembers(request, response)
     ({
         success: true,
         organizationId: organizationId,
-        currentMemberCount: organization.getCurrentMemberCount(),
-        maxMembers: organization.getMaxMembers(),
+        currentMemberCount: authority.organization.getCurrentMemberCount(),
+        maxMembers: authority.organization.getMaxMembers(),
         members: members.map(member => member.toJson())
     });
 }

@@ -1,6 +1,9 @@
 const { PacketronHandlerFlags, PacketronRequestMethod } = require("@gamiumgamers/packetron");
 const { ensureLogin } = require("./Plugins/EnsureLogin");
 const { ecdhResponseEnvelope } = require("./Plugins/EcdhResponseEnvelope");
+const { noCache } = require("./Plugins/NoCache");
+const { ensurePaymentAccess } = require("./Plugins/EnsurePaymentAccess");
+const { ensurePaymentRequestSchema } = require("./Plugins/EnsurePaymentRequestSchema");
 const { browsePaidDeckLibrary } = require("./PaidDeck/BrowsePaidDeckLibrary");
 const { initiatePurchase } = require("./PaidDeck/InitiatePurchase");
 const { verifyPurchase } = require("./PaidDeck/VerifyPurchase");
@@ -60,7 +63,7 @@ function handlePaidDeckEndpoints(server)
         handler: initiatePurchase,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
-        plugins: [ensureLogin]
+        plugins: [ensureLogin, ensurePaymentAccess, ensurePaymentRequestSchema, noCache]
     });
 
     server.handle
@@ -69,7 +72,7 @@ function handlePaidDeckEndpoints(server)
         handler: verifyPurchase,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
-        plugins: [ensureLogin]
+        plugins: [ensureLogin, ensurePaymentAccess, ensurePaymentRequestSchema, noCache]
     });
 
     server.handle

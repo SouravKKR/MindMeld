@@ -1,26 +1,16 @@
 const { PacketronHandlerFlags, PacketronRequestMethod } = require("@gamiumgamers/packetron");
 const { handleRazorpayWebhook } = require("./Webhook/HandleRazorpayWebhook");
-const { handleZohoWebhook } = require("./Webhook/HandleZohoWebhook");
 
 
 function handleWebhookEndpoints(server)
 {
-    // PLAIN_TEXT_BODY (not JSON_BODY) for both — the HMAC signature is computed
-    // over the raw bytes the provider sent. JSON_BODY would parse + lose the
-    // original byte stream, breaking signature verification.
-
-    // Zoho Payments — the active provider driving every checkout in the UI.
-    server.handle
-    ({
-        routePath: `/Webhooks/Zoho`,
-        handler: handleZohoWebhook,
-        flags: PacketronHandlerFlags.PLAIN_TEXT_BODY,
-        method: PacketronRequestMethod.POST,
-        plugins: []
-    });
-
-    // Razorpay — retained server-side; no UI initiates it, but the webhook
-    // stays live so any in-flight / legacy Razorpay order can still reconcile.
+    // Razorpay is the sole payment provider: it creates every order and settles
+    // every flow. This webhook is the server-to-server safety net for a buyer
+    // who pays and then closes the tab before the browser verify leg runs.
+    //
+    // PLAIN_TEXT_BODY (not JSON_BODY) — the HMAC signature is computed over the
+    // raw bytes Razorpay sent. JSON_BODY would parse and lose the original byte
+    // stream, breaking signature verification.
     server.handle
     ({
         routePath: `/Webhooks/Razorpay`,

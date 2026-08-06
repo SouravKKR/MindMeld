@@ -1,4 +1,5 @@
 import HeaderComponent from "../../CommonComponents/HeaderComponent.js";
+import UserIdentityManager from "../../Globals/Classes/UserIdentityManager.js";
 import DialogBox from "../../CommonComponents/DialogBox.js";
 import PageNavigator from "../../Globals/Classes/PageNavigator.js";
 import PaidDeckPurchaseFlow from "../../Globals/Classes/PaidDeckPurchaseFlow.js";
@@ -41,6 +42,21 @@ class PaidDeckDetailsPage extends HTMLElement
     connectedCallback()
     {
         this.setAttribute("page", "");
+
+        // Same rule as the library page: the marketplace is a personal-view
+        // surface, so this page refuses to render inside an organization's view
+        // however it was reached.
+        if (UserIdentityManager.isOrganizationContext())
+        {
+            this.innerHTML = `
+                <header-component title="Paid Deck"></header-component>
+                <div class="paid-deck-details-empty">
+                    The deck marketplace is part of your own library. Switch to viewing as
+                    yourself from the profile menu to open this deck.
+                </div>
+            `;
+            return;
+        }
 
         if (!this.#deck)
         {

@@ -1,4 +1,6 @@
 import DialogBox from "../../CommonComponents/DialogBox.js";
+import UserIdentityManager from "./UserIdentityManager.js";
+import OrganizationContextRegistry from "./Organization/OrganizationContextRegistry.js";
 import PlanMetadataConstants from "../Constants/PlanMetadataConstants.js";
 import { planTiers } from "../Enumerations/PlanTiers.js";
 import { planFeatures } from "../Enumerations/PlanFeatures.js";
@@ -17,15 +19,26 @@ import { planFeatures } from "../Enumerations/PlanFeatures.js";
  *      the feature (Free / Basic / Pro / Pro Plus), read from the same
  *      PlanMetadataConstants the server uses.
  *
+ * Inside an organization view the answer comes from the INSTITUTE instead of
+ * the personal plan: what a member may do there is what their organization
+ * granted their tags, never what they pay for privately. The two are kept
+ * separate on purpose — joining an institute must not silently upgrade or
+ * downgrade a private account, in either direction.
+ *
  * This gate is UX only: the server re-authorizes every AI call against the
- * stored plan (PlanEntitlementGate) and returns FEATURE_NOT_IN_PLAN when the
- * tier does not include it. The client value is never trusted.
+ * stored plan or the organization's rules (PlanEntitlementGate) and returns
+ * FEATURE_NOT_IN_PLAN when neither includes it. The client value is never
+ * trusted.
  */
 class AiFeatureGate
 {
     static UNAUTHORIZED_TITLE = "Sign in required";
     static UNAUTHORIZED_MESSAGE = "Please sign in to use AI features.";
     static UPGRADE_TITLE = "Upgrade required";
+
+    // An organization member cannot buy their way past a rule their institute
+    // set, so the refusal names who to ask rather than offering an upgrade.
+    static ORGANIZATION_RESTRICTED_TITLE = "Not available in this view";
 
     /**
      * True when there is a signed-in user who may use AI features. Cost is
@@ -98,6 +111,13 @@ class AiFeatureGate
         {
             return false;
         }
+
+        const organizationContextId = UserIdentityManager.getOrganizationContextId();
+        if (organizationContextId.length > 0)
+        {
+            return OrganizationContextRegistry.isFeatureAllowedInContext(organizationContextId, Number(planFeature));
+        }
+
         const metadata = PlanMetadataConstants[AiFeatureGate.#tierName(AiFeatureGate.getCurrentPlanTier())];
         return Boolean(metadata && Array.isArray(metadata.features) && metadata.features.includes(featureName));
     }
@@ -147,6 +167,20 @@ class AiFeatureGate
      */
     static async showFeatureNotInPlanAlert(detail = {}, featureLabel = "This feature")
     {
+        // The server reports requiredTier: null inside an organization view,
+        // precisely so the client does not send a member down an upgrade path
+        // that cannot help them.
+        const organizationContextId = UserIdentityManager.getOrganizationContextId();
+        if (organizationContextId.length > 0)
+        {
+            const organizationName = OrganizationContextRegistry.getOrganizationName(organizationContextId);
+            await DialogBox.alert(
+                AiFeatureGate.ORGANIZATION_RESTRICTED_TITLE,
+                `${featureLabel} has not been enabled by ${organizationName} for this view. It may still be available in your own library — switch to viewing as yourself from the profile menu.`
+            );
+            return;
+        }
+
         const requiredTier = typeof detail.requiredTier === "number" ? detail.requiredTier : null;
         const metadata = requiredTier !== null ? PlanMetadataConstants[AiFeatureGate.#tierName(requiredTier)] : null;
         const upgradeTarget = metadata ? `${metadata.label} plan` : "a higher plan";
@@ -192,6 +226,19 @@ class AiFeatureGate
         if (AiFeatureGate.hasFeature(planFeature))
         {
             return true;
+        }
+
+        // Inside an organization view an upgrade prompt would be misleading —
+        // buying a plan changes nothing here.
+        const organizationContextId = UserIdentityManager.getOrganizationContextId();
+        if (organizationContextId.length > 0)
+        {
+            const organizationName = OrganizationContextRegistry.getOrganizationName(organizationContextId);
+            await DialogBox.alert(
+                AiFeatureGate.ORGANIZATION_RESTRICTED_TITLE,
+                `${featureLabel} has not been enabled by ${organizationName} for this view. It may still be available in your own library — switch to viewing as yourself from the profile menu.`
+            );
+            return false;
         }
 
         const minimumTier = AiFeatureGate.minimumTierForFeature(planFeature);

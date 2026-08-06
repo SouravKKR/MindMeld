@@ -35,6 +35,14 @@ class CreditConfiguration
     static DEFAULT_PROMO_GRANT_AMOUNT = 5;
     static DEFAULT_MINIMUM_PURCHASE_CREDITS = 1;
 
+    // The packs a buyer may choose from. Purchases are pack-only: a free
+    // quantity box asked every buyer to decide a number they had no basis for
+    // choosing, and made "how much does this cost" a calculation rather than a
+    // price. The ladder is wide enough that the answer is always "the next one
+    // up". Discounts are left at zero here and set by an administrator — a
+    // default discount would be a pricing decision hidden in code.
+    static DEFAULT_CREDIT_PACK_SIZES = [5, 10, 25, 50, 100, 250, 500, 1000];
+
     // Default flat per-request costs for the AskAi cloud tiers, keyed by
     // TaskTypes name. CreditPreflight treats an ABSENT rule as "unmetered →
     // free", so these tiers must always carry a configured rule — the store
@@ -358,6 +366,26 @@ class CreditConfiguration
      * rules (including admin-disabled ones) are never overwritten.
      * @returns {boolean} true when at least one rule was added
      */
+    /**
+     * Backfills the standard pack ladder when none is configured, so a fresh
+     * environment can sell credits without an administrator having to invent
+     * the sizes first. Returns true when something was added, matching the
+     * other ensure* methods, so the caller knows to persist.
+     *
+     * An existing pack set is never touched: once an administrator has chosen
+     * sizes and discounts, those are the prices customers were shown.
+     */
+    ensureDefaultCreditPacks()
+    {
+        if (this.getCreditPacks().length > 0)
+        {
+            return false;
+        }
+
+        this.setCreditPacks(CreditConfiguration.DEFAULT_CREDIT_PACK_SIZES.map(packSize => ({ credits: packSize, discountPercent: 0 })));
+        return true;
+    }
+
     ensureAskAiTaskRules()
     {
         let bAddedAnyRule = false;

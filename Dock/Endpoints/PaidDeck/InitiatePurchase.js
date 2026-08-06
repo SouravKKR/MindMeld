@@ -2,7 +2,10 @@ const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnec
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const PaidDeckPricingEngine = require("../../Globals/Classes/Pricing/PaidDeckPricingEngine");
 const PaymentProviderFactory = require("../../Globals/Classes/Payments/PaymentProviderFactory");
+const PaymentProvider = require("../../Globals/Classes/Payments/PaymentProvider");
+const CheckoutReceiptIdentifier = require("../../Globals/Classes/Payments/CheckoutReceiptIdentifier");
 const RegionResolver = require("../../Globals/Classes/Pricing/RegionResolver");
+const PaidDeckAudienceResolver = require("../../Globals/Classes/PaidDeck/PaidDeckAudienceResolver");
 const Purchase = require("../../Globals/Model/Purchase");
 const PendingOrderQueryEngine = require("../../Globals/Classes/Database/PendingOrderQueryEngine");
 const { getUser } = require("../Helpers/GetUser");
@@ -86,6 +89,21 @@ async function initiatePurchase(request, response)
     // Load the user once so the pricing engine can resolve org-perks
     // by email without redundant DB hits.
     const user = await getUser(request);
+
+    // An organization's decks are provided to its members, never sold. Refused
+    // here — BEFORE pricing, before any coupon is reserved and before any order
+    // is created — so no payment path is reachable for one at all. The publish
+    // service already forces their price to zero; this is the second,
+    // independent guard, because "it costs nothing" and "it is not purchasable"
+    // are different claims and only the second one keeps a deck out of the
+    // checkout flow entirely.
+    const audienceScopedDeckIds = await PaidDeckAudienceResolver.listOrganizationDeckIds(deckIds);
+    if (audienceScopedDeckIds.length > 0)
+    {
+        response.statusCode = httpStatus.FORBIDDEN;
+        response.sendJson({ error: ErrorCodes.DECK_NOT_FOR_SALE, deckIds: audienceScopedDeckIds });
+        return;
+    }
     // convertToDisplayCurrency = true: the order is created in the buyer's
     // display currency so the payment provider captures the same amount the
     // storefront showed (no display-vs-charge mismatch).
@@ -343,34 +361,112 @@ async function initiatePurchase(request, response)
         return;
     }
 
-    const order = await provider.initiateOrder
-    (
-        pricing.totalMinor,
-        pricing.currency,
+    // Bound the amount BEFORE it leaves our control. A basket that prices
+    // outside the chargeable band means a pricing defect or a manipulation
+    // attempt, and either way the provider would reject it remotely — after we
+    // had already given up the ability to report the reason cleanly.
+    if (!PaymentProvider.isChargeableAmount(pricing.totalMinor))
+    {
+        Logger.warning(logCategory.PURCHASE, LogTitles.PURCHASE_DECK, "Refused a paid-deck order outside the chargeable amount band",
         {
-            receiptId: `mm_${session.getUserId().slice(0, 8)}_${Date.now()}`,
-            notes:
-            {
-                userId: session.getUserId(),
-                deckIds: deckIds.join(",")
-            }
-        }
-    );
+            accountId: session.getUserId(),
+            additionalData: { totalMinor: pricing.totalMinor, currency: pricing.currency, deckIds: deckIds }
+        });
+        response.statusCode = httpStatus.BAD_REQUEST;
+        response.sendJson({ error: ErrorCodes.AMOUNT_OUT_OF_RANGE });
+        return;
+    }
 
-    // Bind the provider order to the buyer + the exact decks + the server-priced
-    // amount. VerifyPurchase reads this back and grants licenses strictly from
-    // it, so a buyer cannot swap in more expensive deckIds after paying. The
-    // order notes above are advisory only — this row is the trusted record.
+    // The receipt is derived from the buyer, the (sorted) decks, the amount and
+    // the currency — never from the clock. Two clicks on the same basket at the
+    // same price therefore produce the same receipt, which is what lets the
+    // retry below find the order the first click already created.
+    const receiptId = CheckoutReceiptIdentifier.forPaidDeckPurchase
+    ({
+        userId: session.getUserId(),
+        deckIds: deckIds,
+        amountMinor: pricing.totalMinor,
+        currency: pricing.currency
+    });
+
+    // A retry of an unpaid checkout reuses the existing provider order instead
+    // of minting a second one for a single purchase. Safe without re-pricing:
+    // the amount and currency are inputs to the receipt, so a row found here is
+    // provably for the same decks at the same price. If anything about the
+    // price moved, the receipt moved with it and this misses.
+    const reusableOrder = await PendingOrderQueryEngine.findReusableByReceipt(receiptId, session.getUserId());
+    if (reusableOrder)
+    {
+        const reusedCheckoutContext = provider.buildCheckoutContext(reusableOrder);
+        if (reusedCheckoutContext)
+        {
+            response.statusCode = httpStatus.OK;
+            response.sendJson
+            ({
+                requiresPayment: true,
+                provider: provider.getProviderEnumValue(),
+                order:
+                {
+                    providerOrderId: reusableOrder.providerOrderId,
+                    amountMinor: reusableOrder.amountMinor,
+                    currency: reusableOrder.currency,
+                    checkoutContext: reusedCheckoutContext
+                },
+                pricing: pricing,
+                reusedExistingOrder: true
+            });
+            return;
+        }
+    }
+
+    // A provider outage must surface as a controlled 502, not an exception
+    // thrown out of the handler. Mirrors InitiateCreditPurchase's handling: the
+    // provider's own error text is logged server-side and never returned to the
+    // client, which would otherwise leak provider internals.
+    // Written BEFORE the provider call — see the note in
+    // InitiateCreditPurchase for why the previous ordering was wrong.
     await PendingOrderQueryEngine.createPendingOrder
     ({
-        providerOrderId: order.providerOrderId,
+        providerOrderId: receiptId,
         userId: session.getUserId(),
         deckIds: deckIds,
         amountMinor: pricing.totalMinor,
         currency: pricing.currency,
         region: region,
-        paymentProvider: provider.getProviderEnumValue()
+        paymentProvider: provider.getProviderEnumValue(),
+        receiptId: receiptId
     });
+
+    let order;
+    try
+    {
+        order = await provider.initiateOrder
+        (
+            pricing.totalMinor,
+            pricing.currency,
+            {
+                receiptId: receiptId,
+                notes:
+                {
+                    userId: session.getUserId(),
+                    deckIds: deckIds.join(",")
+                }
+            }
+        );
+    }
+    catch (orderError)
+    {
+        await PendingOrderQueryEngine.deleteUnclaimedOrder(receiptId, session.getUserId());
+        console.error(`[InitiatePurchase] Order creation failed for ${session.getUserId()}: ${orderError?.message || orderError}`);
+        response.statusCode = httpStatus.BAD_GATEWAY;
+        response.sendJson({ error: ErrorCodes.EXCEPTION });
+        return;
+    }
+
+    // Attach the provider's order id to the row written above. VerifyPurchase
+    // reads it back and grants licenses strictly from it, so a buyer cannot
+    // swap in more expensive deckIds after paying.
+    await PendingOrderQueryEngine.attachProviderOrderId(receiptId, session.getUserId(), order.providerOrderId);
 
     response.statusCode = httpStatus.OK;
     response.sendJson

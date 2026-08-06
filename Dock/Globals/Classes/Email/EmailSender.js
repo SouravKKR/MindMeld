@@ -2,6 +2,7 @@ const App = require("../App");
 const EmailMessage = require("./EmailMessage");
 const EmailTemplate = require("./EmailTemplate");
 const EmailProviderFactory = require("./EmailProviderFactory");
+const EmailSenderIdentities = require("./EmailSenderIdentities");
 
 /**
  * The high-level email API. It composes the message content (subject + branded
@@ -12,14 +13,19 @@ const EmailProviderFactory = require("./EmailProviderFactory");
  * Adding a new email type — a notification, a feature-release announcement — is
  * just another method here that builds an EmailMessage and calls send(); the
  * transport, provider selection, and branding are all reused unchanged.
+ *
+ * Each method also chooses the display name the recipient sees beside the "from"
+ * address, from the fixed EmailSenderIdentities set — so a sign-in code reads as
+ * coming from CogniumLearn Security and a support reply from CogniumLearn
+ * Support, off one shared, verified address.
  */
 class EmailSender
 {
     /**
      * Generalized dispatch seam. Any caller (current or future) can build an
      * EmailMessage and send it through the active provider. When the message
-     * carries no source address, the platform default is filled in here so
-     * individual callers never have to know it.
+     * carries no source address — or no display name — the platform defaults
+     * are filled in here so individual callers never have to know them.
      */
     static async send(emailMessage)
     {
@@ -33,6 +39,11 @@ class EmailSender
                 throw new Error("No email source address configured — set EMAIL_SOURCE_EMAIL (or SMTP_SOURCE_EMAIL) in Dock/.env");
             }
             messageToSend = messageToSend.withSourceEmail(defaultSourceEmail);
+        }
+
+        if (!messageToSend.getSenderName())
+        {
+            messageToSend = messageToSend.withSenderName(EmailSenderIdentities.DEFAULT);
         }
 
         await EmailProviderFactory.getDefaultProvider().sendEmail(messageToSend);
@@ -53,7 +64,7 @@ class EmailSender
             "This code expires in 10 minutes. If you didn't request this, you can safely ignore this email."
         );
 
-        const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody);
+        const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody, EmailSenderIdentities.SECURITY);
         await EmailSender.send(emailMessage);
     }
 
@@ -94,7 +105,7 @@ class EmailSender
             String(emailContent?.footerText ?? "")
         );
 
-        const emailMessage = new EmailMessage("", toEmailAddress, String(emailContent?.subject ?? ""), plainTextBody, htmlBody);
+        const emailMessage = new EmailMessage("", toEmailAddress, String(emailContent?.subject ?? ""), plainTextBody, htmlBody, EmailSenderIdentities.NOTIFICATIONS);
         await EmailSender.send(emailMessage);
     }
 
@@ -126,7 +137,7 @@ class EmailSender
             "This code expires in 60 minutes. If you weren't expecting this, you can safely ignore this email."
         );
 
-        const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody);
+        const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody, EmailSenderIdentities.SECURITY);
         await EmailSender.send(emailMessage);
     }
 
@@ -167,7 +178,7 @@ class EmailSender
             "Thank you for helping us make CogniumLearn better. You're receiving this because you asked to be notified when this issue was resolved."
         );
 
-        const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody);
+        const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody, EmailSenderIdentities.SUPPORT);
         await EmailSender.send(emailMessage);
     }
 
@@ -206,7 +217,7 @@ class EmailSender
             "We're still grateful you took the time to tell us. You're receiving this because you asked to be notified about this issue."
         );
 
-        const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody);
+        const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody, EmailSenderIdentities.SUPPORT);
         await EmailSender.send(emailMessage);
     }
 }

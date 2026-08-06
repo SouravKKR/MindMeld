@@ -10,7 +10,7 @@ import PaymentCheckout from "../Payments/PaymentCheckout.js";
  * CreditPurchaseFlow
  *
  * Buyer-side flow for purchasing credits, mirroring PaidDeckPurchaseFlow's
- * checkout handling: quote (Options) → pick quantity (CreditPurchaseDialog)
+ * checkout handling: quote (Options) → pick a pack (CreditPurchaseDialog)
  * → Initiate (server-priced order) → provider checkout → Verify → refresh the
  * cached user so the new balance shows everywhere immediately. The server
  * selects the payment provider and returns its enum in the initiate response;
@@ -63,6 +63,9 @@ class CreditPurchaseFlow
                 body: JSON.stringify
                 ({
                     credits: selection.credits,
+                    // The server has supported a checkout coupon all along;
+                    // nothing ever sent one, so the discount was unreachable.
+                    couponCode: selection.couponCode || "",
                     localeRegionHint: localeRegionHint
                 })
             });
@@ -95,6 +98,10 @@ class CreditPurchaseFlow
         if (errorCode === "BELOW_MINIMUM_PURCHASE")
         {
             return `The minimum purchase is ${errorJson.minimumPurchaseCredits} credits.`;
+        }
+        if (errorCode === "CREDITS_NOT_A_VALID_PACK")
+        {
+            return "That credit pack is no longer available. Reopen this dialog to see the current packs.";
         }
         if (errorCode === "AMOUNT_BELOW_PROVIDER_MINIMUM")
         {

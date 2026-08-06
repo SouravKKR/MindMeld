@@ -18,57 +18,64 @@ const { PacketronPlugin, PacketronPluginPriority } = require("@gamiumgamers/pack
  *   • Strict-Transport-Security  — forces HTTPS (emitted only on secure requests
  *                                 so plain-http local development is unaffected).
  *
- * Compatibility-first CSP. CogniumLearn embeds third parties that are hostile to a
- * strict nonce/hash policy: Google AdSense, the Zoho Payments checkout widget,
- * Google OAuth,
- * and in-browser LLMs (WebLLM / Transformers.js) that compile WebAssembly, spawn
- * blob-URL workers and stream model shards from huggingface.co. The Web
- * Components also render inline styles throughout. The default policy therefore
- * locks the high-value, no-risk directives (object-src none, base-uri self,
- * frame-ancestors self, form-action) while permitting the https:/inline/eval/
- * wasm/blob sources this stack genuinely needs — so the policy ships real value
- * without breaking any existing functionality. Every part is overridable from
- * the environment for operators who want to tighten it later.
+ * ── Two policies, and which one is enforced ───────────────────────────────
  *
- * ── The strict policy and its staged rollout ──────────────────────────────
+ * CogniumLearn embeds third parties that are hostile to a nonce/hash policy:
+ * Google AdSense, the Razorpay checkout widget, Google OAuth, and in-browser
+ * LLMs (WebLLM / Transformers.js) that compile WebAssembly, spawn blob-URL
+ * workers and stream model shards. The Web Components render inline styles
+ * throughout. Both policies below therefore lock the high-value, no-risk
+ * directives (object-src none, base-uri self, frame-ancestors self,
+ * form-action) and both keep 'unsafe-inline' in style-src — the Web Components
+ * genuinely need it, and inline style is a far smaller risk than inline script.
  *
- * A second, STRICT policy is defined alongside the compatible one. It drops
- * 'unsafe-inline' and 'unsafe-eval' from script-src and replaces the blanket
- * https: source with an explicit allow-list of the origins the app actually
- * loads scripts from. Both removals are believed safe for first-party code:
- * neither app shell contains a single inline <script> or inline event handler
- * (every script is an external src), and the only Function-constructor call in
- * the bundled stack is a `typeof globalThis === "object" ? … : Function("return
- * this")()` fallback that no browser capable of running this app ever reaches.
- * style-src deliberately KEEPS 'unsafe-inline' — the Web Components genuinely
- * render inline styles, and inline style is a far smaller risk than inline
- * script.
+ * They differ in script-src, and ONLY in script-src:
  *
- * What cannot be verified from the source alone is whether the remote third
- * parties (AdSense in particular) inject inline scripts at runtime. So the
- * strict policy is NOT enforced by default. In the default "compatible" mode
- * the compatible policy is enforced exactly as before and the strict policy
- * rides along as Content-Security-Policy-Report-Only, pointed at
- * /Security/CspReport. Browsers then report what the strict policy WOULD have
- * blocked without blocking anything, the reports land in the admin Alerts tab,
- * and once they come back clean an operator promotes the strict policy to
- * enforcing with a single environment variable. That is the whole point of the
- * mode switch: the tightening ships observable and reversible rather than as a
- * flag day.
+ *   STRICT (enforced by default) drops 'unsafe-inline' and 'unsafe-eval' and
+ *   replaces the blanket https: source with an explicit allow-list of the
+ *   origins the app actually loads scripts from. This is the policy that
+ *   satisfies the handbook's B4 control, because it is the only one of the two
+ *   that actually BLOCKS an injected <script> on a page where a payment is
+ *   taken. Both removals are safe for first-party code: neither app shell
+ *   contains a single inline <script> or inline event handler (every script is
+ *   an external src), and the only Function-constructor call in the bundled
+ *   stack is a `typeof globalThis === "object" ? … : Function("return this")()`
+ *   fallback that no browser capable of running this app ever reaches.
+ *   'wasm-unsafe-eval' and blob: stay, for the in-browser LLM.
+ *
+ *   COMPATIBLE is the permissive predecessor: script-src allows
+ *   'unsafe-inline', 'unsafe-eval' and any https: origin. It blocks no injected
+ *   script at all, so it is NOT the default — it survives solely as a one
+ *   variable escape hatch (CONTENT_SECURITY_POLICY_MODE=compatible) for an
+ *   operator who finds a third party breaking under strict and needs the site
+ *   working again while they investigate. When it is selected, the strict
+ *   policy rides along as Content-Security-Policy-Report-Only so the evidence
+ *   needed to get back to strict keeps accumulating.
+ *
+ * The enforced strict policy carries `report-uri` too, so promotion does not
+ * blind the operator: violations keep landing in the admin Alerts tab through
+ * /Security/CspReport whichever mode is selected. What cannot be verified from
+ * source alone is whether a remote third party (AdSense in particular) injects
+ * inline script at runtime — that is exactly what those reports answer, and the
+ * escape hatch is what makes acting on the answer a config change rather than a
+ * deploy.
  *
  * Environment overrides (all optional):
  *   SECURITY_HEADERS_DISABLED            "true" disables the plugin entirely.
  *   CONTENT_SECURITY_POLICY              full verbatim policy string (replaces the default,
  *                                        and suppresses the report-only companion — an
  *                                        operator supplying a policy owns it entirely).
- *   CONTENT_SECURITY_POLICY_MODE         "compatible" (default) or "strict". "strict"
- *                                        promotes the strict policy to the enforced one.
+ *   CONTENT_SECURITY_POLICY_MODE         "strict" (default) or "compatible". "compatible"
+ *                                        demotes the enforced policy to the permissive one
+ *                                        and sends strict as a report-only companion.
  *   CONTENT_SECURITY_POLICY_REPORT_ONLY  "true" sends the enforced policy in report-only
  *                                        mode instead (and suppresses the companion).
  *   CONTENT_SECURITY_POLICY_REPORTING_DISABLED
  *                                        "true" drops the report-only companion header.
  *   CONTENT_SECURITY_POLICY_REPORT_URI   default "/Security/CspReport".
  *   REFERRER_POLICY                      default "strict-origin-when-cross-origin".
+ *   PERMISSIONS_POLICY                   default denies payment/geolocation/usb/serial/
+ *                                        bluetooth/midi/sensors/interest-cohort.
  *   X_FRAME_OPTIONS                      default "SAMEORIGIN".
  *   HSTS_MAX_AGE_SECONDS                 default 15552000 (180 days). "0" disables HSTS.
  *   HSTS_INCLUDE_SUBDOMAINS              default "true".
@@ -79,6 +86,26 @@ class SecurityHeaders
     static DEFAULT_REFERRER_POLICY = "strict-origin-when-cross-origin";
     static DEFAULT_X_FRAME_OPTIONS = "SAMEORIGIN";
     static DEFAULT_HSTS_MAX_AGE_SECONDS = 15552000;
+
+    // Powerful browser features the app never uses. Denying them shrinks what
+    // injected script can reach — notably payment, which would otherwise let a
+    // skimmer invoke the Payment Request API from our origin. Features the app
+    // DOES use are deliberately absent from this list rather than set to
+    // 'self', so nothing here can break them: microphone and camera stay
+    // unlisted for future capture features, and fullscreen is left alone for
+    // the image viewer and mock-test surfaces.
+    static DEFAULT_PERMISSIONS_POLICY = [
+        "payment=()",
+        "geolocation=()",
+        "usb=()",
+        "serial=()",
+        "bluetooth=()",
+        "midi=()",
+        "magnetometer=()",
+        "gyroscope=()",
+        "accelerometer=()",
+        "interest-cohort=()"
+    ].join(", ");
 
     // The compatibility-first default policy. Source lists intentionally allow
     // https: (so any third-party HTTPS origin the app uses keeps working) while
@@ -116,9 +143,8 @@ class SecurityHeaders
     //     invalid-traffic detection. The wildcard is deliberate — Google picks
     //     the ep* subdomain per request. The apex is NOT included because CSP
     //     wildcards do not match it and nothing is served from it.
-    //   • static.zohocdn.com — the Zoho Payments checkout widget
-    //     (ZohoPaymentsCheckout expects zpay-js to be present).
-    //   • checkout.razorpay.com — the dormant Razorpay checkout, still shipped.
+    //   • checkout.razorpay.com — the Razorpay Standard Checkout widget, the
+    //     only payment script the app loads.
     //   • static.cloudflareinsights.com — the Cloudflare RUM/Web-Analytics beacon.
     //     It is not in any page's markup: Cloudflare injects the <script> into
     //     every proxied HTML response at the edge, so it is present in production
@@ -137,7 +163,6 @@ class SecurityHeaders
         "https://*.doubleclick.net",
         "https://*.adtrafficquality.google",
         "https://*.gstatic.com",
-        "https://static.zohocdn.com",
         "https://checkout.razorpay.com",
         "https://static.cloudflareinsights.com"
     ];
@@ -155,6 +180,7 @@ class SecurityHeaders
     static DEFAULT_REPORT_URI = "/Security/CspReport";
 
     static STRICT_MODE = "strict";
+    static COMPATIBLE_MODE = "compatible";
 
     // Subresource extensions the report-only companion is skipped for. Only the
     // DOCUMENT's policy governs what a page may load, so a second CSP header on
@@ -182,9 +208,16 @@ class SecurityHeaders
         return String(process.env.CONTENT_SECURITY_POLICY_REPORT_ONLY || "").toLowerCase() === "true";
     }
 
-    static isStrictMode()
+    /**
+     * The escape hatch, and the ONLY way to stop enforcing the strict policy
+     * short of a verbatim override. Anything other than an explicit
+     * "compatible" — unset, empty, "strict", a typo — leaves strict enforced,
+     * so a mangled value fails towards the safer policy rather than away from
+     * it.
+     */
+    static isCompatibleMode()
     {
-        return String(process.env.CONTENT_SECURITY_POLICY_MODE || "").trim().toLowerCase() === SecurityHeaders.STRICT_MODE;
+        return String(process.env.CONTENT_SECURITY_POLICY_MODE || "").trim().toLowerCase() === SecurityHeaders.COMPATIBLE_MODE;
     }
 
     static isReportingDisabled()
@@ -218,8 +251,8 @@ class SecurityHeaders
     /**
      * The policy that is actually ENFORCED (or, when the report-only flag is
      * set, the one sent report-only). A verbatim override always wins; failing
-     * that, strict mode selects the strict policy and the default selects the
-     * compatible one.
+     * that, compatible mode selects the permissive policy and the default
+     * selects the strict one.
      */
     static buildContentSecurityPolicy()
     {
@@ -234,14 +267,14 @@ class SecurityHeaders
             return SecurityHeaders.__cachedContentSecurityPolicy;
         }
 
-        if (SecurityHeaders.isStrictMode())
+        if (SecurityHeaders.isCompatibleMode())
         {
-            SecurityHeaders.__cachedContentSecurityPolicy = SecurityHeaders.buildStrictContentSecurityPolicy();
+            SecurityHeaders.__cachedContentSecurityPolicy =
+                SecurityHeaders.serializeDirectives(SecurityHeaders.CONTENT_SECURITY_POLICY_DIRECTIVES);
             return SecurityHeaders.__cachedContentSecurityPolicy;
         }
 
-        SecurityHeaders.__cachedContentSecurityPolicy =
-            SecurityHeaders.serializeDirectives(SecurityHeaders.CONTENT_SECURITY_POLICY_DIRECTIVES);
+        SecurityHeaders.__cachedContentSecurityPolicy = SecurityHeaders.buildStrictContentSecurityPolicy();
         return SecurityHeaders.__cachedContentSecurityPolicy;
     }
 
@@ -263,18 +296,24 @@ class SecurityHeaders
 
     /**
      * The strict policy to ship as a report-only companion beside the enforced
-     * compatible one, or null when no companion should be sent.
+     * one, or null when no companion should be sent.
      *
-     * Suppressed when reporting is switched off, when strict mode is already
-     * enforcing it, when the operator supplied a verbatim policy (they own the
-     * policy entirely), and when the legacy report-only flag is set (that flag
-     * already turns the enforced header into a report-only one, and a second
-     * report-only header would simply replace it).
+     * Only relevant while the escape hatch is pulled: in the default strict
+     * mode the enforced header IS the strict policy and already carries the
+     * report-uri, so a companion would be a duplicate. In compatible mode the
+     * companion is what keeps the evidence flowing towards getting back to
+     * strict.
+     *
+     * Suppressed when reporting is switched off, when the operator supplied a
+     * verbatim policy (they own the policy entirely), and when the legacy
+     * report-only flag is set (that flag already turns the enforced header into
+     * a report-only one, and a second report-only header would simply replace
+     * it).
      */
     static buildReportOnlyCompanionPolicy()
     {
         if (SecurityHeaders.isReportingDisabled()
-            || SecurityHeaders.isStrictMode()
+            || !SecurityHeaders.isCompatibleMode()
             || SecurityHeaders.isReportOnly()
             || SecurityHeaders.hasVerbatimOverride())
         {
@@ -358,11 +397,12 @@ class SecurityHeaders
 
         response.setHeader(contentSecurityPolicyHeaderName, SecurityHeaders.buildContentSecurityPolicy());
 
-        // The strict candidate rides along report-only so browsers tell us what
-        // it WOULD block. Report-only never blocks anything, so this cannot
-        // affect functionality — it only produces the evidence needed before
-        // promoting it to enforcing. Skipped on subresources, whose CSP header
-        // no browser consults.
+        // Only when the compatible escape hatch is pulled: the strict policy
+        // rides along report-only so browsers keep telling us what it WOULD
+        // block, which is the evidence needed to get back to enforcing it.
+        // Report-only never blocks anything, so this cannot affect
+        // functionality. Skipped on subresources, whose CSP header no browser
+        // consults.
         if (!SecurityHeaders.isSubresourceRequest(request))
         {
             const reportOnlyCompanionPolicy = SecurityHeaders.buildReportOnlyCompanionPolicy();
@@ -374,6 +414,7 @@ class SecurityHeaders
         response.setHeader("X-Frame-Options", process.env.X_FRAME_OPTIONS || SecurityHeaders.DEFAULT_X_FRAME_OPTIONS);
         response.setHeader("X-Content-Type-Options", "nosniff");
         response.setHeader("Referrer-Policy", process.env.REFERRER_POLICY || SecurityHeaders.DEFAULT_REFERRER_POLICY);
+        response.setHeader("Permissions-Policy", process.env.PERMISSIONS_POLICY || SecurityHeaders.DEFAULT_PERMISSIONS_POLICY);
 
         // HSTS only means anything over HTTPS, and asserting it on plain-http
         // local development would be wrong, so emit it only for secure requests.

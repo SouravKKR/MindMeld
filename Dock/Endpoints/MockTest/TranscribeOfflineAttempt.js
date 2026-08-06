@@ -173,7 +173,7 @@ async function handleTranscribeOfflineAttempt(request, response)
 
     // Plan entitlement: offline-attempt transcription feeds LLM mock-test
     // evaluation, a Basic-tier feature. Refuse a lower tier before staging.
-    const transcriptionEntitlement = await PlanEntitlementGate.requireFeature(userId, planFeatures.MOCK_TEST_EVALUATION);
+    const transcriptionEntitlement = await PlanEntitlementGate.requireFeatureForRequest(request, userId, planFeatures.MOCK_TEST_EVALUATION);
     if (!transcriptionEntitlement.allowed)
     {
         response.statusCode = httpStatus.FORBIDDEN;

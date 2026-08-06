@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 
 const { periodicScopeTypes } = require('../Enumerations/PeriodicScopeTypes');
+const { tagMatchModes } = require('../Enumerations/TagMatchModes');
 const { creditGrantAmountModes } = require('../Enumerations/CreditGrantAmountModes');
 const { periodicScheduleTypes } = require('../Enumerations/PeriodicScheduleTypes');
 const { periodicOnJoinModes } = require('../Enumerations/PeriodicOnJoinModes');
@@ -13,6 +14,8 @@ class PeriodicCreditAssignment
     #scopeType;
     #organizationId;
     #peopleEmails;
+    #tagFilter;
+    #tagMatchMode;
     #amount;
     #amountMode;
     #scheduleType;
@@ -29,13 +32,15 @@ class PeriodicCreditAssignment
     #createdAt;
     #additionalData;
 
-    constructor({name = null, scopeType = 0, organizationId = '', peopleEmails = [], amount = 0, amountMode = 1, scheduleType = 0, intervalDays = 0, dayOfWeek = 0, dayOfMonth = 1, onJoinMode = 0, startAt = new Date(), hasValidUntil = false, validUntil = new Date(), status = 0, terminatedAt = new Date(), createdByUserId = '', createdAt = new Date(), additionalData = {}} = {})
+    constructor({name = null, scopeType = 0, organizationId = '', peopleEmails = [], tagFilter = [], tagMatchMode = 0, amount = 0, amountMode = 1, scheduleType = 0, intervalDays = 0, dayOfWeek = 0, dayOfMonth = 1, onJoinMode = 0, startAt = new Date(), hasValidUntil = false, validUntil = new Date(), status = 0, terminatedAt = new Date(), createdByUserId = '', createdAt = new Date(), additionalData = {}} = {})
     {
         this.#id = crypto.randomUUID();
         this.setName(name);
         this.setScopeType(scopeType);
         this.setOrganizationId(organizationId);
         this.setPeopleEmails(peopleEmails);
+        this.setTagFilter(tagFilter);
+        this.setTagMatchMode(tagMatchMode);
         this.setAmount(amount);
         this.setAmountMode(amountMode);
         this.setScheduleType(scheduleType);
@@ -127,6 +132,41 @@ class PeriodicCreditAssignment
             }
         }
         this.#peopleEmails = value;
+    }
+
+    getTagFilter()
+    {
+        return this.#tagFilter;
+    }
+
+    setTagFilter(value)
+    {
+        if (value !== null)
+        {
+            if (!Array.isArray(value))
+            {
+                value = null;
+            }
+        }
+        this.#tagFilter = value;
+    }
+
+    getTagMatchMode()
+    {
+        return this.#tagMatchMode;
+    }
+
+    setTagMatchMode(value)
+    {
+        if (value !== null)
+        {
+            const enumValues = Object.values(tagMatchModes);
+            if (!enumValues.includes(value))
+            {
+                value = enumValues[0] ?? null;
+            }
+        }
+        this.#tagMatchMode = value;
     }
 
     getAmount()
@@ -423,6 +463,8 @@ class PeriodicCreditAssignment
             scopeType: this.getScopeType() !== null ? Number(this.getScopeType()) : null,
             organizationId: this.getOrganizationId(),
             peopleEmails: this.getPeopleEmails(),
+            tagFilter: this.getTagFilter(),
+            tagMatchMode: this.getTagMatchMode() !== null ? Number(this.getTagMatchMode()) : null,
             amount: this.getAmount(),
             amountMode: this.getAmountMode() !== null ? Number(this.getAmountMode()) : null,
             scheduleType: this.getScheduleType() !== null ? Number(this.getScheduleType()) : null,
@@ -448,6 +490,8 @@ class PeriodicCreditAssignment
             scopeType: json.scopeType ?? null,
             organizationId: json.organizationId ?? null,
             peopleEmails: json.peopleEmails ?? null,
+            tagFilter: json.tagFilter ?? null,
+            tagMatchMode: json.tagMatchMode ?? null,
             amount: json.amount ?? null,
             amountMode: json.amountMode ?? null,
             scheduleType: json.scheduleType ?? null,

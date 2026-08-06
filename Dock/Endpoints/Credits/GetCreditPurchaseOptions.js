@@ -3,6 +3,8 @@ const CreditPurchasePricingEngine = require("../../Globals/Classes/Credits/Credi
 const RegionResolver = require("../../Globals/Classes/Pricing/RegionResolver");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
+const PaymentAccessPolicy = require("../../Globals/Classes/Payments/PaymentAccessPolicy");
+const { getUser } = require("../Helpers/GetUser");
 
 /**
  * GET /Credits/Purchase/Options
@@ -32,8 +34,20 @@ async function getCreditPurchaseOptions(request, response)
         const configuration = await CreditConfigurationStore.load();
         const options = await CreditPurchasePricingEngine.computeOptions(configuration, region);
 
+        // The price list stays readable for everyone so the page still renders,
+        // but outside production only an administrator may actually buy. Saying
+        // so here lets the client hide the purchase action instead of letting a
+        // user configure a top-up and hit a 403 at the last step.
+        const viewer = await getUser(request);
+        const bPurchaseAllowed = PaymentAccessPolicy.isPaymentAllowedForUser(viewer);
+
         response.statusCode = httpStatus.OK;
-        response.sendJson(options);
+        response.sendJson
+        ({
+            ...options,
+            purchaseAllowed: bPurchaseAllowed,
+            purchaseRestrictionReason: bPurchaseAllowed ? "" : PaymentAccessPolicy.describeRestriction()
+        });
     }
     catch (optionsError)
     {

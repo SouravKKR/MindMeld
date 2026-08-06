@@ -1,0 +1,6 @@
+from enum import IntEnum
+
+class PaymentAttemptOutcomes(IntEnum):
+    UNKNOWN = 0
+    FAILED = 1
+    CAPTURED = 2

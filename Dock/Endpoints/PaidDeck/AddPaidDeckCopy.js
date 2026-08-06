@@ -5,6 +5,7 @@ const LicenseConstants = require("../../Globals/Constants/LicenseConstants");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const LicenseClientView = require("../../Globals/Classes/Security/LicenseClientView");
 const { seedProtectedContentForLicense, buildPaidInstanceRowFilter } = require("./PaidDeckGrantHelpers");
+const PaidDeckScopeResolver = require("../../Globals/Classes/PaidDeck/PaidDeckScopeResolver");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
@@ -118,7 +119,7 @@ async function addPaidDeckCopy(request, response)
         // a retry starts from a clean slate.
         try
         {
-            const partialRowsFilter = buildPaidInstanceRowFilter(userId, deckId, instanceId);
+            const partialRowsFilter = buildPaidInstanceRowFilter(PaidDeckScopeResolver.resolveForLicense(license, userId), deckId, instanceId);
             await Promise.all(PAID_ENTITY_COLLECTIONS.map((collectionName) =>
                 database.collection(collectionName).deleteMany(partialRowsFilter)));
         }

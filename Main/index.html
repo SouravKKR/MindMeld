@@ -15,9 +15,21 @@
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:image" content="https://learn.cogniumlabs.io/Globals/Assets/Images/Logos/CogniumLearnLogoWide.png">
 
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5117647314462332"
-     crossorigin="anonymous"></script>
-     
+    <!--
+      Google AdSense is deliberately NOT loaded here.
+
+      This is a single-page application, so a script tag in this document runs
+      on every page the user ever reaches — including checkout. An advertising
+      script has full DOM access to the document it lives in, which on a payment
+      page is the classic card-skimming surface and a direct violation of the
+      Razorpay handbook's B5 control and PCI DSS 6.4.3.
+
+      It is instead injected at runtime by AdvertisementLoader, which loads it
+      only for the home page and refuses while a checkout is open. See
+      Common/ReadmeFiles/PaymentPageScriptInventory.md for the full inventory of
+      what may run on a payment page and why.
+    -->
+
     <!-- CSS Imports -->
     <link rel="stylesheet" href="./CommonStyles/Theme.css">
     <link rel="stylesheet" href="./CommonStyles/GeneratedContent.css">
@@ -116,6 +128,8 @@
     <link rel="stylesheet" href="./Pages/PaidDeckBrowse/Styles/PaidDeckBrowsePage.css">
     <link rel="stylesheet" href="./Pages/AdminPanel/Styles/AdminPanelPage.css">
     <link rel="stylesheet" href="./Pages/Activity/Styles/ActivityPage.css">
+    <link rel="stylesheet" href="./Pages/Organization/Styles/OrganizationPage.css">
+    <link rel="stylesheet" href="./Pages/OrganizationShelf/Styles/OrganizationShelfPage.css">
     <link rel="stylesheet" href="./ThirdParty/Latex/katex/katex.min.css">
 
 
@@ -125,6 +139,9 @@
     <script src="./ThirdParty/JsPdf/jspdf.umd.min.js"></script>
     <script src="./ThirdParty/SheetJs/xlsx.full.min.js"></script>
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <!-- Installed before anything can call fetch: every same-origin request has
+         to carry the active organization context, or it reads the wrong library. -->
+    <script src="./Globals/Classes/Organization/OrganizationContextRequestDecorator.js" type="module"></script>
     <script src="./Globals/Classes/Logging/LoggerBootstrap.js" type="module"></script>
     <script src="./CommonComponents/InitializationOverlay.js" type="module"></script>
     <script src="./CommonComponents/CopyrightNotice.js" type="module"></script>
@@ -137,6 +154,7 @@
     <script src="./Globals/Classes/TermsAndConditionsManager.js" type="module"></script>
     <script src="./Globals/Classes/Appearance/AppearanceManager.js" type="module"></script>
     <script src="./Globals/Classes/TutorialBootstrap.js" type="module"></script>
+    <script src="./Pages/OrganizationShelf/OrganizationShelfPage.js" type="module"></script>
     <script src="./Pages/PaidDeckLibrary/PaidDeckLibraryPage.js" type="module"></script>
     <script src="./Pages/PaidDeckDetails/PaidDeckDetailsPage.js" type="module"></script>
     <script src="./Pages/PaidDeckDetails/Components/PaidDeckBadgeChip.js" type="module"></script>
@@ -148,6 +166,10 @@
     <script src="./Pages/Home/Components/ActivityPreviewComponent.js" type="module"></script>
     <script src="./Pages/Activity/ActivityPage.js" type="module"></script>
     <script src="./Pages/Activity/Components/ActivityEntryComponent.js" type="module"></script>
+    <script src="./Pages/Organization/OrganizationPage.js" type="module"></script>
+    <script src="./Pages/Organization/Components/OrganizationOverviewSection.js" type="module"></script>
+    <script src="./Pages/Organization/Components/OrganizationMembersSection.js" type="module"></script>
+    <script src="./Pages/Organization/Components/OrganizationCreditsSection.js" type="module"></script>
     <script src="./Globals/Classes/PaidDeckBootstrap.js" type="module"></script>
     <script src="./Globals/Classes/PaidDeckDeepLinkBootstrap.js" type="module"></script>
     <script src="./Globals/Classes/Analysis/AutoAnalysisDispatcher.js" type="module"></script>
@@ -166,7 +188,4 @@
     <tutorial-overlay></tutorial-overlay>
     <copyright-notice></copyright-notice>
 </body>
-<script>
-
-</script>
 </html>

@@ -57,11 +57,16 @@ class SesEmailProvider extends EmailProvider
      * from sendEmail so the mapping is unit-testable without a live SES client.
      * The v2 API nests the message under Content.Simple and names the sender
      * FromEmailAddress (the v1 API used Source + a top-level Message).
+     *
+     * FromEmailAddress takes the full formatted address, so a message carrying
+     * a display name arrives as `"CogniumLearn Security" <noreply@…>`. Only the
+     * address part has to be a verified SES identity — the name beside it is
+     * free text SES passes straight through.
      */
     buildSendEmailCommandInput(emailMessage)
     {
         return {
-            FromEmailAddress: emailMessage.getSourceEmail(),
+            FromEmailAddress: emailMessage.getFormattedSourceAddress(),
             Destination:
             {
                 ToAddresses: [emailMessage.getRecipientEmail()]

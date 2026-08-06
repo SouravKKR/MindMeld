@@ -1,112 +1,99 @@
 {
     "name": "PeriodicCreditAssignment",
     "relativePath": "Globals/Model",
-    "members":
-    {
-        "id":
-        {
+    "members": {
+        "id": {
             "datatype": "string",
             "id": true
         },
-        "name":
-        {
+        "name": {
             "datatype": "string",
             "minLength": 1,
             "maxLength": 256
         },
-        "scopeType":
-        {
+        "scopeType": {
             "datatype": "enum:PeriodicScopeTypes",
             "defaultValue": 0
         },
-        "organizationId":
-        {
+        "organizationId": {
             "datatype": "string",
             "defaultValue": ""
         },
-        "peopleEmails":
-        {
+        "peopleEmails": {
             "datatype": "array",
             "defaultValue": []
         },
-        "amount":
-        {
+        "tagFilter": {
+            "datatype": "array<string>",
+            "defaultValue": []
+        },
+        "tagMatchMode": {
+            "datatype": "enum:TagMatchModes",
+            "defaultValue": 0
+        },
+        "amount": {
             "datatype": "float",
             "defaultValue": 0,
             "min": 0
         },
-        "amountMode":
-        {
+        "amountMode": {
             "datatype": "enum:CreditGrantAmountModes",
             "defaultValue": 1
         },
-        "scheduleType":
-        {
+        "scheduleType": {
             "datatype": "enum:PeriodicScheduleTypes",
             "defaultValue": 0
         },
-        "intervalDays":
-        {
+        "intervalDays": {
             "datatype": "int",
             "defaultValue": 0,
             "min": 0
         },
-        "dayOfWeek":
-        {
+        "dayOfWeek": {
             "datatype": "int",
             "defaultValue": 0,
             "min": 0,
             "max": 6
         },
-        "dayOfMonth":
-        {
+        "dayOfMonth": {
             "datatype": "int",
             "defaultValue": 1,
             "min": 1,
             "max": 31
         },
-        "onJoinMode":
-        {
+        "onJoinMode": {
             "datatype": "enum:PeriodicOnJoinModes",
             "defaultValue": 0
         },
-        "startAt":
-        {
+        "startAt": {
             "datatype": "date",
             "defaultValue": "now"
         },
-        "hasValidUntil":
-        {
+        "hasValidUntil": {
             "datatype": "boolean",
             "defaultValue": false
         },
-        "validUntil":
-        {
+        "validUntil": {
             "datatype": "date",
             "defaultValue": "now"
         },
-        "status":
-        {
+        "status": {
             "datatype": "enum:PeriodicAssignmentStatuses",
             "defaultValue": 0
         },
-        "terminatedAt":
-        {
+        "terminatedAt": {
             "datatype": "date",
             "defaultValue": "now"
         },
-        "createdByUserId":
-        {
+        "createdByUserId": {
             "datatype": "string",
             "defaultValue": ""
         },
-        "createdAt":
-        {
+        "createdAt": {
             "datatype": "date",
             "defaultValue": "now"
         },
-        "additionalData":
-        {
+        "additionalData": {
             "datatype": "object",
             "defaultValue": {}
         }

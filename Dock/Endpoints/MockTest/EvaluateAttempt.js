@@ -183,7 +183,7 @@ async function handleEvaluateAttempt(request, response)
     // offline-graded path already returned above (no AI, free on every tier);
     // only the LLM path reaches here. Refuse a lower tier before the credit
     // preflight so it sees an upgrade prompt, not an out-of-credits message.
-    const evaluationEntitlement = await PlanEntitlementGate.requireFeature(userId, planFeatures.MOCK_TEST_EVALUATION);
+    const evaluationEntitlement = await PlanEntitlementGate.requireFeatureForRequest(request, userId, planFeatures.MOCK_TEST_EVALUATION);
     if (!evaluationEntitlement.allowed)
     {
         response.statusCode = httpStatus.FORBIDDEN;

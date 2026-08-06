@@ -66,6 +66,12 @@ class LicenseFieldPreserver
         reissuedLicense.setPasswordHash(storedLicenseDocument.passwordHash || "");
         reissuedLicense.setPasswordSalt(storedLicenseDocument.passwordSalt || "");
 
+        // Which library this license's content was seeded into. Losing it on a
+        // rotation would silently repoint the re-seed, the per-copy delete and
+        // the lapsed-license reaper at the buyer's PERSONAL library — deleting
+        // rows that were never theirs and orphaning the ones that were.
+        reissuedLicense.setScopeKey(storedLicenseDocument.scopeKey || "");
+
         // Which content version this buyer's copies were seeded from.
         reissuedLicense.setDownloadedContentVersion(storedLicenseDocument.downloadedContentVersion || 0);
 

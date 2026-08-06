@@ -1,4 +1,5 @@
 import HeaderComponent from "../../CommonComponents/HeaderComponent.js";
+import UserIdentityManager from "../../Globals/Classes/UserIdentityManager.js";
 import PageNavigator from "../../Globals/Classes/PageNavigator.js";
 import PaidDeckFilterPanel from "./Components/PaidDeckFilterPanel.js";
 import PaidDeckThumbnails from "../../Globals/Classes/PaidDeckThumbnails.js";
@@ -56,6 +57,22 @@ class PaidDeckLibraryPage extends HTMLElement
     async connectedCallback()
     {
         this.setAttribute("page", "");
+
+        // The marketplace belongs to the personal library: a purchase is a
+        // personal transaction and its deck is seeded there. Refusing here as
+        // well as hiding the entry point means a deep link or a stale page in
+        // the navigation stack cannot get around it.
+        if (UserIdentityManager.isOrganizationContext())
+        {
+            this.innerHTML = `
+                <header-component title="Paid Deck Library"></header-component>
+                <div class="paid-deck-library-empty">
+                    The deck marketplace is part of your own library. Switch to viewing as
+                    yourself from the profile menu to browse and buy decks.
+                </div>
+            `;
+            return;
+        }
 
         this.innerHTML = `
             <header-component title="Paid Deck Library"></header-component>

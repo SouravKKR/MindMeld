@@ -1,5 +1,6 @@
 const PaidDeckSearchEngine = require("../../Globals/Classes/Search/PaidDeckSearchEngine");
 const RegionResolver = require("../../Globals/Classes/Pricing/RegionResolver");
+const PaidDeckAudienceResolver = require("../../Globals/Classes/PaidDeck/PaidDeckAudienceResolver");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function searchPaidDecks(request, response)
@@ -21,7 +22,10 @@ async function searchPaidDecks(request, response)
         limit: body?.limit,
         offset: body?.offset,
         userId: userId,
-        includeUnpublished: false
+        includeUnpublished: false,
+        // Server-composed and $and-ed into the query, never derived from the
+        // body: an audience the client could name would be no audience at all.
+        audienceCondition: await PaidDeckAudienceResolver.buildVisibilityCondition(await PaidDeckAudienceResolver.resolveAudienceUser(request))
     });
 
     response.statusCode = httpStatus.OK;

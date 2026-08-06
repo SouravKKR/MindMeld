@@ -2,6 +2,7 @@ const DatabaseConstants = require('../../Constants/DatabaseConstants');
 const DatabaseConnector = require('../Database/DatabaseConnector');
 const OrganizationMemberQueryEngine = require('../Organization/OrganizationMemberQueryEngine');
 const { creditGrantTargetTypes } = require('../../Enumerations/CreditGrantTargetTypes');
+const { tagMatchModes } = require('../../Enumerations/TagMatchModes');
 const { userRoles } = require('../../Enumerations/UserRoles');
 
 /**
@@ -62,8 +63,61 @@ class CreditGrantTargetResolver
         {
             return await CreditGrantTargetResolver.#resolveOrganizationMembers(targetSpecification.organizationId);
         }
+        if (targetType === creditGrantTargetTypes.ORGANIZATION_TAGS)
+        {
+            return await CreditGrantTargetResolver.#resolveOrganizationMembers
+            (
+                targetSpecification.organizationId,
+                targetSpecification.tagFilter,
+                targetSpecification.tagMatchMode
+            );
+        }
+
+        // The pool is not a set of users, so it has no place in a resolver whose
+        // whole output is a recipient list. Refused explicitly rather than
+        // falling through to "no recipients", which would read as a grant that
+        // matched nobody instead of a caller that used the wrong path —
+        // OrganizationPoolGrantService is the one that handles it.
+        if (targetType === creditGrantTargetTypes.ORGANIZATION_POOL)
+        {
+            return CreditGrantTargetResolver.#errorResult("POOL_TARGET_NOT_A_USER_TARGET");
+        }
 
         return CreditGrantTargetResolver.#errorResult("INVALID_TARGET_TYPE");
+    }
+
+    /**
+     * The members a tag selection covers. Public because the distribution
+     * preview, the distribution itself and the recurring reconciler must all
+     * decide membership the same way — a preview that named a different set
+     * from the grant would make the confirmation meaningless.
+     *
+     * @param {Array<OrganizationMember>} members
+     * @param {string[]} tagFilter
+     * @param {number} tagMatchMode a TagMatchModes value
+     * @returns {Array<OrganizationMember>}
+     */
+    static filterMembersByTags(members, tagFilter, tagMatchMode)
+    {
+        const safeMembers = Array.isArray(members) ? members : [];
+        const normalisedTags = (Array.isArray(tagFilter) ? tagFilter : [])
+            .map(tag => String(tag ?? "").trim().toLowerCase())
+            .filter(tag => tag.length > 0);
+
+        if (tagMatchMode === tagMatchModes.EVERYONE || normalisedTags.length === 0)
+        {
+            return safeMembers;
+        }
+
+        return safeMembers.filter((member) =>
+        {
+            const memberTags = Array.isArray(member.getTags?.()) ? member.getTags() : [];
+            if (tagMatchMode === tagMatchModes.ALL)
+            {
+                return normalisedTags.every(tag => memberTags.includes(tag));
+            }
+            return normalisedTags.some(tag => memberTags.includes(tag));
+        });
     }
 
     static async #resolveByEmails(rawEmails)
@@ -151,14 +205,28 @@ class CreditGrantTargetResolver
         return { recipients: recipients, unmatchedEmails: [], error: null };
     }
 
-    static async #resolveOrganizationMembers(organizationId)
+    /**
+     * Every member of an organization, optionally narrowed to those carrying
+     * particular tags.
+     *
+     * Tag narrowing is what makes a distribution expressible as "the final-year
+     * cohort" rather than a hand-pasted list of addresses that is stale the day
+     * after it is written. EVERYONE ignores the tag list entirely; ANY matches a
+     * member holding at least one of them; ALL requires every one.
+     *
+     * @param {string} organizationId
+     * @param {string[]} tagFilter
+     * @param {number} tagMatchMode a TagMatchModes value
+     */
+    static async #resolveOrganizationMembers(organizationId, tagFilter = [], tagMatchMode = tagMatchModes.EVERYONE)
     {
         if (typeof organizationId !== "string" || organizationId.length === 0)
         {
             return CreditGrantTargetResolver.#errorResult("MISSING_ORGANIZATION_ID");
         }
 
-        const members = await OrganizationMemberQueryEngine.listMembers(organizationId);
+        const allMembers = await OrganizationMemberQueryEngine.listMembers(organizationId);
+        const members = CreditGrantTargetResolver.filterMembersByTags(allMembers, tagFilter, tagMatchMode);
         if (members.length === 0)
         {
             return { recipients: [], unmatchedEmails: [], error: null };

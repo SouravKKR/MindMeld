@@ -4,6 +4,7 @@ const KeyManagementService = require("../../Globals/Classes/Security/KeyManageme
 const SyncQueryEngine = require("../../Globals/Classes/Database/SyncQueryEngine");
 const LicenseClientView = require("../../Globals/Classes/Security/LicenseClientView");
 const { removeInstanceFromLicense, buildPaidInstanceRowFilter } = require("./PaidDeckGrantHelpers");
+const PaidDeckScopeResolver = require("../../Globals/Classes/PaidDeck/PaidDeckScopeResolver");
 const { entityTypes } = require("../../Globals/Enumerations/EntityTypes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
@@ -63,6 +64,10 @@ async function deletePaidDeckCopy(request, response)
 
     const database = await DatabaseConnector.getDatabase();
 
+    // The library this copy's rows actually live in — the buyer's own for a
+    // marketplace purchase, an organization's view for a deck it provided.
+    const scopeKey = PaidDeckScopeResolver.resolveForLicense(license, userId);
+
     // Authoritative step: drop the copy from the license registry + bump
     // rotatedAt so the next /Sync/Licenses pull re-delivers the trimmed array.
     removeInstanceFromLicense(license, instanceId);
@@ -86,7 +91,7 @@ async function deletePaidDeckCopy(request, response)
     // tests / popups by parent/deckId, which is naturally scoped to this copy.
     try
     {
-        const instanceDeckRowFilter = buildPaidInstanceRowFilter(userId, deckId, instanceId);
+        const instanceDeckRowFilter = buildPaidInstanceRowFilter(scopeKey, deckId, instanceId);
         const instanceDeckRows = await database
             .collection(DatabaseConstants.DECKS_COLLECTION)
             .find(instanceDeckRowFilter, { projection: { "data.id": 1, _id: 0 } })
@@ -98,7 +103,7 @@ async function deletePaidDeckCopy(request, response)
 
         if (deletionChanges.length > 0)
         {
-            await SyncQueryEngine.bulkRecordDeletions(userId, database, deletionChanges);
+            await SyncQueryEngine.bulkRecordDeletions(scopeKey, database, deletionChanges);
         }
     }
     catch (teardownError)

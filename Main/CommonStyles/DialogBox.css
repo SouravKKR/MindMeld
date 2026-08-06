@@ -115,3 +115,19 @@ dialog-box .close-button img
     width: 100%;
     height: 100%;
 }
+
+/* The organization view-switch confirmation is a list of consequences rather
+   than a one-line question — the switch replaces the whole library on screen,
+   so the dialog has to have room to say what changes. Left-aligned against the
+   centred default because a bulleted list centred on its own axis is unreadable. */
+dialog-box .message-section .organization-view-switch-list
+{
+    margin: 10px 0 0 0;
+    padding-left: 20px;
+    text-align: left;
+    font-size: 14px;
+    line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}

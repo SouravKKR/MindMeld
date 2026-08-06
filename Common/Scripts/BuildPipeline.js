@@ -20,6 +20,11 @@ class BuildPipeline
         { scriptName: 'BundleStaticFiles.js', argumentList: [] },
         { scriptName: 'ManglePrivateMembersInBundle.js', argumentList: [] },
         { scriptName: 'MinifyAndObfuscateStaticFiles.js', argumentList: ['--aggressive'] },
+        // LAST, always: it records the hashes of the final served bytes, so it
+        // has to run after obfuscation rewrites them. Moving it earlier would
+        // bake in hashes of files that no longer exist in that form, and every
+        // boot would then report tampering that never happened.
+        { scriptName: 'GenerateScriptIntegrityManifest.js', argumentList: [] },
     ];
 
     constructor()

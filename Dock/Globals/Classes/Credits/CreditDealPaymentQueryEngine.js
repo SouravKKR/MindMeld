@@ -2,6 +2,7 @@ const DatabaseConnector = require("../Database/DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
 const CreditDealPayment = require("../../Model/CreditDealPayment");
 const { creditDealPaymentStatuses } = require("../../Enumerations/CreditDealPaymentStatuses");
+const { creditDealPaymentModes } = require("../../Enumerations/CreditDealPaymentModes");
 
 
 /**
@@ -121,7 +122,12 @@ class CreditDealPaymentQueryEngine
                 $set:
                 {
                     status: creditDealPaymentStatuses.CAPTURED,
-                    providerPaymentId: typeof providerPaymentId === "string" ? providerPaymentId : ""
+                    providerPaymentId: typeof providerPaymentId === "string" ? providerPaymentId : "",
+                    // WHEN the money landed, not when the row was created. The
+                    // daily reconciliation windows deals by this; createdAt is
+                    // when an admin drafted the deal, which can be days earlier
+                    // and would file the payment under the wrong day.
+                    capturedAt: new Date()
                 }
             },
             { returnDocument: "before" }
@@ -137,6 +143,141 @@ class CreditDealPaymentQueryEngine
 
         const updated = await collection.findOne({ providerOrderId: providerOrderId });
         return { transitioned: true, deal: updated ? CreditDealPayment.fromJson(updated) : null };
+    }
+
+    /**
+     * Replaces the placeholder order id (the receipt) with the provider's real
+     * one, once the remote order exists.
+     *
+     * An on-spot deal row is written BEFORE the provider is called, so between
+     * those two moments it is keyed on its deterministic receipt. Scoped to
+     * PENDING rows still carrying that placeholder, so this can never re-point a
+     * deal that has already captured.
+     *
+     * @param {string} receiptId — the placeholder the row was written under
+     * @param {string} providerOrderId — the provider's real order id
+     * @returns {Promise<{attached: boolean}>}
+     */
+    static async attachProviderOrderId(receiptId, providerOrderId)
+    {
+        const collection = await CreditDealPaymentQueryEngine.#getCollection();
+        if (!collection
+            || typeof receiptId !== "string" || receiptId.length === 0
+            || typeof providerOrderId !== "string" || providerOrderId.length === 0)
+        {
+            return { attached: false };
+        }
+
+        const result = await collection.updateOne
+        (
+            {
+                providerOrderId: receiptId,
+                status: creditDealPaymentStatuses.PENDING
+            },
+            { $set: { providerOrderId: providerOrderId } }
+        );
+
+        return { attached: (result.modifiedCount || 0) > 0 };
+    }
+
+    /**
+     * Removes a deal row written before a provider call that then failed.
+     *
+     * Deliberately narrow, mirroring the pending-order engines: it only ever
+     * deletes a PENDING row whose providerOrderId is STILL its own receipt, so
+     * it cannot remove a deal that has a real remote order behind it.
+     *
+     * @param {string} receiptId
+     * @returns {Promise<{deleted: boolean}>}
+     */
+    static async deleteUnclaimedDeal(receiptId)
+    {
+        const collection = await CreditDealPaymentQueryEngine.#getCollection();
+        if (!collection || typeof receiptId !== "string" || receiptId.length === 0)
+        {
+            return { deleted: false };
+        }
+
+        const result = await collection.deleteOne
+        ({
+            providerOrderId: receiptId,
+            "additionalData.receiptId": receiptId,
+            status: creditDealPaymentStatuses.PENDING
+        });
+
+        return { deleted: (result.deletedCount || 0) > 0 };
+    }
+
+    /**
+     * An unpaid on-spot deal for exactly this intent, or null.
+     *
+     * Reuse matters more here than elsewhere: an organization credit deal is the
+     * largest single amount this product transacts, so a duplicate order is a
+     * duplicate invoice for a real institute rather than a stray row.
+     *
+     * Safe without re-checking the price because the amount and the term are
+     * inputs to the receipt — a row found here is provably the same block of
+     * credits at the same price for the same contract period.
+     *
+     * @param {string} receiptId
+     * @returns {Promise<CreditDealPayment|null>}
+     */
+    static async findReusableByReceipt(receiptId)
+    {
+        const collection = await CreditDealPaymentQueryEngine.#getCollection();
+        if (!collection || typeof receiptId !== "string" || receiptId.length === 0)
+        {
+            return null;
+        }
+
+        const document = await collection.findOne
+        (
+            {
+                "additionalData.receiptId": receiptId,
+                status: creditDealPaymentStatuses.PENDING,
+                // Still keyed on its own receipt means the provider call never
+                // completed, so there is no order for the caller to be handed
+                // back — those rows are for deleteUnclaimedDeal, not for reuse.
+                providerOrderId: { $ne: receiptId }
+            },
+            { projection: { _id: 0 }, sort: { createdAt: -1 } }
+        );
+
+        return document ? CreditDealPayment.fromJson(document) : null;
+    }
+
+    /**
+     * On-spot deals still PENDING and old enough to be worth asking the provider
+     * about, for PendingPaymentReconciler.
+     *
+     * Rows whose providerOrderId is still their receipt are excluded here rather
+     * than by the caller: the provider has never heard of them, so asking about
+     * one every half hour forever is pure waste.
+     *
+     * @param {Date} staleBefore — created at or before this
+     * @param {Date} abandonedBefore — created at or after this
+     * @returns {Promise<Array<object>>} raw rows
+     */
+    static async findStalePendingDeals(staleBefore, abandonedBefore)
+    {
+        const collection = await CreditDealPaymentQueryEngine.#getCollection();
+        if (!collection)
+        {
+            return [];
+        }
+
+        return await collection
+            .find
+            (
+                {
+                    status: creditDealPaymentStatuses.PENDING,
+                    mode: creditDealPaymentModes.ON_SPOT_RAZORPAY,
+                    providerOrderId: { $nin: ["", null] },
+                    createdAt: { $lte: staleBefore, $gte: abandonedBefore }
+                },
+                { projection: { _id: 0 } }
+            )
+            .toArray();
     }
 
     /**

@@ -1,3 +1,5 @@
+const OrganizationScopeResolver = require("../../Globals/Classes/Organization/OrganizationScopeResolver");
+const OrganizationFeatureResolver = require("../../Globals/Classes/Organization/OrganizationFeatureResolver");
 const { getUser } = require("../Helpers/GetUser");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const PeriodicCreditReconciler = require("../../Globals/Classes/Credits/PeriodicCreditReconciler");
@@ -111,7 +113,51 @@ async function handleGetUser(request, response)
     }
 
     response.statusCode = httpStatus.OK;
+    // The organization views this account can switch into, each with what its
+    // rules grant the member there. The client renders its "View as" menu and
+    // its feature gating from this rather than guessing, and every server
+    // endpoint re-checks the same rules anyway — so this is convenience, never
+    // the enforcement.
+    try
+    {
+        responseJson.organizationContexts = await buildOrganizationContexts(user);
+    }
+    catch (organizationContextError)
+    {
+        console.warn(`[HandleGetUser] Organization context lookup failed for ${user.getId()}: ${organizationContextError?.message || organizationContextError}`);
+        responseJson.organizationContexts = [];
+    }
+
     response.sendJson(responseJson);
+}
+
+/**
+ * Every organization view this account may enter, with the entitlements that
+ * apply inside each one.
+ *
+ * A member of several institutes gets several entries; someone who belongs to
+ * none gets an empty list and never sees the switcher at all.
+ */
+async function buildOrganizationContexts(user)
+{
+    const scope = await OrganizationScopeResolver.listAllScopeKeysForUser(user);
+    const email = user.getAdditionalData()?.email || "";
+    const contexts = [];
+
+    for (const organization of scope.organizations)
+    {
+        const entitlement = await OrganizationFeatureResolver.resolveForMember(organization, user.getId(), email);
+        contexts.push
+        ({
+            organizationId: organization.getId(),
+            organizationName: organization.getName(),
+            allowedFeatures: entitlement.featureValues,
+            storageGrantBytes: entitlement.storageGrantBytes,
+            matchedRuleNames: entitlement.matchedRuleNames
+        });
+    }
+
+    return contexts;
 }
 
 module.exports = { handleGetUser };

@@ -125,7 +125,26 @@ class StorageQuotaEnforcer
             const user = await AuthenticationQueryEngine.getUserById(userId);
             if (user)
             {
-                return PlanMetadata.getStorageBytes(PlanTierResolver.getEffectiveTier(user));
+                const planStorageBytes = PlanMetadata.getStorageBytes(PlanTierResolver.getEffectiveTier(user));
+
+                // Organizations can grant their members extra space, because an
+                // institute pushing a large deck library at a Free account would
+                // otherwise exhaust a 20 MB cap on day one. The grant RAISES the
+                // user's single allowance rather than creating a second budget:
+                // one number to reason about, and storage still belongs to the
+                // person rather than to a view.
+                const OrganizationScopeResolver = require("../Organization/OrganizationScopeResolver");
+                const OrganizationFeatureResolver = require("../Organization/OrganizationFeatureResolver");
+
+                const scope = await OrganizationScopeResolver.listAllScopeKeysForUser(user);
+                const grantedBytes = await OrganizationFeatureResolver.resolveTotalStorageGrantBytes
+                (
+                    scope.organizations,
+                    userId,
+                    user.getAdditionalData()?.email || ""
+                );
+
+                return planStorageBytes + grantedBytes;
             }
         }
         catch (lookupError)
@@ -220,19 +239,59 @@ class StorageQuotaEnforcer
         const database = await DatabaseConnector.getDatabase();
         const [firstCollectionName, ...remainingCollectionNames] = StorageQuotaEnforcer.#COUNTED_COLLECTIONS;
 
+        // A user's content lives under several owner keys once they belong to
+        // an organization: their personal one, plus one per organization view.
+        // The cap is the USER's, so the measurement has to cover everything they
+        // hold — measuring the personal scope alone would let an organization
+        // view grow without limit.
+        const scopeKeys = await StorageQuotaEnforcer.#listScopeKeys(userId);
+        const ownerMatch = { userId: { $in: scopeKeys } };
+
         const unionStages = remainingCollectionNames.map(collectionName => (
         {
-            $unionWith: { coll: collectionName, pipeline: [ { $match: { userId: userId } } ] }
+            $unionWith: { coll: collectionName, pipeline: [ { $match: ownerMatch } ] }
         }));
 
         const aggregationResult = await database.collection(firstCollectionName).aggregate
         ([
-            { $match: { userId: userId } },
+            { $match: ownerMatch },
             ...unionStages,
             { $group: { _id: null, totalSize: { $sum: { $bsonSize: "$$ROOT" } } } }
         ]).toArray();
 
         return aggregationResult[0]?.totalSize || 0;
+    }
+
+    /**
+     * Every owner key this account's content can be stored under. Uploads are
+     * NOT scoped this way — an information source belongs to the person who
+     * uploaded it regardless of which view they were in — so only the deck
+     * measurement uses this.
+     *
+     * Falls back to the personal key alone if the lookup fails, so a transient
+     * database problem under-reports rather than blocking a legitimate sync.
+     */
+    static async #listScopeKeys(userId)
+    {
+        try
+        {
+            const AuthenticationQueryEngine = require("../Database/AuthenticationQueryEngine");
+            const OrganizationScopeResolver = require("../Organization/OrganizationScopeResolver");
+
+            const user = await AuthenticationQueryEngine.getUserById(userId);
+            if (!user)
+            {
+                return [userId];
+            }
+
+            const scope = await OrganizationScopeResolver.listAllScopeKeysForUser(user);
+            return scope.scopeKeys;
+        }
+        catch (scopeError)
+        {
+            console.warn(`[StorageQuotaEnforcer] Scope lookup failed for ${userId}: ${scopeError?.message || scopeError}`);
+            return [userId];
+        }
     }
 
     // The UPLOADS category: the stored file size of the user's PERMANENT

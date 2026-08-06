@@ -71,7 +71,7 @@ class PaidDeckSearchEngine
         return queryParts;
     }
 
-    static async search({ filters, sort, region, limit, offset, userId, includeUnpublished })
+    static async search({ filters, sort, region, limit, offset, userId, includeUnpublished, audienceCondition })
     {
         const database = await DatabaseConnector.getDatabase();
         const decksCollection = database.collection(DatabaseConstants.PAID_DECKS_COLLECTION);
@@ -81,6 +81,16 @@ class PaidDeckSearchEngine
         // Restrict the public catalogue to published decks; the admin
         // panel passes includeUnpublished=true so it can see drafts.
         const baseQueryParts = includeUnpublished ? [] : [{ isPublished: true }];
+
+        // The audience clause is a SERVER-ONLY part of the query, $and-ed ahead
+        // of the client's filters so no filter value can widen it. A null
+        // condition means the caller may see everything (a super-admin), which
+        // is expressed as no clause rather than a vacuous one.
+        if (audienceCondition)
+        {
+            baseQueryParts.push(audienceCondition);
+        }
+
         const allQueryParts = [...baseQueryParts, ...filterFragments];
 
         const mongoQuery = allQueryParts.length === 0 ? {} : { $and: allQueryParts };

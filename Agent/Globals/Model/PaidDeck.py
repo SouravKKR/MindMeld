@@ -6,7 +6,7 @@ from Globals.Enumerations.PaidDeckFeatureBadges import PaidDeckFeatureBadges
 
 
 class PaidDeck:
-    def __init__(self, title: str = None, description: str = '', seller_id: str = '', thumbnail_url: str = '', category: str = '', tags: List[str] = [], base_price_minor: int = 0, currency: str = 'INR', duration_days: int = 0, is_perpetual: bool = False, granularity: DeckPurchaseGranularity = DeckPurchaseGranularity(0), bundle_child_ids: List[str] = [], parent_bundle_ids: List[str] = [], asset_blob_id: str = '', key_version: int = 1, is_published: bool = False, published_at: datetime = datetime.now(), feature_badges: List[PaidDeckFeatureBadges] = [], extra_tags: List[str] = [], content_summary: dict = {}, additional_data: dict = {}) -> None:
+    def __init__(self, title: str = None, description: str = '', seller_id: str = '', thumbnail_url: str = '', category: str = '', tags: List[str] = [], base_price_minor: int = 0, currency: str = 'INR', duration_days: int = 0, is_perpetual: bool = False, granularity: DeckPurchaseGranularity = DeckPurchaseGranularity(0), bundle_child_ids: List[str] = [], parent_bundle_ids: List[str] = [], asset_blob_id: str = '', key_version: int = 1, is_published: bool = False, audience_organization_id: str = '', audience_tags: List[str] = [], published_at: datetime = datetime.now(), feature_badges: List[PaidDeckFeatureBadges] = [], extra_tags: List[str] = [], content_summary: dict = {}, additional_data: dict = {}) -> None:
         self.__id = str(uuid.uuid4())
         self.set_title(title)
         self.set_description(description)
@@ -24,6 +24,8 @@ class PaidDeck:
         self.set_asset_blob_id(asset_blob_id)
         self.set_key_version(key_version)
         self.set_is_published(is_published)
+        self.set_audience_organization_id(audience_organization_id)
+        self.set_audience_tags(audience_tags)
         self.set_published_at(published_at)
         self.set_feature_badges(feature_badges)
         self.set_extra_tags(extra_tags)
@@ -190,6 +192,23 @@ class PaidDeck:
             value = bool(value)
         self.__is_published = value
 
+    def get_audience_organization_id(self) -> str:
+        return self.__audience_organization_id
+
+    def set_audience_organization_id(self, value: str) -> None:
+        if value is not None:
+            value = str(value)
+        self.__audience_organization_id = value
+
+    def get_audience_tags(self) -> List[str]:
+        return self.__audience_tags
+
+    def set_audience_tags(self, value: List[str]) -> None:
+        if value is not None:
+            if not isinstance(value, list):
+                value = None
+        self.__audience_tags = value
+
     def get_published_at(self) -> datetime:
         return self.__published_at
 
@@ -259,6 +278,8 @@ class PaidDeck:
             'assetBlobId': self.get_asset_blob_id(),
             'keyVersion': self.get_key_version(),
             'isPublished': self.get_is_published(),
+            'audienceOrganizationId': self.get_audience_organization_id(),
+            'audienceTags': self.get_audience_tags(),
             'publishedAt': self.get_published_at().isoformat() if self.get_published_at() is not None else None,
             'featureBadges': [int(item.value) for item in self.get_feature_badges()] if self.get_feature_badges() is not None else None,
             'extraTags': self.get_extra_tags(),
@@ -285,6 +306,8 @@ class PaidDeck:
             asset_blob_id=data.get('assetBlobId'),
             key_version=data.get('keyVersion'),
             is_published=data.get('isPublished'),
+            audience_organization_id=data.get('audienceOrganizationId'),
+            audience_tags=data.get('audienceTags'),
             published_at=datetime.fromisoformat(data.get('publishedAt')) if data.get('publishedAt') is not None else None,
             feature_badges=[PaidDeckFeatureBadges(v) for v in data.get('featureBadges')] if data.get('featureBadges') is not None else None,
             extra_tags=data.get('extraTags'),

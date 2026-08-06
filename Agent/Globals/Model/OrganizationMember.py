@@ -1,14 +1,20 @@
 import uuid
 from datetime import datetime
+from typing import List
 
 
 class OrganizationMember:
-    def __init__(self, organization_id: str = None, email: str = None, user_id: str = '', added_by: str = '', added_at: datetime = datetime.now()) -> None:
+    def __init__(self, organization_id: str = None, email: str = None, user_id: str = '', added_by: str = '', delegate_powers: int = 0, tags: List[str] = [], attributes: dict = {}, attributes_normalised: dict = {}, attributes_comparable: dict = {}, added_at: datetime = datetime.now()) -> None:
         self.__id = str(uuid.uuid4())
         self.set_organization_id(organization_id)
         self.set_email(email)
         self.set_user_id(user_id)
         self.set_added_by(added_by)
+        self.set_delegate_powers(delegate_powers)
+        self.set_tags(tags)
+        self.set_attributes(attributes)
+        self.set_attributes_normalised(attributes_normalised)
+        self.set_attributes_comparable(attributes_comparable)
         self.set_added_at(added_at)
 
     def get_id(self) -> str:
@@ -50,6 +56,45 @@ class OrganizationMember:
             value = str(value)
         self.__added_by = value
 
+    def get_delegate_powers(self) -> int:
+        return self.__delegate_powers
+
+    def set_delegate_powers(self, value: int) -> None:
+        if value is not None:
+            try:
+                value = int(value)
+                value = max(0, value)
+            except (ValueError, TypeError):
+                value = 0
+        self.__delegate_powers = value
+
+    def get_tags(self) -> List[str]:
+        return self.__tags
+
+    def set_tags(self, value: List[str]) -> None:
+        if value is not None:
+            if not isinstance(value, list):
+                value = None
+        self.__tags = value
+
+    def get_attributes(self) -> dict:
+        return self.__attributes
+
+    def set_attributes(self, value: dict) -> None:
+        self.__attributes = value
+
+    def get_attributes_normalised(self) -> dict:
+        return self.__attributes_normalised
+
+    def set_attributes_normalised(self, value: dict) -> None:
+        self.__attributes_normalised = value
+
+    def get_attributes_comparable(self) -> dict:
+        return self.__attributes_comparable
+
+    def set_attributes_comparable(self, value: dict) -> None:
+        self.__attributes_comparable = value
+
     def get_added_at(self) -> datetime:
         return self.__added_at
 
@@ -77,6 +122,11 @@ class OrganizationMember:
             'email': self.get_email(),
             'userId': self.get_user_id(),
             'addedBy': self.get_added_by(),
+            'delegatePowers': self.get_delegate_powers(),
+            'tags': self.get_tags(),
+            'attributes': self.get_attributes(),
+            'attributesNormalised': self.get_attributes_normalised(),
+            'attributesComparable': self.get_attributes_comparable(),
             'addedAt': self.get_added_at().isoformat() if self.get_added_at() is not None else None,
         }
 
@@ -87,6 +137,11 @@ class OrganizationMember:
             email=data.get('email'),
             user_id=data.get('userId'),
             added_by=data.get('addedBy'),
+            delegate_powers=data.get('delegatePowers'),
+            tags=data.get('tags'),
+            attributes=data.get('attributes'),
+            attributes_normalised=data.get('attributesNormalised'),
+            attributes_comparable=data.get('attributesComparable'),
             added_at=datetime.fromisoformat(data.get('addedAt')) if data.get('addedAt') is not None else None
         )
         if data.get('id') is not None:

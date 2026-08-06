@@ -6,6 +6,7 @@ const PaidDeckContentFingerprint = require("../../Globals/Classes/PaidDeck/PaidD
 const PaidDeckContentUpdatePlanner = require("../../Globals/Classes/PaidDeck/PaidDeckContentUpdatePlanner");
 const LicenseConstants = require("../../Globals/Constants/LicenseConstants");
 const DeckLicense = require("../../Globals/Model/DeckLicense");
+const PaidDeckScopeResolver = require("../../Globals/Classes/PaidDeck/PaidDeckScopeResolver");
 const { entityTypes } = require("../../Globals/Enumerations/EntityTypes");
 const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
@@ -91,6 +92,12 @@ async function updatePaidDeckCopyContent(request, response)
         return;
     }
 
+    // The library this copy's rows live in. A marketplace purchase resolves to
+    // the buyer's own id; an organization-provided deck resolves to that
+    // organization's view, so an update rewrites the copy the member actually
+    // has rather than creating a second one in their personal library.
+    const scopeKey = PaidDeckScopeResolver.resolveForLicense(license, userId);
+
     const paidDeckDocument = await database
         .collection(DatabaseConstants.PAID_DECKS_COLLECTION)
         .findOne({ id: deckId });
@@ -111,7 +118,7 @@ async function updatePaidDeckCopyContent(request, response)
     };
 
     // ── Read the buyer's current rows for this copy ────────────────────────
-    const instanceRowFilter = buildPaidInstanceRowFilter(userId, deckId, instanceId);
+    const instanceRowFilter = buildPaidInstanceRowFilter(scopeKey, deckId, instanceId);
     const existingRowsById = new Map();
 
     for (const entityTypeKey of Object.keys(collectionByEntityType))
@@ -160,7 +167,7 @@ async function updatePaidDeckCopyContent(request, response)
                 const entityData = (entity.plaintext && typeof entity.plaintext === "object") ? entity.plaintext : {};
                 incomingEntities.push
                 ({
-                    id: remapPaidEntityId(entity.entityId, userId, deckId, instanceId),
+                    id: remapPaidEntityId(entity.entityId, scopeKey, deckId, instanceId),
                     masterEntityId: entity.entityId,
                     entityType: entity.entityType,
                     fingerprint: PaidDeckContentFingerprint.compute(entityData, ENTITY_TYPE_NAME_BY_VALUE[entity.entityType]),
@@ -201,8 +208,8 @@ async function updatePaidDeckCopyContent(request, response)
         ({
             updateOne:
             {
-                filter: { userId: userId, "data.id": entityData.id },
-                update: { $set: { userId: userId, data: entityData, serverUpdatedAt: writeTimestamp } },
+                filter: { userId: scopeKey, "data.id": entityData.id },
+                update: { $set: { userId: scopeKey, data: entityData, serverUpdatedAt: writeTimestamp } },
                 upsert: true
             }
         });
@@ -217,11 +224,11 @@ async function updatePaidDeckCopyContent(request, response)
         {
             entityData.parent = (incomingEntity.masterEntityId === rootDeckId)
                 ? "0"
-                : remapPaidEntityId(entityData.parent, userId, deckId, instanceId);
+                : remapPaidEntityId(entityData.parent, scopeKey, deckId, instanceId);
         }
         else
         {
-            entityData.deckId = remapPaidEntityId(entityData.deckId, userId, deckId, instanceId);
+            entityData.deckId = remapPaidEntityId(entityData.deckId, scopeKey, deckId, instanceId);
         }
 
         const existingAdditionalData = (entityData.additionalData && typeof entityData.additionalData === "object") ? entityData.additionalData : {};
@@ -292,7 +299,7 @@ async function updatePaidDeckCopyContent(request, response)
         // device AND cascades their content overlays.
         if (updatePlan.removed.length > 0)
         {
-            await SyncQueryEngine.bulkRecordDeletions(userId, database, updatePlan.removed.map(removedRow => (
+            await SyncQueryEngine.bulkRecordDeletions(scopeKey, database, updatePlan.removed.map(removedRow => (
             {
                 entityId: removedRow.id,
                 entityType: removedRow.entityType
@@ -306,12 +313,12 @@ async function updatePaidDeckCopyContent(request, response)
         {
             const staleOverlays = await database
                 .collection(DatabaseConstants.CONTENT_OVERLAYS_COLLECTION)
-                .find({ userId: userId, "data.targetEntityId": { $in: resetEntityIds } }, { projection: { _id: 0, "data.id": 1 } })
+                .find({ userId: scopeKey, "data.targetEntityId": { $in: resetEntityIds } }, { projection: { _id: 0, "data.id": 1 } })
                 .toArray();
 
             if (staleOverlays.length > 0)
             {
-                await SyncQueryEngine.bulkRecordDeletions(userId, database, staleOverlays.map(overlayRow => (
+                await SyncQueryEngine.bulkRecordDeletions(scopeKey, database, staleOverlays.map(overlayRow => (
                 {
                     entityId: overlayRow.data.id,
                     entityType: entityTypes.CONTENT_OVERLAY

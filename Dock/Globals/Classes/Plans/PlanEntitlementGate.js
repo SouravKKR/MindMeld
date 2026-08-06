@@ -1,6 +1,8 @@
 const AuthenticationQueryEngine = require('../Database/AuthenticationQueryEngine');
 const PlanMetadata = require('./PlanMetadata');
 const PlanTierResolver = require('./PlanTierResolver');
+const OrganizationScopeResolver = require('../Organization/OrganizationScopeResolver');
+const OrganizationFeatureResolver = require('../Organization/OrganizationFeatureResolver');
 const { planTiers } = require('../../Enumerations/PlanTiers');
 const ErrorCodes = require('../../Constants/ErrorCodes');
 
@@ -10,6 +12,15 @@ const ErrorCodes = require('../../Constants/ErrorCodes');
 // FEATURE_NOT_IN_PLAN (403) rather than the credit-shaped PAYMENT_REQUIRED
 // (402). Feature access honours any admin override loaded into PlanMetadata;
 // the client's plan value is never trusted.
+//
+// Inside an ORGANIZATION VIEW the question changes: what the member may do is
+// decided by that organization's permission rules rather than by the plan they
+// personally pay for. That is the whole point of the separation — an institute
+// grants capability inside its own world without upgrading anyone's private
+// account, and a member's own subscription is neither consumed nor extended by
+// working there. requireFeatureForRequest is the entry point that knows which
+// world a request is in; requireFeature remains the personal-only check for the
+// paths that have no request to read.
 
 class PlanEntitlementGate
 {
@@ -65,6 +76,51 @@ class PlanEntitlementGate
 
         const user = await AuthenticationQueryEngine.getUserById(userId);
         return PlanEntitlementGate.evaluateForUser(user, planFeature);
+    }
+
+    /**
+     * The request-aware check. Resolves which view the request is in and
+     * evaluates against that world's rules.
+     *
+     * The organization context is re-authorised inside OrganizationScopeResolver
+     * on every call, so a header naming an organization the caller does not
+     * belong to falls back to their personal plan rather than granting anything.
+     *
+     * @param {object} request
+     * @param {string} userId
+     * @param {number} planFeature a PlanFeatures value
+     * @returns {Promise<{allowed: boolean, currentTier: number, requiredTier: number|null, reason: string, organizationId: string|null}>}
+     */
+    static async requireFeatureForRequest(request, userId, planFeature)
+    {
+        const scope = await OrganizationScopeResolver.resolve(request, userId);
+
+        if (scope.organizationId === null)
+        {
+            return { ...await PlanEntitlementGate.requireFeature(userId, planFeature), organizationId: null };
+        }
+
+        const user = await AuthenticationQueryEngine.getUserById(userId);
+        const entitlement = await OrganizationFeatureResolver.resolveForMember
+        (
+            scope.organization,
+            userId,
+            user ? (user.getAdditionalData()?.email || "") : ""
+        );
+
+        const bAllowed = entitlement.featureValues.includes(Number(planFeature));
+
+        return {
+            allowed: bAllowed,
+            // The tier is reported as the personal one because that is what it
+            // still is — the organization grants features, not a tier — and a
+            // client showing "upgrade to Pro" for a feature the INSTITUTE
+            // controls would send the member to the wrong place.
+            currentTier: user ? PlanTierResolver.getEffectiveTier(user) : planTiers.FREE,
+            requiredTier: null,
+            reason: bAllowed ? "OK" : ErrorCodes.FEATURE_NOT_IN_PLAN,
+            organizationId: scope.organizationId
+        };
     }
 
     // The lowest tier (by ordinal) that unlocks the feature — surfaced to the

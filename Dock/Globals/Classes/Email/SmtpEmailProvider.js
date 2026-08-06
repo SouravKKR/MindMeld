@@ -55,6 +55,23 @@ class SmtpEmailProvider extends EmailProvider
         return this.#transporter;
     }
 
+    /**
+     * Builds the nodemailer sendMail options from an EmailMessage. Split out
+     * from sendEmail — as SesEmailProvider splits its command input — so the
+     * mapping, and the display name riding on the from field, are testable
+     * without a live SMTP connection.
+     */
+    buildSendMailOptions(emailMessage)
+    {
+        return {
+            from: emailMessage.getFormattedSourceAddress(),
+            to: emailMessage.getRecipientEmail(),
+            subject: emailMessage.getSubject(),
+            text: emailMessage.getPlainTextBody(),
+            html: emailMessage.getHtmlBody()
+        };
+    }
+
     async sendEmail(emailMessage)
     {
         if (!emailMessage.isDispatchable())
@@ -62,14 +79,7 @@ class SmtpEmailProvider extends EmailProvider
             throw new Error("SmtpEmailProvider.sendEmail() received an incomplete EmailMessage");
         }
 
-        await this.#getTransporter().sendMail
-        ({
-            from: emailMessage.getSourceEmail(),
-            to: emailMessage.getRecipientEmail(),
-            subject: emailMessage.getSubject(),
-            text: emailMessage.getPlainTextBody(),
-            html: emailMessage.getHtmlBody()
-        });
+        await this.#getTransporter().sendMail(this.buildSendMailOptions(emailMessage));
     }
 }
 

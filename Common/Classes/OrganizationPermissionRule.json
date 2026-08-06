@@ -1,0 +1,48 @@
+{
+    "name": "OrganizationPermissionRule",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "organizationId":
+        {
+            "datatype": "string"
+        },
+        "name":
+        {
+            "datatype": "string",
+            "minLength": 1,
+            "maxLength": 256
+        },
+        "tagFilter":
+        {
+            "datatype": "array<string>",
+            "defaultValue": []
+        },
+        "matchMode":
+        {
+            "datatype": "enum:TagMatchModes",
+            "defaultValue": 0
+        },
+        "allowedFeatures":
+        {
+            "datatype": "array<enum:PlanFeatures>",
+            "defaultValue": []
+        },
+        "storageGrantBytes":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "createdAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        }
+    }
+}

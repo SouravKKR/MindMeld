@@ -47,6 +47,8 @@ class DatabaseConstants
     static ORG_ADMIN_VERIFICATIONS_COLLECTION = 'orgAdminVerifications';
     static ORGANIZATION_PAYMENTS_COLLECTION = 'organizationPayments';
     static ALERTS_COLLECTION = 'alerts';
+    static WEBHOOK_EVENTS_COLLECTION = 'webhookEvents';
+    static WEBHOOK_EVENT_RETENTION_DAYS = 90;
     static RATE_LIMIT_EVENTS_COLLECTION = 'rateLimitEvents';
     static RATE_LIMIT_EVENTS_TTL_DAYS = 30;
     static ADMIN_AUDIT_EVENTS_COLLECTION = 'adminAuditEvents';
@@ -83,6 +85,14 @@ class DatabaseConstants
     static EPHEMERAL_UPLOADS_COLLECTION = 'ephemeralUploads';
     static ANSWER_SHEET_RETENTION_DAYS = 60;
     static SUPPORT_ATTACHMENT_RETENTION_DAYS = 60;
+    static ORGANIZATION_CREDIT_POOLS_COLLECTION = 'organizationCreditPools';
+    static ORGANIZATION_CREDIT_TRANSACTIONS_COLLECTION = 'organizationCreditTransactions';
+    static PAYMENT_ATTEMPTS_COLLECTION = 'paymentAttempts';
+    static PAYMENT_ATTEMPT_RETENTION_DAYS = 90;
+    static PAYMENT_REVERSALS_COLLECTION = 'paymentReversals';
+    static ORGANIZATION_PERMISSION_RULES_COLLECTION = 'organizationPermissionRules';
+    static SCRIPT_INTEGRITY_BASELINES_COLLECTION = 'scriptIntegrityBaselines';
+    static FINANCIAL_RECONCILIATIONS_COLLECTION = 'financialReconciliations';
 }
 
 module.exports = DatabaseConstants;

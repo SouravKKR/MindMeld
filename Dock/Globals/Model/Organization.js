@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 
 const { organizationStatus } = require('../Enumerations/OrganizationStatus');
+const { planFeatures } = require('../Enumerations/PlanFeatures');
 
 class Organization
 {
@@ -15,9 +16,14 @@ class Organization
     #currentMemberCount;
     #creationDate;
     #activationDate;
+    #termEndsAt;
+    #maxStorageGrantBytesPerMember;
+    #maxCreditsPerMemberPerMonth;
+    #maxPublishedDecks;
+    #grantableFeatures;
     #additionalData;
 
-    constructor({name = null, adminEmail = null, adminUserId = '', status = 0, currency = 'INR', creationAmountMinor = 0, maxMembers = 0, currentMemberCount = 0, creationDate = new Date(), activationDate = new Date(), additionalData = {}} = {})
+    constructor({name = null, adminEmail = null, adminUserId = '', status = 0, currency = 'INR', creationAmountMinor = 0, maxMembers = 0, currentMemberCount = 0, creationDate = new Date(), activationDate = new Date(), termEndsAt = new Date(), maxStorageGrantBytesPerMember = 0, maxCreditsPerMemberPerMonth = 0, maxPublishedDecks = 0, grantableFeatures = [], additionalData = {}} = {})
     {
         this.#id = crypto.randomUUID();
         this.setName(name);
@@ -30,6 +36,11 @@ class Organization
         this.setCurrentMemberCount(currentMemberCount);
         this.setCreationDate(creationDate);
         this.setActivationDate(activationDate);
+        this.setTermEndsAt(termEndsAt);
+        this.setMaxStorageGrantBytesPerMember(maxStorageGrantBytesPerMember);
+        this.setMaxCreditsPerMemberPerMonth(maxCreditsPerMemberPerMonth);
+        this.setMaxPublishedDecks(maxPublishedDecks);
+        this.setGrantableFeatures(grantableFeatures);
         this.setAdditionalData(additionalData);
     }
 
@@ -242,6 +253,111 @@ class Organization
         this.#activationDate = value;
     }
 
+    getTermEndsAt()
+    {
+        return this.#termEndsAt;
+    }
+
+    setTermEndsAt(value)
+    {
+        if (value !== null && value !== undefined)
+        {
+            value = value instanceof Date ? value : new Date(value);
+            if (isNaN(value.getTime()))
+            {
+                value = new Date();
+            }
+        }
+        else
+        {
+            value = new Date();
+        }
+        this.#termEndsAt = value;
+    }
+
+    getMaxStorageGrantBytesPerMember()
+    {
+        return this.#maxStorageGrantBytesPerMember;
+    }
+
+    setMaxStorageGrantBytesPerMember(value)
+    {
+        if (value !== null)
+        {
+            value = parseInt(value, 10);
+            if (isNaN(value))
+            {
+                value = 0;
+            }
+            else
+            {
+                value = Math.max(value, 0);
+            }
+        }
+        this.#maxStorageGrantBytesPerMember = value;
+    }
+
+    getMaxCreditsPerMemberPerMonth()
+    {
+        return this.#maxCreditsPerMemberPerMonth;
+    }
+
+    setMaxCreditsPerMemberPerMonth(value)
+    {
+        if (value !== null)
+        {
+            value = parseFloat(value);
+            if (isNaN(value))
+            {
+                value = 0;
+            }
+            else
+            {
+                value = Math.max(value, 0);
+            }
+        }
+        this.#maxCreditsPerMemberPerMonth = value;
+    }
+
+    getMaxPublishedDecks()
+    {
+        return this.#maxPublishedDecks;
+    }
+
+    setMaxPublishedDecks(value)
+    {
+        if (value !== null)
+        {
+            value = parseInt(value, 10);
+            if (isNaN(value))
+            {
+                value = 0;
+            }
+            else
+            {
+                value = Math.max(value, 0);
+            }
+        }
+        this.#maxPublishedDecks = value;
+    }
+
+    getGrantableFeatures()
+    {
+        return this.#grantableFeatures;
+    }
+
+    setGrantableFeatures(value)
+    {
+        if (value !== null)
+        {
+            if (!Array.isArray(value))
+            {
+                value = null;
+            }
+        }
+        this.#grantableFeatures = value;
+    }
+
     getAdditionalData()
     {
         return this.#additionalData;
@@ -266,6 +382,11 @@ class Organization
             currentMemberCount: this.getCurrentMemberCount(),
             creationDate: this.getCreationDate() !== null ? this.getCreationDate().toISOString() : null,
             activationDate: this.getActivationDate() !== null ? this.getActivationDate().toISOString() : null,
+            termEndsAt: this.getTermEndsAt() !== null ? this.getTermEndsAt().toISOString() : null,
+            maxStorageGrantBytesPerMember: this.getMaxStorageGrantBytesPerMember(),
+            maxCreditsPerMemberPerMonth: this.getMaxCreditsPerMemberPerMonth(),
+            maxPublishedDecks: this.getMaxPublishedDecks(),
+            grantableFeatures: this.getGrantableFeatures() !== null ? this.getGrantableFeatures().map(item => Number(item)) : null,
             additionalData: this.getAdditionalData(),
         };
     }
@@ -283,6 +404,11 @@ class Organization
             currentMemberCount: json.currentMemberCount ?? null,
             creationDate: json.creationDate != null ? new Date(json.creationDate) : null,
             activationDate: json.activationDate != null ? new Date(json.activationDate) : null,
+            termEndsAt: json.termEndsAt != null ? new Date(json.termEndsAt) : null,
+            maxStorageGrantBytesPerMember: json.maxStorageGrantBytesPerMember ?? null,
+            maxCreditsPerMemberPerMonth: json.maxCreditsPerMemberPerMonth ?? null,
+            maxPublishedDecks: json.maxPublishedDecks ?? null,
+            grantableFeatures: json.grantableFeatures ?? null,
             additionalData: json.additionalData ?? null
         });
         instance._restoreId_id(json.id);

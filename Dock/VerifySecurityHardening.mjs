@@ -3,8 +3,9 @@
  *
  *   A03 — EnumFilter no longer passes a client-supplied value straight into a
  *         Mongo query fragment, so an operator object cannot be smuggled in.
- *   A05 — SecurityHeaders ships a strict Content-Security-Policy candidate
- *         alongside the enforced compatible one, promotable by environment.
+ *   A05 — SecurityHeaders ENFORCES the strict Content-Security-Policy by
+ *         default, with the permissive predecessor left reachable as a
+ *         one-variable escape hatch.
  *
  * Run from the Dock directory:
  *     node VerifySecurityHardening.mjs
@@ -13,8 +14,9 @@
  *
  * The emphasis throughout is on proving that NOTHING LEGITIMATE BROKE: every
  * registered option of every registered EnumFilter must still produce exactly
- * the query fragment it produced before, and the enforced CSP must be
- * byte-identical to the one that shipped previously unless an operator opts in.
+ * the query fragment it produced before, and the enforced CSP must still name
+ * every origin the application genuinely loads script from — an allow-list that
+ * is now load-bearing rather than advisory, because it BLOCKS.
  */
 
 import { createRequire } from "module";
@@ -221,50 +223,54 @@ function loadSecurityHeadersWith(environmentOverrides)
     return require("./Endpoints/Plugins/SecurityHeaders").SecurityHeaders;
 }
 
-function verifyEnforcedPolicyIsUnchangedByDefault()
+function verifyStrictPolicyIsEnforcedByDefault()
 {
-    section("A05 — the enforced policy is untouched by default (nothing can break)");
+    section("A05 — the STRICT policy is the enforced one by default [B4]");
 
     const SecurityHeaders = loadSecurityHeadersWith({});
     const enforcedPolicy = SecurityHeaders.buildContentSecurityPolicy();
 
-    assert(enforcedPolicy.includes("script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: https:"),
-        "the enforced script-src is byte-identical to the previously shipped one");
-    assert(!enforcedPolicy.includes("report-uri"),
-        "the enforced policy carries no report-uri");
+    // The whole point of the control: an injected inline <script> on a page
+    // where a payment is taken must not run. Only a script-src without
+    // 'unsafe-inline' achieves that, and only in the ENFORCED header.
+    const scriptDirective = enforcedPolicy.split("; ").find(directive => directive.startsWith("script-src "));
+
+    assert(scriptDirective !== undefined && !scriptDirective.includes("'unsafe-inline'"),
+        "the enforced script-src blocks inline script");
+    assert(scriptDirective !== undefined && !scriptDirective.includes("'unsafe-eval'"),
+        "the enforced script-src blocks eval");
+    assert(scriptDirective !== undefined && !scriptDirective.split(" ").includes("https:"),
+        "the enforced script-src names origins instead of allowing any https: origin");
+    assert(enforcedPolicy.includes("'wasm-unsafe-eval'"),
+        "the enforced policy keeps wasm-unsafe-eval for the in-browser LLM");
     assert(enforcedPolicy.includes("object-src 'none'") && enforcedPolicy.includes("frame-ancestors 'self'"),
         "the locked-down directives are still present");
+    assert(enforcedPolicy.includes("report-uri /Security/CspReport"),
+        "enforcing does not blind the operator — the enforced policy still reports violations");
+    assert(SecurityHeaders.buildReportOnlyCompanionPolicy() === null,
+        "no duplicate report-only companion is sent when strict is already enforced");
 }
 
-function verifyStrictCandidateShipsReportOnly()
+function verifyEnforcedPolicyNamesEveryRealScriptOrigin()
 {
-    section("A05 — the strict candidate rides along report-only");
+    section("A05 — the enforced allow-list covers every origin the app really uses");
 
+    // Under report-only a missing origin was a noisy alert. Enforced, it is a
+    // broken feature, so each of these is now load-bearing.
     const SecurityHeaders = loadSecurityHeadersWith({});
-    const companionPolicy = SecurityHeaders.buildReportOnlyCompanionPolicy();
+    const enforcedPolicy = SecurityHeaders.buildContentSecurityPolicy();
 
-    assert(companionPolicy !== null, "a report-only companion policy is produced by default");
-    assert(!companionPolicy.includes("'unsafe-inline' 'unsafe-eval'"),
-        "the strict candidate drops unsafe-inline and unsafe-eval from script-src");
-    assert(companionPolicy.includes("'wasm-unsafe-eval'"),
-        "the strict candidate keeps wasm-unsafe-eval for the in-browser LLM");
-    assert(companionPolicy.includes("https://pagead2.googlesyndication.com"),
-        "the strict candidate allow-lists the AdSense loader origin");
+    assert(enforcedPolicy.includes("https://pagead2.googlesyndication.com"),
+        "the AdSense loader origin is allow-listed");
     // SODAR is fetched by show_ads_impl at runtime, not declared in any markup,
-    // so nothing else in this repo would catch its removal until strict mode was
-    // promoted and AdSense's invalid-traffic detection quietly stopped loading.
-    assert(companionPolicy.includes("https://*.adtrafficquality.google"),
-        "the strict candidate allow-lists the AdSense SODAR origin");
-    assert(companionPolicy.includes("https://static.zohocdn.com") && companionPolicy.includes("https://checkout.razorpay.com"),
-        "the strict candidate allow-lists both checkout widget origins");
-    assert(companionPolicy.includes("https://static.cloudflareinsights.com"),
-        "the strict candidate allow-lists the edge-injected Cloudflare beacon (reported on every proxied page load)");
-    assert(companionPolicy.includes("report-uri /Security/CspReport"),
-        "the strict candidate points at the violation sink");
-
-    const scriptDirective = companionPolicy.split("; ").find(directive => directive.startsWith("script-src "));
-    assert(scriptDirective !== undefined && !scriptDirective.split(" ").includes("https:"),
-        "the strict candidate replaces the blanket https: script source with named origins");
+    // so nothing else in this repo would catch its removal until AdSense's
+    // invalid-traffic detection quietly stopped loading in production.
+    assert(enforcedPolicy.includes("https://*.adtrafficquality.google"),
+        "the AdSense SODAR origin is allow-listed");
+    assert(enforcedPolicy.includes("https://checkout.razorpay.com"),
+        "the Razorpay checkout widget origin is allow-listed — without this, no payment can be taken at all");
+    assert(enforcedPolicy.includes("https://static.cloudflareinsights.com"),
+        "the edge-injected Cloudflare beacon is allow-listed (it is in no markup, so only this list covers it)");
 }
 
 function verifyStyleSrcStaysPermissive()
@@ -272,25 +278,45 @@ function verifyStyleSrcStaysPermissive()
     section("A05 — inline styles are deliberately still allowed");
 
     const SecurityHeaders = loadSecurityHeadersWith({});
-    const companionPolicy = SecurityHeaders.buildReportOnlyCompanionPolicy();
+    const enforcedPolicy = SecurityHeaders.buildContentSecurityPolicy();
 
-    const styleDirective = companionPolicy.split("; ").find(directive => directive.startsWith("style-src "));
+    const styleDirective = enforcedPolicy.split("; ").find(directive => directive.startsWith("style-src "));
 
     assert(styleDirective !== undefined && styleDirective.includes("'unsafe-inline'"),
         "style-src keeps 'unsafe-inline' — the Web Components render inline styles throughout");
 }
 
-function verifyStrictModePromotesThePolicy()
+function verifyCompatibleModeIsTheEscapeHatch()
 {
-    section("A05 — one environment variable promotes the strict policy");
+    section("A05 — one environment variable rolls back to the permissive policy");
 
-    const SecurityHeaders = loadSecurityHeadersWith({ CONTENT_SECURITY_POLICY_MODE: "strict" });
+    const SecurityHeaders = loadSecurityHeadersWith({ CONTENT_SECURITY_POLICY_MODE: "compatible" });
     const enforcedPolicy = SecurityHeaders.buildContentSecurityPolicy();
 
-    assert(!enforcedPolicy.includes("'unsafe-eval'"),
-        "strict mode enforces a policy without unsafe-eval");
-    assert(SecurityHeaders.buildReportOnlyCompanionPolicy() === null,
-        "strict mode sends no duplicate report-only companion");
+    assert(enforcedPolicy.includes("script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: https:"),
+        "compatible mode restores the previously shipped script-src byte-for-byte");
+    assert(!enforcedPolicy.includes("report-uri"),
+        "the compatible policy carries no report-uri of its own");
+
+    const companionPolicy = SecurityHeaders.buildReportOnlyCompanionPolicy();
+
+    assert(companionPolicy !== null,
+        "the strict policy rides along report-only, so the evidence needed to return to strict keeps accumulating");
+    const companionScriptDirective = companionPolicy.split("; ").find(directive => directive.startsWith("script-src "));
+
+    assert(companionScriptDirective !== undefined && !companionScriptDirective.includes("'unsafe-inline'")
+        && companionPolicy.includes("report-uri /Security/CspReport"),
+        "the companion is the strict policy, pointed at the violation sink");
+
+    // A mangled value must fail towards the safer policy, not away from it.
+    for (const mangledValue of ["", "  ", "Strict", "compatable", "true"])
+    {
+        const mangled = loadSecurityHeadersWith({ CONTENT_SECURITY_POLICY_MODE: mangledValue });
+        const mangledScriptDirective = mangled.buildContentSecurityPolicy().split("; ").find(directive => directive.startsWith("script-src "));
+
+        assert(mangledScriptDirective !== undefined && !mangledScriptDirective.includes("'unsafe-inline'"),
+            `CONTENT_SECURITY_POLICY_MODE="${mangledValue}" still enforces the strict policy`);
+    }
 }
 
 function verifyOperatorOverridesStillWin()
@@ -312,60 +338,71 @@ function verifyOperatorOverridesStillWin()
     assert(legacyReportOnly.buildReportOnlyCompanionPolicy() === null,
         "the legacy report-only flag suppresses the companion so the two cannot collide");
 
-    const reportingOff = loadSecurityHeadersWith({ CONTENT_SECURITY_POLICY_REPORTING_DISABLED: "true" });
+    const reportingOff = loadSecurityHeadersWith({ CONTENT_SECURITY_POLICY_MODE: "compatible", CONTENT_SECURITY_POLICY_REPORTING_DISABLED: "true" });
 
     assert(reportingOff.buildReportOnlyCompanionPolicy() === null,
         "reporting can be switched off entirely");
 
     const customSink = loadSecurityHeadersWith({ CONTENT_SECURITY_POLICY_REPORT_URI: "/Custom/Sink" });
 
-    assert(customSink.buildReportOnlyCompanionPolicy().includes("report-uri /Custom/Sink"),
-        "the report sink is relocatable");
+    assert(customSink.buildContentSecurityPolicy().includes("report-uri /Custom/Sink"),
+        "the report sink is relocatable on the enforced policy");
 }
 
 function verifyHeadersAreActuallyStamped()
 {
-    section("A05 — both headers reach the response");
+    section("A05 — the enforcing header reaches the response");
 
-    const SecurityHeaders = loadSecurityHeadersWith({});
-
-    function stampHeadersFor(url)
+    function stamperFor(environmentOverrides)
     {
-        const stampedHeaders = {};
-        const fakeResponse = { setHeader: (name, value) => { stampedHeaders[name] = value; } };
-        const fakeRequest = { url: url, headers: {}, socket: { encrypted: false } };
+        const SecurityHeaders = loadSecurityHeadersWith(environmentOverrides);
 
-        SecurityHeaders.apply(fakeRequest, fakeResponse);
-        return stampedHeaders;
+        return (url) =>
+        {
+            const stampedHeaders = {};
+            const fakeResponse = { setHeader: (name, value) => { stampedHeaders[name] = value; } };
+            const fakeRequest = { url: url, headers: {}, socket: { encrypted: false } };
+
+            SecurityHeaders.apply(fakeRequest, fakeResponse);
+            return stampedHeaders;
+        };
     }
 
+    const stampHeadersFor = stamperFor({});
     const documentHeaders = stampHeadersFor("/");
 
     assert(typeof documentHeaders["Content-Security-Policy"] === "string",
         "the enforced Content-Security-Policy header is stamped");
-    assert(typeof documentHeaders["Content-Security-Policy-Report-Only"] === "string",
-        "the report-only companion header is stamped on a document");
-    assert(documentHeaders["Content-Security-Policy"] !== documentHeaders["Content-Security-Policy-Report-Only"],
-        "the two headers carry different policies");
+    assert(!documentHeaders["Content-Security-Policy"].includes("'unsafe-inline' 'unsafe-eval'"),
+        "the header that BLOCKS is the strict one — not a report-only companion");
+    assert(documentHeaders["Content-Security-Policy-Report-Only"] === undefined,
+        "no companion is stamped alongside it — the enforced policy already reports");
     assert(documentHeaders["X-Content-Type-Options"] === "nosniff" && documentHeaders["X-Frame-Options"] === "SAMEORIGIN",
         "the other security headers are unaffected");
     assert(documentHeaders["Strict-Transport-Security"] === undefined,
         "HSTS is still withheld on a plain-http request");
 
-    assert(typeof stampHeadersFor("/index.html")["Content-Security-Policy-Report-Only"] === "string",
-        "the companion is stamped on /index.html — that is a document, not a subresource");
-    assert(typeof stampHeadersFor("/Sync")["Content-Security-Policy-Report-Only"] === "string",
-        "the companion is stamped on an extensionless API route");
-
     for (const subresourceUrl of ["/Bundle.chunk-ABC123.js", "/CommonStyles/Theme.css", "/Assets/Models/shard.bin", "/Globals/Assets/Images/Logos/Logo.png?v=2"])
     {
-        const subresourceHeaders = stampHeadersFor(subresourceUrl);
-
-        assert(subresourceHeaders["Content-Security-Policy-Report-Only"] === undefined,
-            `the companion is skipped on ${subresourceUrl} — a subresource's CSP is inert`);
-        assert(typeof subresourceHeaders["Content-Security-Policy"] === "string",
-            `the enforced policy is still stamped on ${subresourceUrl}`);
+        assert(typeof stampHeadersFor(subresourceUrl)["Content-Security-Policy"] === "string",
+            `the enforced policy is stamped on ${subresourceUrl}`);
     }
+
+    // The escape hatch must still produce the two-header shape, since that is
+    // the state an operator rolls back into.
+    const stampCompatibleHeadersFor = stamperFor({ CONTENT_SECURITY_POLICY_MODE: "compatible" });
+    const compatibleDocumentHeaders = stampCompatibleHeadersFor("/");
+
+    assert(typeof compatibleDocumentHeaders["Content-Security-Policy-Report-Only"] === "string",
+        "rolled back, the report-only companion header is stamped on a document");
+    assert(compatibleDocumentHeaders["Content-Security-Policy"] !== compatibleDocumentHeaders["Content-Security-Policy-Report-Only"],
+        "rolled back, the two headers carry different policies");
+    assert(typeof stampCompatibleHeadersFor("/index.html")["Content-Security-Policy-Report-Only"] === "string",
+        "the companion is stamped on /index.html — that is a document, not a subresource");
+    assert(typeof stampCompatibleHeadersFor("/Sync")["Content-Security-Policy-Report-Only"] === "string",
+        "the companion is stamped on an extensionless API route");
+    assert(stampCompatibleHeadersFor("/Bundle.chunk-ABC123.js")["Content-Security-Policy-Report-Only"] === undefined,
+        "the companion is skipped on a subresource — a subresource's CSP is inert");
 }
 
 function verifyTheBuildEmitsNoEval()
@@ -418,12 +455,28 @@ function verifyTheBuildEmitsNoEval()
 
             const contents = fs.readFileSync(entryPath, "utf8");
 
-            // The one permitted occurrence is WebLLM's globalThis fallback,
-            // `typeof globalThis == "object" ? globalThis : Function("return
-            // this")()`. The Function branch is unreachable on every browser
-            // capable of running this app, so it never evaluates and never
-            // trips CSP.
-            const withoutKnownDeadBranch = contents.split('typeof globalThis=="object"?globalThis:Function("return this")()').join("");
+            // One construct is permitted: the "find the global object" fallback
+            // that ships in WebLLM and again, in lodash's form, inside Mermaid —
+            //
+            //     typeof globalThis == "object" ? globalThis : Function("return this")()
+            //     global || (typeof self == "object" && self.Object === Object && self) || Function("return this")()
+            //
+            // The Function branch is guarded by a check that is ALWAYS true in a
+            // browser (globalThis and self both exist and are the global), so it
+            // is never evaluated, never reaches the JS engine's compiler, and
+            // never trips CSP. Both spellings are stripped rather than one
+            // vendor's exact bytes, because the property being asserted is "no
+            // eval RUNS", not "no eval appears".
+            const knownDeadGlobalFallbacks =
+            [
+                'typeof globalThis=="object"?globalThis:Function("return this")()',
+                '||Function("return this")()'
+            ];
+            let withoutKnownDeadBranch = contents;
+            for (const deadFallback of knownDeadGlobalFallbacks)
+            {
+                withoutKnownDeadBranch = withoutKnownDeadBranch.split(deadFallback).join("");
+            }
 
             if (evalPattern.test(withoutKnownDeadBranch))
             {
@@ -442,8 +495,9 @@ function verifyThePluginItselfStampsAndContinues()
 {
     section("A05 — the registered global plugin (not just the class) behaves");
 
-    const modulePath = require.resolve("./Endpoints/Plugins/SecurityHeaders");
-    delete require.cache[modulePath];
+    // Load through the same helper the other checks use, so no environment an
+    // earlier check set can leak in and make this one assert the wrong mode.
+    loadSecurityHeadersWith({});
     const { securityHeadersPlugin } = require("./Endpoints/Plugins/SecurityHeaders");
 
     const stampedHeaders = {};
@@ -455,8 +509,8 @@ function verifyThePluginItselfStampsAndContinues()
     assert(handled === false, "the plugin never handles the request — it always falls through to the router");
     assert(typeof stampedHeaders["Content-Security-Policy"] === "string",
         "the plugin stamps the enforced policy");
-    assert(typeof stampedHeaders["Content-Security-Policy-Report-Only"] === "string",
-        "the plugin stamps the report-only companion");
+    assert(!stampedHeaders["Content-Security-Policy"].includes("'unsafe-inline' 'unsafe-eval'"),
+        "the policy the plugin stamps is the strict, blocking one");
 
     // A request object missing url/socket must not throw out of the plugin —
     // it is the very first thing to run on every request.
@@ -484,10 +538,10 @@ async function main()
     verifyEmptyValuesStillMeanUnset();
     verifySiblingFiltersWereAlreadySafe();
 
-    verifyEnforcedPolicyIsUnchangedByDefault();
-    verifyStrictCandidateShipsReportOnly();
+    verifyStrictPolicyIsEnforcedByDefault();
+    verifyEnforcedPolicyNamesEveryRealScriptOrigin();
     verifyStyleSrcStaysPermissive();
-    verifyStrictModePromotesThePolicy();
+    verifyCompatibleModeIsTheEscapeHatch();
     verifyOperatorOverridesStillWin();
     verifyHeadersAreActuallyStamped();
     verifyTheBuildEmitsNoEval();

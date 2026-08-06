@@ -7,7 +7,7 @@ from Globals.Enumerations.PaymentProviders import PaymentProviders
 
 
 class CreditDealPayment:
-    def __init__(self, target_type: CreditDealTargetTypes = CreditDealTargetTypes(0), target_id: str = '', label: str = '', mode: CreditDealPaymentModes = CreditDealPaymentModes(0), status: CreditDealPaymentStatuses = CreditDealPaymentStatuses(0), amount_minor: int = 0, currency: str = 'INR', payment_provider: PaymentProviders = PaymentProviders(0), provider_order_id: str = '', provider_payment_id: str = '', invoice_file_name: str = '', invoice_mime_type: str = '', invoice_bucket_path: str = '', invoice_size_bytes: int = 0, invoice_uploaded_at: datetime = datetime.now(), has_invoice: bool = False, created_by_user_id: str = '', created_at: datetime = datetime.now(), additional_data: dict = {}) -> None:
+    def __init__(self, target_type: CreditDealTargetTypes = CreditDealTargetTypes(0), target_id: str = '', label: str = '', mode: CreditDealPaymentModes = CreditDealPaymentModes(0), status: CreditDealPaymentStatuses = CreditDealPaymentStatuses(0), amount_minor: int = 0, currency: str = 'INR', payment_provider: PaymentProviders = PaymentProviders(0), provider_order_id: str = '', provider_payment_id: str = '', invoice_file_name: str = '', invoice_mime_type: str = '', invoice_bucket_path: str = '', invoice_size_bytes: int = 0, invoice_uploaded_at: datetime = datetime.now(), has_invoice: bool = False, created_by_user_id: str = '', created_at: datetime = datetime.now(), captured_at: datetime = datetime.now(), additional_data: dict = {}) -> None:
         self.__id = str(uuid.uuid4())
         self.set_target_type(target_type)
         self.set_target_id(target_id)
@@ -27,6 +27,7 @@ class CreditDealPayment:
         self.set_has_invoice(has_invoice)
         self.set_created_by_user_id(created_by_user_id)
         self.set_created_at(created_at)
+        self.set_captured_at(captured_at)
         self.set_additional_data(additional_data)
 
     def get_id(self) -> str:
@@ -216,6 +217,22 @@ class CreditDealPayment:
             value = datetime.now()
         self.__created_at = value
 
+    def get_captured_at(self) -> datetime:
+        return self.__captured_at
+
+    def set_captured_at(self, value: datetime) -> None:
+        if value is not None:
+            if isinstance(value, str):
+                try:
+                    value = datetime.fromisoformat(value)
+                except ValueError:
+                    value = datetime.now()
+            elif not isinstance(value, datetime):
+                value = datetime.now()
+        else:
+            value = datetime.now()
+        self.__captured_at = value
+
     def get_additional_data(self) -> dict:
         return self.__additional_data
 
@@ -247,6 +264,7 @@ class CreditDealPayment:
             'hasInvoice': self.get_has_invoice(),
             'createdByUserId': self.get_created_by_user_id(),
             'createdAt': self.get_created_at().isoformat() if self.get_created_at() is not None else None,
+            'capturedAt': self.get_captured_at().isoformat() if self.get_captured_at() is not None else None,
             'additionalData': self.get_additional_data(),
         }
 
@@ -271,6 +289,7 @@ class CreditDealPayment:
             has_invoice=data.get('hasInvoice'),
             created_by_user_id=data.get('createdByUserId'),
             created_at=datetime.fromisoformat(data.get('createdAt')) if data.get('createdAt') is not None else None,
+            captured_at=datetime.fromisoformat(data.get('capturedAt')) if data.get('capturedAt') is not None else None,
             additional_data=data.get('additionalData')
         )
         if data.get('id') is not None:

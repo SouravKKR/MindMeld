@@ -2,6 +2,8 @@ const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnec
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const LicenseClientView = require("../../Globals/Classes/Security/LicenseClientView");
 const LicenseContentVersionResolver = require("../../Globals/Classes/PaidDeck/LicenseContentVersionResolver");
+const OrganizationScopeResolver = require("../../Globals/Classes/Organization/OrganizationScopeResolver");
+const PaidDeckScopeResolver = require("../../Globals/Classes/PaidDeck/PaidDeckScopeResolver");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function pullLicenses(request, response)
@@ -27,11 +29,23 @@ async function pullLicenses(request, response)
     const sinceIsoString = new Date(sinceTimestampMilliseconds).toISOString();
 
     const database = await DatabaseConnector.getDatabase();
+
+    // Licenses are keyed by the PERSON, but their seeded content belongs to one
+    // library. A device in an organization view must not receive the licenses of
+    // marketplace decks that live in the personal library — the tiles would
+    // appear with no content behind them, and the marketplace is deliberately a
+    // personal-view surface. Selecting by scope keeps each view's registry
+    // matching the decks that view actually holds. "" is the legacy value every
+    // license issued before scoping carries, and means personal.
+    const scope = await OrganizationScopeResolver.resolve(request, session.getUserId());
+    const visibleScopeCondition = PaidDeckScopeResolver.buildVisibleScopeCondition(scope.scopeKey, session.getUserId());
+
     const licenseDocuments = await database
         .collection(DatabaseConstants.DECK_LICENSES_COLLECTION)
         .find
         ({
             userId: session.getUserId(),
+            scopeKey: visibleScopeCondition,
             rotatedAt: { $gt: sinceIsoString }
         })
         .toArray();

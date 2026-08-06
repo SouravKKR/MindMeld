@@ -113,7 +113,9 @@ const LogArchivalScheduler = require("./Globals/Classes/Logging/LogArchivalSched
 const ExpiredInformationSourceReaper = require("./Globals/Classes/Content/ExpiredInformationSourceReaper");
 const KeyManagementService = require("./Globals/Classes/Security/KeyManagementService");
 const KeyRotationScheduler = require("./Globals/Classes/Security/KeyRotationScheduler");
+const ScriptIntegrityMonitor = require("./Globals/Classes/Security/ScriptIntegrityMonitor");
 const ExpiredLicenseSweeper = require("./Globals/Classes/PaidDeck/ExpiredLicenseSweeper");
+const OrganizationTermScheduler = require("./Globals/Classes/Organization/OrganizationTermScheduler");
 const AuthenticationQueryEngine = require("./Globals/Classes/Database/AuthenticationQueryEngine");
 const { getSession } = require("./Endpoints/Helpers/GetSession");
 const PaidDeckDeepLinkCookie = require("./Endpoints/Helpers/PaidDeckDeepLinkCookie");
@@ -123,6 +125,10 @@ const { requestLoggingPlugin } = require("./Endpoints/Plugins/RequestLogging");
 const { legalAcceptancePlugin } = require("./Endpoints/Plugins/EnsureLegalAcceptance");
 const { securityHeadersPlugin } = require("./Endpoints/Plugins/SecurityHeaders");
 const RateLimiter = require("./Globals/Classes/Security/RateLimiter");
+const PaymentEnvironmentValidator = require("./Globals/Classes/Payments/PaymentEnvironmentValidator");
+const PaymentAccessPolicy = require("./Globals/Classes/Payments/PaymentAccessPolicy");
+const PendingPaymentReconciler = require("./Globals/Classes/Payments/PendingPaymentReconciler");
+const FinancialReconciliationService = require("./Globals/Classes/Payments/FinancialReconciliationService");
 const ForeignExchangeRatesCache = require("./Globals/Classes/Pricing/ForeignExchangeRatesCache");
 const EcbRatesClient = require("./Globals/Classes/Pricing/EcbRatesClient");
 const ForeignExchangeRatesRefreshScheduler = require("./Globals/Classes/Pricing/ForeignExchangeRatesRefreshScheduler");
@@ -160,6 +166,16 @@ SupportTicketDispatchReconciler.startOnBoot();
 KeyManagementService.initialize();
 KeyRotationScheduler.start();
 
+// Detect that a script allowed to run on a payment page has CHANGED, and tell a
+// human [PCI DSS 11.6.1]. Two halves: the served Dock/Static tree is re-hashed
+// against the manifest the build wrote (nothing legitimate rewrites it after a
+// deploy, so a difference is an incident), and the Razorpay checkout script is
+// re-fetched and diffed against its last known bytes (expected to change, but
+// it is the one place a compromise of the checkout would surface). Both raise
+// admin alerts. The boot check is deliberately delayed so a deploy still
+// unpacking is not mistaken for tampering.
+ScriptIntegrityMonitor.start();
+
 // Eagerly expire lapsed paid-deck licenses on a schedule (tombstone the seeded
 // rows + flip the license to EXPIRED) so cleanup never waits for the affected
 // user to sync. Runs one best-effort sweep at boot, then periodically; every
@@ -168,6 +184,45 @@ ExpiredLicenseSweeper.start();
 ExpiredLicenseSweeper.sweep().catch((sweepError) =>
 {
     console.error("[ExpiredLicenseSweeper] Boot sweep failed:", sweepError);
+});
+
+// Freeze the credit pool of any organization whose contract term has lapsed,
+// and warn the ones approaching it. A lapsed term is the one change to an
+// organization that happens with nobody acting, so it needs a clock rather than
+// a request to notice it. Freezing keeps the credits — they become spendable
+// again on renewal — and every step is idempotent, so a boot sweep plus the
+// periodic one cannot double-announce anything.
+OrganizationTermScheduler.start();
+
+// ── Payment reconciliation ─────────────────────────────────────────────────
+// The safety net beneath the browser verify leg and the provider webhook. If
+// both fail, a captured payment leaves the buyer charged with nothing granted
+// and the pending row is eventually deleted by its TTL, erasing the evidence.
+// This sweep asks the provider what really happened and repairs it. Run once at
+// boot as well as on a timer, because the outage most likely to have lost a
+// webhook is the one that just ended.
+PendingPaymentReconciler.start();
+PendingPaymentReconciler.sweep().catch((reconcileError) =>
+{
+    console.error("[PendingPaymentReconciler] Boot sweep failed:", reconcileError);
+});
+OrganizationTermScheduler.sweep().catch((sweepError) =>
+{
+    console.error("[OrganizationTermScheduler] Boot sweep failed:", sweepError);
+});
+
+// Every other payment guard is per-event and starts from something this server
+// already knows about, so none of them can see a payment that exists at the
+// provider and matches nothing here. This one starts from Razorpay's own
+// account of each closed day and matches it against the money records and the
+// ledger, recording a typed report per day and alerting on any break. It also
+// holds the slot for the accounting system's figure, which is what makes it a
+// reconciliation against accounting records rather than the server agreeing
+// with itself.
+FinancialReconciliationService.start();
+FinancialReconciliationService.sweep().catch((reconcileError) =>
+{
+    console.error("[FinancialReconciliationService] Boot sweep failed:", reconcileError);
 });
 
 // ── Distributed task queue + burst fleet (production only) ──────────────────
@@ -231,6 +286,24 @@ if (process.argv.includes("--logout"))
         {
             console.error("[--logout] Failed to clear sessions:", deleteAllSessionsError);
         });
+}
+
+// ── Payment key / environment mode gate ────────────────────────────────────
+// Runs before anything is registered. A test key in production captures no
+// money while showing customers a success screen; a live key outside
+// production charges real cards. Both are silent failures, so the process
+// refuses to start rather than serving a broken payment flow.
+PaymentEnvironmentValidator.enforceOrExit(environmentName);
+
+// ── Who may spend money here ───────────────────────────────────────────────
+// Outside production, payment routes are administrators-only. Configured
+// before any route is registered so no request can be served by a payment
+// endpoint while the policy is still unset — and the policy itself fails
+// closed if that ever happens anyway.
+PaymentAccessPolicy.configure(environmentName);
+if (!PaymentAccessPolicy.isUnrestrictedEnvironment())
+{
+    console.warn(`[PaymentAccessPolicy] Environment "${environmentName}": payment features are restricted to administrators.`);
 }
 
 const server = new Packetron({ port: 3000, flags: PacketronServerFlags.START_IMMEDIATELY, maxThreads: 1 });

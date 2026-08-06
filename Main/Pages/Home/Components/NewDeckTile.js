@@ -1,5 +1,6 @@
 import Deck from "../../../Globals/Model/Deck.js";
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
+import UserIdentityManager from "../../../Globals/Classes/UserIdentityManager.js";
 import DeckTile from "./DeckTile.js";
 import CreateDeckChoiceModal from "../../../CommonComponents/CreateDeckChoiceModal.js";
 import DeckCreationChoiceAvailability from "../../../Globals/Classes/DeckCreationChoiceAvailability.js";
@@ -36,6 +37,10 @@ class NewDeckTile extends DeckTile
         else if (choice === deckCreationOptions.BROWSE_PAID_LIBRARY)
         {
             PageNavigator.open("paid-deck-library-page");
+        }
+        else if (choice === deckCreationOptions.BROWSE_ORGANIZATION_SHELF)
+        {
+            PageNavigator.open("organization-shelf-page", UserIdentityManager.getOrganizationContextId());
         }
         else if (choice === deckCreationOptions.IMPORT_FROM_FILE)
         {
