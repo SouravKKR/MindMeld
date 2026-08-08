@@ -10,6 +10,13 @@ const { renameMyOrganization } = require("./OrganizationAdmin/RenameMyOrganizati
 const { setMemberDelegatePowers } = require("./OrganizationAdmin/SetMemberDelegatePowers");
 const { importOrganizationMembers } = require("./OrganizationAdmin/ImportOrganizationMembers");
 const { removeOrganizationMembersByFilter } = require("./OrganizationAdmin/RemoveOrganizationMembersByFilter");
+const { updateOrganizationMember } = require("./OrganizationAdmin/UpdateOrganizationMember");
+const { bulkUpdateOrganizationMembers } = require("./OrganizationAdmin/BulkUpdateOrganizationMembers");
+const { updateOrganizationMembersByFilter } = require("./OrganizationAdmin/UpdateOrganizationMembersByFilter");
+const { listOrganizationMemberColumns } = require("./OrganizationAdmin/Columns/ListOrganizationMemberColumns");
+const { setOrganizationMemberColumns } = require("./OrganizationAdmin/Columns/SetOrganizationMemberColumns");
+const { deleteOrganizationMemberColumn } = require("./OrganizationAdmin/Columns/DeleteOrganizationMemberColumn");
+const { renameOrganizationMemberColumn } = require("./OrganizationAdmin/Columns/RenameOrganizationMemberColumn");
 const { getOrganizationListMetadata } = require("./OrganizationAdmin/GetOrganizationListMetadata");
 const { queryOrganizationList } = require("./OrganizationAdmin/QueryOrganizationList");
 const { getOrganizationCreditOverview } = require("./OrganizationAdmin/Credits/GetOrganizationCreditOverview");
@@ -20,8 +27,10 @@ const { createOrganizationPeriodicAssignment } = require("./OrganizationAdmin/Cr
 const { listOrganizationPeriodicAssignments } = require("./OrganizationAdmin/Credits/ListOrganizationPeriodicAssignments");
 const { terminateOrganizationPeriodicAssignment } = require("./OrganizationAdmin/Credits/TerminateOrganizationPeriodicAssignment");
 const { getOrganizationSpendReport } = require("./OrganizationAdmin/Credits/GetOrganizationSpendReport");
+const { downloadEngagementReport } = require("./OrganizationAdmin/Reports/DownloadEngagementReport");
 const { getOrganizationPermissionRules } = require("./OrganizationAdmin/GetOrganizationPermissionRules");
 const { setOrganizationPermissionRules } = require("./OrganizationAdmin/SetOrganizationPermissionRules");
+const { previewOrganizationPermissionRule } = require("./OrganizationAdmin/PreviewOrganizationPermissionRule");
 const { uploadOrganizationDeck } = require("./OrganizationAdmin/Decks/UploadOrganizationDeck");
 const { updateOrganizationDeck } = require("./OrganizationAdmin/Decks/UpdateOrganizationDeck");
 const { withdrawOrganizationDeck } = require("./OrganizationAdmin/Decks/WithdrawOrganizationDeck");
@@ -138,6 +147,75 @@ function handleOrganizationEndpoints(server)
         plugins: [ensureOrgAdmin]
     });
 
+    // Editing members in place — one person, a checked selection, or everyone a
+    // filter matches. The three exist together because the roster list drops its
+    // selection when the page turns, so without the filter-scoped route a large
+    // cohort could only be edited a screenful at a time.
+    server.handle
+    ({
+        routePath: `/Organization/Members/Update`,
+        handler: updateOrganizationMember,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureOrgAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Organization/Members/BulkUpdate`,
+        handler: bulkUpdateOrganizationMembers,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureOrgAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Organization/Members/UpdateByFilter`,
+        handler: updateOrganizationMembersByFilter,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureOrgAdmin]
+    });
+
+    // The per-organization column schema. Reading it needs only standing —
+    // knowing what the columns are called is part of reading the roster —
+    // while changing one needs MANAGE_MEMBERS, checked inside each handler.
+    server.handle
+    ({
+        routePath: `/Organization/Members/Columns/List`,
+        handler: listOrganizationMemberColumns,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureOrgAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Organization/Members/Columns/Set`,
+        handler: setOrganizationMemberColumns,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureOrgAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Organization/Members/Columns/Rename`,
+        handler: renameOrganizationMemberColumn,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureOrgAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Organization/Members/Columns/Delete`,
+        handler: deleteOrganizationMemberColumn,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureOrgAdmin]
+    });
+
     // The member list, served through the shared admin-list framework but
     // scoped to the caller's own organization rather than by list key.
     server.handle
@@ -172,6 +250,17 @@ function handleOrganizationEndpoints(server)
     ({
         routePath: `/Organization/Credits/SpendReport`,
         handler: getOrganizationSpendReport,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureOrgAdmin]
+    });
+
+    // The engagement report — what members did, as opposed to what it cost.
+    // Same standing requirement as the spend report above: reading what your
+    // own members did needs standing, not a specific delegated power.
+    server.handle
+    ({
+        routePath: `/Organization/Reports/Engagement`,
+        handler: downloadEngagementReport,
         method: PacketronRequestMethod.GET,
         plugins: [ensureOrgAdmin]
     });
@@ -245,6 +334,18 @@ function handleOrganizationEndpoints(server)
     ({
         routePath: `/Organization/Permissions/Set`,
         handler: setOrganizationPermissionRules,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureOrgAdmin]
+    });
+
+    // Who a rule covers, before it is saved. A rule that can name columns as
+    // well as tags is no longer readable at a glance, and the mistake that
+    // hides is granting a paid feature to the whole roster.
+    server.handle
+    ({
+        routePath: `/Organization/Permissions/PreviewRule`,
+        handler: previewOrganizationPermissionRule,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureOrgAdmin]

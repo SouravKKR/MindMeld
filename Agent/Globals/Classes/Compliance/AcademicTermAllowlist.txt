@@ -1,0 +1,129 @@
+# AcademicTermAllowlist
+#
+# Entries from the vendored LDNOOBW list (Agent/ThirdParty/Ldnoobw/) that this
+# product must never treat as a hit. They are subtracted from the active pattern
+# before it is compiled, so an allowlisted term produces no match, no verification
+# call and no redaction at all.
+#
+# Why this file exists. LDNOOBW is a general-purpose obscenity list, not a list
+# tuned for a syllabus. CogniumLearn generates NEET Biology, medical, law and
+# UPSC content, where "sex", "rape", "anus", "semen" and "xx" are ordinary
+# vocabulary. Without this file the Human Reproduction chapter, any IPC 375 /
+# POCSO deck and every genetics chapter would fire a Gemini verification call on
+# essentially every generation — the cost, the latency and the risk of deleting a
+# legitimate paragraph all scale with it. Slurs and vulgarity stay fully active;
+# this only removes words whose academic sense dominates so completely that
+# asking a model about intent is wasted work.
+#
+# What is deliberately NOT here. Words whose academic and abusive senses are both
+# real — "negro", "bastard", "dick", "cock", "ass", "hooker", "how to kill" —
+# stay active on purpose. Deciding between "the ass carried the load" and an
+# insult is exactly the job the verification model exists to do.
+#
+# Format. One term per line, lowercase, matching the upstream spelling EXACTLY
+# (an entry that does not appear verbatim in the LDNOOBW file silently does
+# nothing). Blank lines and lines starting with # are ignored.
+#
+# Set CONTENT_GUARDRAIL_INCLUDE_CLINICAL_TERMS=true to ignore this file entirely
+# and scan the full upstream list.
+
+# --- Anatomy and physiology -------------------------------------------------
+anal
+anus
+butt
+clitoris
+ejaculation
+genitals
+nipple
+nipples
+orgasm
+penis
+rectum
+semen
+vagina
+vulva
+
+# --- Reproduction and health education --------------------------------------
+erotic
+erotism
+incest
+intercourse
+masturbate
+masturbating
+masturbation
+nude
+nudity
+sex
+sexual
+sexuality
+sexually
+
+# --- Law and criminology (IPC 375/376, POCSO, obscenity law) ----------------
+date rape
+daterape
+pornography
+rape
+raping
+rapist
+sodomy
+
+# --- Clinical psychology, medicine and pharmacology -------------------------
+cialis
+fecal
+sadism
+spastic
+viagra
+
+# --- Biology, zoology, botany, agriculture ----------------------------------
+# horny  -> stratum corneum, horny beak/scales
+# scat   -> animal droppings, a standard ecology term
+# smut   -> a fungal plant disease of cereals
+# tit(s) -> the bird family (great tit, blue tit)
+# shrimping / bareback -> fisheries economics, equestrianism
+bareback
+horny
+scat
+shrimping
+smut
+tit
+tits
+
+# --- Genetics and numerals --------------------------------------------------
+# xx  -> the XX sex chromosome pair, and Roman numeral 20
+# xxx -> Roman numeral 30, and the usual redaction placeholder
+xx
+xxx
+
+# --- History, politics, sociology, religion ---------------------------------
+# bondage    -> serfdom and slavery in history writing
+# domination -> Weber, colonial domination, market domination
+# escort     -> naval escort, police escort
+# eunuch     -> Mughal and Chinese court history
+# swastika   -> a sacred Hindu, Jain and Buddhist symbol as well as a Nazi one
+bondage
+domination
+escort
+eunuch
+swastika
+
+# --- Ordinary English and technical collisions ------------------------------
+# Multi-word entries below match far more often as innocent prose than as the
+# phrase upstream intended: "the girl on the bus", "a big black hole",
+# "huge fat deposits", "strap on a helmet", "tied up in meetings".
+big black
+fingering
+girl on
+huge fat
+pegging
+scissoring
+skeet
+snatch
+snowballing
+strap on
+suck
+sucks
+swinger
+tied up
+tight white
+tongue in a
+vibrator

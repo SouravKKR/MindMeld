@@ -137,33 +137,6 @@ automatic-generation-page[page]
     height: 15px;
 }
 
-@media (max-width: 520px)
-{
-    .automatic-generation-page-container
-    {
-        padding: 16px;
-    }
-
-    .field-container
-    {
-        align-items: stretch;
-    }
-
-    .field-container > label:first-child
-    {
-        flex: 1 0 100%;
-    }
-
-    .field-container > input,
-    .field-container > select,
-    .field-container > textarea
-    {
-        flex: 1 0 100%;
-        width: 100%;
-        box-sizing: border-box;
-    }
-}
-
 /* ── Action bar ─────────────────────────────────────────────── */
 
 .automatic-generation-action-bar
@@ -218,4 +191,119 @@ automatic-generation-page[page]
 {
     opacity: 0.88;
     background: var(--primary-background-gradient);
+}
+
+
+/* ── Phones ───────────────────────────────────────────────────────────────
+   Kept LAST in the file. Several of these rules override the action-bar and
+   library-hint declarations below what used to be their position, and at equal
+   specificity the later rule wins — sitting above them meant the phone padding
+   and the full-width Start button were silently discarded. */
+/* 600px, matching every other stylesheet in this flow (the study-material,
+   mock-test and dialog breakpoints). At the old 520px a 540-600px phone kept
+   the desktop two-column row, where the 200px fixed label left the control
+   beside it roughly 90px wide — narrow enough that select labels and number
+   inputs were cut off. */
+@media (max-width: 600px)
+{
+    .automatic-generation-page-container
+    {
+        padding: 16px 14px;
+    }
+
+    /* A clear two-level rhythm: 8px binds a label to its own control, 20px
+       separates one field group from the next. Desktop gets away with 14px
+       because each field is a single row there; on a phone a field is two or
+       three rows of left-aligned text, and at 14px the whole panel read as one
+       continuous paragraph with no visible field boundaries. */
+    .generation-fields
+    {
+        padding: 14px;
+        gap: 20px;
+        border-radius: 12px;
+    }
+
+    .generation-type-title-container
+    {
+        font-size: 1rem;
+    }
+
+    .field-container
+    {
+        align-items: stretch;
+        gap: 8px 10px;
+    }
+
+    .field-container > label:first-child
+    {
+        flex: 1 0 100%;
+    }
+
+    .field-container > input,
+    .field-container > select,
+    .field-container > textarea,
+    .field-container > information-source-selector
+    {
+        flex: 1 0 100%;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    /* Number inputs opt out of the desktop `flex: 0 0 90px` on their own row —
+       a bare 90px box under a full-width label reads as a stray fragment. */
+    .field-container > input[type="number"]
+    {
+        flex: 1 0 100%;
+    }
+
+    /* A checkbox is the one control small enough to stay beside its label, and
+       it reads far better there than stranded on a row of its own under a
+       full-width caption. Degrades to the full-width label above if :has() is
+       unsupported, which is the layout everything else in this block uses.
+
+       flex-basis 0 rather than auto: on auto the label claims its whole
+       max-content width when deciding what fits on the line, so the two- and
+       three-line captions ("Good Quality Deck Short Names (uses a few extra
+       credits)") pushed their own checkbox down to the next row while the
+       short ones kept theirs on the right — the checkboxes never lined up. At
+       basis 0 the label always shares the first row and wraps inside its own
+       column, so every checkbox sits at the same right-hand edge. */
+    .field-container:has(> input[type="checkbox"]) > label:first-child
+    {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+
+    /* Top-aligned so the checkbox tracks the FIRST line of a caption that wraps,
+       rather than floating beside its middle. */
+    .field-container:has(> input[type="checkbox"])
+    {
+        align-items: flex-start;
+    }
+
+    .field-container > input[type="checkbox"]
+    {
+        width: 18px;
+        height: 18px;
+        margin-top: 2px;
+    }
+
+    .automatic-generation-action-bar
+    {
+        padding: 12px 14px 6px 14px;
+    }
+
+    .automatic-generation-start-button
+    {
+        flex: 1 1 auto;
+        max-width: 340px;
+        padding: 14px 20px;
+        min-height: 48px;
+    }
+
+    .automatic-generation-deck-library-hint
+    {
+        padding: 0 14px 12px 14px;
+        font-size: 0.75rem;
+    }
 }

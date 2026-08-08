@@ -4,6 +4,7 @@ import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import PriorityQueue from "../../../Globals/Classes/PriorityQueue.js";
 import StudySession from "./StudySession.js";
 import CuratedFlashcardFields from "../../../Globals/Classes/Analysis/CuratedFlashcardFields.js";
+import DailyUsageReporter from "../../../Globals/Classes/Activity/DailyUsageReporter.js";
 
 class SpacedRepetitonSession extends StudySession
 {
@@ -101,6 +102,14 @@ class SpacedRepetitonSession extends StudySession
         {
             // Cards studied is recomputed server-side from fsrs.repetitions on the
             // next /Metrics/Sync (study-page leave / login) — no per-card report.
+            //
+            // The DAY this review happened is a separate matter and is not
+            // recoverable later: Progress keeps only the 20 most recent points
+            // per card, so an organization's usage-over-time would lose the
+            // older ones. Counted here and flushed in batches; the reporter
+            // never blocks or interrupts the study loop.
+            DailyUsageReporter.recordCardStudied();
+
             this.#priorityQueue.push(this._current);
             this.next();
         });

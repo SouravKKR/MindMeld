@@ -174,13 +174,26 @@ paid-deck-browse-page
 }
 
 /* Password prompt + setup share styles */
+
+/* box-sizing matters more than usual here: this element carries 36px of its own
+   horizontal padding AND a min-width. Under the default content-box the two add
+   up, so the box demanded min-width + 36px, which on a phone came out wider than
+   the dialog could ever be — and since the dialog clips its overflow, the
+   password fields ran out past its right edge and off the popup.
+   88vw was measured against the viewport while the dialog is capped at
+   100vw - 16px with 14px of wrapper padding per side, so it asked for more than
+   was ever on offer; the expression below is the width actually available, and
+   max-width clamps it to the dialog on wider screens where the 60% cap binds
+   first. */
 .paid-deck-password-prompt
 {
     display: flex;
     flex-direction: column;
     gap: 12px;
     padding: 4px 18px 14px 18px;
-    min-width: min(380px, 88vw);
+    box-sizing: border-box;
+    min-width: min(380px, calc(100vw - 44px));
+    max-width: 100%;
 }
 
 .paid-deck-password-prompt-title
@@ -210,6 +223,13 @@ paid-deck-browse-page
     background-color: var(--tertiary-background-color);
     color: var(--primary-text-color);
     font-size: 14px;
+    /* An <input> carries a browser default size of ~20 characters as its
+       intrinsic min-width, which a flex column will not shrink below unless told
+       to. Without these it is the input, not the prompt, that sets how wide the
+       dialog has to be. */
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
 }
 
 .paid-deck-password-prompt-input:focus,
@@ -231,6 +251,7 @@ paid-deck-browse-page
 {
     display: flex;
     justify-content: flex-end;
+    flex-wrap: wrap;
     gap: 10px;
 }
 
@@ -255,4 +276,31 @@ paid-deck-browse-page
     color: var(--primary-text-color);
     font-weight: 600;
     cursor: pointer;
+}
+
+/* ── Phones ─────────────────────────────────────────────────────────────────
+   Trim the prompt's own horizontal padding — it sits inside the dialog's
+   wrapper padding, so the two compound — and let the two actions share a row at
+   a full tap-target height, wrapping to their own rows if the labels ever grow
+   past what fits. */
+@media (max-width: 600px)
+{
+    .paid-deck-password-prompt
+    {
+        padding: 4px 2px 6px 2px;
+        gap: 10px;
+    }
+
+    .paid-deck-password-prompt-actions
+    {
+        justify-content: stretch;
+    }
+
+    .paid-deck-password-prompt-cancel,
+    .paid-deck-password-prompt-submit
+    {
+        flex: 1 1 130px;
+        min-height: 44px;
+        padding: 10px 12px;
+    }
 }

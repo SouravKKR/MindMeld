@@ -70,6 +70,17 @@ class NumberRangeFilterInput extends PaidDeckFilterInput
         if (this.#minInputElement !== null) this.#minInputElement.value = "";
         if (this.#maxInputElement !== null) this.#maxInputElement.value = "";
     }
+
+    setValue(value)
+    {
+        if (this.#minInputElement === null || this.#maxInputElement === null)
+        {
+            return;
+        }
+
+        this.#minInputElement.value = typeof value?.min === "number" ? String(value.min) : "";
+        this.#maxInputElement.value = typeof value?.max === "number" ? String(value.max) : "";
+    }
 }
 
 export default NumberRangeFilterInput;

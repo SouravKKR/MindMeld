@@ -7,7 +7,7 @@
 # at runtime.
 #
 # Debian/glibc base (NOT Alpine/musl) is deliberate: the worker pulls torch,
-# torchvision, opencv, scipy, scikit-learn, PyMuPDF, etc., which ship prebuilt
+# torchvision, opencv, scipy, scikit-learn, pypdfium2, etc., which ship prebuilt
 # glibc (manylinux) wheels. On musl those have no wheels and would compile from
 # source (slow, fragile) — exactly the startup pain we want to avoid.
 #
@@ -50,7 +50,7 @@ FROM python:3.12-slim
 # Shared libraries the installed wheels load at runtime:
 #   - libgomp1            : OpenMP, used by numpy / scipy / scikit-learn / torch
 #   - libgl1, libglib2.0-0: OpenCV (opencv-python) image ops
-# (PyMuPDF / Pillow bundle their own native bits in the wheel.)
+# (pypdfium2 / Pillow bundle their own native bits in the wheel.)
 #
 # OCR stack — the OcrPdf workflow shells out to the `ocrmypdf` CLI, which wraps
 # tesseract + ghostscript. These are SYSTEM binaries (not pip wheels), so they must

@@ -6,11 +6,19 @@ from Globals.Enumerations.PaidDeckFeatureBadges import PaidDeckFeatureBadges
 
 
 class PaidDeck:
-    def __init__(self, title: str = None, description: str = '', seller_id: str = '', thumbnail_url: str = '', category: str = '', tags: List[str] = [], base_price_minor: int = 0, currency: str = 'INR', duration_days: int = 0, is_perpetual: bool = False, granularity: DeckPurchaseGranularity = DeckPurchaseGranularity(0), bundle_child_ids: List[str] = [], parent_bundle_ids: List[str] = [], asset_blob_id: str = '', key_version: int = 1, is_published: bool = False, audience_organization_id: str = '', audience_tags: List[str] = [], published_at: datetime = datetime.now(), feature_badges: List[PaidDeckFeatureBadges] = [], extra_tags: List[str] = [], content_summary: dict = {}, additional_data: dict = {}) -> None:
+    # Epoch-zero sentinel meaning "never expires". Date members declared
+    # with nullFallback "forever" coerce None / invalid values to this
+    # instead of "now", so a missing expiry can never silently become an
+    # already-expired timestamp.
+    FOREVER = datetime.fromtimestamp(0)
+
+    def __init__(self, title: str = None, description: str = '', seller_id: str = '', source_deck_id: str = '', provenance_deck_id: str = '', thumbnail_url: str = '', category: str = '', tags: List[str] = [], base_price_minor: int = 0, currency: str = 'INR', duration_days: int = 0, is_perpetual: bool = False, granularity: DeckPurchaseGranularity = DeckPurchaseGranularity(0), bundle_child_ids: List[str] = [], parent_bundle_ids: List[str] = [], asset_blob_id: str = '', key_version: int = 1, is_published: bool = False, retired_at: datetime = datetime.fromtimestamp(0), audience_organization_id: str = '', audience_tags: List[str] = [], published_at: datetime = datetime.now(), feature_badges: List[PaidDeckFeatureBadges] = [], extra_tags: List[str] = [], content_summary: dict = {}, additional_data: dict = {}) -> None:
         self.__id = str(uuid.uuid4())
         self.set_title(title)
         self.set_description(description)
         self.set_seller_id(seller_id)
+        self.set_source_deck_id(source_deck_id)
+        self.set_provenance_deck_id(provenance_deck_id)
         self.set_thumbnail_url(thumbnail_url)
         self.set_category(category)
         self.set_tags(tags)
@@ -24,6 +32,7 @@ class PaidDeck:
         self.set_asset_blob_id(asset_blob_id)
         self.set_key_version(key_version)
         self.set_is_published(is_published)
+        self.set_retired_at(retired_at)
         self.set_audience_organization_id(audience_organization_id)
         self.set_audience_tags(audience_tags)
         self.set_published_at(published_at)
@@ -64,6 +73,22 @@ class PaidDeck:
         if value is not None:
             value = str(value)
         self.__seller_id = value
+
+    def get_source_deck_id(self) -> str:
+        return self.__source_deck_id
+
+    def set_source_deck_id(self, value: str) -> None:
+        if value is not None:
+            value = str(value)
+        self.__source_deck_id = value
+
+    def get_provenance_deck_id(self) -> str:
+        return self.__provenance_deck_id
+
+    def set_provenance_deck_id(self, value: str) -> None:
+        if value is not None:
+            value = str(value)
+        self.__provenance_deck_id = value
 
     def get_thumbnail_url(self) -> str:
         return self.__thumbnail_url
@@ -192,6 +217,22 @@ class PaidDeck:
             value = bool(value)
         self.__is_published = value
 
+    def get_retired_at(self) -> datetime:
+        return self.__retired_at
+
+    def set_retired_at(self, value: datetime) -> None:
+        if value is not None:
+            if isinstance(value, str):
+                try:
+                    value = datetime.fromisoformat(value)
+                except ValueError:
+                    value = PaidDeck.FOREVER
+            elif not isinstance(value, datetime):
+                value = PaidDeck.FOREVER
+        else:
+            value = PaidDeck.FOREVER
+        self.__retired_at = value
+
     def get_audience_organization_id(self) -> str:
         return self.__audience_organization_id
 
@@ -265,6 +306,8 @@ class PaidDeck:
             'title': self.get_title(),
             'description': self.get_description(),
             'sellerId': self.get_seller_id(),
+            'sourceDeckId': self.get_source_deck_id(),
+            'provenanceDeckId': self.get_provenance_deck_id(),
             'thumbnailUrl': self.get_thumbnail_url(),
             'category': self.get_category(),
             'tags': self.get_tags(),
@@ -278,6 +321,7 @@ class PaidDeck:
             'assetBlobId': self.get_asset_blob_id(),
             'keyVersion': self.get_key_version(),
             'isPublished': self.get_is_published(),
+            'retiredAt': self.get_retired_at().isoformat() if self.get_retired_at() is not None else None,
             'audienceOrganizationId': self.get_audience_organization_id(),
             'audienceTags': self.get_audience_tags(),
             'publishedAt': self.get_published_at().isoformat() if self.get_published_at() is not None else None,
@@ -293,6 +337,8 @@ class PaidDeck:
             title=data.get('title'),
             description=data.get('description'),
             seller_id=data.get('sellerId'),
+            source_deck_id=data.get('sourceDeckId'),
+            provenance_deck_id=data.get('provenanceDeckId'),
             thumbnail_url=data.get('thumbnailUrl'),
             category=data.get('category'),
             tags=data.get('tags'),
@@ -306,6 +352,7 @@ class PaidDeck:
             asset_blob_id=data.get('assetBlobId'),
             key_version=data.get('keyVersion'),
             is_published=data.get('isPublished'),
+            retired_at=datetime.fromisoformat(data.get('retiredAt')) if data.get('retiredAt') is not None else None,
             audience_organization_id=data.get('audienceOrganizationId'),
             audience_tags=data.get('audienceTags'),
             published_at=datetime.fromisoformat(data.get('publishedAt')) if data.get('publishedAt') is not None else None,

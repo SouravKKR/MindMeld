@@ -128,6 +128,16 @@ class CouponGrantService
         const expiresAt = benefitExpiresAtMs !== null ? new Date(benefitExpiresAtMs) : DeckLicense.FOREVER;
 
         // Lazy-require to avoid a Globals→Endpoints load-order dependency.
+        // A coupon is an acquisition like any other: a code printed before a
+        // deck was withdrawn must not still mint licences for it afterwards.
+        const PaidDeckAcquisitionGate = require("../PaidDeck/PaidDeckAcquisitionGate");
+        const acquisitionDecision = await PaidDeckAcquisitionGate.evaluateById(targetDeckId);
+        if (!acquisitionDecision.allowed)
+        {
+            console.warn(`[CouponGrantService] Refused to grant ${targetDeckId}: ${acquisitionDecision.reason}`);
+            return { granted: false, reason: acquisitionDecision.reason };
+        }
+
         const { grantAndSeedDeck } = require("../../../Endpoints/PaidDeck/PaidDeckGrantHelpers");
         const database = await DatabaseConnector.getDatabase();
         const licenseJson = await grantAndSeedDeck(database, user.getId(), targetDeckId, { expiresAt: expiresAt, grantSource: GrantSources.COUPON });

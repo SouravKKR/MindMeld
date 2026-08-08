@@ -1,5 +1,4 @@
 const crypto = require("crypto");
-const PacketronResponse = require("@gamiumgamers/packetron/PacketronResponse");
 const {authenticationProviders }= require("../../Globals/Enumerations/AuthenticationProviders");
 const User = require("../../Globals/Model/User");
 const UserSession = require("../../Globals/Model/UserSession");

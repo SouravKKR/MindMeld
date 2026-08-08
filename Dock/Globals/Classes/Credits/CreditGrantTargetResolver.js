@@ -1,6 +1,7 @@
 const DatabaseConstants = require('../../Constants/DatabaseConstants');
 const DatabaseConnector = require('../Database/DatabaseConnector');
 const OrganizationMemberQueryEngine = require('../Organization/OrganizationMemberQueryEngine');
+const MemberAudienceMatcher = require('../Organization/MemberAudienceMatcher');
 const { creditGrantTargetTypes } = require('../../Enumerations/CreditGrantTargetTypes');
 const { tagMatchModes } = require('../../Enumerations/TagMatchModes');
 const { userRoles } = require('../../Enumerations/UserRoles');
@@ -69,7 +70,8 @@ class CreditGrantTargetResolver
             (
                 targetSpecification.organizationId,
                 targetSpecification.tagFilter,
-                targetSpecification.tagMatchMode
+                targetSpecification.tagMatchMode,
+                targetSpecification.attributeConditions
             );
         }
 
@@ -92,6 +94,10 @@ class CreditGrantTargetResolver
      * decide membership the same way — a preview that named a different set
      * from the grant would make the confirmation meaningless.
      *
+     * Kept as the tags-only shorthand over MemberAudienceMatcher, which is now
+     * the one place that answers "who does this description mean" for credits
+     * and for permission rules alike.
+     *
      * @param {Array<OrganizationMember>} members
      * @param {string[]} tagFilter
      * @param {number} tagMatchMode a TagMatchModes value
@@ -99,25 +105,21 @@ class CreditGrantTargetResolver
      */
     static filterMembersByTags(members, tagFilter, tagMatchMode)
     {
-        const safeMembers = Array.isArray(members) ? members : [];
-        const normalisedTags = (Array.isArray(tagFilter) ? tagFilter : [])
-            .map(tag => String(tag ?? "").trim().toLowerCase())
-            .filter(tag => tag.length > 0);
+        return MemberAudienceMatcher.filterMembers(members, { tagFilter: tagFilter, matchMode: tagMatchMode });
+    }
 
-        if (tagMatchMode === tagMatchModes.EVERYONE || normalisedTags.length === 0)
-        {
-            return safeMembers;
-        }
-
-        return safeMembers.filter((member) =>
-        {
-            const memberTags = Array.isArray(member.getTags?.()) ? member.getTags() : [];
-            if (tagMatchMode === tagMatchModes.ALL)
-            {
-                return normalisedTags.every(tag => memberTags.includes(tag));
-            }
-            return normalisedTags.some(tag => memberTags.includes(tag));
-        });
+    /**
+     * The members an audience covers — tags AND conditions over the institute's
+     * own columns, so a distribution can be aimed at "second-year teachers" and
+     * not only at whoever happens to carry a tag.
+     *
+     * @param {Array<OrganizationMember>} members
+     * @param {{tagFilter?: string[], matchMode?: number, attributeConditions?: Array<object>}} audience
+     * @returns {Array<OrganizationMember>}
+     */
+    static filterMembersByAudience(members, audience)
+    {
+        return MemberAudienceMatcher.filterMembers(members, audience);
     }
 
     static async #resolveByEmails(rawEmails)
@@ -206,19 +208,22 @@ class CreditGrantTargetResolver
     }
 
     /**
-     * Every member of an organization, optionally narrowed to those carrying
-     * particular tags.
+     * Every member of an organization, optionally narrowed to an audience.
      *
-     * Tag narrowing is what makes a distribution expressible as "the final-year
+     * Narrowing is what makes a distribution expressible as "the final-year
      * cohort" rather than a hand-pasted list of addresses that is stale the day
      * after it is written. EVERYONE ignores the tag list entirely; ANY matches a
-     * member holding at least one of them; ALL requires every one.
+     * member holding at least one of them; ALL requires every one. Conditions
+     * over the institute's own columns are applied on top, so a distribution can
+     * also say "admitted between 2022 and 2024" without anybody having tagged
+     * for it in advance.
      *
      * @param {string} organizationId
      * @param {string[]} tagFilter
      * @param {number} tagMatchMode a TagMatchModes value
+     * @param {Array<object>} attributeConditions
      */
-    static async #resolveOrganizationMembers(organizationId, tagFilter = [], tagMatchMode = tagMatchModes.EVERYONE)
+    static async #resolveOrganizationMembers(organizationId, tagFilter = [], tagMatchMode = tagMatchModes.EVERYONE, attributeConditions = [])
     {
         if (typeof organizationId !== "string" || organizationId.length === 0)
         {
@@ -226,7 +231,12 @@ class CreditGrantTargetResolver
         }
 
         const allMembers = await OrganizationMemberQueryEngine.listMembers(organizationId);
-        const members = CreditGrantTargetResolver.filterMembersByTags(allMembers, tagFilter, tagMatchMode);
+        const members = CreditGrantTargetResolver.filterMembersByAudience(allMembers,
+        {
+            tagFilter: tagFilter,
+            matchMode: tagMatchMode,
+            attributeConditions: attributeConditions
+        });
         if (members.length === 0)
         {
             return { recipients: [], unmatchedEmails: [], error: null };

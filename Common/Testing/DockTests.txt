@@ -38,6 +38,16 @@ Catalogued deterministic functions (coverage denominator):
   24) Globals/Classes/PaidDeck/PaidDeckContentUpdatePlanner.js :: plan
   25) Globals/Classes/PaidDeck/LicenseContentVersionResolver.js :: resolveDownloadedVersion
   26) Globals/Classes/PaidDeck/LicenseContentVersionResolver.js :: isUpdateAvailable
+  27) Globals/Classes/Generation/RefinedEntityWriter.js  :: computeContentHash
+  28) Globals/Classes/Generation/RefinedEntityWriter.js  :: isWritableTargetKind
+  29) Globals/Classes/Generation/RefinementTargetLocator.js :: normalizeForMatching
+  30) Globals/Classes/Content/SourceRetentionPolicy.js   :: isSourceUnderLegalHold
+  31) Globals/Classes/Content/SourceRetentionPolicy.js   :: isSourceDue (with legal hold)
+  32) Globals/Classes/Credits/CreditConfiguration.js     :: ensureContentRefinementTaskRules
+  33) Globals/Classes/Database/UserDailyActivityQueryEngine.js :: isValidDayUtc
+  34) Globals/Classes/Database/UserDailyActivityQueryEngine.js :: toDayUtc
+  35) Globals/Classes/Organization/CreditSpendCategoryNamer.js :: describe
+  36) Globals/Classes/Organization/CreditSpendCategoryNamer.js :: isInvokedAiFeature
 
 Test cases:
   - PBKDF2 password KEK derivation is deterministic (same password+salt ->

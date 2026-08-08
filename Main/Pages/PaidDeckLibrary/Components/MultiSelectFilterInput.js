@@ -81,6 +81,16 @@ class MultiSelectFilterInput extends PaidDeckFilterInput
         }
     }
 
+    setValue(value)
+    {
+        const selectedValues = new Set((Array.isArray(value) ? value : []).map(entry => String(entry)));
+
+        for (const checkboxElement of this.#checkboxElements)
+        {
+            checkboxElement.checked = selectedValues.has(checkboxElement.dataset.value);
+        }
+    }
+
     static #escape(rawString)
     {
         return String(rawString)

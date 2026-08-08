@@ -3,6 +3,7 @@ const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const PaidDeckPublishGate = require("../../Globals/Classes/Generation/PaidDeckPublishGate");
+const PaidDeckProvenanceLinkResolver = require("../../Globals/Classes/Generation/PaidDeckProvenanceLinkResolver");
 
 /**
  * BulkUpdatePaidDecks
@@ -81,7 +82,11 @@ async function bulkUpdatePaidDecks(request, response)
 
         for (const candidateDeckId of deckIds)
         {
-            const publishDecision = await PaidDeckPublishGate.evaluate(candidateDeckId);
+            // Each listing is gated against its own source deck's record, not
+            // its listing id — the two are different ids and only the former
+            // ever appears in the provenance collection.
+            const provenanceDeckId = await PaidDeckProvenanceLinkResolver.resolveProvenanceDeckId(candidateDeckId);
+            const publishDecision = await PaidDeckPublishGate.evaluate(provenanceDeckId);
             if (!publishDecision.allowed)
             {
                 blockedDeckDecisions.push({ deckId: candidateDeckId, detail: publishDecision.detail, blockingFlags: publishDecision.blockingFlags });

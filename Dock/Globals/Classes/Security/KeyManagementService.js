@@ -285,6 +285,45 @@ class KeyManagementService
         );
     }
 
+    /**
+     * Destroys a deck's encrypted master content, across every key version.
+     *
+     * The inverse of storePaidDeckMaster, and it has to clear BOTH places that
+     * store writes to: the per-entity ciphertext and the asset row carrying the
+     * wrapped content key and manifest. Leaving either behind would keep
+     * encrypted material for a deck nothing points at any more — content the
+     * operator believes they deleted.
+     *
+     * Every key version, not just the current one: a deck that has been rotated
+     * has older versions still sitting in the entities collection.
+     *
+     * @param {string} deckId
+     * @returns {Promise<{ entitiesRemoved: number, assetsRemoved: number }>}
+     */
+    static async deletePaidDeckMaster(deckId)
+    {
+        if (typeof deckId !== "string" || deckId.length === 0)
+        {
+            return { entitiesRemoved: 0, assetsRemoved: 0 };
+        }
+
+        const database = await DatabaseConnector.getDatabase();
+        if (!database)
+        {
+            throw new Error("Database unavailable");
+        }
+
+        const entitiesResult = await database
+            .collection(DatabaseConstants.PAID_DECK_MASTER_ENTITIES_COLLECTION)
+            .deleteMany({ deckId: deckId });
+
+        const assetsResult = await database
+            .collection(DatabaseConstants.PAID_DECK_ASSETS_COLLECTION)
+            .deleteMany({ deckId: deckId });
+
+        return { entitiesRemoved: entitiesResult.deletedCount || 0, assetsRemoved: assetsResult.deletedCount || 0 };
+    }
+
     static #unwrapContentKey(wrappedContentKeyIvBase64, wrappedContentKeyBase64)
     {
         KeyManagementService.#ensureReady();

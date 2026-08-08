@@ -2,6 +2,7 @@ const DatabaseConnector = require("../Database/DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
 const OrganizationMember = require("../../Model/OrganizationMember");
 const OrganizationQueryEngine = require("./OrganizationQueryEngine");
+const OrganizationMemberProfileMutator = require("./OrganizationMemberProfileMutator");
 const { organizationStatus } = require("../../Enumerations/OrganizationStatus");
 
 
@@ -416,7 +417,7 @@ class OrganizationMemberQueryEngine
      * separate, explicit action.
      *
      * @param {string} organizationId
-     * @param {Array<{email: string, attributes: object, attributesNormalised: object, tags: string[]}>} normalisedProfiles
+     * @param {Array<{email: string, attributes: object, attributesNormalised: object, attributesComparable: object, tags: string[]}>} normalisedProfiles
      * @returns {Promise<{ updated: number }>}
      */
     static async replaceProfilesForExistingMembers(organizationId, normalisedProfiles)
@@ -447,7 +448,15 @@ class OrganizationMemberQueryEngine
                         {
                             tags: profile.tags,
                             attributes: profile.attributes,
-                            attributesNormalised: profile.attributesNormalised
+                            attributesNormalised: profile.attributesNormalised,
+                            // All four maps or none. Leaving the comparable copy
+                            // behind is not a cosmetic omission: the number and
+                            // date range filters read ONLY from it, so a member
+                            // whose corrected join year was written to
+                            // `attributes` but not here goes on being matched —
+                            // and removed, and granted credits — on the value
+                            // the sheet replaced.
+                            attributesComparable: profile.attributesComparable
                         }
                     }
                 }
@@ -567,6 +576,179 @@ class OrganizationMemberQueryEngine
             matchedCount: matchedCount,
             sample: sampleDocuments.map(document => OrganizationMember.fromJson(document))
         };
+    }
+
+    /**
+     * Removes one attribute from every member of an organization, across all
+     * three stored copies.
+     *
+     * Dropping a column has to take its values with it. The schema is rebuilt
+     * from the attribute keys members actually carry, so deleting the
+     * description while leaving the data would simply recreate the column on the
+     * next read — the institute would delete it, reload, and find it back.
+     *
+     * @param {string} organizationId
+     * @param {string} attributeKey
+     * @returns {Promise<{ updated: number }>}
+     */
+    static async removeAttributeFromAllMembers(organizationId, attributeKey)
+    {
+        const collection = await OrganizationMemberQueryEngine.#getCollection();
+        const safeKey = String(attributeKey ?? "").trim();
+        if (!collection || safeKey.length === 0)
+        {
+            return { updated: 0 };
+        }
+
+        const unsetFields = {};
+        unsetFields[`attributes.${safeKey}`] = "";
+        unsetFields[`attributesNormalised.${safeKey}`] = "";
+        unsetFields[`attributesComparable.${safeKey}`] = "";
+
+        const updateResult = await collection.updateMany
+        (
+            { organizationId: organizationId },
+            { $unset: unsetFields }
+        );
+
+        return { updated: updateResult.modifiedCount || 0 };
+    }
+
+    /**
+     * Every member matching a prepared Mongo filter. Used where the caller needs
+     * the whole matched set rather than a page of it — applying an edit to a
+     * filtered cohort, and showing an administrator exactly who a permission rule
+     * covers before they save it.
+     *
+     * Bounded rather than unbounded: an organization is capped at a few thousand
+     * seats, so this stays a bounded read, and the caller is told when the cap
+     * truncated the answer instead of quietly receiving a short list.
+     *
+     * @param {string} organizationId
+     * @param {object} additionalQuery a Mongo fragment already built by the caller
+     * @param {number} maximumMembers
+     * @returns {Promise<{ matchedCount: number, members: Array<OrganizationMember>, truncated: boolean }>}
+     */
+    static async listMembersMatching(organizationId, additionalQuery, maximumMembers)
+    {
+        const collection = await OrganizationMemberQueryEngine.#getCollection();
+        if (!collection)
+        {
+            return { matchedCount: 0, members: [], truncated: false };
+        }
+
+        const scopedQuery = { ...additionalQuery, organizationId: organizationId };
+        const matchedCount = await collection.countDocuments(scopedQuery);
+        const safeMaximum = Math.max(1, Number(maximumMembers) || 1);
+
+        const documents = await collection
+            .find(scopedQuery, { projection: { _id: 0 } })
+            .sort({ email: 1 })
+            .limit(safeMaximum)
+            .toArray();
+
+        return {
+            matchedCount: matchedCount,
+            members: documents.map(document => OrganizationMember.fromJson(document)),
+            truncated: matchedCount > documents.length
+        };
+    }
+
+    /**
+     * Applies one mutation to every member matching a prepared Mongo filter.
+     *
+     * The profile each member ends up with is computed per member rather than
+     * pushed down as a single Mongo update, because "add this tag" and "set this
+     * column" both depend on what that member already carried, and because all
+     * four stored maps have to be re-derived together from the result. A `$set`
+     * of `attributes` alone would leave the comparable copy describing the value
+     * it replaced.
+     *
+     * @param {string} organizationId
+     * @param {object} additionalQuery a Mongo fragment already built by the caller
+     * @param {object} mutation
+     * @param {number} maximumMembers
+     * @returns {Promise<{ matchedCount: number, updated: number, truncated: boolean }>}
+     */
+    static async applyMutationToMembersMatching(organizationId, additionalQuery, mutation, maximumMembers)
+    {
+        const collection = await OrganizationMemberQueryEngine.#getCollection();
+        if (!collection)
+        {
+            return { matchedCount: 0, updated: 0, truncated: false };
+        }
+
+        const scopedQuery = { ...additionalQuery, organizationId: organizationId };
+        const matchedCount = await collection.countDocuments(scopedQuery);
+        const safeMaximum = Math.max(1, Number(maximumMembers) || 1);
+
+        const documents = await collection
+            .find(scopedQuery, { projection: { _id: 0 } })
+            .limit(safeMaximum)
+            .toArray();
+
+        if (documents.length === 0)
+        {
+            return { matchedCount: matchedCount, updated: 0, truncated: false };
+        }
+
+        const writeOperations = documents.map((document) =>
+        {
+            const mutatedProfile = OrganizationMemberProfileMutator.buildMutatedProfile(document, mutation);
+            return {
+                updateOne:
+                {
+                    filter: { organizationId: organizationId, id: document.id },
+                    update:
+                    {
+                        $set:
+                        {
+                            tags: mutatedProfile.tags,
+                            attributes: mutatedProfile.attributes,
+                            attributesNormalised: mutatedProfile.attributesNormalised,
+                            attributesComparable: mutatedProfile.attributesComparable
+                        }
+                    }
+                }
+            };
+        });
+
+        const bulkResult = await collection.bulkWrite(writeOperations, { ordered: false });
+
+        return {
+            matchedCount: matchedCount,
+            updated: bulkResult.modifiedCount || 0,
+            truncated: matchedCount > documents.length
+        };
+    }
+
+    /**
+     * Applies one mutation to a named set of members. The organization scope is
+     * part of the filter rather than assumed from the ids, so a payload naming a
+     * member of another institute changes nothing rather than reaching them.
+     *
+     * @param {string} organizationId
+     * @param {string[]} memberIds
+     * @param {object} mutation
+     * @returns {Promise<{ matchedCount: number, updated: number, truncated: boolean }>}
+     */
+    static async applyMutationToMemberIds(organizationId, memberIds, mutation)
+    {
+        const safeIds = (Array.isArray(memberIds) ? memberIds : [])
+            .filter(memberId => typeof memberId === "string" && memberId.length > 0);
+
+        if (safeIds.length === 0)
+        {
+            return { matchedCount: 0, updated: 0, truncated: false };
+        }
+
+        return await OrganizationMemberQueryEngine.applyMutationToMembersMatching
+        (
+            organizationId,
+            { id: { $in: safeIds } },
+            mutation,
+            safeIds.length
+        );
     }
 
     /**

@@ -8,13 +8,10 @@ from Globals.Utility.EnvironmentLoader import EnvironmentLoader
 # and the flushing `print` in debug mode.
 initialize_agent_logger()
 
-# MuPDF parser-warning silencing used to live here unconditionally, which
-# paid the ~0.5s fitz native-binding cost on every agent subprocess launch
-# even for tasks that never touch a PDF (analysis, embedding-only,
-# curated-study, etc.). Each fitz-using workflow now calls
-# MuPdfBootstrap.silence_parser_warnings() at the start of its run() —
-# the call is idempotent and lazy-imports fitz on first invocation, so
-# the cost is only paid where it's needed.
+# PDF reading goes through Globals/Classes/Pdf/PdfDocumentReader, which each
+# PDF-touching workflow imports function-locally. That keeps the PDFium
+# native-binding load off agent subprocess launches for tasks that never
+# touch a PDF (analysis, embedding-only, curated-study, etc.).
 
 
 from Globals.Classes.Task.TaskDescriptor import TaskDescriptor

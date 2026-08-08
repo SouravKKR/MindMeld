@@ -272,6 +272,71 @@ class GeneralGenerationFields extends GenerationFields
         {
             captureImagesContainer.hidden = false;
         }
+
+        // Verification sources are a paid-deck concept and appear only with the
+        // mode. They are shown BELOW the restriction notice above deliberately:
+        // the row that says "curriculum/syllabus source only" and the row that
+        // offers a textbook have to read as one thought, or the second looks
+        // like a contradiction of the first.
+        const verificationSourcesContainer = this.querySelector(".verification-sources-container");
+
+        if (verificationSourcesContainer)
+        {
+            verificationSourcesContainer.hidden = !bPaidDeckMode;
+
+            if (!bPaidDeckMode)
+            {
+                // Cleared as well as hidden. A list left populated after the mode
+                // is switched off would be sent on a run that has no verification
+                // pass to use it.
+                const verificationSourceSelector = verificationSourcesContainer.querySelector("information-source-selector");
+
+                if (verificationSourceSelector && typeof verificationSourceSelector.setSources === "function")
+                {
+                    verificationSourceSelector.setSources([]);
+                }
+            }
+        }
+    }
+
+    /**
+     * The ids of the verification sources the administrator picked.
+     *
+     * Returned as its own list rather than folded into the settings object,
+     * because these are NOT generation inputs and must not travel with the ones
+     * that are. GeneralGenerationSettings is what the source-type restriction is
+     * enforced against; a verification source inside it would be checked as
+     * though the pipeline were about to read it, and refused.
+     */
+    getVerificationSourceIds()
+    {
+        const verificationSourcesContainer = this.querySelector(".verification-sources-container");
+
+        if (!verificationSourcesContainer || verificationSourcesContainer.hidden)
+        {
+            return [];
+        }
+
+        const verificationSourceSelector = verificationSourcesContainer.querySelector("information-source-selector");
+
+        if (!verificationSourceSelector || typeof verificationSourceSelector.getSources !== "function")
+        {
+            return [];
+        }
+
+        // The selector yields ExtractableInformationSource decorators; only the
+        // wrapped source's id travels. The page ranges the decorator carries are
+        // meaningless here — the verification pass reads the whole document.
+        return (verificationSourceSelector.getSources() || [])
+            .map(extractableSource =>
+            {
+                const informationSource = typeof extractableSource.getInformationSource === "function"
+                    ? extractableSource.getInformationSource()
+                    : null;
+
+                return informationSource !== null ? informationSource.getId() : "";
+            })
+            .filter(sourceId => typeof sourceId === "string" && sourceId.length > 0);
     }
 
     /**
@@ -729,6 +794,11 @@ class GeneralGenerationFields extends GenerationFields
                 <label title="Admin only. Generates first-party commercial content from the curriculum itself: only a curriculum/syllabus source is accepted, chunk content is written from model knowledge rather than retrieved from an upload, visuals are generated, and the deck lands unpublished behind a review gate.">Paid Deck (admin): </label>
                 <input type="checkbox" class="paid-deck-mode-checkbox">
                 <span class="credit-warning-note">⚠ Curriculum/syllabus source only</span>
+            </div>
+            <div class="verification-sources-container field-container verification-sources-selector-container" hidden>
+                <label title="Admin only, and optional. Documents the generated content is CHECKED AGAINST after it is written. They are never read while generating — the deck is still written from the curriculum alone — and a check can only raise flags for review. Each must already carry a licence declaration.">Verification Sources (optional): </label>
+                <information-source-selector></information-source-selector>
+                <span class="credit-warning-note">Checked against, never generated from</span>
             </div>
             <div class="information-source-container field-container information-sources-selector-container">
                 <label>Information Sources: </label>

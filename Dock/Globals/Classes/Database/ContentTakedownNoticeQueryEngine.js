@@ -30,10 +30,14 @@ class ContentTakedownNoticeQueryEngine
      * @param {string|null} noticeDetails.actorUserId - The administrator who actioned it.
      * @param {string|null} noticeDetails.actorEmail - Their email, denormalised so the record stands alone.
      * @param {number} noticeDetails.rowsRemoved - Information-source rows deleted across all tenants.
+     * @param {number} noticeDetails.rowsFailed - Rows that would not delete, so the notice is incomplete.
      * @param {string[]} noticeDetails.affectedUserIds - Tenants whose row referenced the content.
-     * @param {boolean} noticeDetails.bContentRemoved - Whether the stored blob was deleted.
+     * @param {number} noticeDetails.storedCopiesFound - Distinct stored copies the notice had to erase.
+     * @param {number} noticeDetails.storedCopiesRemoved - How many of those copies were actually deleted.
+     * @param {boolean} noticeDetails.bContentRemoved - Whether EVERY stored copy was deleted.
      * @param {number} noticeDetails.embeddingChunksRemoved - Verbatim text chunks purged.
-     * @param {number} noticeDetails.figuresRemoved - Cached figure extractions purged.
+     * @param {number} noticeDetails.figuresRemoved - Cached figure extraction rows purged.
+     * @param {number} noticeDetails.figureObjectsRemoved - Figure image objects deleted from storage.
      * @param {string|null} noticeDetails.storageError - Storage failure, when the cascade was incomplete.
      * @return {Promise<object>} The recorded notice.
      */
@@ -50,10 +54,18 @@ class ContentTakedownNoticeQueryEngine
             actorUserId: noticeDetails.actorUserId || null,
             actorEmail: noticeDetails.actorEmail || null,
             rowsRemoved: noticeDetails.rowsRemoved || 0,
+            rowsFailed: noticeDetails.rowsFailed || 0,
             affectedUserIds: noticeDetails.affectedUserIds || [],
+            // Recorded as a pair. Storage is per-user, so a notice erases one
+            // copy per holder; a register that stated only "content removed"
+            // could not later evidence whether every holder's copy went, which
+            // is the single question a rightsholder or regulator will ask.
+            storedCopiesFound: noticeDetails.storedCopiesFound || 0,
+            storedCopiesRemoved: noticeDetails.storedCopiesRemoved || 0,
             contentRemoved: noticeDetails.bContentRemoved === true,
             embeddingChunksRemoved: noticeDetails.embeddingChunksRemoved || 0,
             figuresRemoved: noticeDetails.figuresRemoved || 0,
+            figureObjectsRemoved: noticeDetails.figureObjectsRemoved || 0,
             storageError: noticeDetails.storageError || null,
             actionedAt: Date.now()
         };
@@ -65,7 +77,9 @@ class ContentTakedownNoticeQueryEngine
         console.log(
             `[ContentTakedownNotice] Actioned notice ${noticeDocument.noticeReference} for hash ${noticeDocument.contentHash} — ` +
             `${noticeDocument.rowsRemoved} row(s) across ${noticeDocument.affectedUserIds.length} tenant(s), ` +
-            `${noticeDocument.embeddingChunksRemoved} chunk(s), ${noticeDocument.figuresRemoved} figure(s).`,
+            `${noticeDocument.storedCopiesRemoved}/${noticeDocument.storedCopiesFound} stored copy(ies), ` +
+            `${noticeDocument.embeddingChunksRemoved} chunk(s), ${noticeDocument.figuresRemoved} figure row(s), ` +
+            `${noticeDocument.figureObjectsRemoved} figure object(s).`,
         );
 
         return noticeDocument;

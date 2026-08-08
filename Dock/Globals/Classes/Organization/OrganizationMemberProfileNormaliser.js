@@ -40,6 +40,14 @@ class OrganizationMemberProfileNormaliser
      * Converts a sheet header into the attribute key it is stored under.
      * "Roll Number" / "roll_number" / "roll-number" all become "rollNumber".
      *
+     * IDEMPOTENT: feeding a key back through returns the same key. That matters
+     * because stored keys are re-normalised on every edit, and a version of this
+     * that lowercased first turned "joinYear" into "joinyear" — a DIFFERENT
+     * attribute. Editing a member then wrote the corrected value to a new column
+     * beside the original, leaving every filter and rule reading the old one.
+     * Splitting on the camelCase boundary before lowercasing is what makes the
+     * second pass a no-op.
+     *
      * @param {string} rawHeader
      * @returns {string} a camelCase key, or "" when the header carries nothing
      */
@@ -52,6 +60,10 @@ class OrganizationMemberProfileNormaliser
 
         const words = rawHeader
             .trim()
+            // "joinYear" -> "join Year" so the existing word boundary survives
+            // the lowercasing below. A header written as separate words is
+            // unaffected, so both spellings land on the same key.
+            .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
             .toLowerCase()
             .split(/[^a-z0-9]+/)
             .filter(word => word.length > 0);

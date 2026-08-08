@@ -1,7 +1,7 @@
 import re
 import difflib
 
-import fitz
+from Globals.Classes.Pdf.PdfDocumentReader import PdfDocumentReader
 from Workflows.ProcessSyllabus.TextbookExtractionUtils import clean_text, looks_like_heading
 
 
@@ -11,7 +11,7 @@ _FUZZY_THRESHOLD = 0.60
 
 
 def filter_headings_by_page_range(
-    doc: fitz.Document,
+    pdf_reader: PdfDocumentReader,
     headings: list[dict],
     start_page: int,
     end_page: int,
@@ -34,11 +34,11 @@ def filter_headings_by_page_range(
     if not headings:
         return []
 
-    # Convert to 0-indexed for fitz
-    fitz_start = max(0, start_page - 1)
-    fitz_end   = min(len(doc), end_page)       # exclusive upper bound for range()
+    # Convert to 0-indexed page indices
+    first_page_index = max(0, start_page - 1)
+    end_page_index   = min(pdf_reader.get_page_count(), end_page)   # exclusive upper bound for range()
 
-    candidate_lines = _collect_heading_lines(doc, fitz_start, fitz_end)
+    candidate_lines = _collect_heading_lines(pdf_reader, first_page_index, end_page_index)
 
     if not candidate_lines:
         # Nothing heading-like found on those pages — return everything rather
@@ -46,17 +46,17 @@ def filter_headings_by_page_range(
         return headings
 
     kept = []
-    for h in headings:
-        if _is_present(h["title"], candidate_lines):
-            kept.append(h)
+    for heading in headings:
+        if _is_present(heading["title"], candidate_lines):
+            kept.append(heading)
 
     return kept if kept else headings   # fail-open: never return empty
 
 
 def _collect_heading_lines(
-    doc: fitz.Document,
-    fitz_start: int,
-    fitz_end: int,
+    pdf_reader: PdfDocumentReader,
+    first_page_index: int,
+    end_page_index: int,
 ) -> list[str]:
     """
     Collect every short, heading-like line of text from the page range.
@@ -64,10 +64,9 @@ def _collect_heading_lines(
     these lines as a matching corpus, not as the final output.
     """
     lines = []
-    for page_num in range(fitz_start, fitz_end):
-        try:
-            page_text = doc[page_num].get_text()
-        except Exception:
+    for page_index in range(first_page_index, end_page_index):
+        page_text = pdf_reader.get_page_text(page_index)
+        if not page_text:
             continue
         for raw_line in page_text.splitlines():
             line = clean_text(raw_line)

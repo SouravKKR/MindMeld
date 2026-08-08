@@ -1,6 +1,6 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
-import { planFeatures } from "../../../Globals/Enumerations/PlanFeatures.js";
 import OrganizationErrorMessages from "../../../Globals/Classes/Organization/OrganizationErrorMessages.js";
+import FeatureCheckboxList from "../../../Globals/Classes/Organization/FeatureCheckboxList.js";
 import { organizationStatus } from "../../../Globals/Enumerations/OrganizationStatus.js";
 import { organizationDeckPerkTypes } from "../../../Globals/Enumerations/OrganizationDeckPerkTypes.js";
 
@@ -8,9 +8,10 @@ import { organizationDeckPerkTypes } from "../../../Globals/Enumerations/Organiz
  * OrganizationDetailsDialog
  *
  * Super-admin view + edit for a single organization: rename, member capacity,
- * and the marketplace deck perks its members receive. Member management,
- * permissions, credits and the deck shelf live on the organization's own page —
- * this dialog stays focused on what only a super-admin may change.
+ * the entitlement ceilings, what its owner may do inside its view, and the
+ * marketplace deck perks its members receive. Member management, permissions,
+ * credits and the deck shelf live on the organization's own page — this dialog
+ * stays focused on what only a super-admin may change.
  *
  * Every save reports its outcome next to the control that triggered it and
  * disables that control while the request is in flight, so a failure can never
@@ -22,20 +23,6 @@ import { organizationDeckPerkTypes } from "../../../Globals/Enumerations/Organiz
  */
 class OrganizationDetailsDialog
 {
-    // The features an agreement can include, in the order they are sold rather
-    // than enum order, with the wording a person buying them would use. Kept
-    // beside the dialog that offers them so the two never disagree.
-    static GRANTABLE_FEATURE_DESCRIPTIONS =
-    [
-        { featureValue: planFeatures.ASK_AI, label: "Ask AI" },
-        { featureValue: planFeatures.CHAT, label: "Chat with a deck" },
-        { featureValue: planFeatures.AUTOMATIC_GENERATION, label: "Generate with AI" },
-        { featureValue: planFeatures.CURATED_STUDY, label: "Curated study material" },
-        { featureValue: planFeatures.MOCK_TEST_EVALUATION, label: "Mock-test evaluation" },
-        { featureValue: planFeatures.IMAGE_GENERATION, label: "Image generation" },
-        { featureValue: planFeatures.MONTHLY_FREE_DECK, label: "Monthly free deck" }
-    ];
-
     static #escapeHtml(rawString)
     {
         if (rawString === null || rawString === undefined)
@@ -64,6 +51,51 @@ class OrganizationDetailsDialog
             return "Suspended";
         }
         return String(statusValue);
+    }
+
+    /**
+     * The stored term as a value an <input type="date"> accepts.
+     *
+     * Read in UTC deliberately. The term is written as the final instant of the
+     * chosen day in UTC, so reading it back with local getters would show the
+     * following day for anyone east of UTC and the picker would walk forward a
+     * day on every save.
+     */
+    static #toDateInputValue(termEndsAt)
+    {
+        if (!termEndsAt)
+        {
+            return "";
+        }
+
+        const endDate = new Date(termEndsAt);
+        // The epoch sentinel means no term was ever agreed, which is not the
+        // same as a term that ended in 1970.
+        if (isNaN(endDate.getTime()) || endDate.getTime() <= 0)
+        {
+            return "";
+        }
+
+        const year = String(endDate.getUTCFullYear()).padStart(4, "0");
+        const month = String(endDate.getUTCMonth() + 1).padStart(2, "0");
+        const day = String(endDate.getUTCDate()).padStart(2, "0");
+        return `${year}-${month}-${day}`;
+    }
+
+    static #describeTerm(termEndsAt)
+    {
+        const endDate = termEndsAt ? new Date(termEndsAt) : null;
+        if (endDate === null || isNaN(endDate.getTime()) || endDate.getTime() <= 0)
+        {
+            return "No term is agreed. The pool is left alone — nothing freezes it, and nothing warns before it lapses.";
+        }
+
+        const dayLabel = endDate.toISOString().slice(0, 10);
+        if (endDate.getTime() <= Date.now())
+        {
+            return `The term ended on ${dayLabel}, so credit distributions are paused. Choose a later date to renew.`;
+        }
+        return `The term runs to the end of ${dayLabel}.`;
     }
 
     static async show(organizationId)
@@ -146,6 +178,26 @@ class OrganizationDetailsDialog
                     </div>
                     <p class="organization-action-status" data-role="capacity-status"></p>
 
+                    <h3 class="organization-section-heading">Contract term</h3>
+                    <p class="admin-panel-add-subtitle">
+                        When this organization's credit agreement runs out. Once the date has passed its
+                        pool is frozen &mdash; the credits already bought are kept, but none can be handed
+                        to members until the term is renewed. Moving the date forward renews it and
+                        releases the pool immediately. Leave the field empty for no agreed term.
+                    </p>
+                    <div class="organization-form-grid">
+                        <label class="admin-panel-add-field">
+                            <span>Term ends (the end of this day, UTC)</span>
+                            <input type="date" class="organization-term-input"
+                                   value="${escapeHtml(OrganizationDetailsDialog.#toDateInputValue(organization.termEndsAt))}">
+                        </label>
+                    </div>
+                    <p class="admin-panel-add-subtitle" data-role="term-summary">${escapeHtml(OrganizationDetailsDialog.#describeTerm(organization.termEndsAt))}</p>
+                    <div class="organization-form-actions">
+                        <button type="button" class="organization-secondary-button organization-save-term">Save term</button>
+                    </div>
+                    <p class="organization-action-status" data-role="term-status"></p>
+
                     <h3 class="organization-section-heading">Entitlement ceilings</h3>
                     <p class="admin-panel-add-subtitle">
                         The platform's side of this organization's agreement. Everything they then configure
@@ -172,6 +224,16 @@ class OrganizationDetailsDialog
                     </div>
                     <p class="admin-panel-add-subtitle">AI features their permission rules may grant. A feature left unticked can never be reached by a rule, however that rule is written.</p>
                     <div class="organization-grantable-features" data-role="grantable-features"></div>
+
+                    <h3 class="organization-section-heading">What the owner can do</h3>
+                    <p class="admin-panel-add-subtitle">
+                        The owner's own capability inside this organization's view. It is a grant from
+                        us, not a ceiling, so it is deliberately <em>not</em> limited to the features
+                        above &mdash; those bound what the organization may hand its members. Their
+                        personal plan does not apply in this view, so what is unticked here they do not
+                        have while working in it.
+                    </p>
+                    <div class="organization-grantable-features" data-role="admin-features"></div>
                     <div class="organization-form-actions">
                         <button type="button" class="admin-panel-add-submit organization-save-limits">Save ceilings</button>
                     </div>
@@ -379,36 +441,11 @@ class OrganizationDetailsDialog
             };
 
             // ── Entitlement ceilings ──────────────────────────────────────
-            const grantableFeaturesHost = dialog.querySelector('[data-role="grantable-features"]');
             const selectedFeatureValues = new Set((organization.grantableFeatures || []).map(featureValue => Number(featureValue)));
+            const adminFeatureValues = new Set((organization.adminAllowedFeatures || []).map(featureValue => Number(featureValue)));
 
-            for (const featureDescription of OrganizationDetailsDialog.GRANTABLE_FEATURE_DESCRIPTIONS)
-            {
-                const featureLabel = document.createElement("label");
-                featureLabel.className = "organization-permission-tag";
-
-                const featureCheckbox = document.createElement("input");
-                featureCheckbox.type = "checkbox";
-                featureCheckbox.checked = selectedFeatureValues.has(featureDescription.featureValue);
-                featureCheckbox.addEventListener("change", () =>
-                {
-                    if (featureCheckbox.checked)
-                    {
-                        selectedFeatureValues.add(featureDescription.featureValue);
-                    }
-                    else
-                    {
-                        selectedFeatureValues.delete(featureDescription.featureValue);
-                    }
-                });
-
-                const featureText = document.createElement("span");
-                featureText.textContent = featureDescription.label;
-
-                featureLabel.appendChild(featureCheckbox);
-                featureLabel.appendChild(featureText);
-                grantableFeaturesHost.appendChild(featureLabel);
-            }
+            FeatureCheckboxList.render(dialog.querySelector('[data-role="grantable-features"]'), { selectedFeatureValues: selectedFeatureValues });
+            FeatureCheckboxList.render(dialog.querySelector('[data-role="admin-features"]'), { selectedFeatureValues: adminFeatureValues });
 
             const limitsStatus = dialog.querySelector('[data-role="limits-status"]');
             const saveLimitsButton = dialog.querySelector(".organization-save-limits");
@@ -438,7 +475,8 @@ class OrganizationDetailsDialog
                         maxStorageGrantBytesPerMember: Math.round(storageMegabytes) * 1024 * 1024,
                         maxCreditsPerMemberPerMonth: monthlyCap,
                         maxPublishedDecks: Math.round(publishedDeckCap),
-                        grantableFeatures: Array.from(selectedFeatureValues)
+                        grantableFeatures: Array.from(selectedFeatureValues),
+                        adminAllowedFeatures: Array.from(adminFeatureValues)
                     })
                 }));
 
@@ -453,6 +491,7 @@ class OrganizationDetailsDialog
                 organization.maxCreditsPerMemberPerMonth = monthlyCap;
                 organization.maxPublishedDecks = Math.round(publishedDeckCap);
                 organization.grantableFeatures = Array.from(selectedFeatureValues);
+                organization.adminAllowedFeatures = Array.from(adminFeatureValues);
 
                 limitsStatus.classList.remove("organization-action-status-failure");
                 limitsStatus.classList.add("organization-action-status-success");
@@ -558,6 +597,54 @@ class OrganizationDetailsDialog
 
                 organization.maxMembers = newMaximumMembers;
                 showActionStatus(capacityStatus, `Capacity is now ${newMaximumMembers}.`, true);
+            });
+
+            // ── Contract term ─────────────────────────────────────────────
+            const termStatus = dialog.querySelector('[data-role="term-status"]');
+            const termSummary = dialog.querySelector('[data-role="term-summary"]');
+            const saveTermButton = dialog.querySelector(".organization-save-term");
+
+            saveTermButton.addEventListener("click", async () =>
+            {
+                const pickedDay = dialog.querySelector(".organization-term-input").value;
+
+                // The chosen day is the LAST day of the term, so the term ends
+                // at that day's final instant. Storing midnight would expire it
+                // before the day it names had even begun.
+                const termEndsAtIsoString = pickedDay.length > 0 ? `${pickedDay}T23:59:59.999Z` : "";
+                if (pickedDay.length > 0 && isNaN(new Date(termEndsAtIsoString).getTime()))
+                {
+                    showError("Enter a valid date, or clear the field for no agreed term.");
+                    showActionStatus(termStatus, "Enter a valid date, or clear the field for no agreed term.", false);
+                    return;
+                }
+
+                const responseJson = await runSave(saveTermButton, termStatus, "Saving…", () => fetch("/Admin/Organizations/SetTerm",
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ organizationId: organization.id, termEndsAt: termEndsAtIsoString })
+                }));
+
+                if (!responseJson)
+                {
+                    return;
+                }
+
+                // The server's own value, not the typed one — it settles the
+                // epoch sentinel for a cleared term, so re-opening the dialog
+                // without a reload shows what was actually stored.
+                organization.termEndsAt = responseJson.termEndsAt;
+                termSummary.textContent = OrganizationDetailsDialog.#describeTerm(organization.termEndsAt);
+
+                let savedMessage = "Saved. This organization now has no agreed term, so its pool is left alone.";
+                if (pickedDay.length > 0)
+                {
+                    savedMessage = responseJson.frozen === true
+                        ? "Saved — but that date has already passed, so the pool stays paused."
+                        : "Saved. The term is renewed and distributions may resume.";
+                }
+                showActionStatus(termStatus, savedMessage, true);
             });
 
             dialog.querySelector(".organization-close").addEventListener("click", () =>

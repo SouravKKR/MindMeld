@@ -80,6 +80,23 @@
         {
             "datatype": "string",
             "defaultValue": ""
+        },
+        "licenceType":
+        {
+            "datatype": "enum:SourceLicenceTypes",
+            "defaultValue": 0
+        },
+        "licenceNote":
+        {
+            "datatype": "string",
+            "defaultValue": "",
+            "maxLength": 1024
+        },
+        "sourceUrl":
+        {
+            "datatype": "string",
+            "defaultValue": "",
+            "maxLength": 2048
         }
     }
 }

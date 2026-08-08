@@ -10,17 +10,19 @@ class OrganizationPermissionRule
     #name;
     #tagFilter;
     #matchMode;
+    #attributeConditions;
     #allowedFeatures;
     #storageGrantBytes;
     #createdAt;
 
-    constructor({organizationId = null, name = null, tagFilter = [], matchMode = 0, allowedFeatures = [], storageGrantBytes = 0, createdAt = new Date()} = {})
+    constructor({organizationId = null, name = null, tagFilter = [], matchMode = 0, attributeConditions = [], allowedFeatures = [], storageGrantBytes = 0, createdAt = new Date()} = {})
     {
         this.#id = crypto.randomUUID();
         this.setOrganizationId(organizationId);
         this.setName(name);
         this.setTagFilter(tagFilter);
         this.setMatchMode(matchMode);
+        this.setAttributeConditions(attributeConditions);
         this.setAllowedFeatures(allowedFeatures);
         this.setStorageGrantBytes(storageGrantBytes);
         this.setCreatedAt(createdAt);
@@ -102,6 +104,23 @@ class OrganizationPermissionRule
         this.#matchMode = value;
     }
 
+    getAttributeConditions()
+    {
+        return this.#attributeConditions;
+    }
+
+    setAttributeConditions(value)
+    {
+        if (value !== null)
+        {
+            if (!Array.isArray(value))
+            {
+                value = null;
+            }
+        }
+        this.#attributeConditions = value;
+    }
+
     getAllowedFeatures()
     {
         return this.#allowedFeatures;
@@ -171,6 +190,7 @@ class OrganizationPermissionRule
             name: this.getName(),
             tagFilter: this.getTagFilter(),
             matchMode: this.getMatchMode() !== null ? Number(this.getMatchMode()) : null,
+            attributeConditions: this.getAttributeConditions(),
             allowedFeatures: this.getAllowedFeatures() !== null ? this.getAllowedFeatures().map(item => Number(item)) : null,
             storageGrantBytes: this.getStorageGrantBytes(),
             createdAt: this.getCreatedAt() !== null ? this.getCreatedAt().toISOString() : null,
@@ -184,6 +204,7 @@ class OrganizationPermissionRule
             name: json.name ?? null,
             tagFilter: json.tagFilter ?? null,
             matchMode: json.matchMode ?? null,
+            attributeConditions: json.attributeConditions ?? null,
             allowedFeatures: json.allowedFeatures ?? null,
             storageGrantBytes: json.storageGrantBytes ?? null,
             createdAt: json.createdAt != null ? new Date(json.createdAt) : null

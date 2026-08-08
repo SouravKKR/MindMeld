@@ -15,6 +15,10 @@ const TaskManager = require("../../Globals/Classes/Task/TaskManager");
 const TaskHistoryQueryEngine = require("../../Globals/Classes/Database/TaskHistoryQueryEngine");
 const CreditPreflight = require("../../Globals/Classes/Credits/CreditPreflight");
 const TaskStateManager = require("../../Globals/Classes/Task/TaskStateManager");
+const EphemeralUploadRegistry = require("../../Globals/Classes/Content/EphemeralUploadRegistry");
+const GenerationStagingPolicy = require("../../Globals/Classes/Content/GenerationStagingPolicy");
+const { ephemeralUploadKinds } = require("../../Globals/Enumerations/EphemeralUploadKinds");
+const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const { taskExecutionTargets } = require("../../Globals/Enumerations/TaskExecutionTargets");
 const { getUser } = require("../Helpers/GetUser");
 const { moveToDatabase } = require("../Helpers/MoveToDatabase");
@@ -29,6 +33,9 @@ const NotificationDispatcher = require("../../Globals/Classes/Notifications/Noti
 const NotificationContent = require("../../Globals/Classes/Notifications/NotificationContent");
 const { notificationChannels } = require("../../Globals/Enumerations/NotificationChannels");
 const PaidDeckGenerationGate = require("../../Globals/Classes/Generation/PaidDeckGenerationGate");
+const GenerationProvenanceQueryEngine = require("../../Globals/Classes/Database/GenerationProvenanceQueryEngine");
+const SourceVerificationRunner = require("../../Globals/Classes/PaidDeck/SourceVerificationRunner");
+const VerificationSourceAdmission = require("./Helpers/VerificationSourceAdmission");
 
 
 const VIRTUAL_WEB_SOURCE_TYPES = [
@@ -187,6 +194,14 @@ async function handleGenerate(request, response)
     // validateGenerationSettings, so it also covers any other caller of it.
     const bPaidDeckMode = PaidDeckGenerationGate.isRequested(generalGenerationSettings);
 
+    // Verification sources the administrator picked for this run. A SEPARATE
+    // list from informationSources on purpose: these are never generation
+    // inputs, so they must not pass through the source-type restriction that
+    // defines what paid-deck generation is allowed to read. They are checked
+    // now, before any work starts, and attached to the produced deck after
+    // MoveToDatabase — see VerificationSourceAdmission.
+    let admittedVerificationSources = [];
+
     if (bPaidDeckMode)
     {
         const paidDeckAuthorization = PaidDeckGenerationGate.authorize(user);
@@ -196,6 +211,18 @@ async function handleGenerate(request, response)
             response.sendJson({ error: paidDeckAuthorization.reason });
             return;
         }
+
+        const verificationSourceAdmission = await VerificationSourceAdmission.resolveAndValidate(
+            body["verificationSourceIds"], userId);
+
+        if (!verificationSourceAdmission.allowed)
+        {
+            response.statusCode = httpStatus.BAD_REQUEST;
+            response.sendJson({ error: verificationSourceAdmission.errorCode, detail: verificationSourceAdmission.detail });
+            return;
+        }
+
+        admittedVerificationSources = verificationSourceAdmission.resolvedSources;
     }
 
     try
@@ -390,6 +417,39 @@ async function handleGenerate(request, response)
 
     await TaskManager.setTask(mainTaskDescriptor);
     await TaskManager.trackForUser(userId, mainTaskDescriptor.getId());
+
+    // Register the run's staging folder for deletion BEFORE any of it is
+    // written. The success path still purges it eagerly at the end of
+    // moveToDatabase; this registration is the backstop for every path that
+    // never reaches that line — a failed run, a run the user pauses and
+    // abandons, a run orphaned by a Dock restart. Those all leave staged
+    // flashcards, study material, worker logs and figure crops of the uploaded
+    // book in the bucket, and before this nothing swept them.
+    //
+    // Registered at START rather than on failure because the failure paths are
+    // exactly the ones that may not execute. The upsert on the prefix means
+    // resuming or retrying the same run simply refreshes the window.
+    //
+    // GENERATION_STAGING_RETENTION_DAYS has to stay above two other clocks, and
+    // shortening it below either one breaks something quietly:
+    //
+    //   - TASK_STATES_TTL_DAYS (7d). While that snapshot lives the run is still
+    //     resumable from the paused banner, and a resume reads this folder. Reap
+    //     sooner and a resumable run finds its staging gone.
+    //   - TaskManager's 5h task-blob TTL. OrphanedGenerationReconciler reads an
+    //     EMPTY task folder as proof that moveToDatabase finished, i.e. that the
+    //     run succeeded. It only reaches that inference while the task blob is
+    //     still in Redis, so at 14 days it always exits earlier on the null-task
+    //     branch instead. A window under 5 hours would let the reaper empty a
+    //     failed run's folder and have the reconciler report it as a success.
+    await EphemeralUploadRegistry.register
+    ({
+        storagePrefix: GenerationStagingPolicy.buildStoragePrefix(mainTaskDescriptor.getId()),
+        kind: ephemeralUploadKinds.GENERATION_TASK_STAGING,
+        userId: userId,
+        retentionDays: DatabaseConstants.GENERATION_STAGING_RETENTION_DAYS,
+        metadata: { mainTaskId: mainTaskDescriptor.getId() },
+    });
 
     // Save a resumable snapshot at the START so a run orphaned by a Dock
     // restart/crash (the in-process pipeline below dies with the server, so its
@@ -1003,6 +1063,52 @@ async function handleGenerate(request, response)
         );
 
         console.log(`[Generate] Database move complete for task ${mainTaskId}.`);
+
+        // ── Phase 7: source-grounded verification (paid-deck runs only) ───────
+        // Runs AFTER persistence, unlike Phase 6, because the sources attach to
+        // the deck the run produced and that deck does not exist until now. It
+        // also reads content from the sync collections rather than the task
+        // bucket, so the same code path serves this run and an administrator
+        // re-running the check months later.
+        //
+        // Not awaited and not allowed to fail the run, for the same reason
+        // Phase 6 is not: a check that can destroy completed work creates
+        // pressure to switch the check off. A pass that never completes leaves
+        // the run's flags as Phase 6 wrote them.
+        if (bPaidDeckMode && admittedVerificationSources.length > 0)
+        {
+            try
+            {
+                const provenanceRecord = await GenerationProvenanceQueryEngine.findByMainTaskId(mainTaskId);
+
+                if (provenanceRecord === null)
+                {
+                    console.warn(`[Generate] No provenance record for ${mainTaskId} — verification sources were not attached.`);
+                }
+                else
+                {
+                    const attachedCount = await VerificationSourceAdmission.attachToGeneratedDeck({
+                        provenanceDeckId: provenanceRecord.deckId,
+                        resolvedSources: admittedVerificationSources,
+                        actorUserId: userId,
+                        actorEmail: (user.getAdditionalData() || {}).email || "",
+                    });
+
+                    console.log(`[Generate] Attached ${attachedCount} verification source(s) to deck ${provenanceRecord.deckId}.`);
+
+                    SourceVerificationRunner.start({
+                        provenanceDeckId: provenanceRecord.deckId,
+                        mainTaskId: mainTaskId,
+                        ownerUserId: provenanceRecord.generatedByUserId,
+                        subjectName: generalGenerationSettings.getSubjectName() || "",
+                    });
+                }
+            }
+            catch (sourceVerificationError)
+            {
+                console.error(`[Generate] Source-grounded verification could not be started for ${mainTaskId}: ${sourceVerificationError.message}`);
+            }
+        }
 
         // A retry that fully succeeded must drop the partial badge from the
         // decks the original partial run flagged — done explicitly by id so it

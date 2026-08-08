@@ -3,6 +3,10 @@ const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organizatio
 const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/OrganizationAutoAssigner");
 const OrganizationAuthorityResolver = require("../../Globals/Classes/Organization/OrganizationAuthorityResolver");
 const OrganizationMemberProfileNormaliser = require("../../Globals/Classes/Organization/OrganizationMemberProfileNormaliser");
+const OrganizationMemberColumnQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberColumnQueryEngine");
+const OrganizationMemberColumnBackfiller = require("../../Globals/Classes/Organization/OrganizationMemberColumnBackfiller");
+const MemberSheetHeaderResolver = require("../../Globals/Classes/Organization/MemberSheetHeaderResolver");
+const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
 const { organizationDelegatePowers } = require("../../Globals/Enumerations/OrganizationDelegatePowers");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
@@ -65,13 +69,21 @@ async function importOrganizationMembers(request, response)
         return;
     }
 
+    // Resolve the sheet's headers onto the columns this organization already
+    // keeps, BEFORE anything is normalised. A renamed column is still called by
+    // its old name in the spreadsheet the office sends, and a header that
+    // matched nothing would create a second column beside the first rather than
+    // filling it.
+    const existingColumns = await OrganizationMemberColumnQueryEngine.listColumnsForOrganization(organizationId);
+    const headerResolvedMembers = MemberSheetHeaderResolver.resolveBatch(existingColumns, submittedMembers);
+
     // Validate, normalise and de-duplicate within the submitted batch. A sheet
     // listing the same person twice is normal (a re-export, a merged file), so
     // the LAST row wins rather than the import failing.
     const profileByEmail = new Map();
     const invalidEmails = [];
 
-    for (const submittedMember of submittedMembers)
+    for (const submittedMember of headerResolvedMembers)
     {
         const rawEmail = typeof submittedMember?.email === "string" ? submittedMember.email.trim().toLowerCase() : "";
         if (rawEmail.length === 0 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail))
@@ -141,6 +153,16 @@ async function importOrganizationMembers(request, response)
                 autoAssignedDecks = autoAssignedDecks + autoAssignResult.granted;
             }
         }
+    }
+
+    // Register whatever columns this sheet introduced, so a header typed for the
+    // first time is immediately filterable, nameable and available to a rule —
+    // the same as one that has been there all along. Headers that resolved to an
+    // existing column were already remapped above and add nothing here.
+    const database = await DatabaseConnector.getDatabase();
+    if (database)
+    {
+        await OrganizationMemberColumnBackfiller.backfillForOrganization(database, organizationId);
     }
 
     response.statusCode = bCapacityRefused ? httpStatus.CONFLICT : httpStatus.OK;

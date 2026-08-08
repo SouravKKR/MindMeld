@@ -4,6 +4,7 @@ import OrganizationMembersSection from "./Components/OrganizationMembersSection.
 import OrganizationCreditsSection from "./Components/OrganizationCreditsSection.js";
 import OrganizationPermissionsSection from "./Components/OrganizationPermissionsSection.js";
 import OrganizationDecksSection from "./Components/OrganizationDecksSection.js";
+import OrganizationReportsSection from "./Components/OrganizationReportsSection.js";
 import OrganizationErrorMessages from "../../Globals/Classes/Organization/OrganizationErrorMessages.js";
 import { organizationPageSections } from "../../Globals/Enumerations/OrganizationPageSections.js";
 import { organizationDelegatePowers } from "../../Globals/Enumerations/OrganizationDelegatePowers.js";
@@ -74,6 +75,15 @@ class OrganizationPage extends HTMLElement
             section: organizationPageSections.DECKS,
             label: "Decks",
             tagName: "organization-decks-section",
+            requiredPower: null
+        },
+        {
+            // Readable by anyone with standing, for the same reason as Credits:
+            // reading what your own members did is not a privileged action, and
+            // the endpoint re-checks regardless.
+            section: organizationPageSections.REPORTS,
+            label: "Reports",
+            tagName: "organization-reports-section",
             requiredPower: null
         }
     ];

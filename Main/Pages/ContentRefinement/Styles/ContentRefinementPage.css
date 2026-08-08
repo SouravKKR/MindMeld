@@ -1,0 +1,802 @@
+/*
+    ContentRefinementPage + the shared refinement review surfaces.
+
+    Colours come from Theme.css variables only. The panel/input/button recipes
+    below are copied from the admin dialogs rather than reinvented, so a
+    refinement panel sits next to an existing one without looking like it came
+    from a different app:
+
+        panel   -> secondary background + 1px outline (outline, NOT border, so
+                   the rule does not add to the box and shift the layout)
+        input   -> tertiary background + outline, 8px/10px padding
+        primary -> the app gradient
+        muted   -> transparent + a stronger outline
+
+    The one place literal colours are used is the diff marking, where the whole
+    point is that "removed" and "added" read the same way regardless of theme.
+*/
+
+/* ── Page shell ─────────────────────────────────────────────────────────── */
+
+.content-refinement-page
+{
+    padding: 16px;
+    max-width: 1400px;
+    margin: 0 auto;
+    box-sizing: border-box;
+}
+
+.content-refinement-intro
+{
+    margin-bottom: 16px;
+    color: var(--secondary-text-color);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.content-refinement-layout
+{
+    display: grid;
+    grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+}
+
+/* minmax(0, 1fr) above and min-width: 0 here are both needed: without them a
+   wide figure or a long unbroken token in the detail pane blows the grid track
+   out past the viewport instead of scrolling inside its own container. */
+.content-refinement-detail
+{
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+}
+
+@media (max-width: 900px)
+{
+    .content-refinement-layout
+    {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* ── Entity list ────────────────────────────────────────────────────────── */
+
+.content-refinement-list
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 70vh;
+    overflow-y: auto;
+    /* Room for the focus outline of the last row, which a flush-cut scroll
+       container would otherwise clip. */
+    padding: 2px;
+}
+
+.content-refinement-entity
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    text-align: left;
+    border: none;
+    border-radius: 8px;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--secondary-background-color);
+    color: var(--primary-text-color);
+    font-family: inherit;
+    cursor: pointer;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.content-refinement-entity:hover
+{
+    outline-color: var(--outline-color-strong);
+}
+
+.content-refinement-entity.is-selected
+{
+    outline: 2px solid var(--accent-color);
+    outline-offset: -2px;
+    background-color: var(--tertiary-background-color);
+}
+
+.content-refinement-entity-label
+{
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.content-refinement-entity-deck
+{
+    font-size: 12px;
+    color: var(--accent-color);
+}
+
+.content-refinement-entity-preview
+{
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--secondary-text-color);
+    /* Two lines then ellipsis: enough to recognise the passage, not enough for
+       one long lesson to push every other row off the screen. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+
+/* ── Detail panes ───────────────────────────────────────────────────────── */
+
+.content-refinement-preview,
+.content-refinement-section
+{
+    padding: 16px;
+    border-radius: 8px;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--secondary-background-color);
+    box-sizing: border-box;
+    min-width: 0;
+}
+
+.content-refinement-preview
+{
+    max-height: 40vh;
+    overflow: auto;
+    line-height: 1.6;
+    /* Generated passages routinely carry a token with no break opportunity — a
+       URL, a systematic chemical name, a long identifier. Without this the
+       paragraph is wider than the panel and drags the whole column sideways on
+       a phone, which the figure and <pre> rules below do not cover because the
+       overflowing box is an ordinary <p>. */
+    overflow-wrap: anywhere;
+}
+
+/* Embedded imagery and preformatted diagram source scroll inside the pane
+   rather than widening it. */
+.content-refinement-preview img,
+.content-refinement-preview svg
+{
+    max-width: 100%;
+    height: auto;
+}
+
+.content-refinement-preview figure,
+.content-refinement-preview pre,
+.content-refinement-preview table
+{
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.content-refinement-section h3
+{
+    margin: 0 0 10px 0;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.content-refinement-instruction
+{
+    width: 100%;
+    resize: vertical;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 6px;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+    box-sizing: border-box;
+}
+
+.content-refinement-instruction:focus
+{
+    outline-color: var(--accent-color);
+}
+
+.content-refinement-submit
+{
+    margin-top: 12px;
+    padding: 10px 18px;
+    border: none;
+    border-radius: 8px;
+    background: var(--primary-background-gradient);
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.content-refinement-submit:disabled
+{
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.content-refinement-empty
+{
+    padding: 24px 16px;
+    border-radius: 8px;
+    outline: 1px dashed var(--outline-color);
+    outline-offset: -1px;
+    color: var(--secondary-text-color);
+    font-size: 14px;
+    text-align: center;
+}
+
+/* ── Figure list ────────────────────────────────────────────────────────── */
+
+.content-refinement-figure-note
+{
+    margin-bottom: 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--secondary-text-color);
+}
+
+.content-refinement-figure
+{
+    padding: 12px 0;
+}
+
+.content-refinement-figure + .content-refinement-figure
+{
+    border-top: 1px solid var(--outline-color-subtle);
+}
+
+.content-refinement-figure-heading
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.content-refinement-figure-method
+{
+    padding: 2px 8px;
+    border-radius: 999px;
+    background-color: var(--tertiary-background-color);
+    color: var(--secondary-text-color);
+    font-weight: 400;
+    font-size: 11px;
+}
+
+.content-refinement-figure-caption
+{
+    margin: 4px 0 8px 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--secondary-text-color);
+    overflow-wrap: anywhere;
+}
+
+.content-refinement-figure-actions
+{
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.content-refinement-figure-actions button
+{
+    padding: 6px 14px;
+    border: none;
+    border-radius: 8px;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.content-refinement-figure-actions button:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+/* Removal is the only destructive one here, so it is the only one tinted. */
+.content-refinement-figure-actions button[data-figure-action="REMOVE"]
+{
+    outline-color: var(--danger-text-color);
+    color: var(--danger-text-color);
+}
+
+.content-refinement-figure-actions button[data-figure-action="REMOVE"]:hover
+{
+    background-color: var(--danger-background-color);
+}
+
+/* ── Source attachment ──────────────────────────────────────────────────── */
+
+.refinement-source-attachment
+{
+    margin-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.refinement-source-field
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+}
+
+.refinement-source-field input,
+.refinement-visual-kind-select
+{
+    padding: 8px 10px;
+    border: none;
+    border-radius: 6px;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-size: 14px;
+    box-sizing: border-box;
+    width: 100%;
+}
+
+.refinement-source-field input:focus,
+.refinement-visual-kind-select:focus
+{
+    outline-color: var(--accent-color);
+}
+
+.refinement-source-upload
+{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.refinement-source-upload button
+{
+    padding: 8px 14px;
+    border: none;
+    border-radius: 8px;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.refinement-source-upload button:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.refinement-source-attached
+{
+    padding: 4px 10px;
+    border-radius: 999px;
+    background-color: var(--accent-background-color);
+    color: var(--primary-text-color);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.refinement-source-detach
+{
+    outline-color: var(--danger-text-color) !important;
+    color: var(--danger-text-color) !important;
+}
+
+.refinement-source-note
+{
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--secondary-text-color);
+}
+
+/* ── Visual-kind dialog ─────────────────────────────────────────────────── */
+
+/*
+    The licence-declaration rules that used to sit here moved to
+    CommonStyles/SourceLicenceDeclarationForm.css when the form was extracted
+    for reuse by the admin verification-sources dialog. Styling a shared
+    component from one page's stylesheet would have rendered it unstyled
+    everywhere else it appears.
+*/
+
+.refinement-visual-kind-dialog
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+/* ── Before / after review dialog ───────────────────────────────────────── */
+
+/*
+    dialog-box caps EVERY dialog at max-width: 60% and clips the overflow
+    (overflow: hidden). For a two-pane before/after that is not a stylistic
+    preference, it is a functional failure: at a 1440px viewport the cap is
+    864px, the comparison needs about 1100px, and the excess is cut off — a
+    quarter of the PROPOSED pane, the half the reviewer is being asked to
+    approve, simply is not on screen.
+
+    So the WRAPPER is widened rather than the panes narrowed. The panes are the
+    content; shrinking them to fit a cap meant for message dialogs would trade a
+    clipped comparison for an unreadable one.
+
+    :has() is already relied on by DialogBox.css, so this is no narrower a
+    browser target than the sheet it is extending.
+*/
+dialog-box:has(.refinement-proposal-dialog)
+{
+    max-width: min(1180px, 94vw);
+    width: min(1180px, 94vw);
+}
+
+dialog-box:has(.verification-candidate-dialog)
+{
+    max-width: min(760px, 94vw);
+    width: min(760px, 94vw);
+}
+
+dialog-box:has(.refinement-visual-kind-dialog)
+{
+    max-width: min(620px, 94vw);
+    width: min(620px, 94vw);
+}
+
+.refinement-proposal-dialog
+{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    /* Fills the wrapper widened above. A width of its own here would be the
+       thing that overflows. */
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+.refinement-proposal-summary
+{
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.refinement-proposal-concerns
+{
+    padding: 10px 14px;
+    border-radius: 8px;
+    background-color: var(--highlight-background-soft);
+    color: var(--primary-text-color);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.refinement-proposal-sources,
+.refinement-proposal-model
+{
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--secondary-text-color);
+}
+
+.refinement-proposal-sources a
+{
+    margin-right: 10px;
+    color: var(--accent-color);
+    overflow-wrap: anywhere;
+}
+
+.refinement-muted
+{
+    color: var(--secondary-text-color);
+}
+
+.refinement-vision-verdict
+{
+    padding: 10px 14px;
+    border-radius: 8px;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--secondary-background-color);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.refinement-vision-heading
+{
+    margin-bottom: 4px;
+    font-weight: 600;
+    color: var(--accent-color);
+}
+
+.refinement-comparison
+{
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px;
+    margin-top: 4px;
+}
+
+@media (max-width: 820px)
+{
+    .refinement-comparison
+    {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.refinement-pane
+{
+    display: flex;
+    flex-direction: column;
+    border-radius: 8px;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--secondary-background-color);
+    min-width: 0;
+    overflow: hidden;
+}
+
+.refinement-pane-heading
+{
+    padding: 8px 14px;
+    background-color: var(--tertiary-background-color);
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--secondary-text-color);
+}
+
+/* The proposed pane is the one being decided on, so it is the one marked. */
+.refinement-pane:last-child .refinement-pane-heading
+{
+    color: var(--accent-color);
+}
+
+.refinement-pane-body
+{
+    padding: 14px;
+    max-height: 46vh;
+    overflow: auto;
+    font-size: 14px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.refinement-pane-body figure,
+.refinement-pane-body pre,
+.refinement-pane-body table
+{
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.refinement-pane-body img,
+.refinement-pane-body svg
+{
+    max-width: 100%;
+    height: auto;
+}
+
+.refinement-pane-body figure
+{
+    margin: 0 0 10px 0;
+}
+
+/*
+    Diff marking. Deliberately literal rather than themed: "this text was
+    removed" has to read the same way in every theme, and a variable that
+    resolved near the pane background would erase the only signal here.
+*/
+.refinement-diff-removed
+{
+    background-color: rgba(220, 80, 80, 0.28);
+    color: inherit;
+    text-decoration: line-through;
+    border-radius: 3px;
+    padding: 0 2px;
+}
+
+.refinement-diff-added
+{
+    background-color: rgba(0, 196, 130, 0.28);
+    color: inherit;
+    border-radius: 3px;
+    padding: 0 2px;
+}
+
+.refinement-proposal-notice
+{
+    padding: 10px 14px;
+    border-radius: 8px;
+    background-color: var(--tertiary-background-color);
+    color: var(--secondary-text-color);
+    font-size: 13px;
+}
+
+.refinement-proposal-error
+{
+    padding: 10px 14px;
+    border-radius: 8px;
+    background-color: var(--danger-background-color);
+    color: var(--danger-text-color);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.refinement-proposal-actions
+{
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+
+.refinement-proposal-actions button
+{
+    padding: 10px 18px;
+    border: none;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.refinement-proposal-discard,
+.refinement-proposal-refine
+{
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+}
+
+.refinement-proposal-discard:hover,
+.refinement-proposal-refine:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+.refinement-proposal-apply
+{
+    background: var(--primary-background-gradient);
+    color: var(--primary-text-color);
+    font-weight: 600;
+}
+
+.refinement-proposal-actions button:disabled
+{
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* ── Verification dialog additions ──────────────────────────────────────── */
+
+.verification-flag-autofix
+{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+
+.verification-flag-autofix button
+{
+    padding: 6px 14px;
+    border: none;
+    border-radius: 8px;
+    outline: 1px solid var(--accent-color);
+    outline-offset: -1px;
+    background-color: var(--accent-background-color);
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.verification-flag-autofix button:hover
+{
+    background-color: var(--accent-color);
+}
+
+.verification-flag-autofix button:disabled
+{
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.verification-flag-autofix .verification-muted
+{
+    font-size: 12px;
+}
+
+.verification-candidate-dialog
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+.verification-candidate-list
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 50vh;
+    overflow-y: auto;
+    padding: 2px;
+}
+
+.verification-candidate
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    text-align: left;
+    border: none;
+    border-radius: 8px;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--secondary-background-color);
+    color: var(--primary-text-color);
+    font-family: inherit;
+    cursor: pointer;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.verification-candidate:hover
+{
+    outline-color: var(--accent-color);
+    background-color: var(--tertiary-background-color);
+}
+
+.verification-candidate-heading
+{
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.verification-candidate-preview
+{
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--secondary-text-color);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}

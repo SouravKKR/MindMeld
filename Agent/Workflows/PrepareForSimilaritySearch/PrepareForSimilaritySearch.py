@@ -2,7 +2,6 @@ from Workflows.Workflow import Workflow
 from Globals.Classes.Decorators.ExtractableInformationSource import ExtractableInformationSource
 from Globals.Classes.Generic.Persistence import Persistence
 from Globals.Classes.Database.EmbeddingsQueryEngine import EmbeddingsQueryEngine
-from Globals.Classes.Generic.MuPdfBootstrap import MuPdfBootstrap
 from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Enumerations.InformationSourceTypes import InformationSourceTypes
 from Globals.Utility.JoinPath import join_path
@@ -29,10 +28,9 @@ class PrepareForSimilaritySearch(Workflow):
         await TaskManager.set_task(task)
 
     async def run(self, args = {}):
-        # Function-local fitz import + the MuPDF silence call together
-        # gate the ~0.5s native-binding load behind "this workflow is
-        # actually about to run". For non-PDF source types we exit
-        # before either fires.
+        # The reader import is function-local so the PDFium native binding load
+        # stays gated behind "this workflow is actually about to run". For
+        # non-PDF source types we exit before it fires.
         information_source = self.__source.get_information_source()
         source_type        = information_source.get_source_type()
 
@@ -45,8 +43,7 @@ class PrepareForSimilaritySearch(Workflow):
             await self.__update_progress(1.0)
             return
 
-        MuPdfBootstrap.silence_parser_warnings()
-        import fitz
+        from Globals.Classes.Pdf.PdfDocumentReader import PdfDocumentReader
 
         print(f"Preparing '{redact_source_name(information_source.get_name())}' for similarity search...")
 
@@ -57,9 +54,8 @@ class PrepareForSimilaritySearch(Workflow):
         await self.__update_progress(0.05)
 
         # ── 2. Resolve page ranges into concrete 1-indexed page numbers ───────
-        doc         = fitz.open(stream=pdf_bytes, filetype="pdf")
-        total_pages = doc.page_count
-        doc.close()
+        with PdfDocumentReader(pdf_bytes) as pdf_reader:
+            total_pages = pdf_reader.get_page_count()
 
         candidate_pages = expand_page_ranges(self.__source.get_page_ranges(), total_pages)
         print(f"Page range resolved to {len(candidate_pages)} candidate page(s) (total document pages: {total_pages}).")

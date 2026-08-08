@@ -68,8 +68,39 @@ USER_ID = "verify-credit-gate-user"
 # A task type that is token-metered, so a rule exists and "charge" is meaningful.
 CHARGEABLE_TASK_TYPE = TaskTypes.FLASHCARD_GENERATION_WORKER
 
-# An orchestrator that makes real model calls but carries no spend rule.
-UNMETERED_TASK_TYPE = TaskTypes.GENERATE_FLASHCARDS
+
+def find_unmetered_task_type(configuration):
+    """
+    A task type the live configuration carries no spend rule for.
+
+    DISCOVERED rather than named. This was pinned to GENERATE_FLASHCARDS, which
+    was true when it was written and stopped being true the day
+    ensureGenerationTaskRules started backfilling the generation pipeline — so
+    the harness failed on a configuration change that was entirely intended, and
+    reported a defect in the credit gate that did not exist.
+
+    What is actually being asserted is a property of the GATE ("no rule means
+    allow_free, which is not the same thing as a paid-deck exemption"), not a
+    property of any particular task. Reading the configuration for a task
+    without a rule keeps that assertion honest whatever the seeding does next.
+
+    Returns None when every task type is metered, which is a legitimate state
+    and skips the assertion rather than failing it.
+    """
+    unmetered_task_types = [
+        task_type for task_type in TaskTypes
+        if configuration.get_rule_for_task(int(task_type.value)) is None
+    ]
+
+    # UNKNOWN is the sentinel, not a workload. It would satisfy the assertion
+    # while saying nothing about a task anyone actually runs, so a real task
+    # type is preferred and the sentinel is only used when it is all there is.
+    real_task_types = [task_type for task_type in unmetered_task_types if task_type != TaskTypes.UNKNOWN]
+
+    if real_task_types:
+        return real_task_types[0]
+
+    return unmetered_task_types[0] if unmetered_task_types else None
 
 passed_count = 0
 failed_count = 0
@@ -154,11 +185,18 @@ async def main():
         assert_that(gate["action"] == "deny", "a normal run with no balance is still denied")
 
         balance_holder["balance"] = 500.0
-        gate = await TaskRunner._evaluate_credit_gate(make_task({}, UNMETERED_TASK_TYPE), UNMETERED_TASK_TYPE)
-        assert_that(
-            gate["action"] == "allow_free",
-            f"{UNMETERED_TASK_TYPE.name} has no rule, so it is allow_free -- distinct from an exemption",
-        )
+        unmetered_task_type = find_unmetered_task_type(configuration)
+
+        if unmetered_task_type is None:
+            print("  SKIP  every task type carries a rule, so 'no rule means allow_free' cannot be exercised")
+        else:
+            gate = await TaskRunner._evaluate_credit_gate(
+                make_task({}, unmetered_task_type), unmetered_task_type
+            )
+            assert_that(
+                gate["action"] == "allow_free",
+                f"{unmetered_task_type.name} has no rule, so it is allow_free -- distinct from an exemption",
+            )
 
         print("\n=== The meter ===")
 

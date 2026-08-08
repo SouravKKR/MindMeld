@@ -1,43 +1,48 @@
-const path = require("path");
 const InformationSourceQueryEngine = require("../Database/InformationSourceQueryEngine");
-const DerivedContentQueryEngine = require("../Database/DerivedContentQueryEngine");
+const DerivedContentPurger = require("./DerivedContentPurger");
 const StorageQuotaEnforcer = require("../Storage/StorageQuotaEnforcer");
 const Persistence = require("../Persistence");
+const { joinPath } = require("../../UtilityFunctions.js/JoinPath");
 const { storageTargets } = require("../../Enumerations/StorageTargets");
 
 /**
  * InformationSourcePurger
  *
  * The single removal path for an uploaded document and everything derived from
- * it. Three callers share it — the user-initiated delete endpoint, the expiry
- * reaper behind TEMPORARY retention, and the admin takedown endpoint — so the
- * cascade cannot drift between them.
+ * it. Four callers share it — the user-initiated delete endpoint, the expiry
+ * reaper behind TEMPORARY retention, account closure, and the admin takedown
+ * endpoint — so the cascade cannot drift between them.
  *
  * The ordering discipline it enforces:
  *
  *   1. Remove the information-source row(s) FIRST. The row is the user-facing
  *      entity and the billed footprint, so it must disappear even if a later
  *      storage step fails.
- *   2. Only then check whether any row still references the content hash.
- *      Checking after the delete means the row being removed isn't counted, and
- *      a wrongful blob delete can never precede the row removal.
- *   3. When nothing references the hash any more, remove the blob AND the
- *      derived content-addressed byproducts (embedding chunks, cached figures)
- *      in the same operation. These are keyed by hash alone, so they are
- *      unreachable from the row and would otherwise outlive the document.
+ *   2. Delete the stored bytes ONE COPY PER ROW, each from that row's own
+ *      directory. Storage is per-user: the hash names the object but does not
+ *      dedupe across accounts, so N holders means N distinct blobs. Deriving a
+ *      single path and issuing a single delete — correct when the store was
+ *      content-addressed and shared — leaves every other holder's copy in place.
+ *   3. Hand the derived byproducts to DerivedContentPurger, which removes the
+ *      embedding chunks, the figure rows and the figure PNGs those rows point
+ *      at. They are keyed on (user, hash) rather than reachable from the row, so
+ *      they would otherwise outlive the document.
  *
- * A storage-layer failure never fails the purge — the row is already gone and a
- * stray orphaned blob is harmless — but it is always reported back to the caller
- * so a takedown can be re-run rather than silently believed.
+ * A storage-layer failure never fails the purge — the row is already gone — but
+ * it is always reported back to the caller, and a partial removal is never
+ * reported as a complete one. bContentRemoved means every stored copy this
+ * purge could locate was deleted; anything less leaves it false with the reason
+ * in storageError, because a takedown register that records unremoved content as
+ * removed is a false evidentiary record rather than a stale field.
  */
 class InformationSourcePurger
 {
     /**
-     * Removes one user's information source, cascading to the blob and derived
-     * content only when this was the last row referencing that content.
+     * Removes one user's information source, its stored blob, and everything
+     * derived from it.
      *
      * @param {InformationSource} informationSource - The row to remove.
-     * @return {Promise<{bContentRemoved: boolean, embeddingChunksRemoved: number, figuresRemoved: number, storageError: string|null}>}
+     * @return {Promise<{bContentRemoved: boolean, embeddingChunksRemoved: number, figuresRemoved: number, figureObjectsRemoved: number, storageError: string|null}>}
      */
     static async purgeSingleSource(informationSource)
     {
@@ -47,14 +52,18 @@ class InformationSourcePurger
             bContentRemoved: false,
             embeddingChunksRemoved: 0,
             figuresRemoved: 0,
+            figureObjectsRemoved: 0,
             storageError: null
         };
 
         try
         {
-            // No last-reference check any more: storage is per-user, so this
-            // row's blob and derived content belong to this user alone and
-            // removing the row always means removing them.
+            // No last-reference check on the BLOB: storage is per-user, so this
+            // row's copy belongs to this user alone and removing the row always
+            // means removing it. The figure objects are different — one PNG is
+            // addressed by (user, perceptual hash), so two of the user's own
+            // documents can share it — and DerivedContentPurger runs that check
+            // for them.
             await InformationSourcePurger.#removeContentForSource(informationSource, result);
         }
         catch (cascadeError)
@@ -69,14 +78,19 @@ class InformationSourcePurger
     }
 
     /**
-     * Removes EVERY tenant's row for a content hash, then the blob and all
-     * derived content. This is the takedown path — it deliberately crosses the
-     * tenant boundary, because a content-addressed store fans one uploaded file
-     * out across every user who uploaded the same bytes, and a rightsholder
-     * notice must reach all of them.
+     * Removes EVERY tenant's row for a content hash, then every stored copy of
+     * the bytes and all derived content. This is the takedown path — it
+     * deliberately crosses the tenant boundary, because a rightsholder notice is
+     * about the work rather than about one account.
+     *
+     * Storage is per-user, so "the blob" is a set, not a single object: each
+     * holder has their own copy under their own directory, and the notice is
+     * only honoured when all of them are gone. countStoredCopies reports the
+     * size of that set to the dry run, so an operator sees how many copies a
+     * notice will reach before actioning it.
      *
      * @param {string} contentHash - The sha512 content-addressed key.
-     * @return {Promise<{rowsRemoved: number, affectedUserIds: string[], bContentRemoved: boolean, embeddingChunksRemoved: number, figuresRemoved: number, storageError: string|null}>}
+     * @return {Promise<{rowsRemoved: number, rowsFailed: number, affectedUserIds: string[], storedCopiesFound: number, storedCopiesRemoved: number, unlocatableRowCount: number, bContentRemoved: boolean, embeddingChunksRemoved: number, figuresRemoved: number, figureObjectsRemoved: number, storageError: string|null}>}
      */
     static async purgeAllSourcesWithContentHash(contentHash)
     {
@@ -84,21 +98,58 @@ class InformationSourcePurger
 
         const result = {
             rowsRemoved: 0,
+            rowsFailed: 0,
             affectedUserIds: [],
+            storedCopiesFound: 0,
+            storedCopiesRemoved: 0,
+            unlocatableRowCount: 0,
             bContentRemoved: false,
             embeddingChunksRemoved: 0,
             figuresRemoved: 0,
+            figureObjectsRemoved: 0,
             storageError: null
         };
 
-        // Capture the directory path before the rows go — it is only stored on
-        // the row, and the blob key is derived from it.
-        const directoryPath = matchingSources.length > 0 ? matchingSources[0].getDirectoryPath() : null;
+        // Capture EVERY row's own blob path before the rows go — the path lives
+        // only on the row, and with per-user storage each holder's copy is a
+        // distinct object. A row that never recorded where its bytes live is
+        // counted separately: it cannot be located, so the removal cannot be
+        // called complete.
+        const blobPathsToRemove = [];
+        for (const informationSource of matchingSources)
+        {
+            const blobPath = InformationSourcePurger.#buildBlobPath(informationSource.getDirectoryPath(), contentHash);
+            if (blobPath === null)
+            {
+                result.unlocatableRowCount++;
+                continue;
+            }
+
+            if (!blobPathsToRemove.includes(blobPath))
+            {
+                blobPathsToRemove.push(blobPath);
+            }
+        }
+        result.storedCopiesFound = blobPathsToRemove.length;
+
+        const cascadeErrors = [];
 
         for (const informationSource of matchingSources)
         {
-            await InformationSourceQueryEngine.deleteInformationSource(informationSource);
-            result.rowsRemoved++;
+            try
+            {
+                await InformationSourceQueryEngine.deleteInformationSource(informationSource);
+                result.rowsRemoved++;
+            }
+            catch (rowError)
+            {
+                // One row that will not delete must not strand the rest of the
+                // notice — the remaining tenants are still entitled to removal.
+                result.rowsFailed++;
+                cascadeErrors.push(`row ${informationSource.getId()}: ${rowError?.message || rowError}`);
+                console.warn(`[InformationSourcePurger] Takedown could not delete row ${informationSource.getId()}: ${rowError?.message || rowError}`);
+                continue;
+            }
 
             const ownerUserId = informationSource.getUserId();
             if (ownerUserId && !result.affectedUserIds.includes(ownerUserId))
@@ -107,27 +158,56 @@ class InformationSourcePurger
             }
         }
 
+        for (const blobPath of blobPathsToRemove)
+        {
+            try
+            {
+                await Persistence.delete(blobPath, storageTargets.LINODE_OBJECT_STORAGE);
+                result.storedCopiesRemoved++;
+            }
+            catch (blobError)
+            {
+                cascadeErrors.push(`blob ${blobPath}: ${blobError?.message || blobError}`);
+                console.warn(`[InformationSourcePurger] Takedown could not delete blob ${blobPath}: ${blobError?.message || blobError}`);
+            }
+        }
+
         try
         {
             // The derived content is purged even when no row existed, so a
-            // notice can still clear chunks left behind by an earlier partial
-            // removal. The blob is only attempted when a row told us where it
-            // lives.
-            const purgeCounts = await DerivedContentQueryEngine.purgeByContentHash(contentHash);
+            // notice can still clear chunks and figure objects left behind by an
+            // earlier partial removal.
+            const purgeCounts = await DerivedContentPurger.purgeByContentHash(contentHash);
             result.embeddingChunksRemoved = purgeCounts.embeddingChunksRemoved;
             result.figuresRemoved = purgeCounts.figuresRemoved;
-
-            if (directoryPath !== null)
+            result.figureObjectsRemoved = purgeCounts.figureObjectsRemoved;
+            if (purgeCounts.storageError !== null)
             {
-                const blobPath = path.join(directoryPath, contentHash);
-                await Persistence.delete(blobPath, storageTargets.LINODE_OBJECT_STORAGE);
-                result.bContentRemoved = true;
+                cascadeErrors.push(purgeCounts.storageError);
             }
         }
-        catch (cascadeError)
+        catch (derivedError)
         {
-            result.storageError = cascadeError?.message || String(cascadeError);
-            console.warn(`[InformationSourcePurger] Takedown cascade failed for hash ${contentHash}: ${result.storageError}`);
+            cascadeErrors.push(`derived content: ${derivedError?.message || derivedError}`);
+            console.warn(`[InformationSourcePurger] Takedown derived-content cascade failed for hash ${contentHash}: ${derivedError?.message || derivedError}`);
+        }
+
+        // Complete means EVERY located copy went, no row resisted deletion, and
+        // no row was unlocatable. Anything less is reported as incomplete so the
+        // register never records surviving content as removed.
+        result.bContentRemoved = result.storedCopiesFound > 0
+            && result.storedCopiesRemoved === result.storedCopiesFound
+            && result.rowsFailed === 0
+            && result.unlocatableRowCount === 0;
+
+        if (result.unlocatableRowCount > 0)
+        {
+            cascadeErrors.push(`${result.unlocatableRowCount} row(s) recorded no directory path, so their stored copy could not be located.`);
+        }
+
+        if (cascadeErrors.length > 0)
+        {
+            result.storageError = cascadeErrors.join(" | ");
         }
 
         for (const affectedUserId of result.affectedUserIds)
@@ -139,21 +219,107 @@ class InformationSourcePurger
     }
 
     /**
-     * Removes one user's blob plus the embedding chunks and cached figures
-     * derived from it, recording the counts onto the supplied result object.
+     * Counts the distinct stored copies a takedown for this hash would have to
+     * delete. Reported by the dry run, because "one notice, N copies" is exactly
+     * the fact an operator needs before actioning an irreversible removal.
+     *
+     * @param {InformationSource[]} matchingSources - Every row referencing the hash.
+     * @param {string} contentHash - The sha512 content-addressed key.
+     * @return {number}
+     */
+    static countStoredCopies(matchingSources, contentHash)
+    {
+        const distinctBlobPaths = new Set();
+
+        for (const informationSource of matchingSources)
+        {
+            const blobPath = InformationSourcePurger.#buildBlobPath(informationSource.getDirectoryPath(), contentHash);
+            if (blobPath !== null)
+            {
+                distinctBlobPaths.add(blobPath);
+            }
+        }
+
+        return distinctBlobPaths.size;
+    }
+
+    /**
+     * Removes one user's blob plus the embedding chunks, figure rows and figure
+     * objects derived from it, recording the counts onto the supplied result.
+     *
+     * The two halves are independent on purpose. A blob delete that fails must
+     * not skip the derived purge: the page text and figure crops of the document
+     * are the more sensitive residue, and leaving them because the source object
+     * would not delete is the wrong trade in both directions.
      */
     static async #removeContentForSource(informationSource, result)
     {
-        const blobPath = path.join(informationSource.getDirectoryPath(), informationSource.getHash());
-        await Persistence.delete(blobPath, storageTargets.LINODE_OBJECT_STORAGE);
-        result.bContentRemoved = true;
+        const cascadeErrors = [];
+        const blobPath = InformationSourcePurger.#buildBlobPath(informationSource.getDirectoryPath(), informationSource.getHash());
 
-        const purgeCounts = await DerivedContentQueryEngine.purgeForUserAndContentHash(
+        if (blobPath === null)
+        {
+            // A row with no directory path predates per-user storage or was
+            // written incompletely. Deleting a path guessed from the hash alone
+            // could remove an unrelated object, so it is reported instead.
+            cascadeErrors.push(`Row ${informationSource.getId()} recorded no directory path, so its stored copy could not be located.`);
+        }
+        else
+        {
+            try
+            {
+                await Persistence.delete(blobPath, storageTargets.LINODE_OBJECT_STORAGE);
+                result.bContentRemoved = true;
+            }
+            catch (blobError)
+            {
+                cascadeErrors.push(`blob ${blobPath}: ${blobError?.message || blobError}`);
+            }
+        }
+
+        const purgeCounts = await DerivedContentPurger.purgeForUserAndContentHash(
             informationSource.getUserId(),
             informationSource.getHash(),
         );
         result.embeddingChunksRemoved = purgeCounts.embeddingChunksRemoved;
         result.figuresRemoved = purgeCounts.figuresRemoved;
+        result.figureObjectsRemoved = purgeCounts.figureObjectsRemoved;
+
+        // The rows are gone but an object survived. Surfacing it keeps the
+        // caller's "removed" report honest and lets the reaper's orphan sweep be
+        // the backstop rather than the only line of defence.
+        if (purgeCounts.storageError !== null)
+        {
+            cascadeErrors.push(purgeCounts.storageError);
+        }
+
+        if (cascadeErrors.length > 0)
+        {
+            result.storageError = cascadeErrors.join(" | ");
+        }
+    }
+
+    /**
+     * Builds the object key for a stored document, or null when the row cannot
+     * say where its bytes live.
+     *
+     * The null branch is load-bearing. joinPath drops empty segments, so a
+     * missing directory path silently collapses "<directory>/<hash>" to "<hash>"
+     * — a real key at the bucket root belonging to something else entirely.
+     */
+    static #buildBlobPath(directoryPath, contentHash)
+    {
+        if (typeof directoryPath !== "string" || directoryPath.length === 0)
+        {
+            return null;
+        }
+
+        if (typeof contentHash !== "string" || contentHash.length === 0)
+        {
+            return null;
+        }
+
+        return joinPath("/", directoryPath, contentHash);
     }
 }
 

@@ -17,7 +17,11 @@ failed" -- that is the regression this file exists to catch.
 
 It also pins two things that are easy to erode later:
   * the syllabus plausibility gate runs even when OCR is off, so turning OCR off
-    is not a way around it; and
+    is not a way around it -- and, just as importantly, the verdict is RECORDED
+    on the task payload, which is the only channel by which it reaches
+    PaidDeckGenerationGate. The refusal deliberately does not happen here: this
+    workflow raising would fail the whole upload, and a textbook is a legitimate
+    source for a user's own non-paid generation; and
   * ENABLED means --redo-ocr, which ADDS a text layer over the image regions and
     leaves existing born-digital text intact.
 """
@@ -29,6 +33,8 @@ from pathlib import Path
 AGENT_DIRECTORY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AGENT_DIRECTORY))
 
+from Globals.Constants.OcrTaskPayloadKeys import OcrTaskPayloadKeys
+from Globals.Enumerations.CurriculumPlausibility import CurriculumPlausibility
 from Globals.Enumerations.InformationSourceTypes import InformationSourceTypes
 from Globals.Enumerations.OcrModes import OcrModes
 from Globals.Utility.JoinPath import join_path
@@ -82,7 +88,39 @@ class PersistenceRecorder:
         self.writes[file_path] = data
 
 
-def install_stubs(recorder: PersistenceRecorder, b_ocr_should_succeed: bool = True) -> None:
+class TaskRecorder:
+    """
+    Stands in for the running task, keeping whatever the workflow writes to its
+    payload.
+
+    OcrPdf records its curriculum-plausibility verdict by reading the task
+    payload, adding two keys and writing it back — which is how the verdict
+    reaches PaidDeckGenerationGate, and therefore how a textbook declared as a
+    curriculum gets refused. The stub this replaced carried only
+    set_completion(), so every case in this file died on the first payload read
+    and the plausibility path was never exercised at all.
+
+    ONE instance is shared across get_current_task() calls, deliberately. A stub
+    that minted a fresh task per call would accept the write and lose it, and
+    the assertions below would pass against a payload nothing could ever read.
+    """
+
+    def __init__(self, payload: dict = None):
+        self.payload = dict(payload or {})
+        self.completion = None
+        self.b_saved = False
+
+    def get_payload(self) -> dict:
+        return self.payload
+
+    def set_payload(self, payload: dict) -> None:
+        self.payload = dict(payload or {})
+
+    def set_completion(self, value) -> None:
+        self.completion = value
+
+
+def install_stubs(recorder: PersistenceRecorder, task_recorder: "TaskRecorder", b_ocr_should_succeed: bool = True) -> None:
     """
     Points OcrPdf's collaborators at the recorder. OcrPdf imported Persistence
     and TaskManager by name, so the names are replaced in ITS module namespace --
@@ -93,18 +131,14 @@ def install_stubs(recorder: PersistenceRecorder, b_ocr_should_succeed: bool = Tr
 
     OcrPdfModule.Persistence = recorder
 
-    class TaskStub:
-        def set_completion(self, value):
-            pass
-
     class TaskManagerStub:
         @staticmethod
         async def get_current_task():
-            return TaskStub()
+            return task_recorder
 
         @staticmethod
         async def set_task(task):
-            pass
+            task.b_saved = True
 
     OcrPdfModule.TaskManager = TaskManagerStub
 
@@ -146,7 +180,8 @@ def build_payload(ocr_mode, source_type=InformationSourceTypes.PROVIDED_DOCUMENT
 
 async def run_workflow(payload, b_ocr_should_succeed=True) -> PersistenceRecorder:
     recorder = PersistenceRecorder()
-    install_stubs(recorder, b_ocr_should_succeed)
+    recorder.task = TaskRecorder(payload)
+    install_stubs(recorder, recorder.task, b_ocr_should_succeed)
     await OcrPdf(payload).run()
     return recorder
 
@@ -241,16 +276,39 @@ async def main() -> None:
     OcrPdfModule.SyllabusPlausibilityCheck = RejectingSyllabusCheck
 
     try:
-        b_rejected = False
-        try:
-            await run_workflow(
-                build_payload(OcrModes.DISABLED, source_type=InformationSourceTypes.CURRICULUM_OR_SYLLABUS)
-            )
-        except RuntimeError:
-            b_rejected = True
+        recorder = await run_workflow(
+            build_payload(OcrModes.DISABLED, source_type=InformationSourceTypes.CURRICULUM_OR_SYLLABUS)
+        )
 
-        assert_that(b_rejected, "a mislabelled syllabus is rejected even with OCR DISABLED")
         assert_that(len(evaluated_calls) == 1, "the plausibility gate actually ran on the DISABLED path")
+
+        # The refusal is NOT here, and that is deliberate.
+        #
+        # OcrPdf records the verdict; PaidDeckGenerationGate refuses on it, at
+        # generation time. Raising here would fail the whole upload — the
+        # finalizer treats a missing content object as a failed upload — and a
+        # textbook is a perfectly legitimate upload for a user's own non-paid
+        # generation. The gate's own message says exactly that.
+        #
+        # So what has to be true here is that the verdict REACHES the gate. The
+        # task payload is the only channel: the upload finalizer reads it off
+        # the completed OCR task and copies it onto the information-source row,
+        # which is what the gate later reads. A verdict computed and not
+        # recorded would leave the gate reading UNKNOWN and admitting the
+        # document — the check would look present and enforce nothing.
+        assert_that(
+            recorder.task.payload.get(OcrTaskPayloadKeys.CURRICULUM_PLAUSIBILITY) == int(CurriculumPlausibility.IMPLAUSIBLE),
+            "the IMPLAUSIBLE verdict is recorded on the task payload, which is how the gate learns of it",
+        )
+        assert_that(
+            recorder.task.payload.get(OcrTaskPayloadKeys.CURRICULUM_PLAUSIBILITY_REASON) == "looks like a textbook, not a syllabus",
+            "the measured reason travels with the verdict, so the refusal can say why",
+        )
+        assert_that(recorder.task.b_saved, "the task is saved, or the finalizer would read a stale payload")
+        assert_that(
+            CONTENT_PATH in recorder.writes,
+            "the upload still lands — a textbook is a legitimate source for a user's own non-paid generation",
+        )
     finally:
         OcrPdfModule.SyllabusPlausibilityCheck = original_check
 

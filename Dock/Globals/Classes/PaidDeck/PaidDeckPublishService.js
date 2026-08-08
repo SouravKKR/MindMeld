@@ -7,9 +7,11 @@ const PaidDeck = require("../../Model/PaidDeck");
 const PaidDeckPricing = require("../../Model/PaidDeckPricing");
 const PaidDeckContentSummarizer = require("./PaidDeckContentSummarizer");
 const PaidDeckPublishGate = require("../Generation/PaidDeckPublishGate");
+const PaidDeckProvenanceLinkResolver = require("../Generation/PaidDeckProvenanceLinkResolver");
 const GenerationProvenanceQueryEngine = require("../Database/GenerationProvenanceQueryEngine");
 const RegionMetadata = require("../Pricing/RegionMetadata");
 const BrandNameSanitizer = require("../Content/BrandNameSanitizer");
+const PaidDeckAcquisitionGate = require("./PaidDeckAcquisitionGate");
 const ErrorCodes = require("../../Constants/ErrorCodes");
 
 /**
@@ -71,6 +73,42 @@ class PaidDeckPublishService
         const incomingId = metadata.id || crypto.randomUUID();
         const bPublishing = metadata.isPublished === true;
 
+        const existingDocument = await paidDecksCollection.findOne({ id: incomingId });
+
+        // Which deck's generation record governs this listing.
+        //
+        // This is NOT the listing's own id. A listing id is minted fresh by the
+        // upload dialog on every upload, while provenance is recorded against
+        // the source deck in the publisher's library (MoveToDatabase stamps it
+        // there, because that is the first moment "this run produced that deck"
+        // is a known fact). Evaluating the gate against the listing id — which
+        // is what this did originally — looked up an id that by construction
+        // never appears in the provenance collection, so the lookup always
+        // missed, the gate always allowed, and a deck with unresolved blocking
+        // flags published cleanly. The link has to be carried explicitly.
+        //
+        // sourceDeckId is consulted before giving up: a caller that says where the
+        // content came from has told us which library deck to look under, even
+        // when it did not name a provenance deck. Falling back to incomingId
+        // after that keeps listings published before either field existed
+        // behaving exactly as they did: no record, nothing to verify.
+        //
+        // The picked deck is then resolved to the deck the record is actually
+        // filed under. A run launched into "Chemistry" files its record against
+        // the "Unit I: ..." deck it created, while the tile an administrator
+        // picks to sell is "Chemistry" — so the id arriving here is usually a
+        // relative of the record's deck rather than the record's deck itself.
+        // Resolving now, once, means the gate below and every later read see a
+        // link that points straight at the record. When no run matches, this
+        // returns the id unchanged and nothing about the old behaviour changes.
+        const pickedProvenanceDeckId = metadata.provenanceDeckId
+            || existingDocument?.provenanceDeckId
+            || metadata.sourceDeckId
+            || existingDocument?.sourceDeckId
+            || incomingId;
+
+        const provenanceDeckId = await PaidDeckProvenanceLinkResolver.resolveForDeckId(pickedProvenanceDeckId);
+
         // The pipeline review gate. Refused BEFORE anything is written, so a
         // blocked publish leaves no half-uploaded deck behind. Decks not
         // produced by that pipeline have no provenance record and are
@@ -79,7 +117,7 @@ class PaidDeckPublishService
         // passed verification.
         if (bPublishing)
         {
-            const publishDecision = await PaidDeckPublishGate.evaluate(incomingId);
+            const publishDecision = await PaidDeckPublishGate.evaluate(provenanceDeckId);
             if (!publishDecision.allowed)
             {
                 return {
@@ -92,8 +130,6 @@ class PaidDeckPublishService
             }
         }
 
-        const existingDocument = await paidDecksCollection.findOne({ id: incomingId });
-
         // An existing deck can never change hands or audience through an upload.
         // Without this, an organization re-uploading over a catalogue id would
         // pull a public deck into its own audience — or, worse, a second
@@ -104,6 +140,15 @@ class PaidDeckPublishService
             if (existingAudience !== audienceOrganizationId)
             {
                 return { success: false, error: ErrorCodes.ACCESS_NOT_ALLOWED, reason: "AUDIENCE_MISMATCH" };
+            }
+
+            // Retirement is one-way. Buyers were told this deck was withdrawn,
+            // and a listing that can quietly come back under the same id is a
+            // promise nobody made — republishing means uploading it as a new
+            // deck, which is honest about it being a new offer.
+            if (PaidDeckAcquisitionGate.isRetired(existingDocument))
+            {
+                return { success: false, error: ErrorCodes.PAID_DECK_RETIRED, reason: "RETIRED" };
             }
         }
 
@@ -138,6 +183,14 @@ class PaidDeckPublishService
             title: metadata.title,
             description: metadata.description || "",
             sellerId: metadata.sellerId || options.publisherUserId || "",
+            // Which library deck this listing's content came from, and which
+            // deck's generation record governs it. They differ only when a
+            // sub-deck is sold individually: provenance lives on the top-level
+            // generated deck, so a child carries its own sourceDeckId but its
+            // parent's provenanceDeckId. Both fall back to the existing
+            // document so a metadata-only re-upload cannot orphan the link.
+            sourceDeckId: metadata.sourceDeckId || existingDocument?.sourceDeckId || "",
+            provenanceDeckId: provenanceDeckId,
             thumbnailUrl: metadata.thumbnailUrl || "",
             category: metadata.category || "",
             tags: metadata.tags || [],
@@ -209,7 +262,7 @@ class PaidDeckPublishService
         {
             try
             {
-                await GenerationProvenanceQueryEngine.recordPublication(incomingId, options.publisherUserId || null);
+                await GenerationProvenanceQueryEngine.recordPublication(provenanceDeckId, options.publisherUserId || null);
             }
             catch (publicationRecordError)
             {

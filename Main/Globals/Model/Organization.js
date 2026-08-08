@@ -21,9 +21,10 @@ class Organization
     #maxCreditsPerMemberPerMonth;
     #maxPublishedDecks;
     #grantableFeatures;
+    #adminAllowedFeatures;
     #additionalData;
 
-    constructor({name = null, adminEmail = null, adminUserId = '', status = 0, currency = 'INR', creationAmountMinor = 0, maxMembers = 0, currentMemberCount = 0, creationDate = new Date(), activationDate = new Date(), termEndsAt = new Date(), maxStorageGrantBytesPerMember = 0, maxCreditsPerMemberPerMonth = 0, maxPublishedDecks = 0, grantableFeatures = [], additionalData = {}} = {})
+    constructor({name = null, adminEmail = null, adminUserId = '', status = 0, currency = 'INR', creationAmountMinor = 0, maxMembers = 0, currentMemberCount = 0, creationDate = new Date(), activationDate = new Date(), termEndsAt = new Date(), maxStorageGrantBytesPerMember = 0, maxCreditsPerMemberPerMonth = 0, maxPublishedDecks = 0, grantableFeatures = [], adminAllowedFeatures = [], additionalData = {}} = {})
     {
         this.#id = crypto.randomUUID();
         this.setName(name);
@@ -41,6 +42,7 @@ class Organization
         this.setMaxCreditsPerMemberPerMonth(maxCreditsPerMemberPerMonth);
         this.setMaxPublishedDecks(maxPublishedDecks);
         this.setGrantableFeatures(grantableFeatures);
+        this.setAdminAllowedFeatures(adminAllowedFeatures);
         this.setAdditionalData(additionalData);
     }
 
@@ -358,6 +360,23 @@ class Organization
         this.#grantableFeatures = value;
     }
 
+    getAdminAllowedFeatures()
+    {
+        return this.#adminAllowedFeatures;
+    }
+
+    setAdminAllowedFeatures(value)
+    {
+        if (value !== null)
+        {
+            if (!Array.isArray(value))
+            {
+                value = null;
+            }
+        }
+        this.#adminAllowedFeatures = value;
+    }
+
     getAdditionalData()
     {
         return this.#additionalData;
@@ -387,6 +406,7 @@ class Organization
             maxCreditsPerMemberPerMonth: this.getMaxCreditsPerMemberPerMonth(),
             maxPublishedDecks: this.getMaxPublishedDecks(),
             grantableFeatures: this.getGrantableFeatures() !== null ? this.getGrantableFeatures().map(item => Number(item)) : null,
+            adminAllowedFeatures: this.getAdminAllowedFeatures() !== null ? this.getAdminAllowedFeatures().map(item => Number(item)) : null,
             additionalData: this.getAdditionalData(),
         };
     }
@@ -409,6 +429,7 @@ class Organization
             maxCreditsPerMemberPerMonth: json.maxCreditsPerMemberPerMonth ?? null,
             maxPublishedDecks: json.maxPublishedDecks ?? null,
             grantableFeatures: json.grantableFeatures ?? null,
+            adminAllowedFeatures: json.adminAllowedFeatures ?? null,
             additionalData: json.additionalData ?? null
         });
         instance._restoreId_id(json.id);

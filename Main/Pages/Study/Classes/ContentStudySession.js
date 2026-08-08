@@ -6,6 +6,7 @@ import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import StudySession from "./StudySession.js";
 import StudyMaterialEditorPage from "../../StudyMaterialEditor/StudyMaterialEditorPage.js";
 import ActiveEntityTracker from "../../../Globals/Classes/ActiveEntityTracker.js";
+import DailyUsageReporter from "../../../Globals/Classes/Activity/DailyUsageReporter.js";
 import { entityTypes } from "../../../Globals/Enumerations/EntityTypes.js";
 import StudySessionEvents from "../Events/StudySessionEvents.js";
 import ChatStudyMaterialFields from "../../../Globals/Classes/Analysis/ChatStudyMaterialFields.js";
@@ -215,6 +216,11 @@ class ContentStudySession extends StudySession
         if(!this.#bPreview)
         {
             await material.view(this.getTimeSpent(), true);
+
+            // lifecycle.views is a bare counter with no timestamp, so the day
+            // this read happened exists nowhere else. Counted here and flushed
+            // in batches so an organization's usage-over-time can show it.
+            DailyUsageReporter.recordStudyMaterialViewed();
         }
     }
 

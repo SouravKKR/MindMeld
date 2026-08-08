@@ -16,7 +16,7 @@ generation, so the suite can prove the account is actually charged for it.
 ### Why it is a PDF and not a `.txt`
 
 `Agent/Workflows/PrepareForSimilaritySearch/PrepareForSimilaritySearch.py` opens
-uploaded sources with `fitz.open(stream = ..., filetype = "pdf")`. A `.txt`
+uploaded sources through `PdfDocumentReader` (PDFium). A `.txt`
 fixture dies there. It also has to carry a **real text layer** rather than being
 a scan, so the suite can leave OCR switched off — otherwise every run pays for
 `ocrmypdf` in both wall-clock time and a native-binary dependency, for content

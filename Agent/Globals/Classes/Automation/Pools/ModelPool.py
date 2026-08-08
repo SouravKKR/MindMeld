@@ -152,6 +152,16 @@ class ModelPool:
     IMAGE_VALIDATION_MODEL = ("gemini-2.5-flash-lite", GoogleEnterpriseAiProvider)
     IMAGE_VERIFICATION_MODEL = ("gemini-3.1-flash-lite", GoogleEnterpriseAiProvider)
 
+    # Adjudicates intent for the content guardrail: given a flagged word and the
+    # 25 words either side of it, is the usage abusive or is it clinical, quoted
+    # or otherwise fine? Deliberately the cheapest tier. This runs on top of a
+    # call the user already paid for, every flagged response pays for it, and the
+    # judgement is a narrow one a small model makes as well as a large one — the
+    # hard part (deciding WHICH words to ask about) is the deterministic scan
+    # that already happened. All items in a response are batched into one call,
+    # so the added cost is one short flash-lite request, not one per match.
+    CONTENT_GUARDRAIL_MODEL = ("gemini-2.5-flash-lite", GoogleEnterpriseAiProvider)
+
     # ── Paid-deck generation mode (admin-only) ─────────────────────────────────
     #
     # Content the platform SELLS is first-party commercial material, so the
@@ -211,6 +221,17 @@ class ModelPool:
     # every source type except CURRICULUM_OR_SYLLABUS, so there is no uploaded
     # document in a paid-deck run to pass along. A caller that reaches these
     # entries from outside paid-deck mode would break that guarantee.
+    #
+    # POST-GENERATION REFINEMENT is the one authorised route by which a
+    # user-supplied document reaches a model in service of sellable content, and
+    # it deliberately does NOT come through here — it has its own entry
+    # (REFINE_CONTENT_MODEL, below). The reviewer attaching that document
+    # declares its licence and the declaration plus the file itself are retained
+    # as retrievable proof, which is a different and explicitly evidenced basis
+    # from the independent-creation argument reason 2 rests on. Keeping the two
+    # on separate entries is what stops one being quietly used to justify the
+    # other: nothing that reaches a PAID_DECK_* entry has ever seen a
+    # third-party document, and that sentence must stay literally true.
     PAID_DECK_COVERAGE_SUMMARY_MODEL = ("gemini-3.1-flash-lite", GoogleEnterpriseAiProvider)
 
     # Decides which topics need a visual nobody explicitly asked for. A bounded
@@ -234,3 +255,38 @@ class ModelPool:
     # downstream worker already consumes, so it stays on the configured
     # mid-tier workhorse rather than the premium model.
     PAID_DECK_KNOWLEDGE_CHUNK_MODEL = ("gemini-3.1-flash-lite", GoogleEnterpriseAiProvider)
+
+    # Post-generation content refinement: a subject expert correcting or
+    # extending already-generated content, by instruction and optionally against
+    # a reference source they have declared a licence for.
+    #
+    # Outside the PAID_DECK_* boundary ON PURPOSE — this is the one path that may
+    # receive a user-supplied document, so it must not sit on an entry whose
+    # contract says the opposite. See the boundary note above.
+    #
+    # Google rather than Anthropic for the same reason: the 30-day
+    # abuse-monitoring retention window is a poor fit for a document a user
+    # attached, even a permissively licensed one.
+    REFINE_CONTENT_MODEL = ("gemini-3.1-flash-lite", GoogleEnterpriseAiProvider)
+
+    # Source-grounded verification: checking already-generated paid-deck content
+    # AGAINST a document an administrator has cleared and declared a licence for,
+    # and proposing corrections where the two disagree.
+    #
+    # Outside the PAID_DECK_* boundary ON PURPOSE, and the reason is the whole
+    # design of the feature rather than a detail of it. This call receives
+    # third-party document text, so putting it on a PAID_DECK_* entry would make
+    # the sentence at the end of the boundary note above false — and that
+    # sentence is what the independent-creation position rests on.
+    #
+    # The separation is real, not cosmetic. The admin's sources never enter
+    # GENERATION: the content was already written from model knowledge against a
+    # syllabus, by models that never saw a third-party document, and this pass
+    # runs afterwards and can only RAISE FLAGS. So both statements stay true at
+    # once — the deck was independently created, and it was independently
+    # checked. Wiring a source into any generation stage would collapse the two.
+    #
+    # Google rather than Anthropic for the same reason REFINE_CONTENT_MODEL is:
+    # the 30-day abuse-monitoring retention window is a poor fit for a document
+    # someone attached, even a permissively licensed one.
+    SOURCE_GROUNDED_VERIFICATION_MODEL = ("gemini-3.1-flash-lite", GoogleEnterpriseAiProvider)

@@ -26,6 +26,7 @@ from reportlab.platypus import (
     Frame,
     Paragraph,
     Spacer,
+    LongTable,
     Table,
     TableStyle,
     Flowable,
@@ -227,6 +228,40 @@ def draw_page_chrome(canvas, document):
 
 # --- Content builders -----------------------------------------------------
 
+
+# The height one table row has to work with before it must be split internally:
+# the frame less Frame's own 6pt top and bottom padding and a repeated header
+# row. See enable_in_row_split.
+USABLE_FRAME_HEIGHT = PAGE_HEIGHT - TOP_MARGIN - BOTTOM_MARGIN - 12 - 30
+
+
+def enable_in_row_split(table):
+    """
+    Turns on splitting INSIDE a row, but only for a table with a row too tall to
+    be placed on any page.
+
+    Without it, a Table splits only BETWEEN rows, and repeatRows=1 makes
+    ReportLab refuse even that unless the header and the first data row both fit
+    the frame — so one over-tall row makes the whole table unplaceable and the
+    build dies with a LayoutError, taking the report with it.
+
+    With it on unconditionally, an ordinary short table that merely arrived near
+    a page bottom is split too, leaving an orphan fragment: one cell's first line
+    with every other cell blank, and the real row repeated in full overleaf.
+
+    So it is decided per table, from the row heights ReportLab itself computes.
+    Copied from Common/Scripts/RenderPaidDeckAuditTrail.py, which carries the
+    full rationale and the harness that proves both directions.
+    """
+    try:
+        table.wrap(CONTENT_WIDTH, USABLE_FRAME_HEIGHT)
+        row_heights = getattr(table, "_rowHeights", None) or []
+    except Exception:
+        return
+
+    if any(row_height > USABLE_FRAME_HEIGHT for row_height in row_heights):
+        table.splitInRow = 1
+
 def make_bullets(items):
     """items: list of either (label, text) tuples or plain strings."""
     rows = []
@@ -240,6 +275,8 @@ def make_bullets(items):
             "dot", fontName="Helvetica-Bold", fontSize=10, leading=14.5,
             textColor=GOLD_ACCENT))
         rows.append([dot, Paragraph(body, styles["bullet"])])
+    # splitInRow for the same reason make_table sets it: a bullet holding a long
+    # value must flow across a page break rather than fail to place.
     table = Table(rows, colWidths=[5 * mm, CONTENT_WIDTH - 5 * mm])
     table.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -249,6 +286,8 @@ def make_bullets(items):
         ("TOPPADDING", (0, 0), (-1, -1), 2),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
     ]))
+    enable_in_row_split(table)
+
     return table
 
 
@@ -275,7 +314,15 @@ def make_table(headers, rows, col_ratios, label_first_column=True, center_from_c
             cells.append(Paragraph(value, style))
         data.append(cells)
 
-    table = Table(data, colWidths=col_widths, repeatRows=1)
+    # LongTable + splitInRow, not Table. A plain Table splits only BETWEEN rows,
+    # and with repeatRows=1 it refuses even that unless the repeated header and
+    # the first data row both fit the page frame -- so one cell taller than the
+    # frame made the whole table unplaceable and raised LayoutError, taking the
+    # report with it. splitInRow is a minimum split height rather than a boolean,
+    # so 1 means "split anywhere"; the cells are already Paragraphs, which are
+    # splittable. See Common/Reports/PdfTheme.md and, for the production failure
+    # this was found through, Agent/Verification/VerifyAuditTrailRenderer.py.
+    table = LongTable(data, colWidths=col_widths, repeatRows=1)
     table_style = [
         ("BACKGROUND", (0, 0), (-1, 0), TEAL_TABLE_HEAD),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -290,6 +337,8 @@ def make_table(headers, rows, col_ratios, label_first_column=True, center_from_c
         if row_index % 2 == 0:
             table_style.append(("BACKGROUND", (0, row_index), (-1, row_index), ROW_ALT))
     table.setStyle(TableStyle(table_style))
+    enable_in_row_split(table)
+
     return table
 
 

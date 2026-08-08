@@ -8,5 +8,6 @@ class PaidDeckGenerationPhases(IntEnum):
     VISUAL_GENERATION = 4
     RESOURCE_GENERATION = 5
     VERIFICATION = 6
+    SOURCE_VERIFICATION = 7
     PERSISTENCE = 9
     PUBLICATION = 10

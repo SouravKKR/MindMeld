@@ -5,10 +5,18 @@ const { paidDeckFeatureBadges } = require('../Enumerations/PaidDeckFeatureBadges
 
 class PaidDeck
 {
+    // Epoch-zero sentinel meaning "never expires". Date members declared
+    // with nullFallback "forever" coerce null / undefined / invalid values
+    // to this instead of "now", so a missing expiry can never silently
+    // become an already-expired timestamp.
+    static FOREVER = new Date(0);
+
     #id;
     #title;
     #description;
     #sellerId;
+    #sourceDeckId;
+    #provenanceDeckId;
     #thumbnailUrl;
     #category;
     #tags;
@@ -22,6 +30,7 @@ class PaidDeck
     #assetBlobId;
     #keyVersion;
     #isPublished;
+    #retiredAt;
     #audienceOrganizationId;
     #audienceTags;
     #publishedAt;
@@ -30,12 +39,14 @@ class PaidDeck
     #contentSummary;
     #additionalData;
 
-    constructor({title = null, description = '', sellerId = '', thumbnailUrl = '', category = '', tags = [], basePriceMinor = 0, currency = 'INR', durationDays = 0, isPerpetual = false, granularity = 0, bundleChildIds = [], parentBundleIds = [], assetBlobId = '', keyVersion = 1, isPublished = false, audienceOrganizationId = '', audienceTags = [], publishedAt = new Date(), featureBadges = [], extraTags = [], contentSummary = {}, additionalData = {}} = {})
+    constructor({title = null, description = '', sellerId = '', sourceDeckId = '', provenanceDeckId = '', thumbnailUrl = '', category = '', tags = [], basePriceMinor = 0, currency = 'INR', durationDays = 0, isPerpetual = false, granularity = 0, bundleChildIds = [], parentBundleIds = [], assetBlobId = '', keyVersion = 1, isPublished = false, retiredAt = new Date(0), audienceOrganizationId = '', audienceTags = [], publishedAt = new Date(), featureBadges = [], extraTags = [], contentSummary = {}, additionalData = {}} = {})
     {
         this.#id = crypto.randomUUID();
         this.setTitle(title);
         this.setDescription(description);
         this.setSellerId(sellerId);
+        this.setSourceDeckId(sourceDeckId);
+        this.setProvenanceDeckId(provenanceDeckId);
         this.setThumbnailUrl(thumbnailUrl);
         this.setCategory(category);
         this.setTags(tags);
@@ -49,6 +60,7 @@ class PaidDeck
         this.setAssetBlobId(assetBlobId);
         this.setKeyVersion(keyVersion);
         this.setIsPublished(isPublished);
+        this.setRetiredAt(retiredAt);
         this.setAudienceOrganizationId(audienceOrganizationId);
         this.setAudienceTags(audienceTags);
         this.setPublishedAt(publishedAt);
@@ -115,6 +127,34 @@ class PaidDeck
             value = String(value);
         }
         this.#sellerId = value;
+    }
+
+    getSourceDeckId()
+    {
+        return this.#sourceDeckId;
+    }
+
+    setSourceDeckId(value)
+    {
+        if (value !== null)
+        {
+            value = String(value);
+        }
+        this.#sourceDeckId = value;
+    }
+
+    getProvenanceDeckId()
+    {
+        return this.#provenanceDeckId;
+    }
+
+    setProvenanceDeckId(value)
+    {
+        if (value !== null)
+        {
+            value = String(value);
+        }
+        this.#provenanceDeckId = value;
     }
 
     getThumbnailUrl()
@@ -348,6 +388,28 @@ class PaidDeck
         this.#isPublished = value;
     }
 
+    getRetiredAt()
+    {
+        return this.#retiredAt;
+    }
+
+    setRetiredAt(value)
+    {
+        if (value !== null && value !== undefined)
+        {
+            value = value instanceof Date ? value : new Date(value);
+            if (isNaN(value.getTime()))
+            {
+                value = PaidDeck.FOREVER;
+            }
+        }
+        else
+        {
+            value = PaidDeck.FOREVER;
+        }
+        this.#retiredAt = value;
+    }
+
     getAudienceOrganizationId()
     {
         return this.#audienceOrganizationId;
@@ -462,6 +524,8 @@ class PaidDeck
             title: this.getTitle(),
             description: this.getDescription(),
             sellerId: this.getSellerId(),
+            sourceDeckId: this.getSourceDeckId(),
+            provenanceDeckId: this.getProvenanceDeckId(),
             thumbnailUrl: this.getThumbnailUrl(),
             category: this.getCategory(),
             tags: this.getTags(),
@@ -475,6 +539,7 @@ class PaidDeck
             assetBlobId: this.getAssetBlobId(),
             keyVersion: this.getKeyVersion(),
             isPublished: this.getIsPublished(),
+            retiredAt: this.getRetiredAt() !== null ? this.getRetiredAt().toISOString() : null,
             audienceOrganizationId: this.getAudienceOrganizationId(),
             audienceTags: this.getAudienceTags(),
             publishedAt: this.getPublishedAt() !== null ? this.getPublishedAt().toISOString() : null,
@@ -491,6 +556,8 @@ class PaidDeck
             title: json.title ?? null,
             description: json.description ?? null,
             sellerId: json.sellerId ?? null,
+            sourceDeckId: json.sourceDeckId ?? null,
+            provenanceDeckId: json.provenanceDeckId ?? null,
             thumbnailUrl: json.thumbnailUrl ?? null,
             category: json.category ?? null,
             tags: json.tags ?? null,
@@ -504,6 +571,7 @@ class PaidDeck
             assetBlobId: json.assetBlobId ?? null,
             keyVersion: json.keyVersion ?? null,
             isPublished: json.isPublished ?? null,
+            retiredAt: json.retiredAt != null ? new Date(json.retiredAt) : null,
             audienceOrganizationId: json.audienceOrganizationId ?? null,
             audienceTags: json.audienceTags ?? null,
             publishedAt: json.publishedAt != null ? new Date(json.publishedAt) : null,

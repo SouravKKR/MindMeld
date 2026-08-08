@@ -4,10 +4,11 @@ from Globals.Enumerations.InformationSourceTypes import InformationSourceTypes
 from Globals.Enumerations.OcrModes import OcrModes
 from Globals.Enumerations.ContentRetentionModes import ContentRetentionModes
 from Globals.Enumerations.CurriculumPlausibility import CurriculumPlausibility
+from Globals.Enumerations.SourceLicenceTypes import SourceLicenceTypes
 
 
 class InformationSource:
-    def __init__(self, name: str = None, user_id: str = None, source_type: InformationSourceTypes = None, directory_path: str = None, tags: List[str] = [], mime_type: str = '', hash: str = '', ocr_mode: OcrModes = OcrModes(1), file_size_bytes: int = 0, retention_mode: ContentRetentionModes = ContentRetentionModes(1), expires_at: int = 0, uploaded_at: int = 0, curriculum_plausibility: CurriculumPlausibility = CurriculumPlausibility(0), curriculum_plausibility_reason: str = '') -> None:
+    def __init__(self, name: str = None, user_id: str = None, source_type: InformationSourceTypes = None, directory_path: str = None, tags: List[str] = [], mime_type: str = '', hash: str = '', ocr_mode: OcrModes = OcrModes(1), file_size_bytes: int = 0, retention_mode: ContentRetentionModes = ContentRetentionModes(1), expires_at: int = 0, uploaded_at: int = 0, curriculum_plausibility: CurriculumPlausibility = CurriculumPlausibility(0), curriculum_plausibility_reason: str = '', licence_type: SourceLicenceTypes = SourceLicenceTypes(0), licence_note: str = '', source_url: str = '') -> None:
         self.__id = str(uuid.uuid4())
         self.set_name(name)
         self.set_user_id(user_id)
@@ -23,6 +24,9 @@ class InformationSource:
         self.set_uploaded_at(uploaded_at)
         self.set_curriculum_plausibility(curriculum_plausibility)
         self.set_curriculum_plausibility_reason(curriculum_plausibility_reason)
+        self.set_licence_type(licence_type)
+        self.set_licence_note(licence_note)
+        self.set_source_url(source_url)
 
     def get_id(self) -> str:
         return self.__id
@@ -168,6 +172,36 @@ class InformationSource:
             value = str(value)
         self.__curriculum_plausibility_reason = value
 
+    def get_licence_type(self) -> SourceLicenceTypes:
+        return self.__licence_type
+
+    def set_licence_type(self, value: SourceLicenceTypes) -> None:
+        if value is not None:
+            valid_values = list(SourceLicenceTypes)
+            if value not in valid_values:
+                value = valid_values[0] if valid_values else None
+        self.__licence_type = value
+
+    def get_licence_note(self) -> str:
+        return self.__licence_note
+
+    def set_licence_note(self, value: str) -> None:
+        if value is not None:
+            value = str(value)
+            if len(value) > 1024:
+                value = value[:1024]
+        self.__licence_note = value
+
+    def get_source_url(self) -> str:
+        return self.__source_url
+
+    def set_source_url(self, value: str) -> None:
+        if value is not None:
+            value = str(value)
+            if len(value) > 2048:
+                value = value[:2048]
+        self.__source_url = value
+
     def _restore_id_id(self, stored_id):
         if stored_id is not None:
             self.__id = stored_id
@@ -189,6 +223,9 @@ class InformationSource:
             'uploadedAt': self.get_uploaded_at(),
             'curriculumPlausibility': int(self.get_curriculum_plausibility().value) if self.get_curriculum_plausibility() is not None else None,
             'curriculumPlausibilityReason': self.get_curriculum_plausibility_reason(),
+            'licenceType': int(self.get_licence_type().value) if self.get_licence_type() is not None else None,
+            'licenceNote': self.get_licence_note(),
+            'sourceUrl': self.get_source_url(),
         }
 
     @classmethod
@@ -207,7 +244,10 @@ class InformationSource:
             expires_at=data.get('expiresAt'),
             uploaded_at=data.get('uploadedAt'),
             curriculum_plausibility=CurriculumPlausibility(data.get('curriculumPlausibility')) if data.get('curriculumPlausibility') is not None else None,
-            curriculum_plausibility_reason=data.get('curriculumPlausibilityReason')
+            curriculum_plausibility_reason=data.get('curriculumPlausibilityReason'),
+            licence_type=SourceLicenceTypes(data.get('licenceType')) if data.get('licenceType') is not None else None,
+            licence_note=data.get('licenceNote'),
+            source_url=data.get('sourceUrl')
         )
         if data.get('id') is not None:
             instance._restore_id_id(data.get('id'))

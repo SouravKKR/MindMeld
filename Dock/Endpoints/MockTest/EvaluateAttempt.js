@@ -16,6 +16,8 @@ const { mockTestEvaluationStatuses } = require("../../Globals/Enumerations/MockT
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const CreditPreflight = require("../../Globals/Classes/Credits/CreditPreflight");
 const TaskStateManager = require("../../Globals/Classes/Task/TaskStateManager");
+const EphemeralUploadRegistry = require("../../Globals/Classes/Content/EphemeralUploadRegistry");
+const { ephemeralUploadKinds } = require("../../Globals/Enumerations/EphemeralUploadKinds");
 const { getUser } = require("../Helpers/GetUser");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
@@ -224,12 +226,37 @@ async function handleEvaluateAttempt(request, response)
 
     const evaluationTaskId = evaluationTaskDescriptor.getId();
 
-    const attemptPersistencePath = joinPersistencePath(
+    const evaluationDirectory = joinPersistencePath(
         PersistenceConstants.TASKS_DIRECTORY,
         evaluationTaskId,
-        PersistenceConstants.MOCK_TEST_EVALUATIONS_DIRECTORY,
+        PersistenceConstants.MOCK_TEST_EVALUATIONS_DIRECTORY
+    );
+
+    const attemptPersistencePath = joinPersistencePath(
+        evaluationDirectory,
         MockTestEvaluationConstants.ATTEMPT_INPUT_FILENAME
     );
+
+    // Registered BEFORE the write, for the same reason the transcription flow
+    // beside it registers its prefix: the staged payload is the candidate's
+    // answers together with the question text they answered, and nothing else
+    // would ever remove it. The generation pipeline's task folder is cleaned by
+    // moveToDatabase, which never runs for an evaluation task, so without this
+    // an exam attempt stayed in the bucket permanently.
+    //
+    // The window is short because these files are a processing artefact, not a
+    // record: the graded outcome is applied back to the mock test in Mongo and
+    // that copy is what the learner and any dispute are answered from. The
+    // success path below purges the prefix as soon as it has applied the
+    // grades; this registration only has to cover the runs that fail.
+    await EphemeralUploadRegistry.register
+    ({
+        storagePrefix: `${evaluationDirectory}/`,
+        kind: ephemeralUploadKinds.MOCK_TEST_EVALUATION,
+        userId: userId,
+        retentionDays: DatabaseConstants.MOCK_TEST_EVALUATION_RETENTION_DAYS,
+        metadata: { mockTestId: mockTestId, attemptId: attemptId, evaluationTaskId: evaluationTaskId },
+    });
 
     try
     {
@@ -264,6 +291,14 @@ async function handleEvaluateAttempt(request, response)
                 {
                     await TaskHistoryQueryEngine.recordCompletion(completedTask);
                 }
+
+                // The grades are in Mongo now, so the staged answers and the
+                // graded output have no reader left. Purging here rather than
+                // waiting out the retention window keeps the ordinary case
+                // clean; the registration is what covers the runs that never
+                // reach this line. purgePrefix drops the record too, so a
+                // purged prefix is not re-listed on every reaper tick.
+                await purgeEvaluationStaging(evaluationTaskId);
             }
             catch (postTaskError)
             {
@@ -297,6 +332,36 @@ async function handleEvaluateAttempt(request, response)
                 await TaskManager.untrackForUser(userId, evaluationTaskId);
             }
         });
+}
+
+
+/**
+ * Removes an evaluation's staged input and graded output once they have been
+ * applied.
+ *
+ * Never throws: the grades are already saved, so a storage failure here must
+ * not turn a completed evaluation into a reported failure. The registry entry
+ * survives a failed purge, which is exactly what makes the reaper retry it.
+ *
+ * @param {string} evaluationTaskId - The task whose staging folder to remove.
+ * @returns {Promise<void>}
+ */
+async function purgeEvaluationStaging(evaluationTaskId)
+{
+    const evaluationDirectory = joinPersistencePath(
+        PersistenceConstants.TASKS_DIRECTORY,
+        evaluationTaskId,
+        PersistenceConstants.MOCK_TEST_EVALUATIONS_DIRECTORY
+    );
+
+    try
+    {
+        await EphemeralUploadRegistry.purgePrefix(`${evaluationDirectory}/`);
+    }
+    catch (purgeError)
+    {
+        console.warn(`[EvaluateAttempt] Could not purge evaluation staging for ${evaluationTaskId}: ${purgeError?.message || purgeError}`);
+    }
 }
 
 

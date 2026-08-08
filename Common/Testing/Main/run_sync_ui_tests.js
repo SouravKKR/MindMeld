@@ -810,6 +810,31 @@ function applyPhaseProgressSeries(recorder)
             trace(`  (pre-sweep removed ${preSweep.removedRowCount} leftover fixture row(s))`);
         }
 
+        // The sync lock is per-account and survives a browser that closed
+        // mid-cycle for the whole of its server-side TTL. On a deploy the
+        // critical-flow suite runs immediately before this one on the SAME
+        // account, so a cycle it interrupted leaves the lock held and every
+        // push here blocks on it — the suite then reports sync failures that
+        // are really the previous suite's leftover state. Release it once,
+        // here, before any assertion runs. This cannot mask a lock defect
+        // during the run: it happens before the first case, and case 16 still
+        // sets up and asserts real two-device lock behaviour itself.
+        const forceUnlockResponse = await fetch(`${BASE_URL}/Sync/ForceUnlock`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Cookie": `sessionId=${SESSION_COOKIE}` },
+            body: JSON.stringify({}),
+        }).catch(() => null);
+
+        if (forceUnlockResponse && forceUnlockResponse.ok)
+        {
+            const forceUnlockResult = await forceUnlockResponse.json().catch(() => ({}));
+            if (forceUnlockResult.released)
+            {
+                trace(`  (pre-sweep released a stale sync lock held by device ${forceUnlockResult.previousHolderDeviceId})`);
+            }
+        }
+
         // ── Device A: boot and first sync ───────────────────────────────────
 
         await runCase("Device A boots and its first sync settles without error", async () =>

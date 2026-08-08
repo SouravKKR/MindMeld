@@ -19,6 +19,7 @@ const adminListTypes =
   SUBSCRIPTIONS: 16,
   SUPPORT_TICKETS: 17,
   SUPPORT_UNGROUPED_REPORTS: 18,
+  SOURCE_LICENCE_DECLARATIONS: 19,
 }
 
 module.exports = { adminListTypes };

@@ -6,7 +6,7 @@ const PeriodicSchedule = require("./PeriodicSchedule");
 const OrganizationMemberQueryEngine = require("../Organization/OrganizationMemberQueryEngine");
 const OrganizationQueryEngine = require("../Organization/OrganizationQueryEngine");
 const OrganizationCreditLedger = require("../Organization/OrganizationCreditLedger");
-const CreditGrantTargetResolver = require("./CreditGrantTargetResolver");
+const MemberAudienceMatcher = require("../Organization/MemberAudienceMatcher");
 const AuthenticationQueryEngine = require("../Database/AuthenticationQueryEngine");
 const NotificationDispatcher = require("../Notifications/NotificationDispatcher");
 const NotificationContent = require("../Notifications/NotificationContent");
@@ -90,10 +90,10 @@ class PeriodicCreditReconciler
                 for (const assignment of organizationAssignments)
                 {
                     // An organization-scoped assignment may target part of the
-                    // roster rather than all of it. The tag test happens here,
-                    // at gathering time, so a member the tags do not cover never
-                    // reaches the grant path at all.
-                    if (!await PeriodicCreditReconciler.#memberMatchesAssignmentTags(assignment, membership.organizationId, email))
+                    // roster rather than all of it. The audience test happens
+                    // here, at gathering time, so a member it does not cover
+                    // never reaches the grant path at all.
+                    if (!await PeriodicCreditReconciler.#memberMatchesAssignmentAudience(assignment, membership.organizationId, email))
                     {
                         continue;
                     }
@@ -178,19 +178,25 @@ class PeriodicCreditReconciler
      * split one pot across the fixed recipient list.
      */
     /**
-     * Whether one member is covered by an assignment's tag selection.
+     * Whether one member is covered by an assignment's audience.
      *
-     * Decided through CreditGrantTargetResolver.filterMembersByTags — the same
-     * predicate the one-off distribution and its preview use — so a recurring
-     * plan and an ad-hoc grant written with identical tags reach identical
-     * people. Two implementations of "who does this tag mean" would drift.
+     * Decided through MemberAudienceMatcher — the same matcher the one-off
+     * distribution, its preview and the permission rules use — so a recurring
+     * plan and an ad-hoc grant written with identical criteria reach identical
+     * people. Two implementations of "who does this describe" would drift.
      */
-    static async #memberMatchesAssignmentTags(assignment, organizationId, email)
+    static async #memberMatchesAssignmentAudience(assignment, organizationId, email)
     {
-        const tagFilter = typeof assignment.getTagFilter === "function" ? assignment.getTagFilter() : [];
-        const tagMatchMode = typeof assignment.getTagMatchMode === "function" ? assignment.getTagMatchMode() : tagMatchModes.EVERYONE;
+        const audience =
+        {
+            tagFilter: typeof assignment.getTagFilter === "function" ? assignment.getTagFilter() : [],
+            matchMode: typeof assignment.getTagMatchMode === "function" ? assignment.getTagMatchMode() : tagMatchModes.EVERYONE,
+            attributeConditions: typeof assignment.getAttributeConditions === "function" ? assignment.getAttributeConditions() : []
+        };
 
-        if (tagMatchMode === tagMatchModes.EVERYONE || !Array.isArray(tagFilter) || tagFilter.length === 0)
+        // An assignment that narrows nothing covers everyone, and answering that
+        // without a roster lookup keeps the common case free.
+        if (MemberAudienceMatcher.isEveryone(audience))
         {
             return true;
         }
@@ -201,7 +207,7 @@ class PeriodicCreditReconciler
             return false;
         }
 
-        return CreditGrantTargetResolver.filterMembersByTags([member], tagFilter, tagMatchMode).length === 1;
+        return MemberAudienceMatcher.matchesMember(member, audience);
     }
 
     /**

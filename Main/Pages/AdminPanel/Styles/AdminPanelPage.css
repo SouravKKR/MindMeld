@@ -1896,38 +1896,67 @@ dialog-box:has(.add-members-dialog)
     margin-top: 14px;
 }
 
-/* The features an agreement includes, as chips rather than a column of
-   checkboxes: there are seven of them and they read as a set, not a form. */
+/* The feature matrix, laid out the same way FeatureCheckboxList is laid out on
+   the Organization page: one card per feature with the line that explains it.
+   These rules are duplicated from that page's stylesheet rather than shared,
+   because the admin dialogs can open without the Organization page's stylesheet
+   having been loaded at all — and a feature matrix that falls back to unstyled
+   checkboxes is one a super-admin misreads. */
 .organization-grantable-features
 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 10px;
+}
+
+.organization-grantable-features .organization-permission-feature
+{
     display: flex;
-    flex-wrap: wrap;
+    align-items: flex-start;
     gap: 8px;
+    padding: 10px;
+    border-radius: 8px;
+    background-color: var(--primary-background-color);
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    cursor: pointer;
+    min-width: 0;
 }
 
-/* Chip styling lives here too, because the organization dialogs are the only
-   place outside the Organization page that uses it and the page's own
-   stylesheet is not guaranteed to have loaded first. */
-.organization-grantable-features .organization-permission-tag
+.organization-grantable-features .organization-permission-feature:has(input:disabled)
+{
+    cursor: default;
+    opacity: 0.7;
+}
+
+.organization-grantable-features .organization-permission-feature input[type="checkbox"]
+{
+    width: 15px;
+    height: 15px;
+    margin: 2px 0 0 0;
+    flex: 0 0 auto;
+    cursor: pointer;
+}
+
+.organization-grantable-features .organization-permission-feature-body
 {
     display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
-    border-radius: 999px;
-    outline: 1px solid var(--outline-color-strong);
-    outline-offset: -1px;
-    font-size: 12px;
-    color: var(--primary-text-color);
-    cursor: pointer;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
 }
 
-.organization-grantable-features .organization-permission-tag input[type="checkbox"]
+.organization-grantable-features .organization-permission-feature-title
 {
-    width: 14px;
-    height: 14px;
-    margin: 0;
-    cursor: pointer;
+    font-size: 13px;
+    color: var(--primary-text-color);
+}
+
+.organization-grantable-features .organization-permission-feature-note
+{
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--secondary-text-color);
 }
 
 .organization-fieldset
@@ -2078,4 +2107,560 @@ dialog-box:has(.add-members-dialog)
 .admin-panel-organization-link:hover
 {
     background-color: var(--tertiary-background-color);
+}
+
+/* Paid-deck verification review ---------------------------------------- */
+
+.paid-deck-verification-dialog
+{
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    max-width: 720px;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.verification-decision
+{
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+.verification-decision-allowed
+{
+    background-color: var(--success-background-color);
+    color: var(--success-text-color);
+}
+
+.verification-decision-blocked
+{
+    background-color: var(--danger-background-color);
+    color: var(--danger-text-color);
+}
+
+/* One block per generation run. A deck generated into more than once shows each
+   run separately — they are separate evidence and are never merged. */
+.verification-run + .verification-run
+{
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-color);
+}
+
+.verification-run-heading
+{
+    margin-bottom: 8px;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--secondary-text-color);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.verification-summary
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    background-color: var(--secondary-background-color);
+    font-size: 13px;
+}
+
+.verification-summary-row
+{
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.verification-summary-row > span:first-child,
+.verification-summary-block > span:first-child
+{
+    color: var(--secondary-text-color);
+}
+
+.verification-summary-block ul
+{
+    margin: 4px 0 0 0;
+    padding-left: 20px;
+}
+
+.verification-summary-block pre
+{
+    margin: 4px 0 0 0;
+    padding: 8px;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    font-size: 12px;
+    max-height: 200px;
+    overflow: auto;
+}
+
+.verification-muted
+{
+    color: var(--secondary-text-color);
+    font-size: 12px;
+}
+
+.verification-flags
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.verification-flag
+{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    background-color: var(--secondary-background-color);
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    font-size: 13px;
+}
+
+.verification-flag-blocking
+{
+    outline-color: var(--danger-text-color);
+}
+
+.verification-flag-resolved
+{
+    opacity: 0.65;
+}
+
+.verification-flag-header
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.verification-flag-severity
+{
+    font-weight: 600;
+}
+
+.verification-flag-blocking .verification-flag-severity
+{
+    color: var(--danger-text-color);
+}
+
+.verification-flag-advisory .verification-flag-severity
+{
+    color: var(--highlight-color);
+}
+
+.verification-flag-category
+{
+    padding: 2px 8px;
+    border-radius: 999px;
+    background-color: var(--tertiary-background-color);
+    font-size: 11px;
+}
+
+.verification-flag-resolved-badge
+{
+    padding: 2px 8px;
+    border-radius: 999px;
+    background-color: var(--success-background-color);
+    color: var(--success-text-color);
+    font-size: 11px;
+}
+
+.verification-flag blockquote
+{
+    margin: 0;
+    padding: 8px 12px;
+    border-left: 3px solid var(--outline-color-strong);
+    background-color: var(--tertiary-background-color);
+    color: var(--secondary-text-color);
+    font-size: 12px;
+}
+
+.verification-flag-correction
+{
+    color: var(--success-text-color);
+    font-size: 12px;
+}
+
+.verification-flag-actions
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+
+.verification-flag-actions input
+{
+    flex: 1 1 200px;
+    min-width: 0;
+}
+
+/* Cited passage on a source-grounded flag -------------------------------- */
+
+/*
+    An ADMIN_SOURCE flag claims a cleared document disagrees, so it carries the
+    sentence it rests on. Set apart from the quotedText blockquote above it —
+    that one quotes the deck's own wrong text, this one quotes the source — and
+    a reviewer comparing the two has to tell at a glance which is which.
+*/
+.verification-flag-citation
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.verification-flag-citation-source
+{
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--secondary-text-color);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.verification-flag-citation blockquote
+{
+    border-left-color: var(--accent-color);
+    /* Model-quoted passages have no length limit and can hold an unbroken run
+       of characters, so wrapping is forced rather than left to word breaks. */
+    overflow-wrap: anywhere;
+}
+
+/* Paid-deck verification sources ---------------------------------------- */
+
+/*
+    Sized and scrolled explicitly, for the reason recorded above the
+    organization dialogs: dialog-box is fixed and centred with NO max-height of
+    its own, so a dialog holding a table grows past the viewport and clips its
+    own close button and error banner off the bottom edge — a refused save then
+    looks exactly like nothing happening. This dialog holds a table.
+*/
+dialog-box:has(.paid-deck-verification-sources-dialog)
+{
+    max-width: min(96vw, 860px);
+    width: min(96vw, 860px);
+}
+
+.paid-deck-verification-sources-dialog
+{
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-height: calc(88vh - 60px);
+    overflow-y: auto;
+    min-width: 0;
+}
+
+.verification-sources-explainer
+{
+    padding: 10px 14px;
+    border-radius: 8px;
+    background-color: var(--secondary-background-color);
+    color: var(--secondary-text-color);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.verification-sources-tabs
+{
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.verification-sources-tab
+{
+    padding: 8px 14px;
+    border: none;
+    border-radius: 999px;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    /* Comfortably tappable — these are the dialog's primary navigation and the
+       controls most likely to be reached for on a phone. */
+    min-height: 44px;
+}
+
+.verification-sources-tab-active
+{
+    background-color: var(--accent-background-color);
+    outline-color: var(--accent-color);
+}
+
+.verification-sources-status
+{
+    padding: 10px 14px;
+    border-radius: 8px;
+    background-color: var(--accent-background-color);
+    color: var(--primary-text-color);
+    font-size: 13px;
+}
+
+.verification-sources-status-failed
+{
+    background-color: var(--danger-background-color);
+    color: var(--danger-text-color);
+}
+
+.verification-sources-error
+{
+    padding: 10px 14px;
+    border-radius: 8px;
+    background-color: var(--danger-background-color);
+    color: var(--danger-text-color);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
+.verification-sources-empty
+{
+    padding: 14px;
+    border-radius: 8px;
+    background-color: var(--secondary-background-color);
+    color: var(--secondary-text-color);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.verification-source-list
+{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+}
+
+.verification-source-card
+{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background-color: var(--secondary-background-color);
+    min-width: 0;
+}
+
+.verification-source-name
+{
+    font-weight: 600;
+    font-size: 14px;
+    overflow-wrap: anywhere;
+}
+
+/*
+    Label and value side by side on a desktop, stacked below the phone
+    breakpoint. A grid rather than a flex row so the labels align down the card
+    without any of them being given a hard pixel width.
+*/
+.verification-source-row
+{
+    display: grid;
+    grid-template-columns: 130px minmax(0, 1fr);
+    gap: 8px;
+    font-size: 13px;
+    min-width: 0;
+}
+
+.verification-source-label
+{
+    color: var(--secondary-text-color);
+}
+
+/*
+    URLs and SHA-512 hashes contain no spaces. Without this a single value sets
+    the dialog's minimum width and pushes the page sideways.
+*/
+.verification-source-value-wrap
+{
+    overflow-wrap: anywhere;
+}
+
+.verification-source-card-actions
+{
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+
+.verification-source-detach
+{
+    padding: 8px 14px;
+    border: none;
+    border-radius: 8px;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--danger-text-color);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    min-height: 44px;
+}
+
+.verification-source-detach:hover
+{
+    background-color: var(--danger-background-color);
+}
+
+/*
+    The declaration table scrolls INSIDE this box. A permanent log has columns
+    that cannot usefully be dropped, so on a narrow screen the table scrolls
+    rather than the page — a page scrolling sideways would carry the dialog's
+    close button off screen.
+*/
+.verification-declaration-scroller
+{
+    overflow-x: auto;
+    min-width: 0;
+}
+
+.verification-declaration-table
+{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.verification-declaration-table th,
+.verification-declaration-table td
+{
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+    vertical-align: top;
+}
+
+.verification-declaration-table th
+{
+    color: var(--secondary-text-color);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.verification-declaration-event
+{
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.verification-declaration-event-attached
+{
+    background-color: var(--accent-background-color);
+    color: var(--primary-text-color);
+}
+
+.verification-declaration-event-detached
+{
+    background-color: var(--tertiary-background-color);
+    color: var(--secondary-text-color);
+}
+
+.verification-sources-actions
+{
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.verification-sources-secondary,
+.verification-sources-run
+{
+    padding: 9px 16px;
+    border: none;
+    border-radius: 8px;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    min-height: 44px;
+}
+
+.verification-sources-run
+{
+    background-color: var(--accent-background-color);
+    outline-color: var(--accent-color);
+}
+
+.verification-sources-secondary:disabled,
+.verification-sources-run:disabled
+{
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+@media (max-width: 600px)
+{
+    dialog-box:has(.paid-deck-verification-sources-dialog)
+    {
+        max-width: 96vw;
+        width: 96vw;
+    }
+
+    .paid-deck-verification-sources-dialog
+    {
+        max-height: calc(92vh - 60px);
+        padding-right: 8px;
+    }
+
+    /* Label above value, so neither is squeezed into a column too narrow to
+       read on a phone. */
+    .verification-source-row
+    {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 2px;
+    }
+
+    .verification-source-label
+    {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    /* Full-width actions, matching the organization dialogs at this breakpoint.
+       Three buttons side by side on a 390px screen are neither readable nor
+       comfortably tappable. */
+    .verification-sources-actions
+    {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .verification-sources-secondary,
+    .verification-sources-run,
+    .verification-source-detach
+    {
+        width: 100%;
+    }
+
+    .verification-sources-tab
+    {
+        flex: 1 1 auto;
+    }
 }

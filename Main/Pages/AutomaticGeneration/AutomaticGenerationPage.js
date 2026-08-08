@@ -1100,6 +1100,22 @@ class AutomaticGenerationPage extends HTMLElement
         }
 
         generationSettingsMap["parentDeckId"] = this.#parentDeck?.getId() ?? "0";
+
+        // A TOP-LEVEL field, deliberately outside the settings blocks. These
+        // sources are checked against, never generated from, and the settings
+        // object is what the paid-deck source-type restriction is enforced
+        // against — carrying them inside it would submit a textbook to a gate
+        // that accepts only a syllabus, and be refused. Empty for every
+        // non-paid-deck run, where the picker is hidden.
+        const verificationSourceIds = typeof generalFields.getVerificationSourceIds === "function"
+            ? generalFields.getVerificationSourceIds()
+            : [];
+
+        if (verificationSourceIds.length > 0)
+        {
+            generationSettingsMap["verificationSourceIds"] = verificationSourceIds;
+        }
+
         return generationSettingsMap;
     }
 

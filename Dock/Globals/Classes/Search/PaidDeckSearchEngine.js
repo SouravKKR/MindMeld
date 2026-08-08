@@ -2,6 +2,7 @@ const DatabaseConnector = require("../Database/DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
 const PaidDeckFilterRegistry = require("../PaidDeckFilters/PaidDeckFilterRegistry");
 const PaidDeckPricingEngine = require("../Pricing/PaidDeckPricingEngine");
+const PaidDeckStorefrontProjection = require("../PaidDeck/PaidDeckStorefrontProjection");
 const { paidDeckSortFields } = require("../../Enumerations/PaidDeckSortFields");
 const { sortDirections } = require("../../Enumerations/SortDirections");
 
@@ -126,7 +127,7 @@ class PaidDeckSearchEngine
 
             enrichedDecks.push
             ({
-                ...deckDocument,
+                ...PaidDeckStorefrontProjection.forBuyer(deckDocument),
                 computedPrice: pricingBreakdown.breakdown[0] || null,
                 currency: pricingBreakdown.currency
             });

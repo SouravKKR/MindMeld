@@ -1,6 +1,8 @@
 const AdminListDefinition = require("../AdminLists/AdminListDefinition");
 const OrganizationMemberQueryEngine = require("./OrganizationMemberQueryEngine");
-const OrganizationMemberProfileNormaliser = require("./OrganizationMemberProfileNormaliser");
+const OrganizationMemberColumnQueryEngine = require("./OrganizationMemberColumnQueryEngine");
+const OrganizationMemberColumnBackfiller = require("./OrganizationMemberColumnBackfiller");
+const MemberAttributeTypeInferrer = require("./MemberAttributeTypeInferrer");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
 const TextSearchFilter = require("../PaidDeckFilters/TextSearchFilter");
 const MultiSelectFilter = require("../PaidDeckFilters/MultiSelectFilter");
@@ -19,14 +21,19 @@ const { memberAttributeValueTypes } = require("../../Enumerations/MemberAttribut
  * paged by the database rather than by fetching every member and slicing them
  * in the browser, which is what it did before.
  *
- * The filter set is built per organization from the attribute keys and tags
- * actually in use, because an institute that uploads "stream" and one that
- * uploads "section" do not want each other's filters. A key is offered as a
- * NUMBER range when every stored value parses as a number (join years, marks),
- * as a DATE range when every value parses as a date, and as a STRING range
- * otherwise (names, roll numbers) — one inclusive start/end control either way,
- * which is what makes "select a range" mean the same thing whatever the column
- * holds.
+ * The filter set is built per organization from the columns and tags actually in
+ * use, because an institute that uploads "stream" and one that uploads "section"
+ * do not want each other's filters. A key is offered as a NUMBER range when its
+ * values are numbers (join years, marks), as a DATE range when they are dates,
+ * and as a STRING range otherwise (names, roll numbers) — one inclusive
+ * start/end control either way, which is what makes "select a range" mean the
+ * same thing whatever the column holds.
+ *
+ * Which of those a column IS comes from the institute's own schema
+ * (OrganizationMemberColumnQueryEngine), falling back to inference only for a
+ * key nobody has described yet. The order matters: sampling values is a guess,
+ * and a single "N/A" in a column of admission years is enough to turn a year
+ * range into an alphabetical one for the entire roster. The stated answer wins.
  *
  * The organizationId is never taken from the request body: the caller resolves
  * it through OrganizationAuthorityResolver and passes it in, so a filter
@@ -38,21 +45,58 @@ class OrganizationMemberListBuilder
     static FILTER_KEY_ADDED_AT = "addedAt";
     static ATTRIBUTE_FILTER_KEY_PREFIX = "attribute:";
 
-    // How many members to sample when deciding whether an attribute reads as a
-    // number, a date or plain text. The whole roster is unnecessary — a
-    // consistent column shows its type in the first handful of rows, and an
-    // inconsistent one falls back to text, which always works.
-    static TYPE_SAMPLE_SIZE = 50;
-
     /**
      * @param {object} database
      * @param {string} organizationId
-     * @returns {Promise<{ definition: AdminListDefinition, attributeKeys: string[] }>}
+     * @returns {Promise<{ definition: AdminListDefinition, attributeKeys: string[], memberColumns: Array<OrganizationMemberColumn> }>}
      */
     static async build(database, organizationId)
     {
         const vocabulary = await OrganizationMemberQueryEngine.listProfileVocabulary(organizationId);
-        const attributeTypes = await OrganizationMemberListBuilder.#resolveAttributeTypes(database, organizationId, vocabulary.attributeKeys);
+
+        // Give this organization a column schema if it does not have one yet, so
+        // a roster imported before columns existed is described the same way a
+        // roster imported today is. Existing rows are never overwritten, so the
+        // institute's own labels and type corrections survive.
+        await OrganizationMemberColumnBackfiller.backfillForOrganization(database, organizationId);
+        const columns = await OrganizationMemberColumnQueryEngine.listColumnsForOrganization(organizationId);
+        const columnsByKey = new Map(columns.map(column => [column.getKey(), column]));
+
+        // The schema's order first, then anything stored but not yet described —
+        // which is what a member document carries in the window between an import
+        // and its column row existing.
+        const orderedAttributeKeys = [];
+        for (const column of columns)
+        {
+            if (vocabulary.attributeKeys.includes(column.getKey()))
+            {
+                orderedAttributeKeys.push(column.getKey());
+            }
+        }
+        for (const attributeKey of vocabulary.attributeKeys)
+        {
+            if (!columnsByKey.has(attributeKey))
+            {
+                orderedAttributeKeys.push(attributeKey);
+            }
+        }
+
+        // Sampling only answers for keys the schema does not describe. Where the
+        // institute has stated a type, that is the answer — a column of years
+        // holding one "N/A" must not silently become a text range for everybody.
+        const undescribedKeys = orderedAttributeKeys.filter(attributeKey => !columnsByKey.has(attributeKey));
+        const sampledTypes = await MemberAttributeTypeInferrer.inferTypes(database, organizationId, undescribedKeys);
+
+        const attributeTypes = {};
+        const attributeLabels = {};
+        for (const attributeKey of orderedAttributeKeys)
+        {
+            const column = columnsByKey.get(attributeKey);
+            attributeTypes[attributeKey] = column ? column.getValueType() : sampledTypes[attributeKey];
+            attributeLabels[attributeKey] = column
+                ? column.getLabel()
+                : OrganizationMemberColumnQueryEngine.describeAttributeKey(attributeKey);
+        }
 
         const filters = [];
 
@@ -77,20 +121,20 @@ class OrganizationMemberListBuilder
             field: "addedAt"
         }));
 
-        for (const attributeKey of vocabulary.attributeKeys)
+        for (const attributeKey of orderedAttributeKeys)
         {
-            filters.push(OrganizationMemberListBuilder.#buildAttributeFilter(attributeKey, attributeTypes[attributeKey]));
+            filters.push(OrganizationMemberListBuilder.#buildAttributeFilter(attributeKey, attributeTypes[attributeKey], attributeLabels[attributeKey]));
         }
 
-        const columns =
+        const listColumns =
         [
             { key: "email", label: "Email" },
             { key: "accountLabel", label: "Account" },
             { key: "tagsLabel", label: "Tags" },
-            ...vocabulary.attributeKeys.map(attributeKey => (
+            ...orderedAttributeKeys.map(attributeKey => (
             {
                 key: `attribute_${attributeKey}`,
-                label: OrganizationMemberListBuilder.#describeAttributeKey(attributeKey)
+                label: attributeLabels[attributeKey]
             })),
             { key: "addedAtLabel", label: "Added" }
         ];
@@ -102,17 +146,21 @@ class OrganizationMemberListBuilder
             // Server-supplied and not expressible as a filter, so no client
             // payload can reach another organization's roster.
             baseQuery: { organizationId: organizationId },
-            searchableFields: ["email", ...vocabulary.attributeKeys.map(attributeKey => `attributes.${attributeKey}`)],
+            searchableFields: ["email", ...orderedAttributeKeys.map(attributeKey => `attributes.${attributeKey}`)],
             searchPlaceholder: "Search by email or details",
             filters: filters,
-            columns: columns,
-            rowMapper: (document) => OrganizationMemberListBuilder.#mapRow(document, vocabulary.attributeKeys),
+            columns: listColumns,
+            rowMapper: (document) => OrganizationMemberListBuilder.#mapRow(document, orderedAttributeKeys),
             defaultSort: { field: "addedAt", direction: -1 },
             sortableFields: ["email", "addedAt"],
             rowIdField: "id"
         });
 
-        return { definition: definition, attributeKeys: vocabulary.attributeKeys };
+        return {
+            definition: definition,
+            attributeKeys: orderedAttributeKeys,
+            memberColumns: columns
+        };
     }
 
     /**
@@ -173,9 +221,8 @@ class OrganizationMemberListBuilder
         return !filterQuery || Object.keys(filterQuery).length === 0;
     }
 
-    static #buildAttributeFilter(attributeKey, valueType)
+    static #buildAttributeFilter(attributeKey, valueType, label)
     {
-        const label = OrganizationMemberListBuilder.#describeAttributeKey(attributeKey);
         const filterKey = `${OrganizationMemberListBuilder.ATTRIBUTE_FILTER_KEY_PREFIX}${attributeKey}`;
 
         if (valueType === memberAttributeValueTypes.NUMBER)
@@ -212,75 +259,6 @@ class OrganizationMemberListBuilder
             label: label,
             field: `attributesNormalised.${attributeKey}`
         });
-    }
-
-    /**
-     * Decides how each attribute reads, from a bounded sample of real values.
-     */
-    static async #resolveAttributeTypes(database, organizationId, attributeKeys)
-    {
-        const attributeTypes = {};
-        if (attributeKeys.length === 0)
-        {
-            return attributeTypes;
-        }
-
-        const sampleDocuments = await database
-            .collection(DatabaseConstants.ORGANIZATION_MEMBERS_COLLECTION)
-            .find({ organizationId: organizationId }, { projection: { _id: 0, attributes: 1 } })
-            .limit(OrganizationMemberListBuilder.TYPE_SAMPLE_SIZE)
-            .toArray();
-
-        for (const attributeKey of attributeKeys)
-        {
-            let observedCount = 0;
-            let numericCount = 0;
-            let dateCount = 0;
-
-            for (const sampleDocument of sampleDocuments)
-            {
-                const rawValue = sampleDocument?.attributes?.[attributeKey];
-                if (typeof rawValue !== "string" || rawValue.length === 0)
-                {
-                    continue;
-                }
-
-                observedCount = observedCount + 1;
-
-                // Ask the normaliser, so what the filter offers and what was
-                // stored can never disagree about whether a value is a number.
-                const comparableValue = OrganizationMemberProfileNormaliser.toComparableValue(rawValue);
-                if (typeof comparableValue === "number")
-                {
-                    numericCount = numericCount + 1;
-                }
-                else if (typeof comparableValue === "string")
-                {
-                    dateCount = dateCount + 1;
-                }
-            }
-
-            if (observedCount > 0 && numericCount === observedCount)
-            {
-                attributeTypes[attributeKey] = memberAttributeValueTypes.NUMBER;
-            }
-            else if (observedCount > 0 && dateCount === observedCount)
-            {
-                attributeTypes[attributeKey] = memberAttributeValueTypes.DATE;
-            }
-            else
-            {
-                attributeTypes[attributeKey] = memberAttributeValueTypes.STRING;
-            }
-        }
-
-        return attributeTypes;
-    }
-
-    static #describeAttributeKey(attributeKey)
-    {
-        const spaced = String(attributeKey).replace(/([a-z0-9])([A-Z])/g, "$1 $2");
-        return spaced.charAt(0).toUpperCase() + spaced.slice(1);
     }
 
     static #mapRow(document, attributeKeys)

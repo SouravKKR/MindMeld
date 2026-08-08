@@ -242,15 +242,25 @@ class DialogBox extends HTMLElement
     static modal(html)
     {
         const dialog = document.createElement("dialog-box");
+
+        // The close button is a SIBLING of the content section, not a child of
+        // it. The content section is the dialog's scroll container on short
+        // viewports (see .modal-content-section in DialogBox.css), and an
+        // absolutely positioned descendant of a scroll container scrolls away
+        // with the content — which would carry the only dismiss affordance off
+        // the top of a phone screen the moment the user scrolled down.
+        //
+        // The wrapper's layout lives in DialogBox.css rather than in an inline
+        // style so the mobile breakpoint can trim its padding.
         dialog.innerHTML =
         `
-            <div style="display:flex;flex-direction:column;padding:20px;">` +
+            <div class="modal-content-section">` +
             html +
         `
-                <button class="close-button">
-                    <img src="./Globals/Assets/Images/Icons/CloseIcon.svg" alt="Close Icon">
-                </button>
             </div>
+            <button class="close-button">
+                <img src="./Globals/Assets/Images/Icons/CloseIcon.svg" alt="Close Icon">
+            </button>
         `;
 
         const closeButton = dialog.querySelector(".close-button");

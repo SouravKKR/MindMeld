@@ -3,6 +3,9 @@ const { Packetron, PacketronHandlerFlags, PacketronRequestMethod } = require("@g
 const { handleGenerate } = require("./AutomaticGeneration/Generate");
 const { handleEstimateCost } = require("./AutomaticGeneration/EstimateCost");
 const { handleAutoFillOptions } = require("./AutomaticGeneration/AutoFillOptions");
+const { handleRefineContentProposal } = require("./AutomaticGeneration/RefineContentProposal");
+const { handleRefineVisualProposal } = require("./AutomaticGeneration/RefineVisualProposal");
+const { handleRefineContentApply } = require("./AutomaticGeneration/RefineContentApply");
 const { handleInformationSourceUpload } = require("./AutomaticGeneration/InformationSourceUpload");
 const { handleListInformationSourcesForUser } = require("./AutomaticGeneration/ListInformationSourcesForUser");
 const { handleInformationSourceDownload } = require("./AutomaticGeneration/InformationSourceDownload");
@@ -55,6 +58,38 @@ function handleAutomaticGenerationEndpoints(server)
     ({
         routePath: `/Generate/AutoFillOptions`,
         handler: handleAutoFillOptions,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ ensureLogin ]
+    });
+
+    // Post-generation content refinement. The two Proposal routes are metered
+    // (each spends a model call and the runner does the preflight + charge);
+    // Apply is free, because charging for the decision would put a price on
+    // reviewing the comparison carefully. All three are login-gated and
+    // entitlement-gated on AUTOMATIC_GENERATION inside the runner.
+    server.handle
+    ({
+        routePath: `/Refine/Content/Proposal`,
+        handler: handleRefineContentProposal,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ ensureLogin ]
+    });
+
+    server.handle
+    ({
+        routePath: `/Refine/Visual/Proposal`,
+        handler: handleRefineVisualProposal,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ ensureLogin ]
+    });
+
+    server.handle
+    ({
+        routePath: `/Refine/Content/Apply`,
+        handler: handleRefineContentApply,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ ensureLogin ]

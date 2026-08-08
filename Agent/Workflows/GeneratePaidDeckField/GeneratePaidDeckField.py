@@ -81,6 +81,16 @@ class PaidDeckFieldGenerator:
 
     ALLOWED_FIELDS = set(FIELD_MAX_LENGTHS.keys())
 
+    # Keys a model may wrap the value under when it answers with an object
+    # instead of a bare value. The requested field name comes first because a
+    # model with no schema keys its invented envelope off the task wording.
+    JSON_ENVELOPE_KEYS_BY_FIELD = {
+        "title": ("title", "deckTitle", "value", "text"),
+        "category": ("category", "subject", "value", "text"),
+        "description": ("description", "summary", "value", "text"),
+        "tags": ("tags", "keywords", "value", "text"),
+    }
+
     SYSTEM_PROMPT = (
         "You write storefront metadata for a paid flashcard deck on a study platform. "
         "You are given the topics the deck covers (study-material titles, or the deck's "
@@ -164,8 +174,70 @@ class PaidDeckFieldGenerator:
         return cls.SYSTEM_PROMPT, user_prompt
 
     @classmethod
+    def __unwrap_json_envelope(cls, field: str, raw_text: str) -> str:
+        """
+        Returns the value carried by a JSON envelope, or the text unchanged
+        when it is not one.
+
+        The provider defaults response_mime_type to "application/json" unless
+        some content carries response_as_text, and with no schema to shape it
+        the model invents its own wrapper — {"description": "..."} — which then
+        landed verbatim in the admin's form field. The request now asks for
+        plain text, so this is the second line of defence rather than the
+        first: a model that wraps the value anyway still yields the value.
+
+        Runs BEFORE the code-fence strip, because stripping the backticks off a
+        fenced JSON payload leaves a fragment that no longer parses.
+        """
+        candidate = (raw_text or "").strip()
+
+        if candidate.startswith("```"):
+            candidate = candidate.strip("`").strip()
+            # A fenced block usually opens with its language on the first line.
+            if candidate.lower().startswith("json"):
+                candidate = candidate[len("json"):].strip()
+
+        if not candidate.startswith("{") and not candidate.startswith("["):
+            return raw_text
+
+        try:
+            parsed = json.loads(candidate)
+        except (ValueError, TypeError):
+            return raw_text
+
+        if isinstance(parsed, list):
+            return cls.__join_string_list(parsed) or raw_text
+
+        if not isinstance(parsed, dict):
+            return raw_text
+
+        for envelope_key in cls.JSON_ENVELOPE_KEYS_BY_FIELD.get(field, ()):
+            envelope_value = parsed.get(envelope_key)
+            if isinstance(envelope_value, str) and envelope_value.strip():
+                return envelope_value
+            if isinstance(envelope_value, list):
+                joined_value = cls.__join_string_list(envelope_value)
+                if joined_value:
+                    return joined_value
+
+        # An envelope under a key we did not anticipate is still recoverable
+        # when the object carries exactly one value — that value is
+        # unambiguously the one that was asked for. More than one and we cannot
+        # tell which, so the raw text is returned and the caller sees the
+        # envelope rather than a silently wrong guess.
+        string_values = [value for value in parsed.values() if isinstance(value, str) and value.strip()]
+        if len(parsed) == 1 and len(string_values) == 1:
+            return string_values[0]
+
+        return raw_text
+
+    @staticmethod
+    def __join_string_list(values: list) -> str:
+        return ", ".join(str(entry).strip() for entry in values if str(entry).strip())
+
+    @classmethod
     def __post_process(cls, field: str, raw_text: str) -> str:
-        text = (raw_text or "").strip()
+        text = cls.__unwrap_json_envelope(field, (raw_text or "").strip()).strip()
 
         # Models occasionally wrap a single value in quotes or a stray code
         # fence despite the instruction — strip the common cases.
@@ -198,7 +270,12 @@ class PaidDeckFieldGenerator:
             cls.MODEL_NAME,
             [
                 AutomationContent(AutomationContentTypes.SYSTEM, system_prompt),
-                AutomationContent(AutomationContentTypes.TEXT,   user_prompt),
+                # Without this the provider defaults response_mime_type to
+                # "application/json" and, with no schema to shape it, the model
+                # invents a wrapper object whose raw text reached the admin's
+                # form field. The prompt asks for a bare value; this makes the
+                # transport ask for one too.
+                AutomationContent(AutomationContentTypes.TEXT, user_prompt, {"response_as_text": True}),
             ]
         )
 

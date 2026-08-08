@@ -154,6 +154,23 @@ admin-list-view
     padding: 10px;
     border-bottom: 1px solid var(--tertiary-background-color);
     vertical-align: top;
+    /* A floor per column, which is what turns "cram everything in" into "scroll
+       sideways". Without it the table is width: 100% and simply divides the
+       space it has, so an organization that records eight things about its
+       members gets eight unreadable slivers on a phone rather than a table it
+       can push left and right. Once the floors add up to more than the wrapper,
+       the table overflows and .admin-list-table-wrap scrolls — and the checkbox
+       and the row actions stay pinned to the edges while it does. */
+    min-width: 120px;
+}
+
+/* The two pinned cells are chrome, not data, and sized by their contents. */
+.admin-list-table th.admin-list-checkbox-cell,
+.admin-list-table td.admin-list-checkbox-cell,
+.admin-list-table td.admin-list-actions,
+.admin-list-table thead th:last-child:empty
+{
+    min-width: 0;
 }
 
 .admin-list-table th
@@ -163,15 +180,66 @@ admin-list-view
     white-space: nowrap;
 }
 
+/* The selection and the row actions are pinned to the edges of the scroller
+   while the columns scroll between them.
+
+   Without this, a list wide enough to scroll takes its most important controls
+   off screen with it — and an organization roster is exactly that, because the
+   institute decides how many columns it has. A member list with six custom
+   columns on a phone puts the Edit button somewhere to the right of the visible
+   area, so the one action on the row becomes unreachable on the device most
+   likely to be used. Both cells carry a solid background because a transparent
+   sticky cell shows the scrolling content sliding underneath it. */
+/* Rows carry an explicit background so the pinned cells below can inherit it.
+   A sticky cell MUST be opaque — a transparent one shows the columns sliding
+   underneath as they scroll — and inheriting is what keeps the pinned cells the
+   same colour as the row they belong to instead of a guessed token that drifts
+   the next time the theme moves. */
+.admin-list-table tbody tr
+{
+    background-color: var(--primary-background-color);
+}
+
+.admin-list-table thead tr
+{
+    background-color: var(--secondary-background-color);
+}
+
 .admin-list-checkbox-cell
 {
     width: 1%;
     white-space: nowrap;
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background-color: inherit;
 }
 
 .admin-list-actions
 {
     white-space: nowrap;
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background-color: inherit;
+    /* Reads as the edge of the scrolling area rather than as another column. */
+    box-shadow: -6px 0 6px -6px rgba(0, 0, 0, 0.45);
+}
+
+/* The header's pinned cells sit above the body's, so they take the higher
+   layer as well as the same pinning. The actions header is rendered empty, so
+   it is matched by position. */
+.admin-list-table thead th.admin-list-checkbox-cell
+{
+    z-index: 2;
+}
+
+.admin-list-table thead th:last-child:empty
+{
+    position: sticky;
+    right: 0;
+    z-index: 2;
+    background-color: inherit;
 }
 
 .admin-list-row-action

@@ -1,5 +1,7 @@
 const InformationSourceQueryEngine = require("../Database/InformationSourceQueryEngine");
+const ReferencedProofSourceHashes = require("./ReferencedProofSourceHashes");
 const DerivedContentQueryEngine = require("../Database/DerivedContentQueryEngine");
+const DerivedContentPurger = require("./DerivedContentPurger");
 const InformationSourcePurger = require("./InformationSourcePurger");
 const SourceRetentionPolicy = require("./SourceRetentionPolicy");
 const EphemeralUploadRegistry = require("./EphemeralUploadRegistry");
@@ -35,9 +37,15 @@ class ExpiredInformationSourceReaper
     static #USER_BATCH_SIZE = 200;
     static #ORPHAN_INSPECTION_LIMIT = 500;
     static #EPHEMERAL_SWEEP_LIMIT = 500;
+    static #FIGURE_OBJECT_INSPECTION_LIMIT = 2000;
 
     static #intervalHandle = null;
     static #bRunning = false;
+
+    // Where the last figure-object sweep stopped. Held in memory only: the sweep
+    // is idempotent, so a restart costs one re-scan of the head of the prefix
+    // rather than correctness, and that is not worth a collection.
+    static #figureSweepStartAfterPath = null;
 
     static start()
     {
@@ -107,8 +115,33 @@ class ExpiredInformationSourceReaper
                     continue;
                 }
 
+                // Sources this user has cited as a licensing basis — either as
+                // the reference a content refinement was made from, or as a
+                // declared verification source for a paid deck. They outlive the
+                // retention rules because the declaration that accompanied them
+                // is only worth something while the document can still be
+                // produced — and the rules above would otherwise delete them
+                // exactly when a lapsed subscription makes the question most
+                // likely to be asked. Resolved per user, in step with the
+                // policy, so the lookup stays bounded the same way the
+                // subscription lookups are.
+                let referencedProofHashes;
+                try
+                {
+                    referencedProofHashes = await ReferencedProofSourceHashes.findForUser(candidateUserId);
+                }
+                catch (holdLookupError)
+                {
+                    // Failing to load the holds must never be read as "no holds
+                    // apply" — that would delete the proof this sweep is
+                    // specifically not allowed to delete. Skip the user and
+                    // retry next tick, exactly as a policy failure does.
+                    console.warn(`[ExpiredInformationSourceReaper] Could not resolve licensing holds for ${candidateUserId} (skipping): ${holdLookupError?.message || holdLookupError}`);
+                    continue;
+                }
+
                 const userSources = await InformationSourceQueryEngine.getInformationSourcesByUserId(candidateUserId);
-                const dueSources = userSources.filter(userSource => SourceRetentionPolicy.isSourceDue(userSource, policy, nowMilliseconds));
+                const dueSources = userSources.filter(userSource => SourceRetentionPolicy.isSourceDue(userSource, policy, nowMilliseconds, referencedProofHashes));
 
                 if (dueSources.length === 0)
                 {
@@ -163,6 +196,15 @@ class ExpiredInformationSourceReaper
         catch (ephemeralSweepError)
         {
             console.error(`[ExpiredInformationSourceReaper] Ephemeral upload sweep failed: ${ephemeralSweepError?.message || ephemeralSweepError}`);
+        }
+
+        try
+        {
+            await ExpiredInformationSourceReaper.#sweepOrphanedFigureObjects();
+        }
+        catch (figureSweepError)
+        {
+            console.error(`[ExpiredInformationSourceReaper] Figure object sweep failed: ${figureSweepError?.message || figureSweepError}`);
         }
         finally
         {
@@ -248,17 +290,61 @@ class ExpiredInformationSourceReaper
 
         let embeddingChunksRemoved = 0;
         let figuresRemoved = 0;
+        let figureObjectsRemoved = 0;
 
         for (const orphanedPair of orphanedPairs)
         {
-            const purgeCounts = await DerivedContentQueryEngine.purgeForUserAndContentHash(orphanedPair.userId, orphanedPair.contentHash);
+            const purgeCounts = await DerivedContentPurger.purgeForUserAndContentHash(orphanedPair.userId, orphanedPair.contentHash);
             embeddingChunksRemoved += purgeCounts.embeddingChunksRemoved;
             figuresRemoved += purgeCounts.figuresRemoved;
+            figureObjectsRemoved += purgeCounts.figureObjectsRemoved;
         }
 
         console.log(
             `[ExpiredInformationSourceReaper] Reconciled ${orphanedPairs.length} orphaned (user, document) pair(s) — ` +
-            `${embeddingChunksRemoved} embedding chunk(s), ${figuresRemoved} figure(s) removed.`,
+            `${embeddingChunksRemoved} embedding chunk(s), ${figuresRemoved} figure(s), ` +
+            `${figureObjectsRemoved} figure object(s) removed.`,
+        );
+    }
+
+    /**
+     * Reclaims figure PNGs in object storage that no figure row points at.
+     *
+     * The pass above works from the rows outwards, so it can only reach objects
+     * whose row survived long enough to name them. Everything written before the
+     * cascade covered objects at all — and anything left by a cascade that died
+     * between the row delete and the object delete — is invisible to it and
+     * reachable only by listing the bucket. Without this sweep those crops of
+     * uploaded textbooks stay indefinitely, which is the exact retention gap the
+     * cascade was extended to close.
+     *
+     * DerivedContentPurger owns the safety rules (minimum object age, and a
+     * last-reference check against the figure rows); this method owns only when
+     * the sweep runs, how much it is allowed to look at, and where it resumes.
+     *
+     * The cursor is what makes a bounded sweep eventually exhaustive: each tick
+     * continues after the previous tick's last key and wraps to the beginning
+     * once the prefix runs out, so every object is reached rather than only the
+     * first page of them.
+     */
+    static async #sweepOrphanedFigureObjects()
+    {
+        const sweepResult = await DerivedContentPurger.sweepOrphanedFigureObjects(
+            ExpiredInformationSourceReaper.#FIGURE_OBJECT_INSPECTION_LIMIT,
+            Date.now(),
+            ExpiredInformationSourceReaper.#figureSweepStartAfterPath,
+        );
+
+        ExpiredInformationSourceReaper.#figureSweepStartAfterPath = sweepResult.nextStartAfterPath;
+
+        if (sweepResult.figureObjectsRemoved === 0 && sweepResult.figureObjectsFailed === 0)
+        {
+            return;
+        }
+
+        console.log(
+            `[ExpiredInformationSourceReaper] Swept ${sweepResult.inspectedCount} figure object(s) — ` +
+            `${sweepResult.figureObjectsRemoved} orphan(s) removed, ${sweepResult.figureObjectsFailed} failed.`,
         );
     }
 }

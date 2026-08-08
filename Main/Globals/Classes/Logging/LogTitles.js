@@ -9,6 +9,7 @@ class LogTitles
     static LOGOUT = "LOGOUT";
     static AI_ASK = "AI_ASK";
     static AI_GENERATION = "AI_GENERATION";
+    static CONTENT_GUARDRAIL = "CONTENT_GUARDRAIL";
     static PURCHASE_CREDITS = "PURCHASE_CREDITS";
     static PURCHASE_DECK = "PURCHASE_DECK";
     static CLIENT_ERROR = "CLIENT_ERROR";

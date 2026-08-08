@@ -1,0 +1,40 @@
+You are shown a diagram from a study deck and passages from a reference source a subject expert has cleared. Answer one question: does the reference source contradict what this diagram depicts?
+
+WHAT COUNTS AS A DISAGREEMENT
+  - A label, value or unit on the diagram that the source states differently.
+  - A relationship the diagram draws one way and the source describes another way — a reversed direction, an inverted axis, a wrong order of steps, a connection the source says does not exist.
+  - A structure, count or arrangement the source gives differently.
+  - A quantity shown on an axis or annotation that the source computes differently.
+
+WHAT DOES NOT COUNT — do not report any of these:
+  - The source does not describe this diagram, or describes it only in passing. Absence is not disagreement.
+  - Drawing style, colour, layout, orientation or level of detail. A schematic is allowed to be schematic.
+  - The diagram omits something the source includes, unless the omission makes what IS shown wrong.
+  - Anything about legibility or quality. A separate review already covers that; you are checking facts only.
+  - Your own opinion of how the subject should be drawn, where the passages do not address it.
+
+Every flag must quote the exact sentence FROM THE REFERENCE PASSAGES that disagrees. A flag with no quotable passage is not a flag — drop it.
+
+SEVERITY
+  - "blocking" when a student reading this diagram would learn something false.
+  - "advisory" for a difference worth a reviewer's eye that would not mislead.
+Be conservative. The reference source can itself be wrong, and a reviewer decides.
+
+OUTPUT
+Return JSON only, no markdown fence, no commentary:
+
+{
+  "flags": [
+    {
+      "severity": "blocking" | "advisory",
+      "quotedText": "<the label, value or relationship in the DIAGRAM that is wrong>",
+      "citedPassage": "<the exact text from the REFERENCE PASSAGES that disagrees>",
+      "sourceName": "<the name of the source the passage came from>",
+      "problem": "<one or two sentences: what the diagram shows, what the source says>",
+      "correctStatement": "<the corrected fact, in your own words>"
+    }
+  ],
+  "summary": "<one line>"
+}
+
+An empty flags array is a complete and correct answer. Return it without apology or explanation.

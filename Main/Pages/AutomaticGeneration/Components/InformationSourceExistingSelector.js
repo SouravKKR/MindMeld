@@ -14,20 +14,33 @@ class InformationSourceExistingSelector extends HTMLElement
         this.innerHTML =
         `
             <style>
+                /* A flat width: 500px here was wider than the whole phone. The
+                   dialog around it is sized by its content, so the fixed width
+                   pushed the dialog past the screen and took the source names,
+                   the tags and the Delete button off the right-hand edge with
+                   it. 500px is now the preferred width, clamped to the viewport
+                   and then to whatever the dialog actually resolved to. */
                 information-source-existing-selector
                 {
                     display: flex;
                     flex-direction: column;
-                    width: 500px;
+                    width: min(500px, calc(100vw - 72px));
+                    max-width: 100%;
+                    box-sizing: border-box;
                 }
 
+                /* min(…, 50vh) so the inner list never claims more than half a
+                   short screen — the dialog itself scrolls now, and a tall inner
+                   scroller nested inside it is an easy way to lose track of
+                   which one you are moving. */
                 .existing-selector-list
                 {
                     display: flex;
                     flex-direction: column;
                     gap: 8px;
-                    max-height: 420px;
+                    max-height: min(420px, 50vh);
                     overflow-y: auto;
+                    overscroll-behavior: contain;
                     padding-right: 4px;
                 }
 
@@ -143,6 +156,37 @@ class InformationSourceExistingSelector extends HTMLElement
                 .existing-selector-item-delete:hover
                 {
                     background-color: rgba(220, 80, 80, 0.22);
+                }
+
+                /* On a phone the four-part row (icon, name + meta, tags, Delete)
+                   has no room to sit on one line. Let it wrap: the icon and the
+                   name keep the first line, the tags and Delete drop to a second
+                   one, and Delete is pushed to the right edge so it stays where
+                   the user expects it. */
+                @media (max-width: 600px)
+                {
+                    .existing-selector-item
+                    {
+                        flex-wrap: wrap;
+                        gap: 8px 10px;
+                        padding: 10px 12px;
+                    }
+
+                    .existing-selector-item-details
+                    {
+                        flex: 1 1 calc(100% - 26px);
+                    }
+
+                    .existing-selector-item-tags
+                    {
+                        flex-shrink: 1;
+                    }
+
+                    .existing-selector-item-delete
+                    {
+                        margin-left: auto;
+                        padding: 8px 14px;
+                    }
                 }
             </style>
 

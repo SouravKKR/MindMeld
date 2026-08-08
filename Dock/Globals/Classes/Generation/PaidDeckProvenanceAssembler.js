@@ -57,6 +57,7 @@ class PaidDeckProvenanceAssembler
                 deckId: assemblyDetails.deckId,
                 deckName: assemblyDetails.deckName,
                 generatedByUserId: assemblyDetails.userId,
+                producedDeckIds: assemblyDetails.producedDeckIds || [],
                 sources: sources,
                 declaredSourceTypeNames: sources.map(source => source.declaredSourceType).filter(Boolean),
                 acceptedSourceTypeName: PaidDeckProvenanceAssembler.#resolveSourceTypeName(PaidDeckGenerationGate.ALLOWED_SOURCE_TYPE),

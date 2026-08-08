@@ -155,6 +155,25 @@ class SyncQueryEngine
     }
 
     /**
+     * Retrieves one deck's stored data, or null when the user has no such deck.
+     * @param {string} userId - The id of the user who owns the deck.
+     * @param {string} deckId - The deck's id.
+     * @returns {Promise<object|null>} The deck's data object.
+     */
+    static async getDeck(userId, deckId)
+    {
+        if (typeof deckId !== "string" || deckId.length === 0)
+        {
+            return null;
+        }
+
+        const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.DECKS_COLLECTION);
+        const document = await collection.findOne({ userId: userId, "data.id": deckId }, { projection: { _id: 0, data: 1 } });
+
+        return document ? document.data : null;
+    }
+
+    /**
      * Retrieves all decks updated on the server since the given timestamp for a user.
      * Uses the server-side serverUpdatedAt field, not the entity's own lifecycle timestamp.
      * @param {string} userId - The id of the user.

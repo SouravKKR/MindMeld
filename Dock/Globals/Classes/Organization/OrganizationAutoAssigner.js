@@ -250,6 +250,19 @@ class OrganizationAutoAssigner
      */
     static async #grantOnce(userId, deckId, organization, durationDays)
     {
+        // Same rule as a purchase, and checked before anything is written: a
+        // standing perk pointing at a withdrawn deck stops minting rather than
+        // quietly handing out content the catalogue no longer sells. Placed
+        // first so a refusal cannot leave a completed purchase row behind with
+        // no licence to match it.
+        const PaidDeckAcquisitionGate = require("../PaidDeck/PaidDeckAcquisitionGate");
+        const acquisitionDecision = await PaidDeckAcquisitionGate.evaluateById(deckId);
+        if (!acquisitionDecision.allowed)
+        {
+            console.warn(`[OrganizationAutoAssigner] Skipped ${deckId}: ${acquisitionDecision.reason}`);
+            return false;
+        }
+
         try
         {
             const database = await DatabaseConnector.getDatabase();

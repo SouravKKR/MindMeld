@@ -31,6 +31,10 @@
             "datatype": "enum:TagMatchModes",
             "defaultValue": 0
         },
+        "attributeConditions": {
+            "datatype": "array<object>",
+            "defaultValue": []
+        },
         "amount": {
             "datatype": "float",
             "defaultValue": 0,

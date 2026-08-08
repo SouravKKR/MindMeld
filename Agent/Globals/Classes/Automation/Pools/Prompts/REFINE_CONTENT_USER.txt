@@ -1,0 +1,9 @@
+Subject: {subject_name}
+Topic: {topic_chain}
+Passage type: {target_description}
+
+INSTRUCTION FROM THE REVIEWER
+{instruction}
+{reference_block}
+CURRENT CONTENT
+{before_html}

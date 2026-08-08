@@ -6,7 +6,7 @@ from Globals.Enumerations.PlanFeatures import PlanFeatures
 
 
 class Organization:
-    def __init__(self, name: str = None, admin_email: str = None, admin_user_id: str = '', status: OrganizationStatus = OrganizationStatus(0), currency: str = 'INR', creation_amount_minor: int = 0, max_members: int = 0, current_member_count: int = 0, creation_date: datetime = datetime.now(), activation_date: datetime = datetime.now(), term_ends_at: datetime = datetime.now(), max_storage_grant_bytes_per_member: int = 0, max_credits_per_member_per_month: float = 0, max_published_decks: int = 0, grantable_features: List[PlanFeatures] = [], additional_data: dict = {}) -> None:
+    def __init__(self, name: str = None, admin_email: str = None, admin_user_id: str = '', status: OrganizationStatus = OrganizationStatus(0), currency: str = 'INR', creation_amount_minor: int = 0, max_members: int = 0, current_member_count: int = 0, creation_date: datetime = datetime.now(), activation_date: datetime = datetime.now(), term_ends_at: datetime = datetime.now(), max_storage_grant_bytes_per_member: int = 0, max_credits_per_member_per_month: float = 0, max_published_decks: int = 0, grantable_features: List[PlanFeatures] = [], admin_allowed_features: List[PlanFeatures] = [], additional_data: dict = {}) -> None:
         self.__id = str(uuid.uuid4())
         self.set_name(name)
         self.set_admin_email(admin_email)
@@ -23,6 +23,7 @@ class Organization:
         self.set_max_credits_per_member_per_month(max_credits_per_member_per_month)
         self.set_max_published_decks(max_published_decks)
         self.set_grantable_features(grantable_features)
+        self.set_admin_allowed_features(admin_allowed_features)
         self.set_additional_data(additional_data)
 
     def get_id(self) -> str:
@@ -209,6 +210,15 @@ class Organization:
                 value = None
         self.__grantable_features = value
 
+    def get_admin_allowed_features(self) -> List[PlanFeatures]:
+        return self.__admin_allowed_features
+
+    def set_admin_allowed_features(self, value: List[PlanFeatures]) -> None:
+        if value is not None:
+            if not isinstance(value, list):
+                value = None
+        self.__admin_allowed_features = value
+
     def get_additional_data(self) -> dict:
         return self.__additional_data
 
@@ -237,6 +247,7 @@ class Organization:
             'maxCreditsPerMemberPerMonth': self.get_max_credits_per_member_per_month(),
             'maxPublishedDecks': self.get_max_published_decks(),
             'grantableFeatures': [int(item.value) for item in self.get_grantable_features()] if self.get_grantable_features() is not None else None,
+            'adminAllowedFeatures': [int(item.value) for item in self.get_admin_allowed_features()] if self.get_admin_allowed_features() is not None else None,
             'additionalData': self.get_additional_data(),
         }
 
@@ -258,6 +269,7 @@ class Organization:
             max_credits_per_member_per_month=data.get('maxCreditsPerMemberPerMonth'),
             max_published_decks=data.get('maxPublishedDecks'),
             grantable_features=[PlanFeatures(v) for v in data.get('grantableFeatures')] if data.get('grantableFeatures') is not None else None,
+            admin_allowed_features=[PlanFeatures(v) for v in data.get('adminAllowedFeatures')] if data.get('adminAllowedFeatures') is not None else None,
             additional_data=data.get('additionalData')
         )
         if data.get('id') is not None:

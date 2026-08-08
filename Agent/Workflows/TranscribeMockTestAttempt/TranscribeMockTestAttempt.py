@@ -308,18 +308,16 @@ class TranscribeMockTestAttempt(Workflow):
     def __rasterize_pdf(pdf_bytes, remaining_slots, write_log):
         page_pngs = []
         try:
-            import fitz
+            from Globals.Classes.Pdf.PdfDocumentReader import PdfDocumentReader
 
-            document = fitz.open(stream=pdf_bytes, filetype="pdf")
-            try:
-                for page_index in range(min(document.page_count, remaining_slots)):
-                    page = document.load_page(page_index)
-                    pixmap = page.get_pixmap(dpi=TranscribeMockTestAttempt.PDF_RASTER_DPI)
-                    normalized_png = TranscribeMockTestAttempt.__normalize_image_to_png(pixmap.tobytes("png"), write_log)
+            with PdfDocumentReader(pdf_bytes) as pdf_reader:
+                for page_index in range(min(pdf_reader.get_page_count(), remaining_slots)):
+                    rendered_png = pdf_reader.render_page_to_png_bytes(
+                        page_index, TranscribeMockTestAttempt.PDF_RASTER_DPI
+                    )
+                    normalized_png = TranscribeMockTestAttempt.__normalize_image_to_png(rendered_png, write_log)
                     if normalized_png is not None:
                         page_pngs.append(normalized_png)
-            finally:
-                document.close()
         except Exception as raster_error:
             write_log(f"[TranscribeMockTestAttempt] PDF rasterization failed: {raster_error}")
         return page_pngs

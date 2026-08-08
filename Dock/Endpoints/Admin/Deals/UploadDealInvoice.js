@@ -1,6 +1,9 @@
 const fs = require("fs");
 const CreditDealPaymentQueryEngine = require("../../../Globals/Classes/Credits/CreditDealPaymentQueryEngine");
 const Persistence = require("../../../Globals/Classes/Persistence");
+const EphemeralUploadRegistry = require("../../../Globals/Classes/Content/EphemeralUploadRegistry");
+const DatabaseConstants = require("../../../Globals/Constants/DatabaseConstants");
+const { ephemeralUploadKinds } = require("../../../Globals/Enumerations/EphemeralUploadKinds");
 const { storageTargets } = require("../../../Globals/Enumerations/StorageTargets");
 const ErrorCodes = require("../../../Globals/Constants/ErrorCodes");
 const { httpStatus } = require("../../../Globals/Enumerations/HttpStatus");
@@ -122,6 +125,26 @@ async function uploadDealInvoice(request, response)
         response.sendJson({ error: ErrorCodes.GCS_UPLOAD_FAILED, reason: uploadError?.message });
         return;
     }
+
+    // A commercial record rather than user content, so this window is a
+    // statutory one, not a privacy one: the Companies Act 2013 requires books
+    // of account and their vouchers to be preserved for eight years, which is
+    // longer than any other retention rule in the platform. Registered with a
+    // null userId deliberately — the invoice belongs to the deal, so deleting
+    // the counterparty's account must not shred the accounting record.
+    //
+    // It is booked here rather than left with no lifecycle at all because an
+    // unstated retention period is how the other two storage gaps came to
+    // exist: nothing was wrong with keeping the file, only with nothing ever
+    // having decided for how long.
+    await EphemeralUploadRegistry.register
+    ({
+        storagePrefix: `${INVOICE_DIRECTORY}/${dealId}/`,
+        kind: ephemeralUploadKinds.DEAL_INVOICE,
+        userId: null,
+        retentionDays: DatabaseConstants.DEAL_INVOICE_RETENTION_DAYS,
+        metadata: { dealId: dealId, fileName: fileName },
+    });
 
     await CreditDealPaymentQueryEngine.attachInvoice(dealId, {
         fileName: fileName,

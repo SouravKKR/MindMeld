@@ -22,10 +22,12 @@ Two tiers, so the default run needs no network and no services:
 """
 
 import asyncio
+import io
 import os
 import re
 import sys
 import threading
+import tokenize
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -385,6 +387,7 @@ def verify_no_workflow_builds_its_own_http_client() -> None:
     section("Regression guard: no workflow builds its own HTTP client")
 
     offenders = []
+
     allowed_files = {
         AGENT_DIRECTORY / "Globals" / "Classes" / "WebScraping" / "WebContentFetcher.py",
         AGENT_DIRECTORY / "Globals" / "Classes" / "Automation" / "Providers" / "GoogleEnterpriseAiProvider.py",
@@ -403,13 +406,72 @@ def verify_no_workflow_builds_its_own_http_client() -> None:
         except OSError:
             continue
 
-        if client_pattern.search(source_text) is not None:
+        if client_pattern.search(strip_comments_and_strings(source_text)) is not None:
             offenders.append(str(python_file.relative_to(AGENT_DIRECTORY)))
 
     assert_that(
         len(offenders) == 0,
         f"only WebContentFetcher (and the LLM provider) construct HTTP clients{'' if not offenders else ' -- offenders: ' + ', '.join(offenders)}",
     )
+
+
+def strip_comments_and_strings(source_text: str) -> str:
+    """
+    Returns the file's CODE, with comments and string literals removed.
+
+    The regression guard below is a text search, and a text search over raw
+    source cannot tell a client being constructed from a comment explaining why
+    one is not. That is not hypothetical: ContentGuardrailVerifier documents, in
+    a comment, why it builds a provider per call instead of memoising one — and
+    naming httpx.AsyncClient in that explanation was enough to report the file as
+    an SSRF regression it does not contain.
+
+    A guard that fires on prose gets read as noise, and a guard read as noise
+    stops being read at all — which is exactly how the hole it protects would
+    reopen. Tokenising rather than regexing the comments away also handles the
+    inverse case, a "#" inside a string literal, which a line-based strip would
+    get wrong in the other direction.
+
+    On a file that will not tokenise (a syntax error, an unusual encoding) the
+    raw text is returned. That can only produce a FALSE POSITIVE, never a false
+    negative, which is the right way for this particular check to fail.
+    """
+    source_lines = source_text.splitlines(keepends=True)
+
+    try:
+        comment_and_string_spans = [
+            (token.start, token.end)
+            for token in tokenize.generate_tokens(io.StringIO(source_text).readline)
+            if token.type in (tokenize.COMMENT, tokenize.STRING)
+        ]
+    except (tokenize.TokenError, IndentationError, SyntaxError, UnicodeDecodeError):
+        return source_text
+
+    # The spans are BLANKED IN PLACE rather than the surviving tokens being
+    # re-joined. Re-joining is the obvious implementation and it is wrong: it
+    # separates `httpx`, `.` and `AsyncClient` into three tokens, and whatever
+    # is put between them — a newline, a space — breaks the very pattern this
+    # is searching for. That silently turns the guard into one that passes on a
+    # file which really does construct a client, which is worse than the false
+    # positive it was written to remove.
+    editable_lines = [list(line) for line in source_lines]
+
+    for (start_row, start_column), (end_row, end_column) in comment_and_string_spans:
+        for row_number in range(start_row, end_row + 1):
+            line_index = row_number - 1
+
+            if line_index < 0 or line_index >= len(editable_lines):
+                continue
+
+            line_characters = editable_lines[line_index]
+            blank_from = start_column if row_number == start_row else 0
+            blank_to = end_column if row_number == end_row else len(line_characters)
+
+            for column_index in range(blank_from, min(blank_to, len(line_characters))):
+                if line_characters[column_index] != "\n":
+                    line_characters[column_index] = " "
+
+    return "".join("".join(line_characters) for line_characters in editable_lines)
 
 
 def verify_network_tier() -> None:

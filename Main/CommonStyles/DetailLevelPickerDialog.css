@@ -13,12 +13,13 @@ dialog-box .detail-level-picker-list
     flex-direction: column;
     gap: 10px;
     padding: 8px 0 16px 0;
-    /* The host dialog-box caps at 85% of the viewport in portrait (see
-       DialogBox.css) and DialogBox.modal wraps the content in a div with
-       20px of horizontal padding on each side. Subtracting that 44px keeps
-       the list — and therefore the rows / actions — inside the dialog box
+    /* The host dialog-box caps at 100vw - 16px on phones and 85% of the
+       viewport on wider portrait screens (see DialogBox.css), and
+       DialogBox.modal wraps the content in a div padded 14px per side on
+       phones, 20px elsewhere. Subtracting the larger 44px keeps the list — and
+       therefore the rows / actions — inside the dialog box in both cases
        instead of spilling past its right edge on narrow portrait screens. */
-    min-width: min(440px, calc(85vw - 44px));
+    min-width: min(440px, calc(100vw - 44px));
     max-width: 100%;
     box-sizing: border-box;
 }

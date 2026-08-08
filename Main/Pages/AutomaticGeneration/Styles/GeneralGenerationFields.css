@@ -93,3 +93,28 @@ general-generation-fields .auto-fill-options-container .credit-warning-note
 {
     white-space: normal;
 }
+
+/* ── Phones ─────────────────────────────────────────────────────────────────
+   The page's own breakpoint already puts each label on its own full-width row,
+   which leaves the control and its credit warning sharing the row below. The
+   warnings are the long ones ("⚠ Consumes a lot of credits", "⚠ Curriculum/
+   syllabus source only") and nowrap would push them off the right edge rather
+   than wrap, so they take their own row here and wrap normally. */
+@media (max-width: 600px)
+{
+    general-generation-fields .credit-warning-note
+    {
+        flex: 1 1 100%;
+        margin-left: 0;
+        white-space: normal;
+    }
+
+    general-generation-fields .template-picker-button,
+    general-generation-fields .auto-fill-options-button
+    {
+        flex: 1 1 100%;
+        width: 100%;
+        min-height: 46px;
+        box-sizing: border-box;
+    }
+}

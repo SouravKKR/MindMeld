@@ -3,6 +3,7 @@ const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const PaidDeckPublishGate = require("../../Globals/Classes/Generation/PaidDeckPublishGate");
+const PaidDeckProvenanceLinkResolver = require("../../Globals/Classes/Generation/PaidDeckProvenanceLinkResolver");
 const GenerationProvenanceQueryEngine = require("../../Globals/Classes/Database/GenerationProvenanceQueryEngine");
 
 const ALLOWED_FIELDS = new Set
@@ -74,9 +75,14 @@ async function updatePaidDeck(request, response)
     // (passing the gate trivially) and then published through this endpoint,
     // which would make the control decorative. Every other field update is
     // unaffected, including turning publication OFF.
+    // Resolved once and reused by the stamp below: the gate and the publication
+    // record must consult the same deck, and that deck is the listing's source,
+    // not the listing itself.
+    const provenanceDeckId = await PaidDeckProvenanceLinkResolver.resolveProvenanceDeckId(deckId);
+
     if (setOperations.isPublished === true)
     {
-        const publishDecision = await PaidDeckPublishGate.evaluate(deckId);
+        const publishDecision = await PaidDeckPublishGate.evaluate(provenanceDeckId);
         if (!publishDecision.allowed)
         {
             response.statusCode = httpStatus.CONFLICT;
@@ -106,7 +112,7 @@ async function updatePaidDeck(request, response)
     {
         try
         {
-            await GenerationProvenanceQueryEngine.recordPublication(deckId, request.user?.getId() || null);
+            await GenerationProvenanceQueryEngine.recordPublication(provenanceDeckId, request.user?.getId() || null);
         }
         catch (publicationRecordError)
         {

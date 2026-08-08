@@ -3,6 +3,7 @@ const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnec
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const InformationSourceQueryEngine = require("../../Globals/Classes/Database/InformationSourceQueryEngine");
 const InformationSourcePurger = require("../../Globals/Classes/Content/InformationSourcePurger");
+const DerivedContentPurger = require("../../Globals/Classes/Content/DerivedContentPurger");
 const EphemeralUploadRegistry = require("../../Globals/Classes/Content/EphemeralUploadRegistry");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
@@ -50,6 +51,26 @@ async function handleDeleteAccount(request, response)
     {
         await InformationSourcePurger.purgeSingleSource(userInformationSource);
         purgedSourceCount++;
+    }
+
+    // Derived content the loop above could not reach. It works from surviving
+    // information-source rows outwards, so page text and figure crops left by an
+    // earlier interrupted cascade have nothing pointing at them and would
+    // outlive the account. This sweeps the user's whole figure prefix as well as
+    // their rows, because erasure has to mean the extracted images are gone —
+    // not merely that the records naming them are.
+    let purgedDerivedContent = { embeddingChunksRemoved: 0, figuresRemoved: 0, figureObjectsRemoved: 0, figureObjectsFailed: 0, storageError: null };
+    try
+    {
+        purgedDerivedContent = await DerivedContentPurger.purgeAllForUser(userId);
+    }
+    catch (derivedPurgeError)
+    {
+        // Same ordering rationale as the ephemeral purge below: leave the
+        // account intact so the deletion can be retried rather than
+        // half-completing an erasure.
+        console.error(`[HandleDeleteAccount] Could not purge derived content for ${userId}: ${derivedPurgeError?.message || derivedPurgeError}`);
+        throw derivedPurgeError;
     }
 
     // Uploaded files that are NOT information sources — scanned answer sheets
@@ -118,6 +139,12 @@ async function handleDeleteAccount(request, response)
     // this one is object-storage prefixes emptied, and conflating them would
     // hide a failed blob purge behind a successful row delete.
     wipeCounts.ephemeralUploadPrefixesPurged = purgedEphemeralPrefixCount;
+    // Same reasoning — the figure objects are counted apart from the figure rows
+    // so a storage failure cannot hide behind a successful row delete.
+    wipeCounts.derivedEmbeddingChunksPurged = purgedDerivedContent.embeddingChunksRemoved;
+    wipeCounts.derivedFigureRowsPurged = purgedDerivedContent.figuresRemoved;
+    wipeCounts.derivedFigureObjectsPurged = purgedDerivedContent.figureObjectsRemoved;
+    wipeCounts.derivedFigureObjectsFailed = purgedDerivedContent.figureObjectsFailed;
 
     // The session rows are gone, so the cookie is already invalid server-side —
     // clear it client-side too so the browser stops presenting a dead cookie.

@@ -1,6 +1,6 @@
 import DialogBox from "../../CommonComponents/DialogBox.js";
 import ProgressDialog from "../../CommonComponents/ProgressDialog.js";
-import PaidDeckPasswordPrompt from "./PaidDeckPasswordPrompt.js";
+import PaidDeckPasswordSetup from "./PaidDeckPasswordSetup.js";
 import PaidDeckLicenseSyncer from "./Syncing/PaidDeckLicenseSyncer.js";
 import PaidDeckSession from "./Crypto/PaidDeckSession.js";
 import SyncManager from "./SyncManager.js";
@@ -248,48 +248,20 @@ class PaidDeckPurchaseFlow
     }
 
     /**
-     * Walks the buyer through a one-time paid-deck password setup
-     * after their first purchase. The password derives the KEK that
-     * wraps every owned deck's content key — without it the server
-     * refuses to deliver content. Skipping for now is allowed (the
-     * buyer can come back later) but they won't be able to study
-     * until they set one.
+     * Walks the buyer through the one-time paid-deck password setup after their
+     * first purchase. The password derives the KEK that wraps every owned
+     * deck's content key — without it the server refuses to deliver content, so
+     * the prompt cannot be dismissed and this returns only once a password has
+     * been chosen.
      *
-     * Returns { confirmed, setupSucceeded, password } so the caller
-     * can pre-unlock the PaidDeckSession immediately — eliminating
-     * the second password prompt when the user first opens the deck.
+     * Returns { setupSucceeded, password } so the caller can pre-unlock the
+     * PaidDeckSession immediately — eliminating the second password prompt when
+     * the user first opens the deck.
      */
     static async #promptPasswordSetup()
     {
-        const setupResult = await PaidDeckPasswordPrompt.showSetupPrompt();
-        if (!setupResult.confirmed)
-        {
-            return { confirmed: false, setupSucceeded: false };
-        }
-
-        try
-        {
-            const setupResponse = await fetch("/PaidDecks/SetPassword",
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ password: setupResult.password })
-            });
-
-            if (!setupResponse.ok)
-            {
-                const errorJson = await setupResponse.json().catch(() => ({}));
-                await DialogBox.alert("Password setup failed", errorJson.error || `HTTP ${setupResponse.status}`);
-                return { confirmed: true, setupSucceeded: false };
-            }
-
-            return { confirmed: true, setupSucceeded: true, password: setupResult.password };
-        }
-        catch (setupError)
-        {
-            await DialogBox.alert("Password setup failed", setupError.message);
-            return { confirmed: true, setupSucceeded: false };
-        }
+        const setupResult = await PaidDeckPasswordSetup.run();
+        return { setupSucceeded: setupResult.succeeded, password: setupResult.password };
     }
 }
 

@@ -157,7 +157,15 @@ class OrganizationDeckPublisher
                         title: selection.deck.getName(),
                         description: "",
                         tags: [],
-                        isPublished: true
+                        isPublished: true,
+                        // Sent for the same reason the catalogue upload sends
+                        // it: an organisation publish is gated by the identical
+                        // review gate, and without the link that gate cannot
+                        // find the generation record to gate against. Being
+                        // free changes the price, not whether the content was
+                        // verified.
+                        sourceDeckId: selection.deck.getId(),
+                        provenanceDeckId: selection.deck.getId()
                         // No price, no currency, no duration and no regional
                         // overrides: an organisation's decks are provided, and
                         // the server forces all of that to free regardless of

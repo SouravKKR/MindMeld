@@ -8,7 +8,8 @@ const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 /**
  * POST /Organization/Permissions/Set
  *
- * Body: { organizationId, rules: [{ name, tagFilter, matchMode, allowedFeatures, storageGrantBytes }] }
+ * Body: { organizationId, rules: [{ name, tagFilter, matchMode, attributeConditions,
+ *          allowedFeatures, storageGrantBytes }] }
  *
  * Replaces the whole rule set. Replacement rather than per-rule editing because
  * what a member ends up with depends on every rule at once — saving the set the
@@ -19,6 +20,12 @@ const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
  * the server would refuse to honour later. Clamping at write AND at read means
  * a rule stored before a ceiling was lowered stops granting the excess
  * immediately, without needing a migration.
+ *
+ * `attributeConditions` targets the institute's own columns — an admission year,
+ * a role, a section. Each is checked against an allow-list of member-document
+ * paths before it is stored, so a crafted rule cannot be written against
+ * membership internals like delegatePowers that no screen offers and that are
+ * not the institute's to target.
  */
 async function setOrganizationPermissionRules(request, response)
 {

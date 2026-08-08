@@ -34,6 +34,7 @@ class OrganizationErrorMessages
         [ErrorCodes.MAX_MEMBERS_BELOW_CURRENT]: "Capacity can't be lower than the number of members already in this organization. Remove members first.",
         [ErrorCodes.CAP_REACHED]: "This organization is at its member capacity. Raise the capacity or remove members first.",
         [ErrorCodes.CAP_OR_STATE_REJECTED]: "This organization is at its member capacity, or is not active. Check both and try again.",
+        [ErrorCodes.INVALID_FEATURE_SELECTION]: "One of the ticked features isn't recognised. Reload this screen and set them again.",
         [ErrorCodes.INVALID_PERK]: "One of the deck perks isn't valid. Check its type, value and duration.",
         [ErrorCodes.INVALID_PERK_TYPE]: "Pick a perk type for every deck perk.",
         [ErrorCodes.INVALID_PERK_VALUE]: "Perk value must be a whole number of zero or more (0–100 for a percentage discount).",

@@ -1,4 +1,5 @@
 const AdminListDefinition = require("./AdminListDefinition");
+const PaidDeckAcquisitionGate = require("../PaidDeck/PaidDeckAcquisitionGate");
 const TextSearchFilter = require("../PaidDeckFilters/TextSearchFilter");
 const NumberRangeFilter = require("../PaidDeckFilters/NumberRangeFilter");
 const DateRangeFilter = require("../PaidDeckFilters/DateRangeFilter");
@@ -20,6 +21,7 @@ const { couponBenefitTargets } = require("../../Enumerations/CouponBenefitTarget
 const { supportTicketStatus } = require("../../Enumerations/SupportTicketStatus");
 const { supportTicketTypes } = require("../../Enumerations/SupportTicketTypes");
 const { supportTicketReportStatus } = require("../../Enumerations/SupportTicketReportStatus");
+const { sourceLicenceTypes } = require("../../Enumerations/SourceLicenceTypes");
 const SupportTicketLimits = require("../Support/SupportTicketLimits");
 const { supportTicketTypeDisplayName } = require("../../UtilityFunctions.js/SupportTicketTypeDisplayName");
 
@@ -38,6 +40,26 @@ const LOG_SERVICE_NAME_BY_VALUE = Object.fromEntries(Object.entries(logServiceOr
 class AdminListRegistry
 {
     static #definitionsByKey = new Map();
+
+    /**
+     * Human labels for the declared-licence values.
+     *
+     * Kept as a map rather than printing the enum name, because these appear in
+     * a log an auditor reads: "CC BY" is a licence a reader recognises,
+     * "CC_BY" is an identifier from our codebase. The audit-trail renderer keeps
+     * its own copy for the same reason — it runs as a standalone Python script
+     * with no access to this one.
+     */
+    static #SOURCE_LICENCE_LABELS =
+    {
+        [sourceLicenceTypes.UNSPECIFIED]: "Not specified",
+        [sourceLicenceTypes.CC0]: "CC0",
+        [sourceLicenceTypes.PUBLIC_DOMAIN]: "Public domain",
+        [sourceLicenceTypes.CC_BY]: "CC BY",
+        [sourceLicenceTypes.OWN_WORK]: "Own work",
+        [sourceLicenceTypes.LICENSED_PERMISSION]: "Licensed / permission held",
+        [sourceLicenceTypes.OTHER]: "Other (see note)",
+    };
 
     static #ORGANIZATION_STATUS_LABELS =
     {
@@ -118,7 +140,12 @@ class AdminListRegistry
                 // what the table columns render.
                 ...document,
                 priceLabel: `${document.currency || "INR"} ${((document.basePriceMinor || 0) / 100).toFixed(2)}`,
-                publishedLabel: document.isPublished ? "✓" : "",
+                // Retired and draft are both "not published", and a blank cell
+                // for each left an operator unable to tell a deck they withdrew
+                // from one they never finished.
+                publishedLabel: PaidDeckAcquisitionGate.isRetired(document)
+                    ? "Retired"
+                    : (document.isPublished ? "✓" : "Draft"),
                 isPublished: !!document.isPublished,
                 subdeckCount: Array.isArray(document.bundleChildIds) ? document.bundleChildIds.length : 0
             }),
@@ -377,6 +404,81 @@ class AdminListRegistry
             },
             defaultSort: { field: "occurredAt", direction: -1 },
             sortableFields: ["occurredAt", "statusCode"],
+            rowIdField: "id"
+        }));
+
+        // ── Source licence declarations (permanent IPR log) ─────────────────
+        //
+        // Every declaration an administrator has made about a document used to
+        // verify a paid deck. Browsable here as well as printed in each deck's
+        // audit trail, because the question "what have we ever declared, and who
+        // declared it" is asked across decks and not only about one.
+        //
+        // Read-only, like the audit-event list beside it — the collection is
+        // insert-only by design and there is nothing here to edit.
+        AdminListRegistry.register(new AdminListDefinition
+        ({
+            listKey: adminListTypes.SOURCE_LICENCE_DECLARATIONS,
+            collectionName: DatabaseConstants.SOURCE_LICENCE_DECLARATIONS_COLLECTION,
+            searchableFields: ["sourceName", "declaredByEmail", "deckId", "sourceUrl"],
+            searchPlaceholder: "Search source, admin, deck or URL…",
+            filters:
+            [
+                new EnumFilter
+                ({
+                    key: "event",
+                    label: "Event",
+                    field: "event",
+                    options:
+                    [
+                        { value: "ATTACHED", label: "Attached" },
+                        { value: "DETACHED", label: "Detached" }
+                    ]
+                }),
+                new EnumFilter
+                ({
+                    key: "licenceType",
+                    label: "Declared licence",
+                    field: "licenceType",
+                    options: Object.entries(sourceLicenceTypes).map(([licenceName, licenceValue]) => ({
+                        value: licenceValue,
+                        label: AdminListRegistry.#SOURCE_LICENCE_LABELS[licenceValue] || licenceName,
+                    }))
+                }),
+                new DateRangeFilter({ key: "createdAt", label: "When", field: "createdAt" })
+            ],
+            columns:
+            [
+                { key: "createdAt", label: "When", format: "dateTime" },
+                { key: "event", label: "Event", badge: { "ATTACHED": { label: "Attached", variant: "info" }, "DETACHED": { label: "Detached", variant: "neutral" } } },
+                { key: "sourceName", label: "Source" },
+                { key: "licence", label: "Declared licence" },
+                { key: "declaredBy", label: "Declared by" },
+                { key: "deckId", label: "Deck" },
+                { key: "sourceUrl", label: "URL" }
+            ],
+            rowMapper: (document) =>
+            {
+                const licenceLabel = AdminListRegistry.#SOURCE_LICENCE_LABELS[document.licenceType] || "Unrecognised";
+                const licenceNote = (document.licenceNote || "").trim();
+
+                return {
+                    id: document.declarationId,
+                    createdAt: document.createdAt || null,
+                    event: document.event || "ATTACHED",
+                    sourceName: document.sourceName || "",
+                    // The note is shown WITH the label rather than in a column of
+                    // its own. For OTHER and LICENSED_PERMISSION the note is what
+                    // the declaration actually says — a row reading only "Other"
+                    // would show the shape of a declaration without its content.
+                    licence: licenceNote ? `${licenceLabel} — ${licenceNote}` : licenceLabel,
+                    declaredBy: document.declaredByEmail || (document.declaredByUserId ? `user ${document.declaredByUserId}` : ""),
+                    deckId: document.deckId || "",
+                    sourceUrl: document.sourceUrl || ""
+                };
+            },
+            defaultSort: { field: "createdAt", direction: -1 },
+            sortableFields: ["createdAt"],
             rowIdField: "id"
         }));
 

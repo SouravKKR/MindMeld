@@ -1,0 +1,10 @@
+const contentGuardrailOutcomes =
+{
+  CLEARED: 0,
+  REDACTED: 1,
+  VERIFICATION_FAILED: 2,
+  OVERFLOW_REDACTED: 3,
+  SHADOW_LOGGED: 4,
+}
+
+module.exports = { contentGuardrailOutcomes };

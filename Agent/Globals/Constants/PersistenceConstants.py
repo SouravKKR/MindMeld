@@ -6,6 +6,7 @@ class PersistenceConstants:
     COVERAGE_RECONCILIATION_FILE_NAME = 'CoverageReconciliation.json'
     GENERATED_VISUALS_DIRECTORY = 'GeneratedVisuals'
     PAID_DECK_VERIFICATION_FILE_NAME = 'PaidDeckVerification.json'
+    PAID_DECK_SOURCE_VERIFICATION_DIRECTORY = 'PaidDeckSourceVerification'
     PAID_DECK_ACTION_LOG_DIRECTORY = 'PaidDeckActionLog'
     BLUEPRINT_FILE_NAME = 'Blueprint.json'
     MAPPED_TOPICS_DIRECTORY = 'MappedTopics'
@@ -17,3 +18,4 @@ class PersistenceConstants:
     MOCK_TEST_TRANSCRIPTIONS_DIRECTORY = 'MockTestTranscriptions'
     IMAGE_SYLLABUS_FILE_NAME = 'ImageSyllabus.json'
     VALIDATED_FIGURES_FILE_NAME = 'ValidatedFigures.json'
+    FIGURE_DIRECTORY = 'figures'

@@ -849,17 +849,20 @@ button.ask-ai-injected-delete:hover
     .ask-ai-dialog
     {
         /* Force the dialog to fill the host <dialog-box> on phones.
-           dialog-box itself has no explicit width — only max-width: 85%
-           (portrait) — so without a width floor here it shrinks to the
-           content's min-content size. The streaming body sets
-           `overflow-wrap: anywhere`, which makes that min-content
-           essentially one character wide, and the saved-response
-           preview opened from `.ask-ai-popup-link` ended up rendering
-           text one or two words per line inside a dialog occupying
-           roughly half the viewport. The 40px subtracted from 85vw
-           accounts for the 20px horizontal padding the wrapper div
-           added by DialogBox.modal contributes on each side. */
-        width: calc(85vw - 40px);
+           dialog-box has no width of its own, so without a width floor
+           here it shrinks to the content's min-content size. The
+           streaming body sets `overflow-wrap: anywhere`, which makes
+           that min-content essentially one character wide, and the
+           saved-response preview opened from `.ask-ai-popup-link` ended
+           up rendering text one or two words per line inside a dialog
+           occupying roughly half the viewport.
+           The 44px subtracted tracks dialog-box's phone cap
+           (100vw - 16px) plus the 14px the wrapper div contributes as
+           horizontal padding on each side. Between 601px and 640px the
+           dialog is still capped at 85% with 20px of wrapper padding, so
+           this asks for more width than is available there — max-width
+           below clamps it back to whatever the dialog resolved to. */
+        width: calc(100vw - 44px);
         min-width: 0;
         max-width: 100%;
         padding: 8px 14px 18px 14px;

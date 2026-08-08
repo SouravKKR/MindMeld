@@ -682,8 +682,10 @@ class DeckEditorPage extends HTMLElement
                     <button class="deck-field-input deck-clear-analysis-data-input">Clear Analysis Data</button>
                 </div>
                 <div class="deck-field deck-beautify-short-names-container">
-                    <button class="deck-field-input deck-beautify-short-names-input">Beautify Short Names (AI)</button>
-                    <span class="credit-warning-note">⚠ Uses AI credits</span>
+                    <div class="deck-field-action-row">
+                        <button class="deck-field-input deck-beautify-short-names-input">Beautify Short Names (AI)</button>
+                        <span class="credit-warning-note">⚠ Uses AI credits</span>
+                    </div>
                     <div class="deck-field-helper">Rewrites the short name of this deck and every sub-deck using AI based on the full deck hierarchy.</div>
                 </div>
                 <div style="height: 25px"></div>

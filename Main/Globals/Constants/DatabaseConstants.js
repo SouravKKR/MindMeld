@@ -36,6 +36,10 @@ class DatabaseConstants
     static AI_GENERATED_EXPORT_EVENTS_COLLECTION = 'aiGeneratedExportEvents';
     static AI_GENERATED_EXPORT_EVENTS_TTL_DAYS = 90;
     static GENERATION_PROVENANCE_COLLECTION = 'generationProvenance';
+    static CONTENT_REFINEMENTS_COLLECTION = 'contentRefinements';
+    static PAID_DECK_VERIFICATION_SOURCES_COLLECTION = 'paidDeckVerificationSources';
+    static SOURCE_LICENCE_DECLARATIONS_COLLECTION = 'sourceLicenceDeclarations';
+    static USER_DAILY_ACTIVITY_COLLECTION = 'userDailyActivity';
     static TASK_HISTORY_COLLECTION = 'taskHistory';
     static ADMIN_EMAILS_COLLECTION = 'adminEmails';
     static ALLOWED_LOGIN_EMAILS_COLLECTION = 'allowedLoginEmails';
@@ -43,6 +47,7 @@ class DatabaseConstants
     static RELEASE_NOTES_COLLECTION = 'releaseNotes';
     static ORGANIZATIONS_COLLECTION = 'organizations';
     static ORGANIZATION_MEMBERS_COLLECTION = 'organizationMembers';
+    static ORGANIZATION_MEMBER_COLUMNS_COLLECTION = 'organizationMemberColumns';
     static ORGANIZATION_DECK_PERKS_COLLECTION = 'organizationDeckPerks';
     static ORG_ADMIN_VERIFICATIONS_COLLECTION = 'orgAdminVerifications';
     static ORGANIZATION_PAYMENTS_COLLECTION = 'organizationPayments';
@@ -85,6 +90,9 @@ class DatabaseConstants
     static EPHEMERAL_UPLOADS_COLLECTION = 'ephemeralUploads';
     static ANSWER_SHEET_RETENTION_DAYS = 60;
     static SUPPORT_ATTACHMENT_RETENTION_DAYS = 60;
+    static GENERATION_STAGING_RETENTION_DAYS = 14;
+    static MOCK_TEST_EVALUATION_RETENTION_DAYS = 7;
+    static DEAL_INVOICE_RETENTION_DAYS = 2920;
     static ORGANIZATION_CREDIT_POOLS_COLLECTION = 'organizationCreditPools';
     static ORGANIZATION_CREDIT_TRANSACTIONS_COLLECTION = 'organizationCreditTransactions';
     static PAYMENT_ATTEMPTS_COLLECTION = 'paymentAttempts';

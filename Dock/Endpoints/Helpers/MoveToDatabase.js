@@ -1,6 +1,5 @@
 const SyncQueryEngine = require("../../Globals/Classes/Database/SyncQueryEngine");
 const Persistence = require("../../Globals/Classes/Persistence");
-const PersistenceConstants = require("../../Globals/Constants/PersistenceConstants");
 const SyllabusFingerprintMatcher = require("./SyllabusFingerprintMatcher");
 const { taskStatus } = require("../../Globals/Enumerations/TaskStatus");
 const { buildSyllabusPositionIndex, sortFilesBySyllabusPosition } = require("./SyllabusUtils");
@@ -12,6 +11,8 @@ const GenerationProvenance = require("../../Globals/Classes/Generation/Generatio
 const PaidDeckGenerationGate = require("../../Globals/Classes/Generation/PaidDeckGenerationGate");
 const PaidDeckProvenanceAssembler = require("../../Globals/Classes/Generation/PaidDeckProvenanceAssembler");
 const AiGeneratedTargetDeckStamper = require("../../Globals/Classes/Generation/AiGeneratedTargetDeckStamper");
+const EphemeralUploadRegistry = require("../../Globals/Classes/Content/EphemeralUploadRegistry");
+const GenerationStagingPolicy = require("../../Globals/Classes/Content/GenerationStagingPolicy");
 const { aiGeneratedStampResults } = require("../../Globals/Enumerations/AiGeneratedStampResults");
 
 /**
@@ -200,7 +201,12 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
 
     for (const deckData of deckKeyToDataMap.values())
     {
-        if (bPaidDeckMode && deckData.parent === deckId)
+        // Every deck the run produced, not only the top-level ones. The marker is
+        // how PaidDeckGenerationRunLocator maps the deck an administrator chose to
+        // sell back to the run that made it, and the deck they choose is often a
+        // sub-deck sold on its own — which, when only top-level decks carried the
+        // marker, could not be matched to its own audit trail.
+        if (bPaidDeckMode)
         {
             deckData.additionalData =
             {
@@ -268,29 +274,51 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
     // own record still exists AND the deck id it belongs to is known, so it is
     // where the two are bound together and committed.
     //
-    // One record per deck: the top-level deck the run produced. Best-effort —
-    // a failure here leaves the deck intact but unpublishable, which is the
-    // correct direction to fail in (the publish gate refuses a deck with no
-    // provenance record).
+    // One record per RUN, filed against the deck the run was launched INTO —
+    // the deck the user right-clicked, and the deck an administrator later
+    // uploads as a paid deck.
+    //
+    // Not the decks the run created. Those are its output ("Unit I: ...",
+    // "Unit II: ..."), and filing there put the record on a node nobody sells:
+    // a listing for the launch deck found nothing, the audit trail 404'd, and
+    // the publish gate — which treats "no record" as "nothing to verify" —
+    // allowed the publish. Filing it against the deck that is actually sold
+    // makes the subject of the evidence the subject of the sale, and makes the
+    // report name the deck on the listing rather than one of its children.
+    //
+    // A deck can accumulate SEVERAL records, one per run, when generation is run
+    // into it more than once. That is correct and they are all kept: each run is
+    // separate evidence about a separate act, and nothing here overwrites or
+    // merges them. Every reader — the gate, the review dialog, the audit trail —
+    // takes all of a deck's records together.
+    //
+    // Best-effort — a failure here leaves the deck intact but unpublishable,
+    // which is the correct direction to fail in (the publish gate refuses a deck
+    // with no provenance record).
     if (bPaidDeckMode && topLevelDeckIds.length > 0)
     {
-        for (const topLevelDeckId of topLevelDeckIds)
-        {
-            const topLevelDeckData = Array.from(deckKeyToDataMap.values()).find(deckData => deckData.id === topLevelDeckId);
+        // The root deck's id is the literal "0" for EVERY user, so a record filed
+        // against it would collide across accounts. A run launched from the home
+        // grid falls back to what it produced, which is at least unique.
+        const bLaunchedFromRoot = deckId === AiGeneratedTargetDeckStamper.ROOT_DECK_ID;
+        const provenanceSubjectDeckId = bLaunchedFromRoot ? topLevelDeckIds[0] : deckId;
 
-            await PaidDeckProvenanceAssembler.assembleAndRecord(
-            {
-                mainTaskId: mainTaskId,
-                deckId: topLevelDeckId,
-                deckName: topLevelDeckData ? topLevelDeckData.name : null,
-                userId: userId,
-                generalGenerationSettings: generalGenerationSettings,
-            });
-        }
+        const launchDeckData = bLaunchedFromRoot ? null : await SyncQueryEngine.getDeck(userId, deckId);
+        const producedDeckData = Array.from(deckKeyToDataMap.values()).find(deckData => deckData.id === provenanceSubjectDeckId);
+
+        await PaidDeckProvenanceAssembler.assembleAndRecord(
+        {
+            mainTaskId: mainTaskId,
+            deckId: provenanceSubjectDeckId,
+            deckName: (launchDeckData ? launchDeckData.name : null) || (producedDeckData ? producedDeckData.name : null),
+            userId: userId,
+            producedDeckIds: topLevelDeckIds,
+            generalGenerationSettings: generalGenerationSettings,
+        });
     }
 
     // ── 8. Read and print debug logs before deletion so they appear in Node.js console ──
-    const taskFolderPrefix = `${PersistenceConstants.TASKS_DIRECTORY}/${mainTaskId}/`;
+    const taskFolderPrefix = GenerationStagingPolicy.buildStoragePrefix(mainTaskId);
     const taskFiles = await Persistence.list(taskFolderPrefix);
 
     for (const filePath of taskFiles)
@@ -307,9 +335,13 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
     }
 
     // ── 9. Delete the entire task folder from GCS ─────────────────────────────
-    await Promise.all(taskFiles.map(filePath => Persistence.delete(filePath)));
+    // Routed through the registry rather than deleting the listing directly, so
+    // the deletion record Generate.js wrote at run start is cleared in the same
+    // step. Deleting the objects while leaving the row behind would leave the
+    // reaper re-listing an empty prefix on every tick, forever.
+    const removedFileCount = await EphemeralUploadRegistry.purgePrefix(taskFolderPrefix);
 
-    console.log(`[MoveToDatabase] Deleted ${taskFiles.length} GCS file(s) for task ${mainTaskId}.`);
+    console.log(`[MoveToDatabase] Deleted ${removedFileCount} GCS file(s) for task ${mainTaskId}.`);
 
     return { partialCompletion: partialCompletion, createdFlashcardCount: createdFlashcardCount, createdStudyMaterialCount: createdStudyMaterialCount };
 }

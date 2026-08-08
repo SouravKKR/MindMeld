@@ -1,16 +1,29 @@
 import OrganizationErrorMessages from "../../../Globals/Classes/Organization/OrganizationErrorMessages.js";
+import PlanFeatureCatalogue from "../../../Globals/Classes/Organization/PlanFeatureCatalogue.js";
+import FeatureCheckboxList from "../../../Globals/Classes/Organization/FeatureCheckboxList.js";
+import MemberConditionPanel from "../../../Globals/Classes/Organization/MemberConditionPanel.js";
+import RuleMatchPreviewDialog from "./RuleMatchPreviewDialog.js";
 import { getRandomUuid } from "../../../Globals/UtilityFunctions/GetRandomUuid.js";
 import { organizationDelegatePowers } from "../../../Globals/Enumerations/OrganizationDelegatePowers.js";
 import { tagMatchModes } from "../../../Globals/Enumerations/TagMatchModes.js";
-import { planFeatures } from "../../../Globals/Enumerations/PlanFeatures.js";
 
 /**
  * OrganizationPermissionsSection
  *
  * What members can do inside this organization's view, expressed as rules over
- * tags rather than over people. "Final-year students get mock-test evaluation"
- * survives a new intake; "these 400 email addresses get mock-test evaluation"
- * does not.
+ * tags and over the institute's own columns rather than over people.
+ * "Final-year students get mock-test evaluation" survives a new intake; "these
+ * 400 email addresses get mock-test evaluation" does not.
+ *
+ * A rule can name any column the institute uploads — a joining year, a role, a
+ * section — using the same controls, over the same fields, as the roster's own
+ * filters. That is deliberate reuse rather than convenience: it means "who this
+ * rule covers" and "who this filter shows" cannot come to mean different things.
+ *
+ * Because a rule that combines several of those is no longer readable at a
+ * glance, each one can say who it currently covers before it is saved. The
+ * mistake that guards against is the expensive one — a condition looser than
+ * intended handing a paid feature to the entire roster.
  *
  * A member matching several rules receives the UNION of their features and the
  * LARGEST of their storage grants, which is stated on screen because the
@@ -23,23 +36,13 @@ import { planFeatures } from "../../../Globals/Enumerations/PlanFeatures.js";
  * sold appear unticked and disabled with the reason, rather than hidden — an
  * administrator looking for "generate with AI" should find out that it is not
  * part of their agreement, not conclude the product does not have it.
+ *
+ * A third thing is stated and not editable at all: the OWNER's own access,
+ * which comes from the platform rather than from any rule here. See
+ * #buildOwnerNoticeMarkup.
  */
 class OrganizationPermissionsSection extends HTMLElement
 {
-    // Feature order and copy for the matrix. Kept here rather than derived from
-    // the enum so the labels read as product capabilities to the person buying
-    // them, not as identifiers.
-    static #FEATURE_DESCRIPTIONS =
-    [
-        { featureValue: planFeatures.ASK_AI, label: "Ask AI", description: "Ask a question about anything on screen" },
-        { featureValue: planFeatures.CHAT, label: "Chat with a deck", description: "Ask questions against the deck's own content" },
-        { featureValue: planFeatures.AUTOMATIC_GENERATION, label: "Generate with AI", description: "Build decks and study material from uploaded documents" },
-        { featureValue: planFeatures.CURATED_STUDY, label: "Curated study material", description: "Auto-written lessons targeting weak topics" },
-        { featureValue: planFeatures.MOCK_TEST_EVALUATION, label: "Mock-test evaluation", description: "AI marking and feedback on written answers" },
-        { featureValue: planFeatures.IMAGE_GENERATION, label: "Image generation", description: "Diagrams and illustrations inside generated material" },
-        { featureValue: planFeatures.MONTHLY_FREE_DECK, label: "Monthly free deck", description: "One marketplace deck a month at no cost" }
-    ];
-
     static #BYTES_PER_MEGABYTE = 1024 * 1024;
 
     #organizationId = "";
@@ -48,8 +51,12 @@ class OrganizationPermissionsSection extends HTMLElement
 
     #rules = [];
     #availableTags = [];
+    #conditionFilters = [];
+    #conditionPanelsByRuleId = new Map();
     #grantableFeatures = [];
     #alwaysIncludedFeatures = [];
+    #adminAllowedFeatures = [];
+    #bIsOwner = false;
     #maximumStorageGrantBytes = 0;
 
     initialize(context)
@@ -98,8 +105,11 @@ class OrganizationPermissionsSection extends HTMLElement
 
         this.#rules = Array.isArray(responseJson.rules) ? responseJson.rules : [];
         this.#availableTags = Array.isArray(responseJson.availableTags) ? responseJson.availableTags : [];
+        this.#conditionFilters = Array.isArray(responseJson.conditionFilters) ? responseJson.conditionFilters : [];
         this.#grantableFeatures = Array.isArray(responseJson.grantableFeatures) ? responseJson.grantableFeatures : [];
         this.#alwaysIncludedFeatures = Array.isArray(responseJson.alwaysIncludedFeatures) ? responseJson.alwaysIncludedFeatures : [];
+        this.#adminAllowedFeatures = Array.isArray(responseJson.adminAllowedFeatures) ? responseJson.adminAllowedFeatures : [];
+        this.#bIsOwner = responseJson.isOwner === true;
         this.#maximumStorageGrantBytes = Number(responseJson.maxStorageGrantBytesPerMember) || 0;
 
         this.#render();
@@ -118,6 +128,8 @@ class OrganizationPermissionsSection extends HTMLElement
                     largest storage grant among them. Nothing here changes anyone's own plan.
                 </p>
             </div>
+
+            ${this.#buildOwnerNoticeMarkup()}
 
             <div class="organization-permission-rules" data-role="rules"></div>
 
@@ -149,6 +161,7 @@ class OrganizationPermissionsSection extends HTMLElement
                 name: `Rule ${this.#rules.length + 1}`,
                 tagFilter: [],
                 matchMode: tagMatchModes.EVERYONE,
+                attributeConditions: [],
                 allowedFeatures: [],
                 storageGrantBytes: 0
             });
@@ -161,10 +174,57 @@ class OrganizationPermissionsSection extends HTMLElement
         });
     }
 
+    /**
+     * What the OWNER holds here regardless of the rules.
+     *
+     * The owner is not necessarily on their own roster, so no rule below
+     * describes their access and there is nowhere else on the page it is
+     * explained. Without this line the person with the widest access is the one
+     * person the screen tells nothing — and the reasonable response to that is
+     * to write themselves a rule they do not need, or to conclude the feature
+     * they are using is broken because no rule grants it.
+     *
+     * Rendered only for the owner: a delegate reading the same screen would be
+     * told about capability that is not theirs.
+     */
+    #buildOwnerNoticeMarkup()
+    {
+        if (!this.#bIsOwner)
+        {
+            return "";
+        }
+
+        const grantedLabels = this.#adminAllowedFeatures.map(featureValue => PlanFeatureCatalogue.getLabel(featureValue));
+
+        if (grantedLabels.length === 0)
+        {
+            return `
+                <p class="admin-panel-add-subtitle organization-owner-grant-note">
+                    As the owner you currently have only the features every account has while viewing as
+                    this organization. Ask CogniumLearn to widen that — the rules below decide what your
+                    members can do, not what you can.
+                </p>
+            `;
+        }
+
+        return `
+            <p class="admin-panel-add-subtitle organization-owner-grant-note">
+                As the owner you have <strong>${grantedLabels.join(", ")}</strong> while viewing as this
+                organization, whatever the rules below say. CogniumLearn sets that, so you never need a
+                rule for yourself — the rules below are for your members.
+            </p>
+        `;
+    }
+
     #renderRules()
     {
         const rulesHost = this.querySelector('[data-role="rules"]');
         rulesHost.innerHTML = "";
+
+        // Dropped with the DOM they were bound to. Keeping them would leave the
+        // save path reading conditions out of panels whose inputs are detached,
+        // which reads as a rule that quietly lost its conditions.
+        this.#conditionPanelsByRuleId.clear();
 
         if (this.#rules.length === 0)
         {
@@ -207,6 +267,12 @@ class OrganizationPermissionsSection extends HTMLElement
 
             <div class="organization-permission-rule-tags" data-role="tags"></div>
 
+            <div class="organization-permission-rule-conditions">
+                <span class="organization-permission-conditions-title">Narrow it further by your own columns</span>
+                <p class="organization-permission-rule-hint">Every condition set here must also be true. Leave one blank to ignore it.</p>
+                <div class="organization-condition-panel" data-role="conditions"></div>
+            </div>
+
             <div class="organization-permission-rule-features" data-role="features"></div>
 
             <label class="admin-panel-add-field">
@@ -214,6 +280,10 @@ class OrganizationPermissionsSection extends HTMLElement
                 <input type="number" min="0" step="1" data-role="storage" ${bMayEdit ? "" : "disabled"}>
                 <small class="organization-permission-rule-hint" data-role="storage-hint"></small>
             </label>
+
+            <div class="organization-permission-rule-footer">
+                <button type="button" class="organization-secondary-button" data-role="preview">Show who this matches</button>
+            </div>
         `;
 
         const nameInput = cardElement.querySelector('[data-role="name"]');
@@ -255,10 +325,55 @@ class OrganizationPermissionsSection extends HTMLElement
             });
         }
 
+        const previewButton = cardElement.querySelector('[data-role="preview"]');
+        previewButton.addEventListener("click", () =>
+        {
+            RuleMatchPreviewDialog.show
+            ({
+                organizationId: this.#organizationId,
+                ruleName: rule.name,
+                tagFilter: Array.isArray(rule.tagFilter) ? rule.tagFilter : [],
+                matchMode: Number(rule.matchMode),
+                // Read from the panel rather than from the saved rule, so the
+                // preview answers for what is on screen now — including edits
+                // that have not been saved yet, which is exactly when an
+                // administrator most needs to know who they just included.
+                attributeConditions: this.#collectConditionsForRule(rule)
+            });
+        });
+
         this.#renderTagPickers(cardElement, rule);
+        this.#renderConditionPanel(cardElement, rule);
         this.#renderFeatureMatrix(cardElement, rule);
 
         return cardElement;
+    }
+
+    /**
+     * The condition builder for one rule, rendered from the roster's own filter
+     * metadata so a rule gains a control for every column this institute keeps.
+     */
+    #renderConditionPanel(cardElement, rule)
+    {
+        const conditionsHost = cardElement.querySelector('[data-role="conditions"]');
+        const conditionPanel = new MemberConditionPanel(conditionsHost, () =>
+        {
+            rule.attributeConditions = conditionPanel.getConditions();
+        });
+
+        conditionPanel.render(this.#conditionFilters, rule.attributeConditions, !this.#mayEdit());
+        this.#conditionPanelsByRuleId.set(rule.id, conditionPanel);
+    }
+
+    #collectConditionsForRule(rule)
+    {
+        const conditionPanel = this.#conditionPanelsByRuleId.get(rule.id);
+        if (conditionPanel)
+        {
+            return conditionPanel.getConditions();
+        }
+
+        return Array.isArray(rule.attributeConditions) ? rule.attributeConditions : [];
     }
 
     #renderTagPickers(cardElement, rule)
@@ -319,66 +434,29 @@ class OrganizationPermissionsSection extends HTMLElement
 
     #renderFeatureMatrix(cardElement, rule)
     {
-        const featuresHost = cardElement.querySelector('[data-role="features"]');
-        featuresHost.innerHTML = "";
-
         const grantableFeatureSet = new Set(this.#grantableFeatures);
-        const alwaysIncludedSet = new Set(this.#alwaysIncludedFeatures);
         const selectedFeatures = new Set(Array.isArray(rule.allowedFeatures) ? rule.allowedFeatures : []);
 
-        for (const featureDescription of OrganizationPermissionsSection.#FEATURE_DESCRIPTIONS)
+        // Everything the catalogue knows about that this organization was not
+        // sold. Shown disabled with the reason rather than hidden — an
+        // administrator looking for "generate with AI" should find out that it
+        // is not part of their agreement, not conclude the product lacks it.
+        const unavailableFeatureValues = new Set
+        (
+            PlanFeatureCatalogue.getAllFeatureValues().filter(featureValue => !grantableFeatureSet.has(featureValue))
+        );
+
+        FeatureCheckboxList.render(cardElement.querySelector('[data-role="features"]'),
         {
-            const bAlwaysIncluded = alwaysIncludedSet.has(featureDescription.featureValue);
-            const bGrantable = grantableFeatureSet.has(featureDescription.featureValue);
-
-            const featureLabel = document.createElement("label");
-            featureLabel.className = "organization-permission-feature";
-
-            const featureCheckbox = document.createElement("input");
-            featureCheckbox.type = "checkbox";
-            featureCheckbox.checked = bAlwaysIncluded || selectedFeatures.has(featureDescription.featureValue);
-            featureCheckbox.disabled = bAlwaysIncluded || !bGrantable || !this.#mayEdit();
-            featureCheckbox.addEventListener("change", () =>
+            selectedFeatureValues: selectedFeatures,
+            forcedFeatureValues: new Set(this.#alwaysIncludedFeatures),
+            unavailableFeatureValues: unavailableFeatureValues,
+            bReadOnly: !this.#mayEdit(),
+            onChanged: () =>
             {
-                if (featureCheckbox.checked)
-                {
-                    selectedFeatures.add(featureDescription.featureValue);
-                }
-                else
-                {
-                    selectedFeatures.delete(featureDescription.featureValue);
-                }
                 rule.allowedFeatures = Array.from(selectedFeatures);
-            });
-
-            const featureBody = document.createElement("span");
-            featureBody.className = "organization-permission-feature-body";
-
-            const featureTitle = document.createElement("span");
-            featureTitle.className = "organization-permission-feature-title";
-            featureTitle.textContent = featureDescription.label;
-
-            const featureNote = document.createElement("small");
-            featureNote.className = "organization-permission-feature-note";
-            if (bAlwaysIncluded)
-            {
-                featureNote.textContent = "Included for everyone — this cannot be switched off.";
             }
-            else if (!bGrantable)
-            {
-                featureNote.textContent = "Not part of this organization's agreement.";
-            }
-            else
-            {
-                featureNote.textContent = featureDescription.description;
-            }
-
-            featureBody.appendChild(featureTitle);
-            featureBody.appendChild(featureNote);
-            featureLabel.appendChild(featureCheckbox);
-            featureLabel.appendChild(featureBody);
-            featuresHost.appendChild(featureLabel);
-        }
+        });
     }
 
     async #save(saveButton)
@@ -424,6 +502,10 @@ class OrganizationPermissionsSection extends HTMLElement
                         name: rule.name.trim(),
                         tagFilter: Array.isArray(rule.tagFilter) ? rule.tagFilter : [],
                         matchMode: Number(rule.matchMode),
+                        // Read from the live panel rather than the rule object,
+                        // so a condition typed but not yet blurred is saved
+                        // rather than silently dropped.
+                        attributeConditions: this.#collectConditionsForRule(rule),
                         allowedFeatures: Array.isArray(rule.allowedFeatures) ? rule.allowedFeatures : [],
                         storageGrantBytes: Number(rule.storageGrantBytes) || 0
                     }))

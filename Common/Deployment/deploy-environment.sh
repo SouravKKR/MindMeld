@@ -262,34 +262,87 @@ build_dock_context()
         -czf "$output_path" Dock
 }
 
+# The files under Common/ that a RUNNING server executes, as opposed to the ones
+# that only build the distribution. Dock ships as its own directory, so anything
+# it spawns from a sibling directory has to be shipped deliberately or it is
+# simply absent on the node: /Admin/PaidDecks/AuditTrail spawned a renderer that
+# had never been deployed, so the endpoint could only ever have failed there.
+#
+# Listed file by file rather than tarring Common/ wholesale. Common/ holds the
+# codegen sources, the audit and test suites, and the deployment scripts
+# themselves — none of which a production node should be carrying, and one of
+# which (Common/Deployment) reads deployment.env.
+build_common_runtime_context()
+{
+    local output_path="$1"
+    tar -czf "$output_path" \
+        Common/Scripts/RenderPaidDeckAuditTrail.py \
+        Common/Scripts/RenderOrganizationEngagementReport.py
+}
+
 build_frontend()
 {
     log_step "Building the production frontend (codegen + bundle + mangle + obfuscate)..."
     # Retry the whole build: on a Windows dev box the bundler's post-inline unlink of
     # Dock/Static sources intermittently hits EBUSY (Defender/indexer/IDE holding a
     # just-written file). The lock is transient, so a short wait + retry clears it.
+    #
+    # Each step's exit status is checked EXPLICITLY rather than by wrapping the run
+    # in `set -e`. Bash ignores errexit — including a `set -e` a subshell sets on
+    # itself — whenever the command sits in an `if` condition or on the left of
+    # `||`, and the previous `if ( set -e; ... )` form was exactly that, so it was
+    # inert: BundleStaticFiles.js exited 1 on an EBUSY unlink, the run carried on
+    # through mangle + obfuscate, reported success, and the retry never fired.
+    # Dock/Static was left holding the ~635 raw sources the bundler had not managed
+    # to delete alongside the bundles, and would have shipped to production that
+    # way. An explicit per-step check cannot be silenced by its calling context.
+    #
+    # GenerateScriptIntegrityManifest.js is LAST, always — same ordering as
+    # Common/Scripts/BuildPipeline.js: it records the hashes of the final served
+    # bytes, so it must run after obfuscation rewrites them. Omitting it here
+    # shipped a freshly-built Dock/Static next to whatever stale manifest was on
+    # disk, and the base node then reported "possible compromise of the origin" on
+    # every boot — a permanent false positive that buries a real tamper alert.
+    local build_steps=(
+        "GenerateServiceManifest.js"
+        "GenerateEnumerations.js"
+        "GenerateConstants.js"
+        "GenerateClasses.js"
+        "CopyStaticFiles.js"
+        "BundleStaticFiles.js"
+        "ManglePrivateMembersInBundle.js"
+        "MinifyAndObfuscateStaticFiles.js --aggressive"
+        "GenerateScriptIntegrityManifest.js"
+    )
+
     local attempt
+    local build_step
+    local step_status
+    local failed_step
     for attempt in 1 2 3 4 5
     do
-        if (
-            cd "$REPOSITORY_ROOT"
-            node ./Common/Scripts/GenerateServiceManifest.js
-            node ./Common/Scripts/GenerateEnumerations.js
-            node ./Common/Scripts/GenerateConstants.js
-            node ./Common/Scripts/GenerateClasses.js
-            node ./Common/Scripts/CopyStaticFiles.js
-            node ./Common/Scripts/BundleStaticFiles.js
-            node ./Common/Scripts/ManglePrivateMembersInBundle.js
-            node ./Common/Scripts/MinifyAndObfuscateStaticFiles.js --aggressive
-        )
+        failed_step=""
+        for build_step in "${build_steps[@]}"
+        do
+            step_status=0
+            ( cd "$REPOSITORY_ROOT" && node ./Common/Scripts/$build_step ) || step_status=$?
+            if [ "$step_status" -ne 0 ]
+            then
+                failed_step="$build_step"
+                log_warning "Build step '$build_step' exited $step_status."
+                break
+            fi
+        done
+
+        if [ -z "$failed_step" ]
         then
             log_success "Frontend built (Dock/Static is production-ready)."
             return 0
         fi
-        log_warning "Frontend build attempt $attempt failed (transient file lock?); retrying in 10s..."
+        log_warning "Frontend build attempt $attempt failed at '$failed_step' (transient file lock?); retrying in 10s..."
         sleep 10
     done
-    log_error "Frontend build failed after 5 attempts."
+    log_error "Frontend build failed after 5 attempts (last failing step: $failed_step)."
     return 1
 }
 
@@ -575,6 +628,24 @@ run_browser_test_gates()
         run_browser_suite "Synchronisation" "Common/Testing/Main/run_sync_ui_tests.js" "$REPOSITORY_ROOT/Common/Reports/.results/sync-ui.json" "$base_url" || gate_status=1
     fi
 
+    # Organization surfaces — membership, delegated powers, the spend report and
+    # the engagement report. None of it was covered by any browser suite while
+    # carrying the features an institute pays for.
+    if [ "$gate_status" -eq 0 ]
+    then
+        run_browser_suite "Organization" "Common/Testing/Main/run_organization_ui_tests.js" "$REPOSITORY_ROOT/Common/Reports/.results/organization-ui.json" "$base_url" || gate_status=1
+    fi
+
+    # The paid-deck lifecycle, and specifically the pair that has to hold in
+    # both directions: a held deck refuses deletion by default, and a forced
+    # deletion revokes every licence in the same operation. Forcing without
+    # revoking would leave buyers holding an entitlement to content that no
+    # longer exists — which fails silently, and only for them.
+    if [ "$gate_status" -eq 0 ]
+    then
+        run_browser_suite "Paid decks" "Common/Testing/Main/run_paid_deck_ui_tests.js" "$REPOSITORY_ROOT/Common/Reports/.results/paid-deck-ui.json" "$base_url" || gate_status=1
+    fi
+
     if [ "$started_dock" -eq 1 ]
     then
         log_step "Stopping the browser-gate Dock..."
@@ -706,20 +777,23 @@ update_base_node()
     log_step "Verifying SSH to the '$ENVIRONMENT_NAME' base node ($base_node_target)..."
     wait_for_ssh "$base_node_target"
 
-    log_step "Uploading the Agent + Dock contexts to the base node..."
-    local agent_archive dock_archive
+    log_step "Uploading the Agent + Dock + Common runtime contexts to the base node..."
+    local agent_archive dock_archive common_archive
     agent_archive="$(mktemp -t cogniumlearn-agent-context.XXXXXX.tar.gz)"
     dock_archive="$(mktemp -t cogniumlearn-dock-context.XXXXXX.tar.gz)"
-    ( cd "$REPOSITORY_ROOT" && build_agent_context "$agent_archive" && build_dock_context "$dock_archive" )
+    common_archive="$(mktemp -t cogniumlearn-common-context.XXXXXX.tar.gz)"
+    ( cd "$REPOSITORY_ROOT" && build_agent_context "$agent_archive" && build_dock_context "$dock_archive" && build_common_runtime_context "$common_archive" )
     copy_over_scp "$agent_archive" "${base_node_target}:/tmp/cogniumlearn-agent-context.tar.gz"
     copy_over_scp "$dock_archive" "${base_node_target}:/tmp/cogniumlearn-dock-context.tar.gz"
-    rm -f "$agent_archive" "$dock_archive"
+    copy_over_scp "$common_archive" "${base_node_target}:/tmp/cogniumlearn-common-context.tar.gz"
+    rm -f "$agent_archive" "$dock_archive" "$common_archive"
 
     log_step "Refreshing Agent + Dock code, image pointer + restarting Dock for '$ENVIRONMENT_NAME'..."
     run_ssh "$base_node_target" \
         "REPO_DIR='$BASE_NODE_REPO_DIR' \
          AGENT_CONTEXT_ARCHIVE='/tmp/cogniumlearn-agent-context.tar.gz' \
          DOCK_CONTEXT_ARCHIVE='/tmp/cogniumlearn-dock-context.tar.gz' \
+         COMMON_CONTEXT_ARCHIVE='/tmp/cogniumlearn-common-context.tar.gz' \
          NEW_IMAGE_ID='$image_id_to_set' \
          DOCK_ENV_FILE='$(dock_environment_file_name)' \
          COGNIUMLEARN_ENVIRONMENT='$ENVIRONMENT_NAME' \

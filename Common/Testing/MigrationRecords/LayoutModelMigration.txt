@@ -1,0 +1,58 @@
+DocLayout-YOLO (AGPL-3.0) -> Docling Heron (Apache-2.0) — migration record
+============================================================================
+
+Corpus: 13 PDFs, ~1,150 pages (textbooks, slide decks, scanned bundles,
+a question bank). Both arms run through the REAL ImageExtractor; only the
+model call differs. Baseline captured before doclayout_yolo was uninstalled
+and cannot be regenerated - there is no licence available to reinstall it under.
+
+Configuration adopted:
+    name                               strict
+    pictureConfidenceThreshold         0.55
+    tableConfidenceThreshold           0.55
+    captionConfidenceThreshold         0.5
+    minimumRegionDimensionPixels       40
+    duplicateBoxIouThreshold           0.9
+    containedBoxSuppressionThreshold   0.8
+    treatFormulaAsFigure               False
+    treatCodeAsFigure                  False
+
+Result over the full corpus:
+    matched                            694
+    matchedLoose                       39
+    framingDrift                       68
+    captionDiverged                    195
+    genuineMisses                      23
+    junkDropped                        13
+    reframed                           51
+    newOnly                            102
+    oldTotal                           820
+    newTotal                           835
+    seconds                            133.6
+
+Baseline figures: 820. New: 835. Matched: 694 + 39 loose. Reframed: 51.
+
+The 23 baseline figures not reproduced were EVERY ONE inspected by eye:
+    7   institutional letterhead logos (Ramaiah Institute, KIADB)
+    1   abstract slide-decoration shape
+    15  "KEY CONCEPTS" chapter-opener text sidebars (one per textbook chapter)
+No diagram, chart, illustration or table was lost. Each of those 23 previously
+cost a Gemini vision call.
+
+Per document:
+    pdf                           old  new  matched  flagged  newOnly
+    4sem_dbslab_qb_2026             7    7        7        0        0
+    AL61-UNIT-V_pptx               16   41       15        0       26
+    Activity_points_merged         72   63       58        7        5
+    OOPS_Workshop                  24   17       12        1        5
+    UNIT-5_2__SmartCities__1_      12   10       10        0        0
+    Unit_1__2_                     98   99       89        0       10
+    Unit_2__2_                     33   33       30        0        3
+    Unit_3__2_                     19   25       18        0        7
+    Unit_4__1_                     42   44       38        0        6
+    fulltb                        373  367      335       14       32
+    lech102                       100  104       99        0        5
+    test                            8    9        7        1        2
+    unit-4__1__merged              16   16       15        0        1
+
+Reproduce: F:/Testing/CogniumLearn/CompareConfigurations.py --config strict --scope all

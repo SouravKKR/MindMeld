@@ -2,6 +2,7 @@ const Organization = require("../../Globals/Model/Organization");
 const OrganizationQueryEngine = require("../../Globals/Classes/Organization/OrganizationQueryEngine");
 const OrganizationDeckPerkQueryEngine = require("../../Globals/Classes/Organization/OrganizationDeckPerkQueryEngine");
 const OrgAdminVerificationManager = require("../../Globals/Classes/Authentication/OrgAdminVerificationManager");
+const OrganizationFeatureSelection = require("../../Globals/Classes/Organization/OrganizationFeatureSelection");
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
 const { organizationStatus } = require("../../Globals/Enumerations/OrganizationStatus");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
@@ -22,7 +23,16 @@ const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
  * callback never arrived the organization was permanently uneditable and
  * invisible to its own admin.
  *
- * Body: { name, adminEmail, verificationToken, currency?, maxMembers, deckPerks? }
+ * The owner's own capability inside the organization's view is set here too.
+ * It defaults to EVERY feature: the owner is the person the institute is run
+ * by, and an organization whose administrator cannot use the product they are
+ * administering is not a state anybody asks for. Inside an organization view
+ * the personal plan is not consulted at all, so without this grant an owner who
+ * never added themselves to their own roster would run the whole institute on
+ * the Free floor — including one who pays for Pro Plus personally.
+ *
+ * Body: { name, adminEmail, verificationToken, currency?, maxMembers, deckPerks?,
+ *         adminAllowedFeatures? }
  */
 async function createOrganization(request, response)
 {
@@ -33,6 +43,23 @@ async function createOrganization(request, response)
     const currency = typeof body?.currency === "string" && body.currency.length > 0 ? body.currency.toUpperCase() : "INR";
     const maxMembers = Number.isInteger(body?.maxMembers) ? body.maxMembers : 0;
     const deckPerks = Array.isArray(body?.deckPerks) ? body.deckPerks : [];
+
+    // Absent means "all of them" rather than "none": the dialog ticks every box
+    // by default, and a caller that never mentions the field is asking for that
+    // same default. An explicitly empty array is still honoured — that is how a
+    // super-admin says the owner gets the Free floor only.
+    let adminAllowedFeatures = OrganizationFeatureSelection.getAllFeatureValues();
+    if (body?.adminAllowedFeatures !== undefined)
+    {
+        const featureValidation = OrganizationFeatureSelection.validate(body.adminAllowedFeatures);
+        if (!featureValidation.valid)
+        {
+            response.statusCode = httpStatus.BAD_REQUEST;
+            response.sendJson({ success: false, error: ErrorCodes.INVALID_FEATURE_SELECTION, field: "adminAllowedFeatures", featureValue: featureValidation.invalidValue });
+            return;
+        }
+        adminAllowedFeatures = featureValidation.featureValues;
+    }
 
     if (name.length === 0 || name.length > 256)
     {
@@ -95,6 +122,7 @@ async function createOrganization(request, response)
         currentMemberCount: 0,
         creationDate: now,
         activationDate: now,
+        adminAllowedFeatures: adminAllowedFeatures,
         additionalData: {}
     });
 
@@ -114,7 +142,10 @@ async function createOrganization(request, response)
         success: true,
         organizationId: created.getId(),
         status: organizationStatus.ACTIVE,
-        requiresPayment: false
+        requiresPayment: false,
+        // Echoed so the caller can show what the owner actually ended up with
+        // rather than what it hoped it had sent.
+        adminAllowedFeatures: adminAllowedFeatures
     });
 }
 

@@ -7,6 +7,7 @@ from Globals.Classes.Automation.AutomationResponse import AutomationResponse
 from Globals.Classes.Automation.AutomationProvider import AutomationProvider
 from Globals.Classes.Automation.ResponseCache import ResponseCache
 from Globals.Classes.Automation.ShadowModelEvaluator import ShadowModelEvaluator
+from Globals.Classes.Compliance.ContentGuardrail import ContentGuardrail
 from Globals.Classes.Credits.CreditMeter import CreditMeter
 
 
@@ -18,8 +19,14 @@ class AutomationCaller:
     # in-flight coroutines a single call_batch fan-out creates.
     MAX_LIVE_BATCH_CONCURRENCY = 8
 
-    def __init__(self, provider: AutomationProvider):
+    def __init__(self, provider: AutomationProvider, b_enable_content_guardrail: bool = True):
         self.__provider = provider
+
+        # Off for exactly one caller: ContentGuardrailVerifier, which asks a model
+        # to adjudicate flagged text and would otherwise have its own reply
+        # scanned — a reply that contains the flagged terms by construction, so
+        # the guardrail would flag it, verify it, and recurse forever.
+        self.__b_enable_content_guardrail = b_enable_content_guardrail
 
     @staticmethod
     def __joined_text_output(response: AutomationResponse) -> str | None:
@@ -44,6 +51,12 @@ class AutomationCaller:
 
         if cached_response is not None:
             if validator is None or validator(cached_response):
+                # Entries written since the guardrail shipped are already clean —
+                # the sanitisation below happens before ResponseCache.store — so
+                # this normally costs one regex pass and finds nothing. It is here
+                # for the entries written BEFORE it shipped, which live for up to
+                # ResponseCache.TTL_DAYS and would otherwise serve unscanned text.
+                await self.__apply_content_guardrail(cached_response, request)
                 # A hit returns without ever reaching the provider, so nothing
                 # else in this path will meter it. Record the original call's
                 # usage here or the task bills zero for work it delivered — and
@@ -59,6 +72,11 @@ class AutomationCaller:
                 return cached_response
 
         response = await self.__provider.execute(request)
+
+        # Before the validator, before the cache write, before shadow sampling —
+        # so every one of them sees the sanitised text and a stored entry can
+        # never replay content the guardrail already removed.
+        await self.__apply_content_guardrail(response, request)
 
         if validator is not None:
             b_valid_response = validator(response)
@@ -80,6 +98,21 @@ class AutomationCaller:
         ShadowModelEvaluator.maybe_sample_and_shadow(request, response)
 
         return response
+
+    async def __apply_content_guardrail(self, response: AutomationResponse, request: AutomationRequest) -> None:
+        """
+        Runs the content guardrail over a response's text outputs, in place.
+
+        A request carrying no model is not an LLM call at all — that is how
+        ProcessSyllabus builds requests for the local DocumentProcessingProvider,
+        whose "output" is text extracted from a student's uploaded PDF. Rewriting
+        that would be a data-integrity bug rather than a safety feature, so the
+        model name is passed through and ContentGuardrail skips a None.
+        """
+        if not self.__b_enable_content_guardrail or response is None:
+            return
+
+        await ContentGuardrail.sanitize_response(response, model = request.get_model())
 
     async def call_batch(
         self,

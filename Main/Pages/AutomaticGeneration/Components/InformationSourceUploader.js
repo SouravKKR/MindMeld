@@ -20,13 +20,21 @@ class InformationSourceUploader extends HTMLElement
                 information-source-uploader
                 {
                     display: flex;
+                    flex-wrap: wrap;
                     gap: 10px;
                 }
 
+                /* flex-basis 150px + wrap rather than a plain flex: 1. The two
+                   labels ("Select From Existing" / "Upload New") do not both fit
+                   on one line inside a phone-width source row, and squeezing
+                   them broke each label over two lines instead of giving each
+                   button its own full-width row. */
                 .information-source-uploader-button
                 {
-                    flex: 1;
+                    flex: 1 1 150px;
+                    min-width: 0;
                     padding: 10px 15px;
+                    min-height: 44px;
                     border-radius: 8px;
                     font-size: 13px;
                     font-weight: 600;
@@ -92,6 +100,8 @@ class InformationSourceUploader extends HTMLElement
                         font-size: 18px;
                         font-weight: 700;
                         color: #ffffff;
+                        /* Clears the dialog's absolutely positioned close button. */
+                        padding-right: 40px;
                         padding-bottom: 15px;
                         margin-bottom: 15px;
                         border-bottom: 1px solid #2c2c2c;
@@ -100,6 +110,17 @@ class InformationSourceUploader extends HTMLElement
                     .select-existing-modal-selector-container
                     {
                         margin-top: 5px;
+                        min-width: 0;
+                    }
+
+                    @media (max-width: 600px)
+                    {
+                        .select-existing-modal-header
+                        {
+                            font-size: 16px;
+                            padding-bottom: 12px;
+                            margin-bottom: 10px;
+                        }
                     }
                 </style>
 
@@ -138,25 +159,49 @@ class InformationSourceUploader extends HTMLElement
                         font-size: 18px;
                         font-weight: 700;
                         color: #ffffff;
+                        /* Clears the dialog's absolutely positioned close button
+                           so a wrapped heading never runs underneath it. */
+                        padding-right: 40px;
                         padding-bottom: 15px;
                         margin-bottom: 5px;
                         border-bottom: 1px solid #2c2c2c;
                     }
 
+                    /* 400px is the preferred width, not a floor. The old
+                       min(400px, 90vw - 48px) was measured against the VIEWPORT
+                       while the dialog around it is capped well below full
+                       width, so on a phone the picker came out wider than the
+                       dialog and its inputs ran off the side of the screen.
+                       max-width: 100% clamps it to whatever the dialog actually
+                       resolved to, at every width. */
                     .upload-new-modal-file-selector-container
                     {
-                        width: min(400px, calc(90vw - 48px));
+                        width: min(400px, calc(100vw - 72px));
+                        max-width: 100%;
                         margin: 15px 0;
                     }
 
+                    /* flex-start, not center: these labels wrap to two or three
+                       lines on a phone, and a centred checkbox then sits beside
+                       the middle line instead of beside the sentence it ticks. */
                     .upload-new-modal-option-row
                     {
                         display: flex;
-                        align-items: center;
+                        align-items: flex-start;
                         gap: 8px;
                         margin: 4px 0;
                         font-size: 13px;
+                        line-height: 1.45;
                         cursor: pointer;
+                    }
+
+                    .upload-new-modal-option-row input[type="checkbox"]
+                    {
+                        flex-shrink: 0;
+                        width: 16px;
+                        height: 16px;
+                        margin: 2px 0 0 0;
+                        accent-color: #0098C4;
                     }
 
                     /* Sits directly under the OCR checkbox it explains, indented to
@@ -191,6 +236,41 @@ class InformationSourceUploader extends HTMLElement
                     {
                         opacity: 0.85;
                         background: linear-gradient(45deg, #0098C4, #B55BD0);
+                    }
+
+                    /* The dialog scrolls on a short phone, but every row it can
+                       shed is a row the user does not have to scroll past to
+                       reach Upload. Nothing is hidden — only the whitespace and
+                       the type scale come down. */
+                    @media (max-width: 600px)
+                    {
+                        .upload-new-modal-header
+                        {
+                            font-size: 16px;
+                            padding-bottom: 12px;
+                        }
+
+                        .upload-new-modal-file-selector-container
+                        {
+                            margin: 12px 0;
+                        }
+
+                        .upload-new-modal-option-row
+                        {
+                            font-size: 12.5px;
+                        }
+
+                        .upload-new-modal-option-hint
+                        {
+                            margin: 0 0 8px 24px;
+                            font-size: 11px;
+                        }
+
+                        .upload-new-modal-upload-button
+                        {
+                            margin-top: 8px;
+                            min-height: 46px;
+                        }
                     }
                 </style>
 

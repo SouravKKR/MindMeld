@@ -49,6 +49,30 @@ class DateRangeFilterInput extends PaidDeckFilterInput
         if (this.#fromInputElement !== null) this.#fromInputElement.value = "";
         if (this.#toInputElement !== null) this.#toInputElement.value = "";
     }
+
+    setValue(value)
+    {
+        if (this.#fromInputElement === null || this.#toInputElement === null)
+        {
+            return;
+        }
+
+        // A date input only accepts YYYY-MM-DD, so the stored ISO instant is
+        // trimmed to its date part rather than rejected wholesale.
+        this.#fromInputElement.value = DateRangeFilterInput.#toDateInputValue(value?.from);
+        this.#toInputElement.value = DateRangeFilterInput.#toDateInputValue(value?.to);
+    }
+
+    static #toDateInputValue(isoString)
+    {
+        if (typeof isoString !== "string" || isoString.length === 0)
+        {
+            return "";
+        }
+
+        const parsedDate = new Date(isoString);
+        return Number.isNaN(parsedDate.getTime()) ? "" : parsedDate.toISOString().slice(0, 10);
+    }
 }
 
 export default DateRangeFilterInput;

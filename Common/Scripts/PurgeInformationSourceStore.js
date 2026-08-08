@@ -17,6 +17,8 @@
  *   - every textEmbeddings chunk (verbatim extracted page text)
  *   - every figures document (extracted images)
  *   - every object under the information-source storage prefix
+ *   - every object under the figure storage prefix (the cropped page images
+ *     themselves, which the figures documents only point at)
  *
  * What it does NOT touch: decks, cards, study materials, mock tests, progress,
  * users, sessions, purchases, paid decks. Everything a learner actually studies
@@ -77,25 +79,41 @@ async function purgeInformationSourceStore()
         }
     }
 
-    // Object storage. Listing the prefix is what makes this exhaustive: it
-    // catches blobs whose row was already gone, which the row-driven purge paths
-    // by definition cannot reach.
-    const storagePrefix = PersistenceConstants.INFORMATION_SOURCE_DIRECTORY;
-    let storedObjectPaths = [];
-    try
-    {
-        storedObjectPaths = await Persistence.list(storagePrefix, storageTargets.LINODE_OBJECT_STORAGE);
-    }
-    catch (listError)
-    {
-        console.error(`[Purge] Could not list '${storagePrefix}': ${listError?.message || listError}`);
-    }
+    // Object storage. Listing the prefixes is what makes this exhaustive: it
+    // catches objects whose row was already gone, which the row-driven purge
+    // paths by definition cannot reach.
+    //
+    // The figure prefix is listed alongside the source prefix because the two
+    // are separate object trees. Emptying the `figures` collection above removes
+    // the only record of where each cropped page image lives, so a run that
+    // skipped this prefix would leave those images permanently unreachable AND
+    // permanently stored — the worse of both outcomes.
+    const storagePrefixes =
+    [
+        PersistenceConstants.INFORMATION_SOURCE_DIRECTORY,
+        PersistenceConstants.FIGURE_DIRECTORY
+    ];
 
-    console.log("");
-    console.log(`[Purge] object storage '${storagePrefix}': ${storedObjectPaths.length} object(s)`);
-
-    if (bConfirmed)
+    for (const storagePrefix of storagePrefixes)
     {
+        let storedObjectPaths = [];
+        try
+        {
+            storedObjectPaths = await Persistence.list(storagePrefix, storageTargets.LINODE_OBJECT_STORAGE);
+        }
+        catch (listError)
+        {
+            console.error(`[Purge] Could not list '${storagePrefix}': ${listError?.message || listError}`);
+        }
+
+        console.log("");
+        console.log(`[Purge] object storage '${storagePrefix}': ${storedObjectPaths.length} object(s)`);
+
+        if (!bConfirmed)
+        {
+            continue;
+        }
+
         let removedCount = 0;
         let failedCount = 0;
 

@@ -1,0 +1,59 @@
+{
+    "name": "OrganizationMemberColumn",
+    "relativePath": "Globals/Model",
+    "members":
+    {
+        "id":
+        {
+            "datatype": "string",
+            "id": true
+        },
+        "organizationId":
+        {
+            "datatype": "string"
+        },
+        "key":
+        {
+            "datatype": "string",
+            "minLength": 1,
+            "maxLength": 64
+        },
+        "label":
+        {
+            "datatype": "string",
+            "minLength": 1,
+            "maxLength": 128
+        },
+        "valueType":
+        {
+            "datatype": "enum:MemberAttributeValueTypes",
+            "defaultValue": 0
+        },
+        "aliases":
+        {
+            "datatype": "array<string>",
+            "defaultValue": []
+        },
+        "displayOrder":
+        {
+            "datatype": "int",
+            "defaultValue": 0,
+            "min": 0
+        },
+        "renamePhase":
+        {
+            "datatype": "enum:MemberColumnRenamePhases",
+            "defaultValue": 0
+        },
+        "pendingRenameToKey":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "createdAt":
+        {
+            "datatype": "date",
+            "defaultValue": "now"
+        }
+    }
+}

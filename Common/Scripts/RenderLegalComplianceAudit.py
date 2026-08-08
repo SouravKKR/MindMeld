@@ -27,6 +27,7 @@ from reportlab.platypus import (
     Frame,
     Paragraph,
     Spacer,
+    LongTable,
     Table,
     TableStyle,
     Flowable,
@@ -59,7 +60,7 @@ CONTENT_WIDTH = PAGE_WIDTH - LEFT_MARGIN - RIGHT_MARGIN
 
 OUTPUT_PATH = Path(__file__).resolve().parent.parent / "Reports" / "LegalComplianceAuditReport.pdf"
 DOCUMENT_TITLE = "Legal & Compliance Exposure Audit"
-DOCUMENT_DATE = "31 July 2026"
+DOCUMENT_DATE = "8 August 2026"
 
 
 # --- Paragraph styles -----------------------------------------------------
@@ -176,6 +177,40 @@ def where(path, lines):
     return "<font face='Courier' size='7'>%s<br/>: %s</font>" % (rendered, lines)
 
 
+
+# The height one table row has to work with before it must be split internally:
+# the frame less Frame's own 6pt top and bottom padding and a repeated header
+# row. See enable_in_row_split.
+USABLE_FRAME_HEIGHT = PAGE_HEIGHT - TOP_MARGIN - BOTTOM_MARGIN - 12 - 30
+
+
+def enable_in_row_split(table):
+    """
+    Turns on splitting INSIDE a row, but only for a table with a row too tall to
+    be placed on any page.
+
+    Without it, a Table splits only BETWEEN rows, and repeatRows=1 makes
+    ReportLab refuse even that unless the header and the first data row both fit
+    the frame — so one over-tall row makes the whole table unplaceable and the
+    build dies with a LayoutError, taking the report with it.
+
+    With it on unconditionally, an ordinary short table that merely arrived near
+    a page bottom is split too, leaving an orphan fragment: one cell's first line
+    with every other cell blank, and the real row repeated in full overleaf.
+
+    So it is decided per table, from the row heights ReportLab itself computes.
+    Copied from Common/Scripts/RenderPaidDeckAuditTrail.py, which carries the
+    full rationale and the harness that proves both directions.
+    """
+    try:
+        table.wrap(CONTENT_WIDTH, USABLE_FRAME_HEIGHT)
+        row_heights = getattr(table, "_rowHeights", None) or []
+    except Exception:
+        return
+
+    if any(row_height > USABLE_FRAME_HEIGHT for row_height in row_heights):
+        table.splitInRow = 1
+
 def make_bullets(items):
     rows = []
     for item in items:
@@ -186,6 +221,8 @@ def make_bullets(items):
             body = item
         dot = Paragraph("&bull;", ParagraphStyle("dot", fontName="Helvetica-Bold", fontSize=10, leading=14.5, textColor=GOLD_ACCENT))
         rows.append([dot, Paragraph(body, styles["bullet"])])
+    # splitInRow for the same reason make_table sets it: a bullet holding a long
+    # value must flow across a page break rather than fail to place.
     table = Table(rows, colWidths=[5 * mm, CONTENT_WIDTH - 5 * mm])
     table.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -194,6 +231,8 @@ def make_bullets(items):
         ("TOPPADDING", (0, 0), (-1, -1), 2),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
     ]))
+    enable_in_row_split(table)
+
     return table
 
 
@@ -218,7 +257,15 @@ def make_table(headers, rows, col_ratios, label_first_column=True, centered_colu
             cells.append(Paragraph(value, style))
         data.append(cells)
 
-    table = Table(data, colWidths=col_widths, repeatRows=1)
+    # LongTable + splitInRow, not Table. A plain Table splits only BETWEEN rows,
+    # and with repeatRows=1 it refuses even that unless the repeated header and
+    # the first data row both fit the page frame -- so one cell taller than the
+    # frame made the whole table unplaceable and raised LayoutError, taking the
+    # report with it. splitInRow is a minimum split height rather than a boolean,
+    # so 1 means "split anywhere"; the cells are already Paragraphs, which are
+    # splittable. See Common/Reports/PdfTheme.md and, for the production failure
+    # this was found through, Agent/Verification/VerifyAuditTrailRenderer.py.
+    table = LongTable(data, colWidths=col_widths, repeatRows=1)
     table_style = [
         ("BACKGROUND", (0, 0), (-1, 0), TEAL_TABLE_HEAD),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -233,6 +280,8 @@ def make_table(headers, rows, col_ratios, label_first_column=True, centered_colu
         if row_index % 2 == 0:
             table_style.append(("BACKGROUND", (0, row_index), (-1, row_index), ROW_ALT))
     table.setStyle(TableStyle(table_style))
+    enable_in_row_split(table)
+
     return table
 
 
@@ -277,19 +326,20 @@ def build_story():
     story.append(Spacer(1, 8))
 
     story.append(make_callout(
-        "CogniumLearn ingests third-party copyrighted material by design, so its exposure lives in how "
-        "source documents are retained, how they are re-expressed, and who can reach them. On this pass "
-        "<b>no HIGH-severity finding remains</b>. The cross-tenant retrieval path is gone: curated study "
-        "now grounds only on the learner's own weak cards, their own study material, and the web, so the "
-        "isolation property holds by construction rather than by a filter that could be forgotten. "
-        "Answer-sheet scans are deleted as soon as they are read into memory, which also closes every "
-        "later failure path. Generated entities now record which uploaded documents fed them, making "
-        "&quot;what did we generate from this source&quot; an answerable question. "
-        "What remains is a tail of second-order retention gaps on the smaller upload surfaces "
-        "&mdash; support attachments and mock-test attempt payloads, neither of which has a lifecycle "
-        "&mdash; plus prompt-level residue and a structural weakness worth naming: the derived-content "
-        "collections still carry no tenant column, so isolation continues to depend on every caller "
-        "behaving. There is now only one such caller, and it checks twice."))
+        "CogniumLearn ingests third-party copyrighted material by design, so its exposure lives in how source "
+        "documents are retained, how they are re-expressed, and who can reach them. On this pass the erasure "
+        "cascade is whole: a document's stored bytes, its extracted page text, its figure rows and the figure "
+        "images themselves all go together, a takedown deletes one copy per holder rather than one in total, and "
+        "no removal reports a success it has not achieved. The retention rule the code enforces is the one the "
+        "Privacy Policy publishes, to the day. "
+        "What this sweep surfaced instead is quieter and sits in two places. <b>Three object-storage prefixes "
+        "still have no lifecycle at all</b> &mdash; the mock-test evaluation payload, the folder an abandoned "
+        "generation run leaves behind, and deal invoices &mdash; none of them reached by any reaper. And "
+        "<b>two retrieval paths resolve across the tenant boundary</b>: Ask AI can label a citation with another "
+        "account's filename, and the document download reads out of another account's storage prefix whenever two "
+        "users hold the same file. Neither leaks content, because the bytes are identical either way; both "
+        "quietly undo the per-user separation the platform deliberately adopted, and one of them puts a stranger's "
+        "brand-bearing filename in front of the model."))
     story.append(Spacer(1, 4))
 
     # ── Executive summary ─────────────────────────────────────────────────
@@ -301,72 +351,110 @@ def build_story():
         make_table(
             ["Component", "Rating", "Headline", "Action"],
             [
-                ["Derived-content tenancy model", risk("MEDIUM"),
-                 "Chunk and figure documents carry no tenant column, so isolation is enforced by callers rather "
-                 "than by the schema. Only one caller reads them now and it checks ownership twice, but the "
-                 "structural weakness is what allowed the previous cross-tenant path to exist.",
+                ["Unlifecycled storage prefixes", risk("MEDIUM"),
+                 "Three object-storage prefixes are written by user action and deleted by nothing: the mock-test "
+                 "evaluation payload (the candidate's answers plus the question text), the task folder an "
+                 "abandoned generation run leaves behind, and deal invoices. Every other upload surface now has a "
+                 "reaper; these were never given one.",
                  action("RECOMMENDED")],
-                ["Secondary upload retention", risk("MEDIUM"),
-                 "Support attachments and mock-test attempt payloads are written to permanent storage with no "
-                 "expiry, no sweep and no delete endpoint. The primary document path has a full lifecycle; "
-                 "these were built without one.",
+                ["Cross-tenant retrieval resolution", risk("MEDIUM"),
+                 "Two paths resolve past the tenant boundary once two accounts hold the same file: the Ask AI "
+                 "citation label can resolve to another user's filename, and the download reads the blob out of "
+                 "another user's storage prefix. No content leaks &mdash; the bytes are identical &mdash; but both "
+                 "undo the per-user separation the platform deliberately adopted.",
+                 action("RECOMMENDED")],
+                ["Derivative provenance", risk("MEDIUM"),
+                 "Generated cards, study material and mock tests record nothing about the document they came from. "
+                 "The worker stages sourcePages and the write-back drops it, so a takedown has no way to find the "
+                 "content derived from a work &mdash; the gap is in the write-back, not the pipeline.",
+                 action("RECOMMENDED")],
+                ["Ask-AI expression contract", risk("MEDIUM"),
+                 "The shared expression rules lead study-material, flashcard, mock-test and knowledge-chunk "
+                 "generation, but not Ask AI &mdash; the one path that puts verbatim source excerpts in front of "
+                 "the model behind a one-paragraph system prompt.",
+                 action("RECOMMENDED")],
+                ["Answer-sheet promise divergence", risk("MEDIUM"),
+                 "The Privacy Policy promises a scanned answer sheet is kept 60 days so a candidate can dispute "
+                 "their marks against it. The worker deletes each scan the moment it is read into memory. The "
+                 "privacy posture is better than published; the dispute guarantee is not kept.",
+                 action("RECOMMENDED")],
+                ["Third-party mark handling", risk("MEDIUM"),
+                 "A cross-tenant egress path exists (paid-deck library, organization deck shelf). Mark detection "
+                 "runs there as an advisory warning; the redaction function it was built around is called from "
+                 "nowhere.",
+                 action("RECOMMENDED")],
+                ["Grievance timelines", risk("MEDIUM"),
+                 "The Grievance Officer is named with a postal address in both documents, but neither commits to a "
+                 "statutory acknowledgement or disposal window, and no public copyright-complaint route is "
+                 "published.",
                  action("RECOMMENDED")],
                 ["Residual prompt exposure", risk("MEDIUM"),
-                 "Exam-paper extraction still requests verbatim text (deliberately, transformed downstream), and "
-                 "one prompt asks for an examination board's official instructions reproduced exactly.",
+                 "Exam-paper extraction requests verbatim text deliberately, and the pool self-expires with the "
+                 "task; one prompt asks for an examination board's official instructions reproduced exactly.",
                  action("RECOMMENDED")],
-                ["Similarity enforcement coverage", risk("MEDIUM"),
-                 "Verbatim-overlap scoring is observe-only and wired to study material alone; flashcards and "
-                 "mock-test questions are generated from the same sources and are unmeasured.",
+                ["Similarity enforcement", risk("MEDIUM"),
+                 "Containment is scored on generated prose and logged, never persisted, and enforcement is off "
+                 "pending calibration. Deliberate &mdash; an uncalibrated threshold pressures the model to "
+                 "paraphrase content that must stay exact &mdash; but the calibration data is being discarded.",
                  action("RECOMMENDED")],
-                ["Provenance usability", risk("MEDIUM"),
-                 "Generated entities now record their source documents, but nothing can query that field &mdash; "
-                 "the data needed to answer a notice exists and is unreachable.",
+                ["Brand identifiers to the model", risk("MEDIUM"),
+                 "Ask AI labels each grounding excerpt with the uploaded document's name &mdash; the same "
+                 "brand-bearing string that is pseudonymised at every logging site before it reaches disk.",
                  action("RECOMMENDED")],
-                ["Source document retention", risk("MEDIUM"),
-                 "A PERMANENT upload is kept indefinitely as a full OCRed reproduction. That is the user's "
-                 "explicit choice and is no longer the silent default.",
-                 action("NONE")],
                 ["Takedown derivative scope", risk("MEDIUM"),
-                 "Takedown removes the source, its chunks and its figures, but not content generated from it. "
-                 "This is deliberate: original wording about facts is not a reproduction, and full lineage is "
+                 "Takedown removes the source and its derived artefacts, but not content generated from it. "
+                 "Deliberate: original wording about facts is not a reproduction, and full lineage is "
                  "unachievable across synced and user-edited copies.",
                  action("NONE")],
-                ["Curated-study retrieval", risk("PASS"),
-                 "Grounds only on the learner's own weak cards, their own non-curated study material, and web "
-                 "search. The shared chunk store is not read at all.",
+                ["Erasure cascade completeness", risk("PASS"),
+                 "A document's blob, page text, figure rows and figure images are removed together, ordered so no "
+                 "step destroys the record the next one needs, with a last-reference check before an image is "
+                 "dropped and a cursor-driven sweep reclaiming what earlier gaps left.",
                  action("NONE")],
-                ["Answer-sheet scan retention", risk("PASS"),
-                 "Scans are deleted immediately after being loaded into memory, so every later failure path "
-                 "leaves nothing behind and no sweeper is required.",
+                ["Takedown completeness", risk("PASS"),
+                 "The cross-tenant purge deletes one stored copy per holder, counts what it found against what it "
+                 "removed, and reports completion only when every copy went and no row resisted.",
                  action("NONE")],
-                ["Ask-AI grounded retrieval", risk("PASS"),
-                 "Client-supplied source hashes are resolved against the caller's own rows in Dock and "
-                 "re-derived independently in the Agent.",
+                ["Retention policy vs. published terms", risk("PASS"),
+                 "The subscription-linked grace period the reaper enforces is the same period the Privacy Policy "
+                 "publishes, and the free-tier branch is load-bearing rather than decorative.",
                  action("NONE")],
-                ["Retention lifecycle", risk("PASS"),
-                 "TEMPORARY retention is enforced by an expiry stamp and a reaper running the full cascade; "
-                 "deletion removes blob, chunks and figures; orphans are reconciled.",
+                ["Derived-content tenancy", risk("PASS"),
+                 "Embedding chunks and cached figures carry a tenant column, both vector-search paths filter on "
+                 "it, and orphan detection matches the (user, document) pair rather than the hash.",
                  action("NONE")],
-                ["Takedown governance", risk("PASS"),
-                 "A dry-run-capable admin endpoint actions notices by content hash across tenants and writes to "
-                 "an append-only register.",
+                ["Source reachability", risk("PASS"),
+                 "No public bucket, pre-signed URL or unauthenticated route to stored content exists; every read "
+                 "is server-side and credentialed behind a login guard and an ownership check.",
+                 action("NONE")],
+                ["Secondary upload lifecycle", risk("PASS"),
+                 "Support attachments and answer-sheet prefixes have a registry-backed retention window plus an "
+                 "eager purge on ticket closure; account deletion purges both immediately.",
+                 action("NONE")],
+                ["Expression contract (generation)", risk("PASS"),
+                 "One shared contract leads generation, separating content that must stay exact &mdash; formulae, "
+                 "constants, statutory definitions &mdash; from prose that must be re-authored.",
+                 action("NONE")],
+                ["Export handling", risk("PASS"),
+                 "Export writes a pure local file with no server link, and paid and AI-generated decks are "
+                 "refused, with the client-side nature of that gate acknowledged and monitored.",
                  action("NONE")],
                 ["Third-party API hygiene", risk("PASS"),
-                 "Vertex service-account auth is asserted and fails loudly rather than silently downgrading; the "
-                 "OpenAI client suppresses server-side retention.",
+                 "All three providers assert their data posture in code: Vertex refuses a silent downgrade to the "
+                 "API-key surface, OpenAI sets store=False, Anthropic fails closed and states what it may receive.",
                  action("NONE")],
                 ["Application logging", risk("PASS"),
-                 "No document content reaches the logs and uploaded filenames are pseudonymised before entering "
-                 "the pipeline.",
-                 action("NONE")],
-                ["Generated-content tenancy", risk("PASS"),
-                 "Decks, cards, study materials and mock tests are uniquely indexed on userId; the paid-deck "
-                 "catalogue is admin-curated, not pooled user content.",
+                 "No document content reaches the logs, uploaded filenames are pseudonymised across six workflows, "
+                 "and the task archive stores a summary string rather than the payload.",
                  action("NONE")],
                 ["Contractual safeguards", risk("PASS"),
-                 "Terms carry a UGC rights warranty, an indemnity and an infringing-content prohibition; a "
-                 "Grievance Officer is named with contact details.",
+                 "Terms carry an infringing-content prohibition, a UGC rights warranty and an IP indemnity; "
+                 "point-of-action IP notices appear at both upload and export.",
+                 action("NONE")],
+                ["Inbound dependency licensing", risk("PASS"),
+                 "Assessed separately and not rated here &mdash; see "
+                 "<b>Common/Reports/DependencyLicenceReport.pdf</b>, which is generated from the manifests and "
+                 "installed metadata and carries its own rating.",
                  action("NONE")],
             ],
             [19, 12, 51, 18], centered_columns=(1, 3)),
@@ -375,63 +463,75 @@ def build_story():
     # ── Area 1 ────────────────────────────────────────────────────────────
     story.extend(section("2. File Lifecycle &amp; Retention", [
         Paragraph(
-            "The information-source path has a complete lifecycle and the answer-sheet path now has one too. "
-            "The remaining gaps are on the two upload surfaces that were never given one.", styles["body"]),
+            "Six upload surfaces were traced end to end: study documents, support attachments, answer-sheet "
+            "scans, mock-test attempt payloads, deal invoices and generation task staging. The document cascade "
+            "is now complete and the two secondary surfaces have real windows. What remains is three prefixes "
+            "that no reaper covers, and one place where the code is stricter than the promise it publishes.",
+            styles["body"]),
         findings_table([
-            ["R-01", where("Dock/Endpoints/Support/SubmitSupportReport.js", "299, 338"),
-             "Support attachments are moved to permanent object storage on submission. The only delete call is "
-             "the rollback for a failed upload, so once a ticket exists the attachment is permanent, and the "
-             "supportTickets collection carries no TTL. Users attach screenshots of whatever they were looking "
-             "at, which routinely includes copyrighted study material.",
+            ["R-01", where("Dock/Endpoints/MockTest/EvaluateAttempt.js", "227-244, 303-316"),
+             "The attempt payload &mdash; the candidate's answers plus the question text they answered &mdash; is "
+             "written to <font face='Courier' size='7'>Tasks/&lt;evaluationTaskId&gt;/MockTestEvaluations/</font> "
+             "and the graded output lands beside it. Nothing registers that prefix with "
+             "<font face='Courier' size='7'>EphemeralUploadRegistry</font>, and the only code that deletes a task "
+             "folder is the generation success path, which never runs for an evaluation task. The transcription "
+             "flow immediately alongside it registers its prefix; this one does not, so it keeps a graded exam "
+             "attempt indefinitely by omission rather than by decision.",
              risk("MEDIUM"), action("RECOMMENDED")],
-            ["R-02", where("Dock/Endpoints/MockTest/EvaluateAttempt.js", "227-240"),
-             "The evaluated attempt payload &mdash; the candidate's transcribed answers &mdash; is written to "
-             "object storage and never removed. Less sensitive than the scan images now that those are deleted, "
-             "but it is still a permanent record of an individual's exam responses with no expiry.",
+            ["R-02", where("Dock/Endpoints/Helpers/MoveToDatabase.js", "319-339"),
+             "The generation task folder is listed and deleted as the last step of the SUCCESS path only. A run "
+             "that fails, is paused and abandoned, or is orphaned by a restart leaves "
+             "<font face='Courier' size='7'>Tasks/&lt;mainTaskId&gt;/</font> intact &mdash; staged flashcards and "
+             "study material, worker logs, the web image cache and the figure scratch prefix, all of it derived "
+             "from the uploaded book. The orphan reconciler reads that folder to decide what happened "
+             "(<font face='Courier' size='7'>OrphanedGenerationReconciler.js:100</font>) and deliberately leaves "
+             "it in place; no reaper covers the prefix afterwards.",
              risk("MEDIUM"), action("RECOMMENDED")],
-            ["R-03", where("Dock/Endpoints/Admin/Deals/UploadDealInvoice.js", "115"),
-             "Deal invoices are uploaded to permanent storage with no deletion path anywhere in the file. "
-             "Admin-authored commercial documents rather than third-party content, so the copyright exposure is "
-             "negligible; listed because it is the third upload surface without a lifecycle.",
+            ["R-03", where("Agent/Workflows/TranscribeMockTestAttempt/TranscribeMockTestAttempt.py", "252-270"),
+             "Each answer-sheet scan is deleted as soon as it has been read into memory. Privacy Policy clause "
+             "10.5 states the opposite: the scan is retained &quot;for 60 (sixty) days from upload so that it "
+             "remains available if You dispute the transcription or the marks awarded&quot;. The registry entry "
+             "written at upload does book a 60-day window "
+             "(<font face='Courier' size='7'>TranscribeOfflineAttempt.js:268-275</font>), but by the time the "
+             "reaper sees it the images are already gone. The privacy posture is better than published; the "
+             "dispute-evidence guarantee is not kept, and it is the half a candidate would rely on.",
+             risk("MEDIUM"), action("RECOMMENDED")],
+            ["R-04", where("Dock/Endpoints/Admin/Deals/UploadDealInvoice.js", "110-135"),
+             "Deal invoices are moved to <font face='Courier' size='7'>Invoices/&lt;dealId&gt;/</font> with no "
+             "deletion path anywhere in the file and no registry entry. Admin-authored commercial documents "
+             "rather than third-party content, so the copyright exposure is negligible; listed because it is the "
+             "last upload surface with no lifecycle at all, and because a commercial record deserves a stated "
+             "retention period rather than an unstated one.",
              risk("LOW"), action("RECOMMENDED")],
-            ["R-04", where("Dock/Endpoints/AutomaticGeneration/InformationSourceUpload.js", "300-345"),
-             "A PERMANENT-retention upload is stored indefinitely as a complete OCRed reproduction of the source "
-             "document. The user selects this explicitly and it is no longer the fallback for an omitted mode, "
-             "so the retention is consented rather than accidental.",
-             risk("MEDIUM"), action("NONE")],
-            ["R-05", where("Agent/Workflows/OcrPdf/OcrPdf.py", "196-203"),
-             "When OCR fails the workflow stores the original un-OCRed bytes so the upload is not lost. Reviewed "
-             "and judged the right trade-off &mdash; the alternative silently loses the user's document &mdash; "
-             "but it means the retained artefact is byte-identical to the source.",
-             risk("MEDIUM"), action("NONE")],
-            ["R-06", where("Dock/Endpoints/AutomaticGeneration/InformationSourceDownload.js", "21-35"),
-             "The getUser result is not null-checked before user.getId() is called, so an unauthenticated request "
-             "produces a 500 rather than a 401. Not a disclosure &mdash; the throw precedes any storage read "
-             "&mdash; but it is the only handler in this group missing the guard.",
-             risk("LOW"), action("RECOMMENDED")],
-            ["R-07", where("Agent/Workflows/TranscribeMockTestAttempt/TranscribeMockTestAttempt.py", "128-141, 252-269"),
-             "<b>Control verified.</b> Answer-sheet scans are deleted immediately after being normalised into "
-             "memory. Deleting at the earliest safe point rather than on completion means an LLM error, a write "
-             "failure or a killed worker all leave nothing behind, so no sweeper is needed. Confirmed that no "
-             "consumer reads them back: the result endpoint returns transcription JSON only, and a retry "
-             "re-uploads from the browser as a new task.",
+            ["R-05", where("Dock/Globals/Classes/Content/SourceRetentionPolicy.js", "30-124"),
+             "<b>Control verified.</b> Three branches &mdash; subscribed, lapsed, never-subscribed &mdash; all at "
+             "<font face='Courier' size='7'>SOURCE_RETENTION_GRACE_DAYS = 60</font>, which is exactly the period "
+             "Privacy Policy clause 10.4 publishes for both the subscription and the free case. The cutoff is "
+             "derived per sweep rather than stamped at upload, so no subscription event can leave it stale, and "
+             "the free-tier branch actually deletes rather than reading as a policy that never fires.",
              risk("PASS"), action("NONE")],
-            ["R-08", where("Dock/Globals/Classes/Content/ExpiredInformationSourceReaper.js", "whole class"),
-             "<b>Control verified.</b> TEMPORARY retention is enforced by an expiry stamp and an hourly reaper "
-             "running the full cascade. A Mongo TTL index was correctly avoided: it would drop the row while "
-             "orphaning the blob and derived content that only the row points to.",
+            ["R-06", where("Dock/Globals/Classes/Content/DerivedContentPurger.js", "38-160"),
+             "<b>Control verified.</b> The figure images cropped from an uploaded book are now removed with the "
+             "document. The ordering is the part that makes it correct: the storage paths are read while the rows "
+             "still name them, the rows go, and only then is each path re-checked against surviving rows before "
+             "the object is dropped &mdash; a PNG is addressed by (user, perceptual hash), so two of one user's "
+             "books containing the same illustration share it. A bounded, cursor-driven sweep reclaims what "
+             "earlier gaps left, skipping anything younger than the write-to-record window.",
              risk("PASS"), action("NONE")],
-            ["R-09", where("Dock/Globals/Classes/Content/InformationSourcePurger.js", "42-160"),
-             "<b>Control verified.</b> One shared removal path serves user delete, expiry and takedown: row "
-             "first, then blob plus embedding chunks plus cached figures once no row references the content.",
+            ["R-07", where("Dock/Globals/Classes/Content/EphemeralUploadRegistry.js", "53-201"),
+             "<b>Control verified.</b> Support attachments and answer-sheet prefixes are registered at upload with "
+             "60-day windows matching Privacy Policy clauses 10.5 and 10.6, purged eagerly when a ticket is "
+             "resolved, and purged immediately on account deletion. Deletion is by prefix rather than by a stored "
+             "file list, so a partially-written batch is still fully reclaimable, and the row is dropped only "
+             "after the objects are &mdash; the failure mode is &quot;sweep again&quot;, never &quot;forget&quot;.",
              risk("PASS"), action("NONE")],
-            ["R-10", where("Dock/Globals/Classes/Database/DerivedContentQueryEngine.js", "56-96"),
-             "<b>Control verified.</b> An orphan sweep clears chunks and figures whose source row no longer "
-             "exists. Only hashes with zero surviving rows are candidates, so live grounding data is never at risk.",
-             risk("PASS"), action("NONE")],
-            ["R-11", where("Dock/Endpoints/AutomaticGeneration/InformationSourceDownload.js", "35-49"),
-             "<b>Control verified.</b> Source download requires a session and re-checks ownership server-side. No "
-             "public bucket, pre-signed URL or unauthenticated route to a source document exists.",
+            ["R-08", where("Dock/Endpoints/AutomaticGeneration/InformationSourceDownload.js", "19-49"),
+             "<b>Control verified.</b> No route serves stored content without authentication. The download is "
+             "registered behind <font face='Courier' size='7'>ensureLogin</font> "
+             "(<font face='Courier' size='7'>HandleAutomaticGenerationEndpoints.js:117-121</font>), the read is "
+             "server-side through credentialed object storage, and no pre-signed URL, public ACL or public bucket "
+             "path exists anywhere in the tree. A separate defect in how this handler resolves the blob is "
+             "recorded at T-02.",
              risk("PASS"), action("NONE")],
         ]),
     ]))
@@ -439,264 +539,411 @@ def build_story():
     # ── Area 2 ────────────────────────────────────────────────────────────
     story.extend(section("3. System Prompts &amp; Content Transformation", [
         Paragraph(
-            "A single shared expression contract now leads every generation prompt. Its central rule is worth "
-            "stating: content with only one accurate expression &mdash; formulae, constants, chemical species, "
-            "statutory definitions, terms of art, quantities &mdash; must be reproduced exactly, because "
-            "copyright does not reach it and altering it would introduce error. Only prose, where alternative "
-            "phrasings exist, must be re-authored.", styles["body"]),
+            "Eighty-three prompt assets were read. The shared expression contract is genuine and well drafted "
+            "&mdash; it separates what must stay exact from what must be re-authored, and refuses the trade the "
+            "requirements file forbids. The exposure is in which paths lead with it and which do not.",
+            styles["body"]),
         findings_table([
-            ["X-01", where("Agent/.../Pools/Prompts/PYQ_EXTRACTION_SYSTEM.txt", "4, 13"),
-             "Still instructs verbatim extraction of exam questions. This is a deliberate choice &mdash; faithful "
-             "extraction preserves the question's meaning and transformation happens downstream &mdash; and the "
-             "pool is held in memory only, never persisted. The residual risk is that the copyrighted text does "
-             "exist in the prompt, and only the rephrase stage stands between it and the user.",
+            ["X-01", where("Agent/Workflows/AskAi/AskAiPromptBuilder.py", "215, 553-563"),
+             "Ask AI composes its grounding block from retrieved page chunks &mdash; verbatim extracted text of "
+             "the uploaded book &mdash; and pairs it with "
+             "<font face='Courier' size='7'>ASK_AI_SYSTEM</font>, a single paragraph about tone that says nothing "
+             "about expression. The other four generation paths all lead with "
+             "<font face='Courier' size='7'>SOURCE_EXPRESSION_RULES</font>. This is the path where verbatim source "
+             "prose is closest to the output and the only one with no contract governing how it is re-expressed.",
              risk("MEDIUM"), action("RECOMMENDED")],
-            ["X-02", where("Agent/.../Pools/Prompts/MOCK_TEST_INSTRUCTIONS_USER.txt", "6"),
-             "Asks the model to return an examination board's official instructions and duration &quot;exactly as "
-             "they would appear on the paper&quot;. Partly defensible as functional matter, but it is authored "
-             "text owned by the board being reproduced verbatim into a commercial product.",
+            ["X-02", where("Agent/Globals/Classes/Automation/Pools/Prompts/MOCK_TEST_INSTRUCTIONS_USER.txt", "6"),
+             "The prompt asks the model to &quot;return its official instructions and duration exactly as they "
+             "would appear on the paper&quot; for a named exam. An examination board's instruction sheet is that "
+             "board's own text, and reproducing it exactly is a reproduction rather than a fact. The functional "
+             "need &mdash; a candidate practising under the real rubric &mdash; is met by an equivalent statement "
+             "of the same rules, since the marking scheme and timing are facts while the wording is not.",
              risk("MEDIUM"), action("RECOMMENDED")],
-            ["X-03", where("Agent/Workflows/StudyMaterialGenerationWorker/", "similarity hook"),
-             "Verbatim-overlap measurement is wired to study material only. Flashcards and mock-test questions "
-             "are generated from the same source chunks and are not measured, so a copied flashcard leaves no "
-             "trace anywhere.",
+            ["X-03", where("Agent/Globals/Classes/Compliance/SourceSimilarityScorer.py", "160-225"),
+             "Containment of generated prose within its source chunks is scored on every study-material and "
+             "flashcard generation, but the score is written to stderr and discarded &mdash; nothing persists it "
+             "with the entity. Enforcement is off behind "
+             "<font face='Courier' size='7'>SOURCE_SIMILARITY_ENFORCEMENT_ENABLED</font> with an explicitly "
+             "uncalibrated 0.25 default. Keeping enforcement off is right; discarding the distribution means the "
+             "calibration that would let it be turned on is never accumulated.",
              risk("MEDIUM"), action("RECOMMENDED")],
-            ["X-04", where("Agent/.../Pools/Prompts/SOURCE_EXPRESSION_RULES.txt", "whole file"),
-             "<b>Control verified.</b> A shared expression contract is composed into the study-material, "
-             "flashcard and both mock-test prompts. It separates content that must stay exact from prose that "
-             "must be re-authored, and states that the no-attribution rule is a presentation rule rather than "
-             "permission to copy.",
+            ["X-04", where("Agent/Globals/Classes/Automation/Pools/Prompts/PYQ_EXTRACTION_SYSTEM.txt", "6, 15"),
+             "Exam-paper extraction instructs &quot;verbatim where possible&quot; and &quot;Do NOT make up "
+             "questions or paraphrase them. Verbatim extraction.&quot; This is deliberate and largely contained: "
+             "the extracted pool is never written to the blueprint or any collection &mdash; it travels only in "
+             "the worker task payload, which carries a five-hour Redis TTL "
+             "(<font face='Courier' size='7'>TaskManager.js:18, 298</font>) &mdash; and downstream every seed is "
+             "rewritten through the rephrase pass rather than emitted. Recorded because the verbatim step is real "
+             "and its containment rests on that TTL rather than on an explicit deletion.",
+             risk("MEDIUM"), action("RECOMMENDED")],
+            ["X-05", where("Agent/Globals/Classes/Automation/Pools/Prompts/SOURCE_EXPRESSION_RULES.txt", None),
+             "<b>Control verified.</b> The contract does what the requirements file demands and refuses the trade "
+             "it forbids: formulae, constants, chemical species, statutory definitions, terms of art and "
+             "numerical values are named as content that MUST be reproduced exactly, prose as content that must "
+             "be re-authored, with an explicit instruction never to reword a fact to satisfy the rule. It also "
+             "closes the loophole that a &quot;never mention the source&quot; instruction could be read as "
+             "licence to copy it unattributed. Composed into flashcards, study material, mock tests and knowledge "
+             "chunks.",
              risk("PASS"), action("NONE")],
-            ["X-05", where("Agent/.../Pools/Prompts/STUDY_MATERIAL_GENERATION_SYSTEM.txt", "24"),
-             "<b>Control verified.</b> The former instruction to quote source statements precisely is now scoped "
-             "to canonical statements of laws and definitions, capped at three per document and never "
-             "consecutive &mdash; addressing aggregate similarity as well as individual copying.",
-             risk("PASS"), action("NONE")],
-            ["X-06", where("Agent/.../Pools/Prompts/MOCK_TEST_QUESTION_REPHRASE_SYSTEM.txt", "70-88"),
-             "<b>Control verified.</b> The rephrase stage states that seeds are copyrighted text and that this is "
-             "the only point the wording is replaced, requires re-authoring rather than editing, sets a "
-             "six-consecutive-word ceiling, and requires discarding a seed that cannot be rephrased accurately.",
+            ["X-06", where("Agent/Globals/Classes/Automation/Pools/Prompts/MOCK_TEST_QUESTION_REPHRASE_SYSTEM.txt", None),
+             "<b>Control verified.</b> Every PYQ seed is rewritten under a closed-book rule that forbids "
+             "referring to any source, backed by a measurable six-word shared-run limit mirrored in code as "
+             "<font face='Courier' size='7'>DEFAULT_MAX_SHARED_WORD_RUN</font>. This is the control that keeps "
+             "X-04's verbatim extraction from reaching the learner as a copy.",
              risk("PASS"), action("NONE")],
         ]),
     ]))
 
     # ── Area 3 ────────────────────────────────────────────────────────────
-    story.extend(section("4. Tenant Isolation &amp; Database Segregation", [
+    story.extend(section("4. Tenant Isolation &amp; Database Leakage", [
         Paragraph(
-            "The chunk store now has exactly one reader, and it verifies ownership twice. What remains is the "
-            "schema-level weakness that made a second, unchecked reader possible in the first place.",
+            "Every retrieval path over user content was read, not only the shared query engine. The scoping of "
+            "the content itself is sound and defended three times over. Both findings below are in the "
+            "<i>resolution</i> steps that sit beside that scoping &mdash; a name lookup and a path lookup, "
+            "neither of which inherited the tenant filter the query next to it applies.",
             styles["body"]),
         findings_table([
-            ["I-01", where("Agent/Globals/Classes/Database/EmbeddingsQueryEngine.py", "16-97"),
-             "Chunk documents carry informationSourceHash but no tenant column, and the same is true of the "
-             "figures cache. Isolation is therefore a property of every caller rather than of the schema. That is "
-             "exactly how a workflow was previously able to bypass the safe query engine with a raw pipeline; "
-             "nothing structural prevents a future one from doing the same.",
+            ["T-01", where("Agent/Globals/Classes/Database/EmbeddingsQueryEngine.py", "180-191"),
+             "After the scoped vector search returns, source names are resolved with "
+             "<font face='Courier' size='7'>find({hash: {$in: hashes}})</font> &mdash; no "
+             "<font face='Courier' size='7'>userId</font> filter, unlike every query above it in the same method. "
+             "The hash set is the caller's own, but rows for that hash exist for every tenant holding the file, "
+             "and the hash&#8209;to&#8209;name map keeps whichever row Mongo returns last. A user who uploaded "
+             "&quot;Physics.pdf&quot; can therefore see a citation labelled with another account's filename for "
+             "the same book &mdash; and by D-01 that foreign name is also what reaches the model.",
              risk("MEDIUM"), action("RECOMMENDED")],
-            ["I-02", where("Dock/Globals/Classes/Database/DatabaseConnector.js", "316-317"),
-             "A stale comment states that &quot;the curated-study textbook search&quot; issues $vectorSearch "
-             "aggregations against this index. That consumer no longer exists. A future reader auditing the "
-             "index would conclude there are two retrieval paths and look for one that is not there.",
-             risk("LOW"), action("RECOMMENDED")],
-            ["I-03", where("Agent/Workflows/PrepareImages/PrepareImages.py", "272"),
-             "The figures cache is looked up by content hash, so figure extractions are reused across every user "
-             "who uploaded the same document. Same content-addressed sharing model as the source blob itself, "
-             "and it exposes no text &mdash; noted for completeness rather than as a defect.",
-             risk("LOW"), action("NONE")],
-            ["I-04", where("Agent/Workflows/GenerateCuratedStudyMaterial/GenerateCuratedStudyMaterial.py", "298-345"),
-             "<b>Control verified.</b> Curated study grounds on the learner's own weak cards (carried in the task "
-             "payload), their own non-curated study material for the deck, and web search. The query filters on "
-             "userId and deckId, and the shared chunk store is not read at all. Curated material is excluded "
-             "from its own corpus so successive batches cannot ground on each other and drift.",
+            ["T-02", where("Dock/Endpoints/AutomaticGeneration/InformationSourceDownload.js", "35-45"),
+             "Authorisation is checked by content hash "
+             "(<font face='Courier' size='7'>doesUserOwnInformationSourceWithHash</font>) but the read then uses "
+             "the <i>requested row's</i> <font face='Courier' size='7'>directoryPath</font>, which belongs to "
+             "whichever tenant that row is for. A user passing another account's information-source id downloads "
+             "out of that account's per-user prefix whenever both hold the same file. No content leaks &mdash; "
+             "the check guarantees the requester owns the same bytes &mdash; but this is exactly the &quot;one "
+             "stored copy served to two accounts&quot; pattern the per-user storage split was adopted to end "
+             "(<font face='Courier' size='7'>InformationSourceUpload.js:448-461</font>). Separately, the "
+             "<font face='Courier' size='7'>getUser</font> result is dereferenced without a null check; the route "
+             "sits behind <font face='Courier' size='7'>ensureLogin</font>, so this costs a 500 instead of a 401 "
+             "rather than admitting anyone.",
+             risk("MEDIUM"), action("RECOMMENDED")],
+            ["T-03", where("Agent/Globals/Classes/Database/EmbeddingsQueryEngine.py", "96-273"),
+             "<b>Control verified.</b> Grounding retrieval is scoped three independent times: Dock filters the "
+             "caller's hashes before the worker spawns, the worker re-derives the permitted set from "
+             "<font face='Courier' size='7'>informationSources</font>, and both retrieval implementations filter "
+             "on <font face='Courier' size='7'>userId</font> &mdash; the Atlas "
+             "<font face='Courier' size='7'>$vectorSearch</font> in its filter clause and the brute-force "
+             "fallback in its find. An empty owner id returns nothing rather than falling open, and the fallback "
+             "path was checked specifically because a degraded search node is where a filter usually gets lost.",
              risk("PASS"), action("NONE")],
-            ["I-05", where("Agent/Globals/Classes/Database/EmbeddingsQueryEngine.py", "99-165"),
-             "<b>Control verified.</b> vector_search takes a mandatory owner id and re-derives which requested "
-             "hashes that user owns before querying, failing closed on an empty id. It is now the only reader of "
-             "the chunk store anywhere in the codebase.",
+            ["T-04", where("Agent/Globals/Classes/Database/EmbeddingsQueryEngine.py", "15-68"),
+             "<b>Control verified.</b> Derived content is keyed on the tenant at write time, not only at read "
+             "time: chunk upserts match on "
+             "<font face='Courier' size='7'>(userId, informationSourceHash, pageNumber, content)</font>, so one "
+             "document uploaded by two users produces two independent chunk sets rather than one shared row that "
+             "later needs an access check. Figure rows carry the same pair, and orphan detection matches on it "
+             "rather than on the hash alone.",
              risk("PASS"), action("NONE")],
-            ["I-06", where("Dock/Endpoints/AskAi/Helpers/AskAiStreamRunner.js", "461-511"),
-             "<b>Control verified.</b> Client-supplied source hashes are resolved against the caller's own rows "
-             "before the payload leaves Dock, and the filtered list overrides the client value. With I-05 this is "
-             "genuine defence in depth &mdash; neither layer depends on the other.",
-             risk("PASS"), action("NONE")],
-            ["I-07", where("Dock/Globals/Classes/Database/DatabaseConnector.js", "199-214"),
-             "<b>Control verified.</b> Decks, cards, study materials and mock tests are each uniquely indexed on "
-             "{ userId, data.id }; the deck-merge heuristic filters on userId; the paid-deck catalogue is "
-             "admin-uploaded first-party content rather than pooled user material.",
-             risk("PASS"), action("NONE")],
-            ["I-08", where("Dock/Endpoints/AutomaticGeneration/InformationSourceUpload.js", "300-330"),
-             "<b>Control verified.</b> The upload response is identical in shape whether or not the content was "
-             "already stored, closing the oracle that revealed whether a file existed on the platform. Completion "
-             "timing still differs, which is inherent to deduplication.",
-             risk("LOW"), action("NONE")],
         ]),
     ]))
 
     # ── Area 4 ────────────────────────────────────────────────────────────
     story.extend(section("5. Model Training &amp; Data Logging", [
         Paragraph(
-            "The strongest of the five areas. Both provider postures are asserted in code rather than inherited "
-            "from platform defaults, and the log pipeline carries no brand-bearing identifiers.", styles["body"]),
+            "Three providers carry live traffic. All three state their data posture in code at the point of "
+            "reliance rather than inheriting it from a platform default, which is the distinction the "
+            "requirements file asks for. The one finding is not about a provider setting but about what is put "
+            "into the prompt.", styles["body"]),
         findings_table([
-            ["D-01", where("Agent/.../Providers/GoogleEnterpriseAiProvider.py", "146-190"),
-             "<b>Control verified.</b> A missing Vertex project no longer falls silently back to the API-key path "
-             "with its different data-governance posture; it raises unless the fallback is explicitly opted into, "
-             "and the resolved auth mode is logged once per process.",
+            ["D-01", where("Agent/Workflows/AskAi/AskAiPromptBuilder.py", "559-563"),
+             "Each grounding excerpt is labelled "
+             "<font face='Courier' size='7'>[Source: &lt;document name&gt;, page N]</font> using the uploaded "
+             "file's own name. That string routinely carries a coaching institute or publisher mark, and it is "
+             "the same string the platform is careful to pseudonymise everywhere it touches disk. The page number "
+             "is what makes the citation useful to the learner; the brand-bearing stem is not. Compounded by "
+             "T-01, the name sent can belong to a different account.",
+             risk("MEDIUM"), action("RECOMMENDED")],
+            ["D-02", where("Agent/Globals/Classes/Automation/Providers/GoogleEnterpriseAiProvider.py", "152-182"),
+             "<b>Control verified.</b> The provider refuses to fall back from the service-account Vertex backend "
+             "to the Express API-key surface implicitly, raising with an explanation that names the reason "
+             "&mdash; a different contractual and data-governance posture &mdash; and requiring "
+             "<font face='Courier' size='7'>GOOGLE_ENTERPRISE_AGENT_ALLOW_API_KEY_FALLBACK</font> to accept it "
+             "deliberately. The resolved auth mode is printed once per process, so the posture in force is "
+             "visible in every worker's log rather than inferred.",
              risk("PASS"), action("NONE")],
-            ["D-02", where("Agent/.../Providers/OpenAiProvider.py", "12-40, 74"),
-             "<b>Control verified.</b> store=False is set on every call and the account-level zero-data-retention "
-             "requirement is documented where it is relied upon. The provider is not on the live path and the "
-             "docstring says so.",
+            ["D-03", where("Agent/Globals/Classes/Automation/Providers/OpenAiProvider.py", "34, 78"),
+             "<b>Control verified.</b> <font face='Courier' size='7'>store=False</font> is a named class constant "
+             "passed on every call rather than an argument that could be dropped at one call site, so prompts and "
+             "completions are not retained for the platform's own use.",
              risk("PASS"), action("NONE")],
-            ["D-03", where("Agent/Globals/Utility/RedactSourceName.py", "whole file"),
-             "<b>Control verified.</b> Uploaded filenames, which routinely carry institute and publisher names, "
-             "are replaced with a deterministic pseudonym at fifteen log sites across six workflows. Correlation "
-             "survives; the brand-attribution trail in MongoDB and the admin log export does not.",
+            ["D-04", where("Agent/Globals/Classes/Automation/Providers/AnthropicProvider.py", "57-90"),
+             "<b>Control verified.</b> The provider fails loudly at construction when its key is absent rather "
+             "than routing paid-deck work to a different model, and it documents honestly what it does not "
+             "control &mdash; the 30-day platform-level abuse-monitoring window, and that zero-data-retention is "
+             "an account-level agreement rather than a request parameter. Stating an uncontrolled posture "
+             "explicitly is worth more than asserting a flag that does not exist.",
              risk("PASS"), action("NONE")],
-            ["D-04", where("Agent/.../Providers/GoogleEnterpriseAiProvider.py", "~810"),
-             "The image-generation stream prints interleaved model text parts verbatim to stderr. Model output "
-             "rather than source input and confined to the diagram path, so exposure is slight &mdash; but it is "
-             "the last place raw model text enters the log.",
-             risk("LOW"), action("RECOMMENDED")],
-            ["D-05", where("Agent/Workflows/", "reviewed across all workflows"),
-             "<b>Control verified.</b> A sweep of every print statement in the Agent service found no raw "
-             "document text, chunk content or full prompt written to logs.",
+            ["D-05", where("Agent/Globals/Utility/RedactSourceName.py", "5-36"),
+             "<b>Control verified.</b> Uploaded filenames are converted to a deterministic pseudonym "
+             "(<font face='Courier' size='7'>src-4f2a9c71.pdf</font>) before any logging, applied across six "
+             "workflows, keeping the extension for diagnostics and the digest for cross-run correlation. The "
+             "reasoning is recorded at the helper: Agent output is teed into Dock's pipeline, persisted to Mongo "
+             "and the write-ahead log, and is downloadable through the admin export, so a raw filename would "
+             "become a durable exportable record attributing named third-party material to the platform. The task "
+             "archive likewise stores a summary string rather than the payload.",
              risk("PASS"), action("NONE")],
         ]),
     ]))
 
     # ── Area 5 ────────────────────────────────────────────────────────────
-    story.extend(section("6. Legal Intermediary Provisions &amp; Safe Harbour", [
+    story.extend(section("6. Legal Intermediary Provisions", [
         Paragraph(
-            "The platform can action a notice, record it, and evidence what it removed. The open question is no "
-            "longer whether it can delete, but whether it can investigate.", styles["body"]),
+            "The safe-harbour machinery is largely present and, where present, genuinely built rather than "
+            "gestured at: an insert-only notice register, a dry-run takedown that refuses an unattributed "
+            "removal, export gates and a full contractual set. Three gaps sit between that machinery and what it "
+            "can actually reach.", styles["body"]),
         findings_table([
-            ["H-01", where("Dock/Globals/Classes/Generation/GenerationProvenance.js", "whole class"),
-             "Generated cards and study material now record the content hashes of the uploads that produced "
-             "them, but <b>no query surface reads that field</b>. Answering &quot;what did we generate from this "
-             "document&quot; still requires an ad-hoc database query. The data exists and is unreachable through "
-             "any supported path, which is only half the capability.",
+            ["H-01", where("Dock/Endpoints/Helpers/MoveToDatabase.js", "319-341"),
+             "Generated cards, study material and mock tests record nothing about the document they were built "
+             "from. The pipeline has the information &mdash; workers stage "
+             "<font face='Courier' size='7'>sourcePages</font> alongside each entity "
+             "(<font face='Courier' size='7'>FlashcardGenerationWorker.py:461</font>, "
+             "<font face='Courier' size='7'>StudyMaterialGenerationWorker.py:210</font>) &mdash; and the "
+             "write-back drops it; the field appears nowhere in Dock. Only the deck carries an "
+             "&quot;AI-generated&quot; marker, which says nothing about which work it came from. A rightsholder "
+             "notice therefore has no way to enumerate what was derived from the material, which is what makes "
+             "H-07 an accepted limit rather than a solvable one.",
              risk("MEDIUM"), action("RECOMMENDED")],
-            ["H-02", where("Dock/Globals/Classes/Content/InformationSourcePurger.js", "84-140"),
-             "Takedown removes the source rows across all tenants, the blob, the chunks and the figures &mdash; "
-             "but not content generated from them. <b>This is deliberate and correct.</b> Original wording about "
-             "facts is not a reproduction, so a notice against a source does not automatically reach it; and full "
-             "lineage is unachievable in any case across synced device copies, user edits via content overlays, "
-             "and materials synthesised from several sources plus the web. Removal of derivatives should stay a "
-             "per-case decision informed by the similarity score, not an automatic cascade.",
+            ["H-02", where("Dock/Globals/Classes/Content/BrandNameSanitizer.js", "128-147"),
+             "<font face='Courier' size='7'>redact</font> is implemented, tested against a curated mark list and "
+             "called from nowhere. The only consumer is "
+             "<font face='Courier' size='7'>findRegisteredMarks</font>, used at publish time as an advisory "
+             "warning that does not block "
+             "(<font face='Courier' size='7'>PaidDeckPublishService.js:311-318</font>). Advisory detection is the "
+             "right default for a title, because nominative use is legitimate and only an operator can tell it "
+             "from implied endorsement &mdash; but nothing applies the redaction on the one path where content "
+             "crosses to an account that is not the publisher's.",
+             risk("MEDIUM"), action("RECOMMENDED")],
+            ["H-03", where("Dock/SeedData/LegalDocuments.json", "Terms cl.19; Privacy cl.18"),
+             "A Grievance Officer is named in both documents with a full postal address and an email, which is "
+             "the substantive part of the obligation. Neither commits to a timeline: the Terms promise "
+             "&quot;reasonable efforts&hellip; at the earliest possible opportunity&quot; and the Privacy Policy "
+             "&quot;within the timelines prescribed under Applicable Law&quot;, where the IT Rules 2021 specify "
+             "24 hours to acknowledge and 15 days to dispose. No separate copyright-complaint route is published "
+             "either, so a rightsholder's only entry point is the general support address.",
+             risk("MEDIUM"), action("RECOMMENDED")],
+            ["H-04", where("Dock/Globals/Classes/Content/InformationSourcePurger.js", "81-215"),
+             "<b>Control verified.</b> The takedown purge builds one blob path per matching row from that row's "
+             "own directory, deduplicates, and deletes each independently so one failure does not abandon the "
+             "rest. <font face='Courier' size='7'>bContentRemoved</font> is true only when every located copy was "
+             "removed, no row resisted deletion and no row was unlocatable; the register records "
+             "<font face='Courier' size='7'>storedCopiesFound</font> against "
+             "<font face='Courier' size='7'>storedCopiesRemoved</font> so a partial removal is legible rather "
+             "than rounded up to success. A row with no directory path is counted and skipped rather than having "
+             "a path guessed from the hash.",
+             risk("PASS"), action("NONE")],
+            ["H-05", where("Dock/Endpoints/Admin/Content/TakedownContent.js", "36-160"),
+             "<b>Control verified.</b> A notice reference is mandatory even for a dry run, so an unattributed "
+             "removal cannot be actioned; a hash matching neither rows nor derived artefacts returns 404 rather "
+             "than recording a takedown that removed nothing; the dry run reports the distinct stored-copy count "
+             "before an irreversible action; and every outcome is appended to an insert-only register that has no "
+             "update or delete method.",
+             risk("PASS"), action("NONE")],
+            ["H-06", where("Main/Globals/Model/Deck.js", "1094-1147"),
+             "<b>Control verified.</b> Export writes a local <font face='Courier' size='7'>.mmd</font> file "
+             "through the client's own persistence layer &mdash; a self-contained payload, not a link back to a "
+             "central server, so a shared export cannot become a distribution channel for platform-hosted "
+             "content. Paid and AI-generated decks are refused at the export entry point, with the client-side "
+             "nature of that gate acknowledged and reported.",
+             risk("PASS"), action("NONE")],
+            ["H-07", where("Dock/SeedData/LegalDocuments.json", "Terms cl.9.2"),
+             "<b>Control verified.</b> The contractual set is complete: a UGC rights warranty that the user owns "
+             "or is licensed for what they upload, a representation that it infringes no third-party right, an IP "
+             "indemnity, and an express statement that the Company is not obliged to host or retain any UGC.",
+             risk("PASS"), action("NONE")],
+            ["H-08", where("Dock/Globals/Classes/Content/InformationSourcePurger.js", "81-90"),
+             "Takedown reaches the source and everything derived mechanically from it, but not the flashcards and "
+             "study material generated from it. Recorded as an accepted limit rather than a defect: original "
+             "wording about facts is not a reproduction of the work, and once content has synced to devices and "
+             "been user-edited, full lineage is unachievable. H-01 is what would make a case-by-case review "
+             "possible where it is warranted.",
              risk("MEDIUM"), action("NONE")],
-            ["H-03", where("Dock/Globals/Classes/Content/BrandNameSanitizer.js", "whole class"),
-             "Third-party mark detection is correct but wired to a single surface (paid-deck upload) as an "
-             "advisory warning. It is applied on no egress path because none exists, which also means it is "
-             "untested against real cross-tenant traffic.",
-             risk("MEDIUM"), action("RECOMMENDED")],
-            ["H-04", where("Dock/Endpoints/Admin/Content/TakedownContent.js", "whole file"),
-             "<b>Control verified.</b> An admin endpoint actions a notice by content hash across all tenants, "
-             "with a dry-run mode reporting exactly what would be removed and whether the hash was actioned "
-             "before. A mistyped hash returns 404 rather than silently succeeding.",
-             risk("PASS"), action("NONE")],
-            ["H-05", where("Dock/Globals/Classes/Database/ContentTakedownNoticeQueryEngine.js", "whole class"),
-             "<b>Control verified.</b> Every takedown is appended to an insert-only register recording hash, "
-             "notice reference, actor, tenants affected and counts purged. No update or delete method exists.",
-             risk("PASS"), action("NONE")],
-            ["H-06", where("Dock/SeedData/LegalDocuments.json", "Terms 7, 9.2, 14; Privacy 18"),
-             "<b>Control verified.</b> The Terms prohibit infringing uploads, require the user to warrant they "
-             "hold all rights in their content, and carry an IP indemnity. The Privacy Policy names a Grievance "
-             "Officer with published contact details and statutory response timelines.",
-             risk("PASS"), action("NONE")],
-            ["H-07", where("Main/, Dock/Endpoints/", "no such handlers"),
-             "<b>Control verified.</b> No export or share handler exists, so no user-authored text reaches "
-             "another tenant. This is what keeps H-03 contained &mdash; a property that lapses silently the "
-             "moment sharing ships.",
-             risk("PASS"), action("NONE")],
         ]),
+    ]))
+
+    # ── Section 6 pointer ─────────────────────────────────────────────────
+    story.extend(section("7. Inbound Dependency Licensing", [
+        make_callout(
+            "Inbound third-party licence exposure is assessed in its own report and is deliberately not "
+            "summarised, rated or restated here. It is generated &mdash; never hand-written &mdash; from the "
+            "manifests and installed package metadata at render time, and carries its own weighted rating out of "
+            "ten. See <b>Common/Reports/DependencyLicenceReport.pdf</b>, regenerated as the first step of this "
+            "audit by <b>Common/Scripts/RenderDependencyLicenceReport.py</b>."),
     ]))
 
     # ── Remediation ───────────────────────────────────────────────────────
-    story.extend(section("7. Recommended Remediation", [
-        Paragraph("Specifications only &mdash; nothing was changed while producing this audit.", styles["body"]),
+    story.extend(section("8. Recommended Remediation", [
+        Paragraph(
+            "Specifications only &mdash; nothing was changed while producing this audit. None of these trades "
+            "accuracy for originality; where a fix touches a prompt, the invariant content (formulae, constants, "
+            "statutory definitions, quantities) is explicitly left exact.", styles["body"]),
         make_table(
             ["Priority", "Addresses", "Specification"],
             [
-                ["P1", "I-01",
-                 "Stamp an owner set onto chunk and figure documents at write time so tenancy is a property of "
-                 "the schema rather than of caller discipline, and treat any raw $vectorSearch against "
-                 "textEmbeddings outside the query engine as a review failure. The convention held only because "
-                 "there is now one caller; it was broken once already."],
                 ["P1", "R-01, R-02",
-                 "Give the secondary upload surfaces a lifecycle: expire support attachments on ticket closure "
-                 "and attempt payloads after a defined review window, then sweep both. Reuse the existing reaper "
-                 "rather than adding schedulers &mdash; it already runs the cascade for two other content types."],
-                ["P1", "H-01",
-                 "Add an admin lookup that lists generated entities by source content hash, so the provenance "
-                 "field can actually answer a notice. Report the stored similarity score alongside each result so "
-                 "the operator can distinguish original phrasing from a substantially-copied artefact, and keep "
-                 "removal a manual per-case decision."],
+                 "Register the evaluation prefix with "
+                 "<font face='Courier' size='7'>EphemeralUploadRegistry</font> at the point the attempt payload "
+                 "is written, and register the generation task prefix at run start rather than relying on the "
+                 "success path to clean it. The success path can still purge eagerly; the registration is the "
+                 "backstop for every path that does not reach it. Reuse the existing reaper &mdash; it already "
+                 "runs this exact shape of sweep for two other content types, so this is one call per producer "
+                 "and no new machinery."],
+                ["P1", "T-01",
+                 "Add <font face='Courier' size='7'>userId</font> to the source-name lookup, matching every other "
+                 "query in that method. One filter term; it cannot regress retrieval because the hash set is "
+                 "already the caller's own, and it closes both the label leak and the foreign-name-to-model path "
+                 "in D-01."],
+                ["P1", "T-02",
+                 "Resolve the requester's OWN row for the hash and read from that row's directory, rather than "
+                 "reading from the row whose id was supplied. The ownership check already loads exactly that row "
+                 "&mdash; return it instead of a boolean and use it. Add the missing null check on "
+                 "<font face='Courier' size='7'>getUser</font> so the handler answers 401 on its own rather than "
+                 "depending solely on the route guard."],
+                ["P1", "R-03",
+                 "Decide which half is right and make the other match, rather than leaving them divergent. The "
+                 "recommended direction is to keep the code and correct clause 10.5: state that the scan is "
+                 "deleted as soon as it has been transcribed and that the transcription is what a dispute is "
+                 "reviewed against. That is the stronger privacy posture and it is what already happens. If the "
+                 "dispute-evidence guarantee is wanted instead, remove the eager delete and let the registered "
+                 "60-day window do the work it was already booked for."],
+                ["P2", "H-01",
+                 "Persist the <font face='Courier' size='7'>sourcePages</font> and source hash the workers "
+                 "already stage onto the stored card, study material and mock test, then add an admin lookup that "
+                 "lists generated entities by source content hash. Store the containment score from X-03 "
+                 "alongside each entity so the lookup can rank candidates by how verbatim they actually are, and "
+                 "keep removal a manual per-case decision rather than a cascade."],
+                ["P2", "X-01",
+                 "Compose <font face='Courier' size='7'>SOURCE_EXPRESSION_RULES</font> into the Ask AI system "
+                 "prompt, as the other four generation paths already do. Its accuracy carve-out is what makes "
+                 "this safe: definitions, formulae and quantities stay exact, and only the surrounding prose must "
+                 "be the model's own. Do not narrow the grounding block to compensate &mdash; less grounding "
+                 "means more invention, which is the worse failure."],
+                ["P2", "D-01",
+                 "Send the redacted pseudonym rather than the raw document name in the grounding label, keeping "
+                 "the page number, which is the part that makes the citation useful. "
+                 "<font face='Courier' size='7'>RedactSourceName</font> already produces a stable pseudonym, so "
+                 "citations stay consistent within a response, and the frontend can map it back to the real title "
+                 "client-side where the user is entitled to see it."],
+                ["P2", "X-02",
+                 "Replace &quot;return its official instructions&hellip; exactly as they would appear on the "
+                 "paper&quot; with an instruction to state the same rules in the platform's own words &mdash; "
+                 "keeping duration, marks per question, negative marking and section counts exact, because those "
+                 "are facts and the candidate's practice depends on them, while the rubric prose is re-authored."],
                 ["P2", "X-03",
-                 "Extend similarity scoring to the flashcard and mock-test workers so all three generation paths "
-                 "are measured, then calibrate a threshold from the collected distribution before enabling "
-                 "enforcement anywhere."],
-                ["P2", "X-01, X-02",
-                 "Once mock-test similarity telemetry exists, revisit whether verbatim PYQ extraction is still "
-                 "warranted. Separately, replace the request for official exam instructions with a summary of "
-                 "format, duration and marking rather than the board's own text."],
+                 "Persist the containment score with the entity instead of only logging it, and extend scoring to "
+                 "mock-test question generation. Then calibrate a threshold from the collected distribution "
+                 "before enabling enforcement anywhere &mdash; an uncalibrated threshold either never fires or "
+                 "pressures the model to paraphrase the content that must stay exact."],
+                ["P2", "H-02",
+                 "Apply <font face='Courier' size='7'>BrandNameSanitizer.redact</font> to the publicly listed "
+                 "fields of paid decks and organization decks at the point they are shown to an account other "
+                 "than the publisher's, leaving the publisher's own view unmodified. That is exactly the posture "
+                 "the class documents and has never been wired to."],
                 ["P2", "H-03",
-                 "Wire brand-mark redaction into the first cross-tenant egress path at the time it is built, and "
-                 "treat that as a launch requirement rather than a follow-up."],
-                ["P3", "I-02, D-04, R-06",
-                 "Housekeeping: correct the stale vector-index comment, drop the verbatim model-text print from "
-                 "the image-generation stream, and add the missing null guard in the download handler."],
-                ["P3", "R-03",
-                 "Give deal invoices a retention period consistent with the commercial record-keeping "
-                 "requirement they exist to satisfy."],
+                 "State the IT Rules 2021 windows explicitly in both documents &mdash; acknowledgement within 24 "
+                 "hours, disposal within 15 days &mdash; and publish a dedicated copyright-notice route "
+                 "identifying what a valid notice must contain. The takedown machinery to honour one already "
+                 "exists; what is missing is the published address that lets a rightsholder reach it."],
+                ["P3", "R-04",
+                 "Give deal invoices a stated retention period and a deletion path, either through the same "
+                 "registry with a commercial-records window or through an explicit archival rule. The exposure is "
+                 "negligible; the value is that no upload surface is left with an unstated lifecycle, which is "
+                 "how the three findings above came to exist."],
+                ["P3", "X-04",
+                 "Delete the extracted question pool from the worker payload once the rephrase pass has consumed "
+                 "it, rather than relying on the five-hour task TTL. The TTL is a real bound and the current "
+                 "state is acceptable; an explicit delete makes the containment a decision rather than a "
+                 "consequence of an unrelated cache setting."],
             ],
-            [9, 17, 74], centered_columns=(0,)),
+            [9, 13, 78]),
     ]))
 
     # ── Operational notes ─────────────────────────────────────────────────
-    story.extend(section("8. Operational Notes", [
+    story.extend(section("9. Operational Notes", [
+        Paragraph(
+            "Behaviour that changes how an environment boots or what it does by default, recorded so a deploy "
+            "does not discover it.", styles["body"]),
         make_bullets([
-            ("Deployment gate",
-             "The Vertex provider refuses to start when no project is configured unless the API-key fallback is "
-             "explicitly enabled. Confirm every environment sets GOOGLE_ENTERPRISE_AGENT_PROJECT before "
-             "deploying, or the Agent will not boot."),
-            ("Behaviour change &mdash; curated study",
-             "Curated material is now grounded on the learner's own cards and study material plus the web, not "
-             "on a shared textbook corpus. Output will be narrower and more personal. It also no longer loads a "
-             "sentence-transformer model per task, which reduces worker memory pressure."),
-            ("Behaviour change &mdash; retention default",
-             "An upload omitting a retention mode now defaults to TEMPORARY and is deleted after seven days. The "
-             "shipped client always sends the mode explicitly, so only non-conforming callers are affected; the "
-             "fallback logs a warning worth watching after release."),
-            ("Enforcement stays off",
-             "Similarity scoring is observe-only. Do not enable SOURCE_SIMILARITY_ENFORCEMENT_ENABLED until real "
-             "containment scores have been collected &mdash; an uncalibrated threshold either never fires or "
-             "pressures the model to paraphrase the formulae that must stay exact."),
+            ("Vertex auth now gates Agent boot",
+             "<font face='Courier' size='7'>GOOGLE_ENTERPRISE_AGENT_PROJECT</font> must be set. An environment "
+             "carrying only <font face='Courier' size='7'>GOOGLE_ENTERPRISE_AGENT_API_KEY</font> raises at "
+             "provider construction instead of running, and must set "
+             "<font face='Courier' size='7'>GOOGLE_ENTERPRISE_AGENT_ALLOW_API_KEY_FALLBACK=true</font> to accept "
+             "the Express surface deliberately. This is the intended failure mode, but it will stop an "
+             "unmigrated environment."),
+            ("Anthropic key is paid-deck-only and fails closed",
+             "<font face='Courier' size='7'>ANTHROPIC_API_KEY</font> is required only by the admin-only "
+             "paid-deck generation stages. The provider raises at construction when it is unset rather than "
+             "silently routing to another model, which would contradict the model id recorded in the run's "
+             "generation-provenance document. Environments that never run paid-deck generation can leave it "
+             "unset."),
+            ("Similarity enforcement is off and its threshold is uncalibrated",
+             "<font face='Courier' size='7'>SOURCE_SIMILARITY_ENFORCEMENT_ENABLED</font> defaults to off and "
+             "<font face='Courier' size='7'>SOURCE_SIMILARITY_CONTAINMENT_THRESHOLD</font> defaults to 0.25, "
+             "which the code documents as a starting point rather than a validated value. Enabling enforcement "
+             "before calibrating against production data is the specific mistake the default exists to prevent."),
+            ("The figure-object sweep cursor is in-memory",
+             "The reaper's position in the figure prefix is held in process memory, so a restart re-scans from "
+             "the head of the prefix. The sweep is idempotent, so this costs repeated listing rather than "
+             "correctness &mdash; but on a bucket large enough that a full pass spans many ticks, frequent "
+             "restarts will keep it near the beginning."),
+            ("Answer-sheet retention is shorter than published",
+             "Per R-03 the scans are deleted within minutes of transcription, not the 60 days clause 10.5 "
+             "states. Support answering a marks dispute cannot retrieve the original image today, whatever the "
+             "policy says."),
         ]),
     ]))
 
-    # ── Scope ─────────────────────────────────────────────────────────────
-    story.extend(section("9. Scope &amp; Method", [
-        make_bullets([
-            ("Method",
-             "Independent static review of the working tree, tracing each data flow from its entry handler "
-             "through storage, worker, prompt and retrieval to the rendered or persisted output. Every control "
-             "was re-verified against the current source rather than assumed from a prior review, and the "
-             "previous report was deleted before this pass began."),
-            ("Covered",
-             "All four upload handlers; the information-source, support-attachment, attempt-payload and "
-             "answer-sheet lifecycles; every vector-retrieval path in both services; the prompt corpus; the "
-             "Agent's logging surface; MongoDB schema, index and TTL definitions; the admin route table; and the "
-             "seeded Terms of Service and Privacy Policy."),
-            ("Not covered",
-             "Deployed infrastructure and bucket ACLs as configured in production, third-party contractual terms "
-             "as executed, and dynamic behaviour &mdash; no suite was run against a live environment, which the "
-             "repository has no runner for. Findings describe source code, not a running system."),
-            ("Standing",
-             "An engineering risk assessment, not legal advice. Ratings reflect architectural exposure and "
-             "remediation cost; whether any finding constitutes infringement, a data-protection breach or an "
-             "intermediary-liability failure is a question for qualified counsel."),
-        ]),
+    # ── Rating ────────────────────────────────────────────────────────────
+    story.extend(section("10. Overall Rating", [
+        make_table(
+            ["Area", "Weight", "Score", "Reasoning"],
+            [
+                ["File lifecycle &amp; retention", "High", "8",
+                 "The document cascade is complete and ordered correctly, the published retention period is the "
+                 "one enforced, and two secondary surfaces have real registry-backed windows. Against that: three "
+                 "prefixes no reaper covers, and a published promise the code contradicts."],
+                ["Derivative-work risk", "High", "8",
+                 "The shared expression contract is genuinely good and refuses the accuracy trade outright, and "
+                 "the closed-book rephrase rule is measurable. The deduction is for the one path that puts "
+                 "verbatim source in front of the model without it, and for discarding the similarity data that "
+                 "would let enforcement be calibrated."],
+                ["Tenant isolation", "High", "8",
+                 "Closed at the schema rather than by convention: a tenant column written at upsert time, three "
+                 "independent checks on retrieval, both search implementations filtered, per-user storage paths. "
+                 "Two resolution steps beside that scoping still cross the boundary, neither leaking content."],
+                ["Third-party API hygiene", "Medium", "9",
+                 "All three providers assert their posture in code at the point of reliance, refuse silent "
+                 "downgrades, and state honestly what they do not control. The deduction is for sending the "
+                 "uploader's brand-bearing document name to a provider the logs are careful to keep it from."],
+                ["Intermediary safeguards", "High", "7",
+                 "Contract, insert-only register, dry-run takedown that now removes every holder's copy, export "
+                 "gates and point-of-action notices are all present and verified. Against that: generated content "
+                 "records no provenance at all, the redaction function is built but unwired, and no statutory "
+                 "timeline is committed."],
+            ],
+            [26, 12, 9, 53], centered_columns=(1, 2)),
+        Spacer(1, 9),
+        make_callout(
+            "<b>Overall: 8 / 10.</b> No HIGH finding survived this pass. The erasure cascade &mdash; the thing "
+            "that most determines whether a retention promise means anything &mdash; is complete and, more to the "
+            "point, honest: it reports partial removal as partial, which is the property that lets an operator "
+            "trust the register. What holds the score at eight is a consistent pattern rather than any single "
+            "defect: <b>the platform is good at the mechanism and less good at its edges</b>. Three storage "
+            "prefixes were never handed to the reaper that already exists. Two lookups sitting inches from "
+            "correctly-scoped queries did not inherit the filter. Provenance is computed by the workers and "
+            "dropped by the write-back. A redaction function is written and never called. Each is small and "
+            "individually cheap &mdash; a registration call, a filter term, a persisted field &mdash; and "
+            "together they are the difference between controls that exist and controls that reach. With the P1 "
+            "items done, the same codebase rates around 9."),
     ]))
 
     story.append(Spacer(1, 10))

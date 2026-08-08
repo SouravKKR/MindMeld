@@ -302,12 +302,6 @@ class ProcessSyllabus(Workflow):
         return curriculum_sources, document_sources
 
     async def run(self):
-        # Every ProcessSyllabus path hits fitz (the TOC / heading / structure
-        # extractors). Silence MuPDF's C-level warnings here so the agent log
-        # stays clean for the rest of the run.
-        from Globals.Classes.Generic.MuPdfBootstrap import MuPdfBootstrap
-        MuPdfBootstrap.silence_parser_warnings()
-
         main_task_id                  = os.getenv("MAIN_TASK_ID")
         syllabus_file_destination_path = join_path(
             "/",

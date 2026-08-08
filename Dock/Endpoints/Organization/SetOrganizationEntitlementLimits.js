@@ -1,6 +1,6 @@
 const OrganizationQueryEngine = require("../../Globals/Classes/Organization/OrganizationQueryEngine");
 const OrganizationPermissionRuleQueryEngine = require("../../Globals/Classes/Organization/OrganizationPermissionRuleQueryEngine");
-const { planFeatures } = require("../../Globals/Enumerations/PlanFeatures");
+const OrganizationFeatureSelection = require("../../Globals/Classes/Organization/OrganizationFeatureSelection");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
 
@@ -20,8 +20,15 @@ const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
  * inspecting the rules after a downgrade would see grants that no longer
  * happen and reasonably conclude the ceiling had not applied.
  *
+ * The owner's own features (`adminAllowedFeatures`) are set here as well. They
+ * are a direct platform grant rather than a ceiling, so nothing is clamped to
+ * them and they are NOT clamped to `grantableFeatures` — that list bounds what
+ * the organization may hand its MEMBERS, and bounding the owner's own
+ * capability by it would let an owner strip themselves by editing their
+ * allow-list.
+ *
  * Body: { organizationId, maxStorageGrantBytesPerMember?, maxCreditsPerMemberPerMonth?,
- *         maxPublishedDecks?, grantableFeatures? }
+ *         maxPublishedDecks?, grantableFeatures?, adminAllowedFeatures? }
  *
  * Every field is optional and an absent one is left alone, so a single ceiling
  * can be adjusted without restating the others and clearing them by omission.
@@ -88,27 +95,28 @@ async function setOrganizationEntitlementLimits(request, response)
 
     if (body.grantableFeatures !== undefined)
     {
-        if (!Array.isArray(body.grantableFeatures))
+        const grantableValidation = OrganizationFeatureSelection.validate(body.grantableFeatures);
+        if (!grantableValidation.valid)
         {
             response.statusCode = httpStatus.BAD_REQUEST;
-            response.sendJson({ error: ErrorCodes.INVALID_REQUEST, field: "grantableFeatures" });
+            response.sendJson({ error: ErrorCodes.INVALID_FEATURE_SELECTION, field: "grantableFeatures", featureValue: grantableValidation.invalidValue });
             return;
         }
 
-        const knownFeatureValues = Object.values(planFeatures);
-        const requestedFeatures = body.grantableFeatures.map(featureValue => Number(featureValue));
+        limits.grantableFeatures = grantableValidation.featureValues;
+    }
 
-        for (const featureValue of requestedFeatures)
+    if (body.adminAllowedFeatures !== undefined)
+    {
+        const adminValidation = OrganizationFeatureSelection.validate(body.adminAllowedFeatures);
+        if (!adminValidation.valid)
         {
-            if (!knownFeatureValues.includes(featureValue))
-            {
-                response.statusCode = httpStatus.BAD_REQUEST;
-                response.sendJson({ error: ErrorCodes.INVALID_REQUEST, field: "grantableFeatures", featureValue: featureValue });
-                return;
-            }
+            response.statusCode = httpStatus.BAD_REQUEST;
+            response.sendJson({ error: ErrorCodes.INVALID_FEATURE_SELECTION, field: "adminAllowedFeatures", featureValue: adminValidation.invalidValue });
+            return;
         }
 
-        limits.grantableFeatures = Array.from(new Set(requestedFeatures));
+        limits.adminAllowedFeatures = adminValidation.featureValues;
     }
 
     const updateResult = await OrganizationQueryEngine.setEntitlementLimits(organizationId, limits);

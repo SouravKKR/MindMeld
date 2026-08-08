@@ -278,6 +278,7 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
         response_schema_override = None
         temperature_override = None
         max_output_tokens_override = None
+        concurrency_bucket_override = None
 
         for content in inputs:
             metadata = content.get_metadata()
@@ -310,6 +311,15 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
                 temperature_override = metadata.get("temperature")
             if metadata and metadata.get("max_output_tokens") is not None:
                 max_output_tokens_override = metadata.get("max_output_tokens")
+
+            # Which Redis semaphore pool this call queues in. Defaults to the
+            # model name, which is what you want when the only thing worth
+            # rationing is the model's own quota. The content guardrail overrides
+            # it because it makes a flash-lite call from INSIDE a flash-lite
+            # stream that is already holding a slot: sharing the bucket would let
+            # a burst of guarded streams wait on slots only they could release.
+            if metadata and metadata.get("concurrency_bucket"):
+                concurrency_bucket_override = metadata.get("concurrency_bucket")
 
             match ctype:
                 case AutomationContentTypes.SYSTEM:
@@ -363,6 +373,7 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
             model = request.get_model(),
             contents = user_parts,
             config = config,
+            concurrency_bucket = concurrency_bucket_override,
         )
 
         # Capture token usage into the process-global meter so the credit
@@ -391,7 +402,15 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
                                     base64.b64decode(part.inline_data.data)
                                 ))
 
-        return AutomationResponse(outputs, usage_metadata)
+        # Grounding metadata is present on the buffered response object exactly
+        # as it is on the final stream chunk, but until now only execute_stream
+        # read it — so a non-streamed grounded call could report which model it
+        # used and not what it consulted. Anything that has to evidence a
+        # currency check (verification, coverage reconciliation, content
+        # refinement) runs through this path.
+        grounding_sources = GoogleEnterpriseAiProvider.__extract_citation_sources(response)
+
+        return AutomationResponse(outputs, usage_metadata, grounding_sources)
 
     @staticmethod
     def __safe_response_text(response) -> str | None:
@@ -423,6 +442,7 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
         user_prompt: str,
         attached_image_parts: list,
         b_enable_google_search: bool,
+        account_id: str = "",
     ):
         """
         Async generator that streams an enterprise-backend text response
@@ -444,9 +464,18 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
         as an error event and terminate the stream — we can't replay tokens
         we've already shipped to the browser.
 
+        Content guardrail: every text chunk passes through a
+        StreamingContentGuardrail before it is yielded, so a banned term is
+        caught while it is still inside this process. That buffers output to
+        whole sentences — see that class for what it costs and why. The guard
+        is built fresh on each retry attempt below, because a replayed stream
+        starts its text over and a carried-over buffer would duplicate it.
+
         The Redis semaphore is held for the lifetime of the stream so per-
         model concurrency caps apply to streaming calls too.
         """
+        from Globals.Classes.Compliance.StreamingContentGuardrail import StreamingContentGuardrail
+
         user_text_part = types.Part.from_text(text=user_prompt)
         contents = [user_text_part, *attached_image_parts]
 
@@ -475,6 +504,7 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
             sleep_seconds = None
             b_yielded_any_text = False
             last_seen_chunk = None
+            stream_guardrail = StreamingContentGuardrail(model = model, account_id = account_id)
 
             try:
                 async with RedisSemaphore.slot(
@@ -499,8 +529,18 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
 
                         chunk_text = getattr(next_chunk, "text", None)
                         if chunk_text:
-                            b_yielded_any_text = True
-                            yield { "type": "text", "value": chunk_text }
+                            # b_yielded_any_text tracks what actually reached the
+                            # browser, not what arrived from the model. The guard
+                            # holds text back, so a transient failure during that
+                            # hold is still safely replayable — flipping the flag
+                            # on arrival would forfeit a retry we can legally make.
+                            for safe_text in await stream_guardrail.accept(chunk_text):
+                                b_yielded_any_text = True
+                                yield { "type": "text", "value": safe_text }
+
+                    for safe_text in await stream_guardrail.flush():
+                        b_yielded_any_text = True
+                        yield { "type": "text", "value": safe_text }
 
                     GoogleEnterpriseAiProvider.__log_stream_usage(last_seen_chunk, model)
 
@@ -574,10 +614,15 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
     @staticmethod
     def __extract_citation_sources(final_chunk) -> list[dict]:
         """
-        Pulls the {uri, title} list out of the final stream chunk's
-        grounding metadata when google-search grounding fired. Returns
-        an empty list when the chunk has no grounding info or the call
-        wasn't grounded.
+        Pulls the {uri, title} list out of a response's grounding metadata when
+        google-search grounding fired. Returns an empty list when there is no
+        grounding info or the call wasn't grounded.
+
+        Takes either the final stream chunk or a buffered response object —
+        both expose the same candidates/grounding_metadata shape, and every
+        read here is a getattr with a default, so a provider-side shape change
+        degrades to "no sources" rather than to an exception on a call that
+        otherwise succeeded.
         """
         if final_chunk is None:
             return []
@@ -601,7 +646,7 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
                 return collected_sources
         return []
 
-    async def __generate_content_with_retry(self, model: str, contents, config):
+    async def __generate_content_with_retry(self, model: str, contents, config, concurrency_bucket: str = None):
         """
         Calls generate_content with two layers of protection against
         transient failures (429 RESOURCE_EXHAUSTED and 5xx
@@ -612,6 +657,11 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
            This is the primary defense: it stops every worker in the
            cluster from firing live calls in the same microsecond.
 
+           `concurrency_bucket` overrides which pool that is. It defaults to
+           the model name; a caller supplies its own only when it needs a
+           budget that is independent of the model's ordinary traffic — see
+           the concurrency_bucket metadata note in execute().
+
         2. Inside the slot we run the actual call. If the API still
            returns a transient error — 429 (quota share / rough TPM
            estimate exceeded) or 5xx (server-side capacity blip) — we
@@ -620,12 +670,14 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
            exponential backoff. After MAX_TRANSIENT_RETRIES the caller
            is informed via the original exception.
         """
+        resolved_bucket = concurrency_bucket or model
+
         attempt_index = 0
         while True:
             sleep_seconds = None
             async with RedisSemaphore.slot(
-                bucket = model,
-                max_concurrent = GoogleEnterpriseAiProvider.__resolve_concurrent_limit(model),
+                bucket = resolved_bucket,
+                max_concurrent = GoogleEnterpriseAiProvider.__resolve_concurrent_limit(resolved_bucket),
                 hold_timeout_seconds = ApiConcurrencyLimits.SLOT_HOLD_TIMEOUT_SECONDS,
                 poll_interval_seconds = ApiConcurrencyLimits.ACQUIRE_POLL_INTERVAL_SECONDS,
             ):
@@ -665,9 +717,9 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
             attempt_index += 1
 
     @staticmethod
-    def __resolve_concurrent_limit(model: str) -> int:
+    def __resolve_concurrent_limit(bucket: str) -> int:
         return ApiConcurrencyLimits.MAX_CONCURRENT_BY_BUCKET.get(
-            model,
+            bucket,
             ApiConcurrencyLimits.DEFAULT_MAX_CONCURRENT,
         )
 

@@ -1,38 +1,32 @@
 import io
 
-import fitz
 from PIL import Image
 
+from Globals.Classes.Layout.DoclingLayoutDetector import DoclingLayoutDetector
+from Globals.Classes.Pdf.PdfDocumentReader import PdfDocumentReader
+from Globals.Enumerations.LayoutRegionRoles import LayoutRegionRoles
 from Workflows.PrepareImages.ReferenceNormalizer import ReferenceNormalizer
 
 
 class ImageExtractor:
     """
-    Extracts figure regions from PDF pages using DocLayout-YOLO detection.
+    Extracts figure regions from PDF pages using a layout-detection model.
     Returns raw image bytes, caption text, perceptual hash, and bounding box.
     Geometric junk filters (aspect ratio, margin proximity) are applied before
     any upstream processing — no context window, no embed_text.
-    A secondary vector-drawing fallback via page.get_drawings() catches org charts
-    and flowcharts that YOLO under-detects.
-    Requires: doclayout-yolo, imagehash
+    A secondary vector-drawing fallback over the page's vector paths catches org
+    charts and flowcharts the model under-detects.
+
+    The detector is injected, so which model does the detecting is a constructor
+    argument rather than a property of this pipeline. It defaults to
+    DoclingLayoutDetector; the tuning harness and the enhance lab pass their own.
+    Requires: imagehash
     """
 
-    _YOLO_REPO_ID = "juliozhao/DocLayout-YOLO-DocStructBench"
-    _YOLO_WEIGHTS_FILENAME = "doclayout_yolo_docstructbench_imgsz1024.pt"
     _RENDER_DPI = 200
-    # Was 0.15. Lowered after observing complex textbook flowcharts (dashed
-    # borders, 3D-shaded boxes, paper-texture backgrounds) falling below
-    # YOLO's figure-class confidence floor and never reaching the LLM
-    # validator. 0.15 is still well above the noise where YOLO starts to
-    # mislabel body-text regions as figures.
-    _YOLO_CONFIDENCE_THRESHOLD = 0.15
-    _YOLO_IMAGE_SIZE = 1024
     _MIN_FIGURE_DIMENSION_PIXELS = 80
     _PAGE_PADDING_FRACTION_X = 0.05
     _PAGE_PADDING_FRACTION_Y = 0.05
-    _FIGURE_LABEL = "figure"
-    _CAPTION_LABEL = "figure_caption"
-    _TABLE_LABEL = "table"
     _MAX_ASPECT_RATIO = 6.0
     _MIN_ASPECT_RATIO = 0.16
     _MARGIN_FRACTION = 0.03
@@ -47,29 +41,26 @@ class ImageExtractor:
     _DRAWING_MIN_DISTINCT_SHAPES = 3
     _DRAWING_OVERLAP_IOU_THRESHOLD = 0.3
     _EMBEDDED_IMAGE_OVERLAP_IOU_THRESHOLD = 0.3
+    # Vector paths and embedded images narrower or shorter than this are page
+    # rules, underlines and spacer graphics rather than diagram parts. The
+    # threshold is expressed in PDF points (as it was when the bounding boxes
+    # arrived in points) and converted to pixels at the current render DPI.
+    _MINIMUM_DRAWING_DIMENSION_POINTS = 5.0
 
-    _cached_yolo_model = None
+    def __init__(self, layout_detector = None):
+        self.__layout_detector = layout_detector or DoclingLayoutDetector()
 
-    @classmethod
-    def _get_yolo_model(cls):
-        if cls._cached_yolo_model is None:
-            from huggingface_hub import hf_hub_download
-            from doclayout_yolo import YOLOv10
-
-            weights_path = hf_hub_download(
-                repo_id=cls._YOLO_REPO_ID,
-                filename=cls._YOLO_WEIGHTS_FILENAME,
-            )
-            cls._cached_yolo_model = YOLOv10(weights_path)
-
-        return cls._cached_yolo_model
+    def get_layout_detector(self):
+        return self.__layout_detector
 
     @staticmethod
-    def _extract_region_text(page, pixel_rect: tuple[int, int, int, int], render_dpi: int) -> str:
-        scale = 72.0 / render_dpi
-        x0, y0, x1, y1 = pixel_rect
-        pdf_rect = fitz.Rect(x0 * scale, y0 * scale, x1 * scale, y1 * scale)
-        return page.get_textbox(pdf_rect).strip()
+    def _extract_region_text(
+        pdf_reader: PdfDocumentReader,
+        page_index: int,
+        pixel_rect: tuple[int, int, int, int],
+        render_dpi: int,
+    ) -> str:
+        return pdf_reader.get_text_in_pixel_box(page_index, pixel_rect, render_dpi).strip()
 
     @staticmethod
     def _cluster_drawing_rects(pixel_rects: list[tuple], gap_px: int) -> list[tuple]:
@@ -98,32 +89,32 @@ class ImageExtractor:
 
     @staticmethod
     def _drawing_region_detections(
-        page,
+        pdf_reader: PdfDocumentReader,
+        page_index: int,
         render_dpi: int,
         existing_boxes: list[list[int]],
     ) -> list[dict]:
         """
-        Uses page.get_drawings() to find vector diagram regions (org charts, sparse
-        flowcharts) that YOLO may miss entirely due to low confidence on line-art.
-        Returns detection dicts with empty caption_text for regions that don't
-        substantially overlap any existing YOLO detection.
+        Uses the page's vector path objects to find vector diagram regions (org
+        charts, sparse flowcharts) that the layout model may miss entirely due to low
+        confidence on line-art. Returns detection dicts with empty caption_text
+        for regions that don't substantially overlap any existing model detection.
         """
-        drawings = page.get_drawings()
-        if not drawings:
+        drawing_pixel_boxes = pdf_reader.get_vector_path_pixel_boxes(page_index, render_dpi)
+        if not drawing_pixel_boxes:
             return []
 
-        scale = render_dpi / 72.0
+        minimum_dimension_pixels = (
+            ImageExtractor._MINIMUM_DRAWING_DIMENSION_POINTS * render_dpi / 72.0
+        )
         pixel_rects: list[tuple] = []
-        for d in drawings:
-            r = d.get("rect")
-            if r is None:
+        for drawing_box in drawing_pixel_boxes:
+            box_x0, box_y0, box_x1, box_y1 = drawing_box
+            if (box_x1 - box_x0) < minimum_dimension_pixels:
                 continue
-            if r.width < 5 or r.height < 5:
+            if (box_y1 - box_y0) < minimum_dimension_pixels:
                 continue
-            pixel_rects.append((
-                int(r.x0 * scale), int(r.y0 * scale),
-                int(r.x1 * scale), int(r.y1 * scale),
-            ))
+            pixel_rects.append(drawing_box)
 
         if not pixel_rects:
             return []
@@ -179,77 +170,65 @@ class ImageExtractor:
 
     @staticmethod
     def _embedded_image_detections(
-        page,
+        pdf_reader: PdfDocumentReader,
+        page_index: int,
         render_dpi: int,
         existing_boxes: list[list[int]],
     ) -> list[dict]:
         """
         Catches embedded raster images (PNG/JPEG screenshots, scanned figures,
-        slide-deck exports) that YOLO and the vector-drawing fallback both
+        slide-deck exports) that the layout model and the vector-drawing fallback both
         miss. Most academic textbook diagrams arrive as embedded images, so
         this path materially improves recall on slide screenshots of the
         "Process of MBO" variety -- a circular flow with text labels rendered
         as a single PNG.
 
-        Uses page.get_image_rects(xref) to recover the on-page bounding box
-        for each embedded image. Skips images that substantially overlap an
-        existing YOLO detection so we don't double-extract the same figure.
+        The reader reports each image object's placed bounding box directly, so
+        one image drawn twice on a page yields two boxes and the same image
+        drawn once yields one — no cross-reference lookup needed. Skips images
+        that substantially overlap an existing model detection so we don't
+        double-extract the same figure.
         """
-        try:
-            embedded_image_records = page.get_images(full=True)
-        except Exception:
+        embedded_image_pixel_boxes = pdf_reader.get_embedded_image_pixel_boxes(page_index, render_dpi)
+        if not embedded_image_pixel_boxes:
             return []
 
-        if not embedded_image_records:
-            return []
-
-        scale = render_dpi / 72.0
+        minimum_dimension_pixels = (
+            ImageExtractor._MINIMUM_DRAWING_DIMENSION_POINTS * render_dpi / 72.0
+        )
         new_detections: list[dict] = []
         seen_pixel_rects: set[tuple] = set()
 
-        for image_record in embedded_image_records:
-            image_xref = image_record[0]
-
-            try:
-                image_rects = page.get_image_rects(image_xref)
-            except Exception:
+        for pixel_box in embedded_image_pixel_boxes:
+            if (pixel_box[2] - pixel_box[0]) < minimum_dimension_pixels:
+                continue
+            if (pixel_box[3] - pixel_box[1]) < minimum_dimension_pixels:
                 continue
 
-            for image_rect in image_rects or []:
-                if image_rect.width < 5 or image_rect.height < 5:
-                    continue
+            # The same image placed at the same spot can be reported more
+            # than once; dedup before continuing.
+            if pixel_box in seen_pixel_rects:
+                continue
+            seen_pixel_rects.add(pixel_box)
 
-                pixel_box = (
-                    int(image_rect.x0 * scale),
-                    int(image_rect.y0 * scale),
-                    int(image_rect.x1 * scale),
-                    int(image_rect.y1 * scale),
-                )
+            pixel_width = pixel_box[2] - pixel_box[0]
+            pixel_height = pixel_box[3] - pixel_box[1]
+            if (pixel_width < ImageExtractor._MIN_FIGURE_DIMENSION_PIXELS
+                    or pixel_height < ImageExtractor._MIN_FIGURE_DIMENSION_PIXELS):
+                continue
 
-                # An identical xref can appear in get_images() multiple times
-                # for the same on-page rect; dedup before continuing.
-                if pixel_box in seen_pixel_rects:
-                    continue
-                seen_pixel_rects.add(pixel_box)
+            if ImageExtractor._box_overlaps_existing(
+                pixel_box,
+                existing_boxes,
+                ImageExtractor._EMBEDDED_IMAGE_OVERLAP_IOU_THRESHOLD,
+            ):
+                continue
 
-                pixel_width = pixel_box[2] - pixel_box[0]
-                pixel_height = pixel_box[3] - pixel_box[1]
-                if (pixel_width < ImageExtractor._MIN_FIGURE_DIMENSION_PIXELS
-                        or pixel_height < ImageExtractor._MIN_FIGURE_DIMENSION_PIXELS):
-                    continue
-
-                if ImageExtractor._box_overlaps_existing(
-                    pixel_box,
-                    existing_boxes,
-                    ImageExtractor._EMBEDDED_IMAGE_OVERLAP_IOU_THRESHOLD,
-                ):
-                    continue
-
-                new_detections.append({
-                    "box": pixel_box,
-                    "caption_box": None,
-                    "caption_text": "",
-                })
+            new_detections.append({
+                "box": pixel_box,
+                "caption_box": None,
+                "caption_text": "",
+            })
 
         return new_detections
 
@@ -282,39 +261,47 @@ class ImageExtractor:
 
     @staticmethod
     def _detect_figure_detections(
-        yolo_model,
+        layout_detector,
         page_image: Image.Image,
-        page,
+        pdf_reader: PdfDocumentReader,
+        page_index: int,
         render_dpi: int,
     ) -> list[dict]:
-        detection_results = yolo_model.predict(
-            page_image,
-            imgsz=ImageExtractor._YOLO_IMAGE_SIZE,
-            conf=ImageExtractor._YOLO_CONFIDENCE_THRESHOLD,
-            device="cpu",
-            verbose=False,
-        )
+        layout_detections = layout_detector.detect(page_image, render_dpi)
 
-        if not detection_results:
-            # No YOLO hits at all -- fall back to BOTH the drawing-region
+        if not layout_detections:
+            # No model hits at all -- fall back to BOTH the drawing-region
             # path (vector flowcharts) and the embedded-image path (raster
             # screenshots like slide-deck exports). These are the two
-            # geometries YOLO most commonly misses on academic content.
-            drawing_detections = ImageExtractor._drawing_region_detections(page, render_dpi, [])
-            embedded_detections = ImageExtractor._embedded_image_detections(page, render_dpi, [])
+            # geometries the layout model most commonly misses on academic
+            # content.
+            drawing_detections = ImageExtractor._drawing_region_detections(
+                pdf_reader, page_index, render_dpi, []
+            )
+            embedded_detections = ImageExtractor._embedded_image_detections(
+                pdf_reader, page_index, render_dpi, []
+            )
             return drawing_detections + embedded_detections
 
-        result = detection_results[0]
         figure_boxes: list[list[int]] = []
+        # Only FIGURE-role regions may receive a caption. The detector reports
+        # one CAPTION role for figure and table captions alike, so without this
+        # a table caption sitting near a picture would be unioned into that
+        # picture and produce a crop spanning half the page.
+        b_caption_eligible: list[bool] = []
         caption_boxes: list[tuple[int, int, int, int]] = []
 
-        for detected_box in result.boxes:
-            label = result.names[int(detected_box.cls)].lower().replace(" ", "_")
-            coordinates = tuple(map(int, detected_box.xyxy[0].tolist()))
+        for layout_detection in layout_detections:
+            region_role = layout_detection.get_region_role()
+            coordinates = layout_detection.get_pixel_box()
 
-            if label == ImageExtractor._FIGURE_LABEL or label == ImageExtractor._TABLE_LABEL:
+            if region_role is LayoutRegionRoles.FIGURE:
                 figure_boxes.append(list(coordinates))
-            elif label == ImageExtractor._CAPTION_LABEL:
+                b_caption_eligible.append(True)
+            elif region_role is LayoutRegionRoles.TABLE:
+                figure_boxes.append(list(coordinates))
+                b_caption_eligible.append(False)
+            elif region_role is LayoutRegionRoles.CAPTION:
                 caption_boxes.append(coordinates)
 
         mutable_figure_boxes = [list(box) for box in figure_boxes]
@@ -324,6 +311,11 @@ class ImageExtractor:
             if not mutable_figure_boxes:
                 break
 
+            # The nearest region is chosen across ALL of them, tables included,
+            # and the caption is then dropped if a table won. Searching only the
+            # caption-eligible regions instead would hand a table's caption to
+            # whichever picture happened to be next-nearest, which is how a
+            # caption ends up unioned into a figure on the far side of the page.
             nearest_figure_index = min(
                 range(len(mutable_figure_boxes)),
                 key=lambda index: min(
@@ -331,6 +323,9 @@ class ImageExtractor:
                     abs(caption_box[3] - mutable_figure_boxes[index][1]),
                 )
             )
+
+            if not b_caption_eligible[nearest_figure_index]:
+                continue
 
             merged = mutable_figure_boxes[nearest_figure_index]
             mutable_figure_boxes[nearest_figure_index] = [
@@ -349,7 +344,7 @@ class ImageExtractor:
 
             if caption_box is not None:
                 caption_text = ImageExtractor._extract_region_text(
-                    page, caption_box, render_dpi
+                    pdf_reader, page_index, caption_box, render_dpi
                 )
 
             detections.append({
@@ -359,13 +354,13 @@ class ImageExtractor:
             })
 
         drawing_detections = ImageExtractor._drawing_region_detections(
-            page, render_dpi, mutable_figure_boxes
+            pdf_reader, page_index, render_dpi, mutable_figure_boxes
         )
         detections.extend(drawing_detections)
 
         # Boxes considered "already covered" for the embedded-image pass
-        # must include both the YOLO detections AND any drawing-region
-        # detections we just added, otherwise a YOLO figure that happens
+        # must include both the model detections AND any drawing-region
+        # detections we just added, otherwise a model figure that happens
         # to be an embedded raster gets extracted twice and the dedup
         # only catches it via perceptual hash later.
         combined_existing_boxes = list(mutable_figure_boxes)
@@ -373,7 +368,7 @@ class ImageExtractor:
             combined_existing_boxes.append(list(drawing_detection["box"]))
 
         embedded_detections = ImageExtractor._embedded_image_detections(
-            page, render_dpi, combined_existing_boxes
+            pdf_reader, page_index, render_dpi, combined_existing_boxes
         )
         detections.extend(embedded_detections)
 
@@ -396,8 +391,8 @@ class ImageExtractor:
         """
         import imagehash
 
-        yolo_model = self._get_yolo_model()
-        pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
+        layout_detector = self.__layout_detector
+        pdf_reader = PdfDocumentReader(pdf_bytes)
 
         filter_pages = allowed_pages is not None and len(allowed_pages) > 0
         allowed_pages_set = set(allowed_pages) if filter_pages else None
@@ -405,21 +400,18 @@ class ImageExtractor:
         seen_perceptual_hashes: set[str] = set()
         extracted_figures: list[dict] = []
 
-        for page_number, page in enumerate(pdf_document):
+        for page_number in range(pdf_reader.get_page_count()):
             # page_number is 0-indexed; allowed_pages contains 1-indexed numbers.
             if filter_pages:
                 one_indexed = page_number + 1
                 if one_indexed not in allowed_pages_set:
                     continue
 
-            pixmap = page.get_pixmap(dpi=self._RENDER_DPI)
-            rendered_page_image = Image.open(
-                io.BytesIO(pixmap.tobytes("png"))
-            ).convert("RGB")
+            rendered_page_image = pdf_reader.render_page_to_image(page_number, self._RENDER_DPI)
             page_width, page_height = rendered_page_image.size
 
             figure_detections = self._detect_figure_detections(
-                yolo_model, rendered_page_image, page, self._RENDER_DPI
+                layout_detector, rendered_page_image, pdf_reader, page_number, self._RENDER_DPI
             )
 
             for detection in figure_detections:
@@ -483,5 +475,5 @@ class ImageExtractor:
                     "imageBytes": figure_image_bytes,
                 })
 
-        pdf_document.close()
+        pdf_reader.close()
         return extracted_figures

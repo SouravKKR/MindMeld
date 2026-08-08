@@ -12,6 +12,19 @@
     pointer-events: all;
 }
 
+/* A dialog is position: fixed and centred on the viewport, so anything taller
+   than the viewport overflows off BOTH ends with no way to reach either — the
+   page behind it scrolls, the dialog does not. On a phone that silently put the
+   confirming button of several dialogs (the source-upload Upload button, the
+   generation-estimate action row) permanently out of reach.
+   The height is therefore capped and the scrolling is moved inside, onto the
+   .message-section / .modal-content-section, so the title and the button row
+   stay pinned and only the body moves. dvh rather than vh so a mobile browser's
+   collapsing address bar can't reintroduce the overflow this is here to
+   prevent. No vh fallback: the minifier collapses duplicate declarations of the
+   same property, so only the last one ever reaches production — a fallback
+   written above it would be silently dropped and read as protection that isn't
+   there. dvh is no narrower a target than the :has() this sheet already uses. */
 dialog-box
 {
     display: flex;
@@ -29,14 +42,62 @@ dialog-box
     justify-content: space-between;
     box-shadow: 0 0 5px rgba(213, 195, 0, 0.7);
     max-width: 60%;
+    box-sizing: border-box;
+    max-height: calc(100dvh - 24px);
+    overflow: hidden;
 }
 
-@media (orientation: portrait) 
+/* Without an explicit width the box is shrink-to-fit, and for a fixed element
+   positioned with left: 50% the available width it shrinks into is only what
+   remains to the RIGHT of that point — half the viewport. The max-width caps
+   were therefore almost never the binding constraint: a text-heavy dialog
+   collapsed toward min-width instead, which is how the generation-estimate
+   warning ended up wrapping at three words a line inside a 200px box on a
+   375px phone. max-content restores "as wide as the content asks for, capped
+   by max-width", which is what those caps were written to express.
+
+   Scoped to portrait and to narrow windows, which is where the collapse is
+   ruinous, so desktop dialogs keep the exact widths they have today. */
+@media (orientation: portrait), (max-width: 900px)
+{
+    dialog-box
+    {
+        width: max-content;
+    }
+}
+
+@media (orientation: portrait)
 {
     dialog-box
     {
         max-width: 85%;
-    }    
+    }
+}
+
+/* Phones get the viewport minus a thin margin rather than a percentage: at
+   375px the old 85% cap left 56px of dead space and forced the content inside
+   to overflow horizontally instead. */
+@media (max-width: 600px)
+{
+    dialog-box
+    {
+        max-width: calc(100vw - 16px);
+        max-height: calc(100dvh - 16px);
+    }
+}
+
+/* The scrollable body of a DialogBox.modal() dialog. min-height: 0 is what
+   actually lets it shrink — a flex item's default min-height: auto refuses to
+   go below its content and the cap above would be defeated. */
+.modal-content-section
+{
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
 }
 
 dialog-box .title-section
@@ -47,20 +108,30 @@ dialog-box .title-section
     text-align: center;
     border-radius: 10px;
     background-color: var(--tertiary-background-color);
+    flex-shrink: 0;
 }
 
+/* The only part of an alert / confirm / prompt that scrolls. The title above it
+   and the button row below it are pinned, so a long message can never push the
+   answer buttons past the bottom of the screen. */
 dialog-box .message-section
 {
     font-size: 16px;
     padding: 15px;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
 }
 
 dialog-box .button-section
 {
     display: flex;
     justify-content: center;
+    flex-wrap: wrap;
     gap: 10px;
     padding: 10px;
+    flex-shrink: 0;
 }
 
 /* Scoped to text-entry inputs only. Checkboxes / radios inside a
@@ -99,6 +170,9 @@ dialog-box .button-section button:hover
     transition: background-color 0.2s ease-in-out;
 }
 
+/* Positioned against the dialog itself (its nearest positioned ancestor), so it
+   stays pinned to the top-right corner while .modal-content-section scrolls
+   underneath it. z-index keeps it above content that scrolls past. */
 dialog-box .close-button
 {
     position: absolute;
@@ -108,6 +182,7 @@ dialog-box .close-button
     width: 45px;
     height: 45px;
     background-color: #00000000;
+    z-index: 1;
 }
 
 dialog-box .close-button img
@@ -130,4 +205,58 @@ dialog-box .message-section .organization-view-switch-list
     display: flex;
     flex-direction: column;
     gap: 8px;
+}
+
+/* ── Phones ─────────────────────────────────────────────────────────────────
+   Every dialog gains ~50px of usable content width from the wider cap above
+   plus the trimmed padding here, which is what keeps fixed-width contents
+   (file pickers, source lists) inside the screen. The button row wraps rather
+   than squeezing three actions onto one line and breaking each of their labels
+   over two lines; a wrapped button takes the full row so it stays a comfortable
+   tap target. */
+@media (max-width: 600px)
+{
+    .modal-content-section
+    {
+        padding: 14px;
+    }
+
+    dialog-box .title-section
+    {
+        font-size: 17px;
+        padding: 14px;
+    }
+
+    dialog-box .message-section
+    {
+        font-size: 15px;
+        padding: 14px;
+    }
+
+    dialog-box .button-section
+    {
+        padding: 10px 14px 14px 14px;
+    }
+
+    dialog-box .button-section > button
+    {
+        flex: 1 1 140px;
+        min-height: 44px;
+    }
+
+    dialog-box .message-section input:not([type="checkbox"]):not([type="radio"])
+    {
+        width: 100%;
+    }
+}
+
+/* Only the dialogs that actually carry a close button reserve room for it. A
+   centred .title-section in a plain alert has nothing in its top-right corner,
+   so padding it asymmetrically there would visibly push the title off centre.
+   Kept LAST in the file: the phone block above sets the padding shorthand, which
+   would otherwise reset this longhand back to symmetric on exactly the screens
+   where the overlap is worst. */
+dialog-box:has(> .close-button) .title-section
+{
+    padding-right: 50px;
 }

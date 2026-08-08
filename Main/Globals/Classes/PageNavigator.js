@@ -12,6 +12,7 @@ import MockTestTranscriptionReviewPage from "../../Pages/MockTestTranscriptionRe
 import DeckInsightsPage from "../../Pages/DeckInsights/DeckInsightsPage.js";
 import AuthenticationEvents from "../Events/AuthenticationEvents.js";
 import AutomaticGenerationPage from "../../Pages/AutomaticGeneration/AutomaticGenerationPage.js";
+import ContentRefinementPage from "../../Pages/ContentRefinement/ContentRefinementPage.js";
 import CogniumLearnAboutPage from "../../Pages/About/CogniumLearnAboutPage.js";
 import ProgressPage from "../../Pages/Progress/ProgressPage.js";
 import SettingsPage from "../../Pages/Settings/SettingsPage.js";

@@ -1,9 +1,11 @@
 import PaidDeckSession from "./Crypto/PaidDeckSession.js";
 import PaidDeckRegistry from "./PaidDeckRegistry.js";
+import PaidDeckPasswordSetup from "./PaidDeckPasswordSetup.js";
 import OrganizationContextIdentity from "./Organization/OrganizationContextIdentity.js";
 import Deck from "../Model/Deck.js";
 import DialogBox from "../../CommonComponents/DialogBox.js";
 import ProgressDialog from "../../CommonComponents/ProgressDialog.js";
+import ErrorCodes from "../Constants/ErrorCodes.js";
 
 /**
  * PaidDeckStudyGate
@@ -90,13 +92,68 @@ class PaidDeckStudyGate
                 const unlockResult = await PaidDeckSession.unlock(paidDeckId, enteredPassword);
                 if (!unlockResult || unlockResult.success !== true)
                 {
-                    await DialogBox.alert("Couldn't unlock", "That password didn't work for this deck. Please try again.");
-                    return false;
+                    // PASSWORD_NOT_SET means the account owns the deck but never
+                    // chose a password, so there is no answer to the prompt above
+                    // and repeating it can only fail again. Accounts land here by
+                    // having dismissed the post-purchase setup back when it was
+                    // dismissable; nothing else in the app raises that prompt a
+                    // second time, which made this a permanent lockout. Offer the
+                    // setup here instead — this is the only route back for a
+                    // buyer already in that state.
+                    if (unlockResult && unlockResult.error === ErrorCodes.PASSWORD_NOT_SET)
+                    {
+                        if (!await PaidDeckStudyGate.#setUpPasswordAndUnlock(paidDeckId))
+                        {
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        await DialogBox.alert("Couldn't unlock", "That password didn't work for this deck. Please try again.");
+                        return false;
+                    }
                 }
             }
         }
 
         await PaidDeckStudyGate.#decryptSubtree(deck);
+        return true;
+    }
+
+    /**
+     * Recovery route for an account that owns paid decks with no paid-deck
+     * password set: raise the (mandatory) setup prompt, then unlock this deck
+     * with the password it just registered so the user carries straight on into
+     * the deck they were opening rather than being asked for it again.
+     *
+     * @param {string} paidDeckId
+     * @returns {Promise<boolean>} true when the deck is now unlocked.
+     */
+    static async #setUpPasswordAndUnlock(paidDeckId)
+    {
+        await DialogBox.alert
+        (
+            "Set your paid-deck password",
+            "You haven't set a paid-deck password yet. Choose one now — it protects every paid deck you own, and you'll be asked for it once each browser session."
+        );
+
+        const setupResult = await PaidDeckPasswordSetup.run();
+        if (!setupResult.succeeded)
+        {
+            return false;
+        }
+
+        const unlockResult = await PaidDeckSession.unlock(paidDeckId, setupResult.password);
+        if (!unlockResult || unlockResult.success !== true)
+        {
+            await DialogBox.alert
+            (
+                "Couldn't unlock",
+                "Your password was saved, but this deck couldn't be opened just now. Please try opening it again."
+            );
+            return false;
+        }
+
         return true;
     }
 

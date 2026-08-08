@@ -658,6 +658,18 @@ organization-permissions-section
     color: var(--secondary-text-color);
 }
 
+/* The owner's own grant, stated above the rules. Marked out from the ordinary
+   subtitles around it because it is the one line on the page that describes the
+   reader's own access rather than their members'. */
+.organization-owner-grant-note
+{
+    padding: 10px 12px;
+    border-radius: 8px;
+    background-color: var(--primary-background-color);
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+}
+
 .organization-permission-rule-hint
 {
     font-size: 11px;
@@ -686,5 +698,443 @@ organization-permissions-section
     {
         width: 100%;
         min-height: 44px;
+    }
+}
+
+/* ── Reports section ────────────────────────────────────────────────────── */
+
+.organization-reports-section
+{
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.organization-reports-contents
+{
+    margin: 0;
+    padding-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--secondary-text-color);
+}
+
+/* The measurement caveat, deliberately given the weight of a callout rather
+   than a footnote. An institute reading "cards studied" has to know which of
+   its numbers were observed and which were asserted by a device. */
+.organization-reports-note
+{
+    padding: 10px 14px;
+    border-radius: 8px;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--secondary-background-color);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--secondary-text-color);
+    max-width: 720px;
+}
+
+.organization-reports-status
+{
+    font-size: 13px;
+    color: var(--success-text-color);
+}
+
+/* ── The member field table ────────────────────────────────────────────────
+   Field name on the left, value on the right, one row per field, and a button
+   that adds another. A form built only from columns that already exist would
+   offer an institute that has never uploaded a spreadsheet nothing but a tags
+   box, so the NAME is an input too — typing one is what creates the field. */
+.organization-field-table
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.organization-field-table-head
+{
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+    gap: 10px;
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--secondary-text-color);
+}
+
+.organization-field-row
+{
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background-color: var(--primary-background-color);
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    min-width: 0;
+}
+
+.organization-field-name-cell,
+.organization-field-value-cell
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+/* The per-cell captions repeat what the header row already says, so they are
+   hidden while that header is visible and revealed when the row stacks and the
+   header no longer lines up with anything. */
+.organization-field-cell-label
+{
+    display: none;
+    font-size: 11px;
+    color: var(--secondary-text-color);
+}
+
+.organization-field-row input,
+.organization-field-row select
+{
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* Only visible once "Something else…" is chosen, and then it sits directly
+   under the chooser it replaces rather than in a separate part of the form. */
+.organization-field-name-cell input[data-role="field-name-custom"][hidden]
+{
+    display: none;
+}
+
+/* Says out loud that a typed name is about to fill in a field that already
+   exists. Merging silently would be the same gesture as creating a duplicate,
+   and the administrator could not tell which one happened. */
+.organization-field-merge-hint
+{
+    font-size: 11px;
+    color: var(--secondary-text-color);
+    line-height: 1.4;
+}
+
+.organization-field-table-actions
+{
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.organization-bulk-edit-name
+{
+    flex: 1 1 160px;
+    min-width: 0;
+}
+
+@media (max-width: 640px)
+{
+    /* Two inputs and a Remove button side by side on a phone leave each about
+       90px, which is unusable. The row becomes a small card: name, value, then
+       a full-width Remove. */
+    .organization-field-table-head
+    {
+        display: none;
+    }
+
+    .organization-field-row
+    {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .organization-field-cell-label
+    {
+        display: block;
+    }
+
+    .organization-field-remove
+    {
+        width: 100%;
+        min-height: 44px;
+    }
+
+    .organization-field-table-actions > button
+    {
+        width: 100%;
+        min-height: 44px;
+    }
+
+    .organization-bulk-edit-name
+    {
+        grid-column: 1 / -1;
+        min-height: 40px;
+    }
+}
+
+/* ── Rule conditions over the institute's own columns ──────────────────────
+   The controls inside are the roster's own filter inputs, so they arrive with
+   the .paid-deck-filter-* rules already applied. What is added here is the
+   block around them: a titled area inside the rule card, and a grid that wraps
+   instead of forcing the card wider than the screen. */
+.organization-permission-rule-conditions
+{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px;
+    border-radius: 8px;
+    background-color: var(--primary-background-color);
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    min-width: 0;
+}
+
+.organization-permission-conditions-title
+{
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--secondary-text-color);
+}
+
+.organization-condition-panel
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    /* A flex item defaults to min-width: auto and refuses to shrink below its
+       contents, which is what pushes a range control off the side of a phone. */
+    min-width: 0;
+}
+
+.organization-condition-field
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1 1 220px;
+    min-width: 0;
+}
+
+.organization-permission-rule-footer
+{
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* ── The member column editor ──────────────────────────────────────────────
+   A row per column on a desk, stacked cards on a phone. */
+.organization-columns-dialog
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+.organization-column-list
+{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+}
+
+.organization-column-row
+{
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background-color: var(--primary-background-color);
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    min-width: 0;
+}
+
+.organization-column-name
+{
+    flex: 1 1 220px;
+    min-width: 0;
+}
+
+.organization-column-type
+{
+    flex: 0 1 150px;
+    min-width: 0;
+}
+
+.organization-column-actions
+{
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.organization-column-row code
+{
+    font-size: 11px;
+    word-break: break-all;
+}
+
+/* ── Bulk member edit ──────────────────────────────────────────────────────
+   Each row is a tick, a name and a value, and the value is disabled until the
+   tick is on — so the layout has to keep the three legible side by side on a
+   desk and stacked on a phone. */
+.organization-bulk-edit-form
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+.organization-bulk-edit-fields
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.organization-bulk-edit-field
+{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background-color: var(--primary-background-color);
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    min-width: 0;
+}
+
+.organization-bulk-edit-field:has(input[type="checkbox"]:checked)
+{
+    outline-color: var(--outline-color-strong);
+}
+
+.organization-bulk-edit-label
+{
+    flex: 0 1 200px;
+    min-width: 0;
+    font-size: 13px;
+}
+
+.organization-bulk-edit-input
+{
+    flex: 1 1 180px;
+    min-width: 0;
+}
+
+.organization-bulk-edit-status
+{
+    font-size: 13px;
+    color: var(--secondary-text-color);
+}
+
+/* ── Who a rule covers ─────────────────────────────────────────────────────
+   The list can run to thousands of rows, so it scrolls inside its own bounded
+   box. Without that the dialog body becomes the scroller for the summary and
+   the list together, and the count the administrator came to read leaves the
+   screen the moment they look at the names. */
+.organization-rule-preview
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+.organization-rule-preview-list
+{
+    max-height: 45vh;
+    overflow-y: auto;
+    overflow-x: auto;
+    overscroll-behavior: contain;
+    border-radius: 8px;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    min-width: 0;
+}
+
+@media (max-width: 640px)
+{
+    /* One condition per row. Two 200px range controls side by side on a phone
+       truncate both their labels and neither is readable. */
+    .organization-condition-field
+    {
+        flex-basis: 100%;
+    }
+
+    /* The column row becomes a card: label, type, then a full-width row of
+       actions large enough to tap. */
+    .organization-column-row
+    {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .organization-column-actions
+    {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+    }
+
+    .organization-column-actions > button
+    {
+        min-height: 44px;
+    }
+
+    .organization-bulk-edit-field
+    {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: center;
+        row-gap: 6px;
+    }
+
+    /* The value input drops to its own full-width row beneath the tick and its
+       name, rather than being squeezed into whatever is left of the line. */
+    .organization-bulk-edit-input
+    {
+        grid-column: 1 / -1;
+        min-height: 40px;
+    }
+
+    .organization-permission-rule-footer > button
+    {
+        width: 100%;
+        min-height: 44px;
+    }
+
+    /* Landscape on a phone leaves roughly 375px of height for everything, so
+       the preview list must not claim nearly half of it. */
+    .organization-rule-preview-list
+    {
+        max-height: 40vh;
+    }
+}
+
+/* Phone landscape specifically: a very short viewport, where a list sized as a
+   fraction of the screen is a list nobody can read. Bounded in absolute terms
+   so the summary above it and the buttons below it both stay visible. */
+@media (orientation: landscape) and (max-height: 480px)
+{
+    .organization-rule-preview-list
+    {
+        max-height: 160px;
     }
 }

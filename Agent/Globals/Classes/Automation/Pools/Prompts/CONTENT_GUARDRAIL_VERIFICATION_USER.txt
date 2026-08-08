@@ -1,0 +1,3 @@
+Adjudicate each of the following {item_count} flagged item(s). Return one verdict per item, in order.
+
+{numbered_items}

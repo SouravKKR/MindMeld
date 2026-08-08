@@ -53,6 +53,17 @@ then
     rm -f "$DOCK_CONTEXT_ARCHIVE"
 fi
 
+# The handful of Common/ files a running Dock executes as a subprocess — see
+# build_common_runtime_context in deploy-environment.sh for what is in here and
+# why it is a named list rather than the whole directory. Optional so a deploy
+# driven by an older orchestrator (which sends no such archive) still works.
+if [ -n "${COMMON_CONTEXT_ARCHIVE:-}" ] && [ -f "$COMMON_CONTEXT_ARCHIVE" ]
+then
+    echo "==> Refreshing the Common runtime scripts Dock spawns..."
+    tar -xzf "$COMMON_CONTEXT_ARCHIVE" -C "$REPO_DIR"
+    rm -f "$COMMON_CONTEXT_ARCHIVE"
+fi
+
 echo "==> Ensuring the Agent venv + dependencies..."
 cd "$AGENT_DIRECTORY"
 if ! command -v uv >/dev/null 2>&1

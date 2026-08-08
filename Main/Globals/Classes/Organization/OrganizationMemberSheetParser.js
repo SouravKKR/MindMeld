@@ -16,9 +16,20 @@
  *   - any trailing columns with NO header are read as bare tags, so the plain
  *     "email, tag, tag, tag" sheet works without a header for every tag
  *
- * The recommended template is `email, name, joinYear, stream, rollNumber, tags`
- * — enough to select ranges over a real roster (a year group, a stream, a span
- * of roll numbers) without asking anyone to invent a schema.
+ * The recommended template is `email, name, joinYear, role, stream, rollNumber,
+ * tags` — enough to select ranges over a real roster (a year group, a stream, a
+ * span of roll numbers) without asking anyone to invent a schema.
+ *
+ * `role` is a suggestion, not a schema. A roster is rarely all students: the
+ * teachers on it carry different columns, and telling them apart is what most
+ * rules turn out to need first. It stays ordinary text, decided by whatever the
+ * institute writes on the form it hands out, rather than a fixed list this
+ * product would have to guess in advance and every institute would then have to
+ * argue with.
+ *
+ * Only `email` is required. Every other column here can be renamed, retyped,
+ * reordered or dropped by the institute, and any column NOT listed here works
+ * exactly as well — the sheet decides the schema, not this list.
  *
  * Nothing here decides what a value MEANS: whether joinYear is a number or a
  * string is worked out server-side from the values actually stored, so one
@@ -31,7 +42,7 @@ class OrganizationMemberSheetParser
     static TAGS_COLUMN_NAME = "tags";
     static TAG_SEPARATOR_PATTERN = /[;|]/;
 
-    static RECOMMENDED_HEADERS = ["email", "name", "joinYear", "stream", "rollNumber", "tags"];
+    static RECOMMENDED_HEADERS = ["email", "name", "joinYear", "role", "stream", "rollNumber", "tags"];
 
     static #STRICT_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -44,8 +55,12 @@ class OrganizationMemberSheetParser
     {
         return [
             OrganizationMemberSheetParser.RECOMMENDED_HEADERS.slice(),
-            ["arjun.rao@example.edu", "Arjun Rao", "2024", "B.Tech CSE", "A0142", "first-year;scholarship"],
-            ["meera.iyer@example.edu", "Meera Iyer", "2022", "B.Tech ECE", "E0317", "final-year"]
+            ["arjun.rao@example.edu", "Arjun Rao", "2024", "student", "B.Tech CSE", "A0142", "first-year;scholarship"],
+            ["meera.iyer@example.edu", "Meera Iyer", "2022", "student", "B.Tech ECE", "E0317", "final-year"],
+            // A teacher, carrying only the columns that apply to them. The blank
+            // cells are the point: a roster is not one kind of person, and an
+            // absent value stays absent rather than becoming an empty one.
+            ["s.khan@example.edu", "S Khan", "", "teacher", "Physics", "", "staff"]
         ];
     }
 

@@ -208,13 +208,62 @@ class DatabaseConnector
         await contentTakedownNoticesCollection.createIndex({ contentHash: 1 });
         await contentTakedownNoticesCollection.createIndex({ actionedAt: -1 });
 
+        // ── Generation provenance (insert-only paid-deck audit records) ────────
+        // Read on every admin provenance surface — the review dialog, the flag
+        // resolution, the audit trail and the publish gate — and once more on
+        // each insert, which guards against recording the same run twice.
+        // Deliberately NOT unique on mainTaskId: that guard belongs to
+        // GenerationProvenanceQueryEngine, and a duplicate already in the
+        // collection would turn this boot step into a crash loop.
+        const generationProvenanceCollection = database.collection(DatabaseConstants.GENERATION_PROVENANCE_COLLECTION);
+        await generationProvenanceCollection.createIndex({ deckId: 1 });
+        await generationProvenanceCollection.createIndex({ mainTaskId: 1 });
+
+        // ── Content refinements (insert-only record of applied AI corrections) ──
+        // deckId serves the audit trail and the per-deck history. The two
+        // user-scoped indexes serve the retention hold, which the hourly reaper
+        // runs once per candidate user — an unindexed scan there would put a
+        // full collection walk on a background sweep that already touches every
+        // account with sources.
+        const contentRefinementsCollection = database.collection(DatabaseConstants.CONTENT_REFINEMENTS_COLLECTION);
+        await contentRefinementsCollection.createIndex({ refinementId: 1 }, { unique: true });
+        await contentRefinementsCollection.createIndex({ deckId: 1, createdAt: 1 });
+        await contentRefinementsCollection.createIndex({ ownerUserId: 1, sourceHash: 1 });
+        await contentRefinementsCollection.createIndex({ actorUserId: 1, sourceHash: 1 });
+
+        // ── Per-user daily activity (engagement rollup) ────────────────────────
+        // The scope pair is the upsert key, so it is unique — two rows for one
+        // scope and day would double-count that day in every report that reads
+        // them. The organization index serves the report itself, which pulls a
+        // whole organization's window in one query rather than per member.
+        const userDailyActivityCollection = database.collection(DatabaseConstants.USER_DAILY_ACTIVITY_COLLECTION);
+        await userDailyActivityCollection.createIndex({ scopeKey: 1, dayUtc: 1 }, { unique: true });
+        await userDailyActivityCollection.createIndex({ organizationId: 1, dayUtc: 1 });
+
         // ── Decks ──────────────────────────────────────────────────────────────
         await decksCollection.createIndex({ userId: 1, "data.id": 1 }, { unique: true });
         await decksCollection.createIndex({ userId: 1, serverUpdatedAt: 1 });
 
+        // PaidDeckGenerationRunLocator identifies a deck before it knows whose it
+        // is, so it cannot use the compound index above — that one leads with
+        // userId. Without this it collection-scans every deck in the deployment
+        // on each admin provenance lookup.
+        await decksCollection.createIndex({ "data.id": 1 });
+
+        // ...and then walks the deck's subtree by parent. Scoped to the owner so
+        // the walk cannot cross into another user's library.
+        await decksCollection.createIndex({ userId: 1, "data.parent": 1 });
+
         // ── Cards ──────────────────────────────────────────────────────────────
         await cardsCollection.createIndex({ userId: 1, "data.id": 1 }, { unique: true });
         await cardsCollection.createIndex({ userId: 1, serverUpdatedAt: 1 });
+
+        // Every row that came from one paid deck. The organization engagement
+        // report runs this once per member, so without it a report for a
+        // hundred-member institute is a hundred scans of entire card libraries.
+        // The unique index above leads with userId too, but a compound index is
+        // only usable left-to-right — it cannot serve a paidDeckId predicate.
+        await cardsCollection.createIndex({ userId: 1, "data.additionalData.paidDeckId": 1 });
 
         // ── Study materials ────────────────────────────────────────────────────
         // One document per user per study material
@@ -225,6 +274,11 @@ class DatabaseConnector
 
         // Fetch all study materials belonging to a specific deck
         await studyMaterialsCollection.createIndex({ userId: 1, "data.deckId": 1 });
+
+        // Same reason as the cards index: the engagement report reads a
+        // member's org-deck materials, and the curated-study count filters the
+        // same set.
+        await studyMaterialsCollection.createIndex({ userId: 1, "data.additionalData.paidDeckId": 1 });
 
         // ── Sync data ──────────────────────────────────────────────────────────
         await syncDataCollection.createIndex({ userId: 1, deviceId: 1 }, { unique: true });
@@ -273,6 +327,10 @@ class DatabaseConnector
 
         // Fetch all mock tests belonging to a specific deck
         await mockTestsCollection.createIndex({ userId: 1, "data.deckId": 1 });
+
+        // Same reason as the cards index — the engagement report counts a
+        // member's attempts on org decks only.
+        await mockTestsCollection.createIndex({ userId: 1, "data.additionalData.paidDeckId": 1 });
 
         // ── Ask-AI popup links ─────────────────────────────────────────────────
         // Standalone sync entity (used to live under deck.additionalData but
@@ -654,6 +712,35 @@ class DatabaseConnector
         // permission rules, so it is a multikey lookup on every one of those
         // paths rather than an occasional report.
         await organizationMembersCollection.createIndex({ organizationId: 1, tags: 1 });
+        // Every institute names its own columns, so the fields these filters run
+        // over are not known when the index is declared — "joinYear" for one
+        // organization, "cohort" and "section" for the next. A wildcard index
+        // covers whatever each one actually stores.
+        //
+        // Two of them because the two maps answer different questions: the
+        // comparable copy holds numbers and ISO dates for range filters, the
+        // normalised copy holds lowercased text for string ranges. Compound with
+        // organizationId (MongoDB 7.0+) so a range stays inside one roster
+        // instead of scanning every institute's members; that prefix is always
+        // present because AdminListDefinition forces it in as the base query and
+        // no client payload can drop it.
+        //
+        // Deliberately NOT one index per column: a collection is capped at 64
+        // indexes, so per-key indexes would break the moment a handful of
+        // organizations each defined a handful of columns.
+        await organizationMembersCollection.createIndex({ organizationId: 1, "attributesComparable.$**": 1 });
+        await organizationMembersCollection.createIndex({ organizationId: 1, "attributesNormalised.$**": 1 });
+
+        // ── Organization member columns ────────────────────────────────────────
+        // The per-organization column schema: what an institute calls each
+        // column, how it reads (text/number/date) and which older names still
+        // resolve to it. Looked up by organization on every list build, and
+        // unique on (organizationId, key) so a rename can never leave two
+        // columns claiming the same stored key.
+        const organizationMemberColumnsCollection = database.collection(DatabaseConstants.ORGANIZATION_MEMBER_COLUMNS_COLLECTION);
+        await organizationMemberColumnsCollection.createIndex({ id: 1 }, { unique: true });
+        await organizationMemberColumnsCollection.createIndex({ organizationId: 1, key: 1 }, { unique: true });
+        await organizationMemberColumnsCollection.createIndex({ organizationId: 1, displayOrder: 1 });
 
         // ── Organization permission rules ──────────────────────────────────────
         // Read on every feature check inside an organization view, so the

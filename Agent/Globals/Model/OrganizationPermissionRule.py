@@ -6,12 +6,13 @@ from Globals.Enumerations.PlanFeatures import PlanFeatures
 
 
 class OrganizationPermissionRule:
-    def __init__(self, organization_id: str = None, name: str = None, tag_filter: List[str] = [], match_mode: TagMatchModes = TagMatchModes(0), allowed_features: List[PlanFeatures] = [], storage_grant_bytes: int = 0, created_at: datetime = datetime.now()) -> None:
+    def __init__(self, organization_id: str = None, name: str = None, tag_filter: List[str] = [], match_mode: TagMatchModes = TagMatchModes(0), attribute_conditions: List[dict] = [], allowed_features: List[PlanFeatures] = [], storage_grant_bytes: int = 0, created_at: datetime = datetime.now()) -> None:
         self.__id = str(uuid.uuid4())
         self.set_organization_id(organization_id)
         self.set_name(name)
         self.set_tag_filter(tag_filter)
         self.set_match_mode(match_mode)
+        self.set_attribute_conditions(attribute_conditions)
         self.set_allowed_features(allowed_features)
         self.set_storage_grant_bytes(storage_grant_bytes)
         self.set_created_at(created_at)
@@ -57,6 +58,15 @@ class OrganizationPermissionRule:
             if value not in valid_values:
                 value = valid_values[0] if valid_values else None
         self.__match_mode = value
+
+    def get_attribute_conditions(self) -> List[dict]:
+        return self.__attribute_conditions
+
+    def set_attribute_conditions(self, value: List[dict]) -> None:
+        if value is not None:
+            if not isinstance(value, list):
+                value = None
+        self.__attribute_conditions = value
 
     def get_allowed_features(self) -> List[PlanFeatures]:
         return self.__allowed_features
@@ -106,6 +116,7 @@ class OrganizationPermissionRule:
             'name': self.get_name(),
             'tagFilter': self.get_tag_filter(),
             'matchMode': int(self.get_match_mode().value) if self.get_match_mode() is not None else None,
+            'attributeConditions': self.get_attribute_conditions(),
             'allowedFeatures': [int(item.value) for item in self.get_allowed_features()] if self.get_allowed_features() is not None else None,
             'storageGrantBytes': self.get_storage_grant_bytes(),
             'createdAt': self.get_created_at().isoformat() if self.get_created_at() is not None else None,
@@ -118,6 +129,7 @@ class OrganizationPermissionRule:
             name=data.get('name'),
             tag_filter=data.get('tagFilter'),
             match_mode=TagMatchModes(data.get('matchMode')) if data.get('matchMode') is not None else None,
+            attribute_conditions=data.get('attributeConditions'),
             allowed_features=[PlanFeatures(v) for v in data.get('allowedFeatures')] if data.get('allowedFeatures') is not None else None,
             storage_grant_bytes=data.get('storageGrantBytes'),
             created_at=datetime.fromisoformat(data.get('createdAt')) if data.get('createdAt') is not None else None

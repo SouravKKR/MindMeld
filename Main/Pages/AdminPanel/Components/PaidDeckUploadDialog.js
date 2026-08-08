@@ -109,7 +109,7 @@ class PaidDeckUploadDialog
                     }
                 }
 
-                const childPayloads = PaidDeckUploadDialog.#collectChildPayloads(formElement, dialog, checkedChildRows, bundleId);
+                const childPayloads = PaidDeckUploadDialog.#collectChildPayloads(formElement, dialog, checkedChildRows, bundleId, sourceDeckState.selectedDeck);
                 const childIds = childPayloads.map((childPayload) => childPayload.metadata.id);
 
                 const bundlePayload = PaidDeckUploadDialog.#collectBundlePayload
@@ -181,7 +181,12 @@ class PaidDeckUploadDialog
                         if (!childResponse.ok)
                         {
                             const childErrorJson = await childResponse.json().catch(() => ({}));
-                            throw new Error(childErrorJson.error || `Sub-deck "${childPayload.metadata.title}" upload failed (HTTP ${childResponse.status}).`);
+                            throw new Error(PaidDeckUploadDialog.#describeUploadFailure
+                            (
+                                childResponse,
+                                childErrorJson,
+                                `Sub-deck "${childPayload.metadata.title}"`
+                            ));
                         }
                         uploadedCount++;
                         reportProgress();
@@ -197,7 +202,7 @@ class PaidDeckUploadDialog
                     if (!bundleResponse.ok)
                     {
                         const bundleErrorJson = await bundleResponse.json().catch(() => ({}));
-                        throw new Error(bundleErrorJson.error || `Bundle upload failed (HTTP ${bundleResponse.status}).`);
+                        throw new Error(PaidDeckUploadDialog.#describeUploadFailure(bundleResponse, bundleErrorJson, "Bundle"));
                     }
                     uploadedCount++;
                     reportProgress();
@@ -219,6 +224,30 @@ class PaidDeckUploadDialog
                 }
             });
         });
+    }
+
+    /**
+     * Turns a failed upload response into something an administrator can act on.
+     *
+     * A 409 is the review gate refusing over unresolved blocking verification
+     * flags, and its body carries the human-readable `detail` explaining which.
+     * Surfacing only `error` printed the bare error code and left the reader to
+     * guess both what was wrong and where to answer it, so the gate's refusal is
+     * spelled out and points at the review dialog that can clear it.
+     */
+    static #describeUploadFailure(response, errorJson, contextLabel)
+    {
+        if (response.status === 409)
+        {
+            const blockingFlagCount = Array.isArray(errorJson.blockingFlags) ? errorJson.blockingFlags.length : 0;
+
+            return `${contextLabel} was refused by the verification review gate. `
+                + `${errorJson.detail || "It has unresolved blocking verification flags."}`
+                + `${blockingFlagCount > 0 ? ` (${blockingFlagCount} flag(s).)` : ""}`
+                + ` Open "Verification" on the deck in the Decks list to review and resolve them.`;
+        }
+
+        return errorJson.error || `${contextLabel} upload failed (HTTP ${response.status}).`;
     }
 
     static #escape(rawValue)
@@ -1080,6 +1109,14 @@ class PaidDeckUploadDialog
             category: getValue("category").trim(),
             description: getValue("description").trim(),
             sellerId: getValue("sellerId").trim(),
+            // The listing id above is minted fresh for every upload, so it can
+            // never be used to find the generation record — that is filed
+            // against the deck in the library this content came from. Sending
+            // the link is what lets the server's review gate find anything at
+            // all; without it the gate looks up an id that cannot exist and
+            // waves every deck through.
+            sourceDeckId: selectedSourceDeck.getId(),
+            provenanceDeckId: selectedSourceDeck.getId(),
             thumbnailUrl: bundleThumbnail.thumbnailUrl,
             basePriceMinor: Number(getValue("basePriceMinor") || 0),
             currency: getValue("currency").trim().toUpperCase() || "INR",
@@ -1104,8 +1141,15 @@ class PaidDeckUploadDialog
      * inherits the bundle's currency, tags, badges, institute, and
      * isPublished — anything more granular would balloon the per-row
      * mini-form. Admin can override per-child later via Edit dialog.
+     *
+     * `pickedRootDeck` is the deck chosen in the picker, not the sub-deck a row
+     * represents. Generation provenance is recorded once per run against the
+     * top-level deck it produced, so a sub-deck sold on its own has no record
+     * of its own to be gated by — it inherits its parent's. Passing the root
+     * separately keeps that distinction explicit rather than having the server
+     * walk the deck tree to guess at it.
      */
-    static #collectChildPayloads(formElement, dialog, checkedChildRows, bundleId)
+    static #collectChildPayloads(formElement, dialog, checkedChildRows, bundleId, pickedRootDeck)
     {
         if (!Array.isArray(checkedChildRows) || checkedChildRows.length === 0) return [];
 
@@ -1151,6 +1195,8 @@ class PaidDeckUploadDialog
                 category: "",
                 description: childRow.descriptionInput.value.trim(),
                 sellerId: sharedSellerId,
+                sourceDeckId: childRow.subDeck.getId(),
+                provenanceDeckId: pickedRootDeck.getId(),
                 thumbnailUrl: childThumbnail.thumbnailUrl,
                 basePriceMinor: Number(childRow.priceInput.value || 0),
                 currency: sharedCurrency,

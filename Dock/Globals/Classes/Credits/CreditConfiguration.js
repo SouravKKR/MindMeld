@@ -61,6 +61,22 @@ class CreditConfiguration
     // the store backfills this on load. Cheap single call; admin-tunable later.
     static AUTO_FILL_GENERATION_OPTIONS_DEFAULT_FLAT_COST = 0.3;
 
+    // Default flat per-request costs for post-generation content refinement.
+    // Both bypass the task queue, so an ABSENT rule would read as free and the
+    // store backfills them on load.
+    //
+    // The two are priced an order of magnitude apart on purpose, and a single
+    // shared rule would have been wrong. A text refinement is one flash-lite
+    // call. A visual refinement drives the deck pipeline's own diagram path: a
+    // premium symbolic-generation call at high reasoning effort, a possible
+    // second call when the routed format declines and the request escalates to
+    // inline SVG, and then a premium vision review of the rendered result.
+    // Charging the text price for that would sell opus diagrams at flash-lite
+    // rates; charging the diagram price for a typo fix would stop anyone using
+    // the feature the corrections actually depend on.
+    static REFINE_CONTENT_DEFAULT_FLAT_COST = 0.4;
+    static REFINE_VISUAL_DEFAULT_FLAT_COST = 4;
+
     // ── Generation pipeline defaults ──────────────────────────────────────────
     //
     // The queued generation workers shipped with NO rule at all, which meant two
@@ -442,6 +458,56 @@ class CreditConfiguration
             terms: [new CreditSpendTerm({ credits: flatCost, divisors: {} })],
         });
         return true;
+    }
+
+    /**
+     * Ensures both content-refinement actions have configured spend rules,
+     * adding the default flat-cost rules when missing. Existing rules —
+     * including admin-disabled ones — are never overwritten.
+     *
+     * Same reasoning as ensureAutoFillGenerationOptionsTaskRule: these are
+     * one-shot workers outside the task queue, so with no rule CreditPreflight
+     * reads them as unmetered and nothing is ever charged.
+     *
+     * The ADMIN verification auto-fix deliberately runs unmetered and does not
+     * consult these rules — it is gated by role, not by balance. It still
+     * records a zero-value ledger entry so the spend is attributable.
+     *
+     * @returns {boolean} true when at least one rule was added
+     */
+    ensureContentRefinementTaskRules()
+    {
+        const defaultFlatCostsByTaskTypeName =
+        {
+            REFINE_CONTENT: CreditConfiguration.REFINE_CONTENT_DEFAULT_FLAT_COST,
+            REFINE_VISUAL: CreditConfiguration.REFINE_VISUAL_DEFAULT_FLAT_COST,
+        };
+
+        let bAddedAnyRule = false;
+
+        for (const taskTypeName of Object.keys(defaultFlatCostsByTaskTypeName))
+        {
+            if (this.#taskRules[taskTypeName])
+            {
+                continue;
+            }
+
+            // minimumBalanceToRun matches the flat cost so a user who could not
+            // afford the ON_SUCCESS charge is refused at preflight rather than
+            // receiving a proposal the post-call charge then floor-rejects.
+            const flatCost = defaultFlatCostsByTaskTypeName[taskTypeName];
+            this.#taskRules[taskTypeName] = new CreditSpendRule
+            ({
+                enabled: true,
+                deductionTiming: creditDeductionTimings.ON_SUCCESS,
+                minimumBalanceToRun: flatCost,
+                minimumBalanceFloor: 0,
+                terms: [new CreditSpendTerm({ credits: flatCost, divisors: {} })],
+            });
+            bAddedAnyRule = true;
+        }
+
+        return bAddedAnyRule;
     }
 
     /**

@@ -109,11 +109,11 @@ class OrganizationCreditsSection extends HTMLElement
                     <span class="organization-summary-label">Given out so far</span>
                     <span class="organization-summary-value">${pool.lifetimeDistributed}</span>
                 </div>
-                <div class="organization-summary-card">
+                <div class="organization-summary-card" title="Set by CogniumLearn as part of your agreement.">
                     <span class="organization-summary-label">Term ends</span>
                     <span class="organization-summary-value">${OrganizationCreditsSection.#escapeHtml(termEndsAtLabel)}</span>
                 </div>
-                <div class="organization-summary-card">
+                <div class="organization-summary-card" title="Set by CogniumLearn as part of your agreement — it caps how much any one member can receive in a calendar month, however you distribute.">
                     <span class="organization-summary-label">Per member each month</span>
                     <span class="organization-summary-value">${this.#overview.maxCreditsPerMemberPerMonth > 0 ? this.#overview.maxCreditsPerMemberPerMonth : "No limit"}</span>
                 </div>

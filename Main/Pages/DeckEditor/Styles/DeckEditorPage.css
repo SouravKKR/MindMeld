@@ -62,6 +62,9 @@
     margin-bottom: 4px;
 }
 
+/* Every field that carries explanatory text under its control stacks
+   vertically. In the default row layout the helper paragraph competes with the
+   control for width, which squeezes a button label onto three lines. */
 .deck-auto-performance-analysis-container,
 .deck-auto-generate-curated-study-container
 {
@@ -69,6 +72,25 @@
     align-items: flex-start;
     gap: 8px;
     padding: 4px 0;
+}
+
+/* Button variants of the same shape — stretched so the button keeps the full
+   row width the other action buttons have. */
+.deck-beautify-short-names-container,
+.deck-clear-mock-test-attempts-container
+{
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 4px 0;
+}
+
+/* Keeps a button and its credit note on one line above the helper text. */
+.deck-field-action-row
+{
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 
 deck-editor-page .credit-warning-note
@@ -101,6 +123,12 @@ deck-editor-page .credit-warning-note
     font-size: 11px;
     line-height: 1.55;
     color: var(--secondary-text-color, #888888);
+}
+
+/* Only under a checkbox row: indents the text past the box so it lines up with
+   the option name rather than the control. Button rows are flush. */
+.deck-field-checkbox-label + .deck-field-helper
+{
     padding-left: 26px;
 }
 

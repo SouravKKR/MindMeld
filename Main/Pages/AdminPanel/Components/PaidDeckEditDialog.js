@@ -416,6 +416,20 @@ class PaidDeckEditDialog
                                 tags: deck.tags || [],
                                 basePriceMinor: deck.basePriceMinor || 0,
                                 currency: deck.currency || "INR",
+                                // Content is being replaced, so the link follows
+                                // the newly picked deck rather than whatever the
+                                // listing was originally published from.
+                                sourceDeckId: sourceDeckState.selectedDeck.getId(),
+                                provenanceDeckId: sourceDeckState.selectedDeck.getId(),
+                                // Licence duration must be re-sent, not omitted.
+                                // PaidDeckPublishService resolves absent fields
+                                // to 0 / false, which LicenseExpiryResolver reads
+                                // as UNSPECIFIED — "caller must refuse to grant".
+                                // Leaving them out silently made a live deck
+                                // unpurchasable every time its content was
+                                // refreshed.
+                                durationDays: deck.durationDays || 0,
+                                isPerpetual: deck.isPerpetual === true,
                                 granularity: deck.granularity || 0,
                                 bundleChildIds: deck.bundleChildIds || [],
                                 parentBundleIds: deck.parentBundleIds || [],

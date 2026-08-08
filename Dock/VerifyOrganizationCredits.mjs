@@ -47,6 +47,7 @@ const DatabaseConstants = require("./Globals/Constants/DatabaseConstants");
 const Organization = require("./Globals/Model/Organization");
 const { handleOrganizationEndpoints } = require("./Endpoints/HandleOrganizationEndpoints");
 const { handleAdminEndpoints } = require("./Endpoints/HandleAdminEndpoints");
+const { setOrganizationTerm } = require("./Endpoints/Organization/SetOrganizationTerm");
 const { organizationStatus } = require("./Globals/Enumerations/OrganizationStatus");
 const { creditGrantAmountModes } = require("./Globals/Enumerations/CreditGrantAmountModes");
 const { tagMatchModes } = require("./Globals/Enumerations/TagMatchModes");
@@ -81,6 +82,27 @@ function skip(description)
 function section(title)
 {
     console.log(`\n=== ${title} ===`);
+}
+
+/**
+ * Drives one endpoint handler directly, with the smallest request and response
+ * it actually reads. Routing and authorization are covered by the tier-1 route
+ * checks, so what this exercises is the handler's own logic and the status code
+ * it chooses — the part a service-level call would skip entirely.
+ */
+async function callEndpoint(handler, body)
+{
+    const captured = { statusCode: 0, body: null };
+    const request = { getBody: async () => body, user: { getId: () => "harness-admin" } };
+    const response =
+    {
+        set statusCode(value) { captured.statusCode = value; },
+        get statusCode() { return captured.statusCode; },
+        sendJson(payload) { captured.body = payload; }
+    };
+
+    await handler(request, response);
+    return captured;
 }
 
 
@@ -136,6 +158,7 @@ async function runAlwaysOnTier()
     const adminRoutePaths = adminRoutes.map(route => route.routePath);
     assert(adminRoutePaths.includes("/Admin/Credits/Deals/CreateForOrganization"), "Selling credits to an organization is a super-admin route");
     assert(adminRoutePaths.includes("/Admin/Organizations/SetLimits"), "The entitlement ceilings are settable from a route, not only from the database");
+    assert(adminRoutePaths.includes("/Admin/Organizations/SetTerm"), "The contract term is renewable from a route — a renewal must not require selling credits");
 
     // ── The pool is a grant target, and not a user one ────────────────────
     section("Tier 1b — granting to a pool rather than to members");
@@ -396,11 +419,48 @@ async function runDatabaseTier()
         const secondSweep = await OrganizationTermScheduler.sweep(now);
         assert(secondSweep.frozen === 0, "Sweeping again does not re-freeze an already-frozen pool");
 
-        // ── Renewal unfreezes and carries the balance over ────────────────
-        await OrganizationCreditLedger.setFrozen(organizationId, false);
-        await OrganizationQueryEngine.setTermEndsAt(organizationId, new Date(now.getTime() + 30 * 86400000));
+        // ── Renewal from the super-admin route ────────────────────────────
+        //
+        // Driven through the endpoint rather than the query engine on purpose:
+        // the property under test is that renewing settles the pool's frozen
+        // flag in the same request. Writing the term directly would leave the
+        // pool paused until the next sweep, which is exactly the behaviour a
+        // super-admin renewing from the panel must not see.
+        const renewResponse = await callEndpoint(setOrganizationTerm, { organizationId: organizationId, termEndsAt: new Date(now.getTime() + 30 * 86400000).toISOString() });
+        assert(renewResponse.body.success === true, "The term route accepts a renewal");
+
         const renewedPool = await OrganizationCreditLedger.getPool(organizationId);
         assert(renewedPool.getFrozen() === false && renewedPool.getBalance() === 460, "Renewing keeps the carried-over credits and unfreezes them");
+        assert(renewResponse.body.frozen === false, "…and reports the pool as released, so the panel can say so");
+
+        const renewedOrganization = await OrganizationQueryEngine.getOrganizationById(organizationId);
+        assert(renewedOrganization.getTermEndsAt().getTime() > now.getTime(), "The stored term actually moved into the future");
+
+        // A term typed into the past is a correction, not a renewal — it must
+        // leave the pool paused rather than releasing it because a save
+        // succeeded.
+        const backdatedResponse = await callEndpoint(setOrganizationTerm, { organizationId: organizationId, termEndsAt: new Date(now.getTime() - 86400000).toISOString() });
+        assert(backdatedResponse.body.frozen === true, "Setting a term that has already passed leaves the pool paused");
+        assert((await OrganizationCreditLedger.getPool(organizationId)).getFrozen() === true, "…and the stored pool agrees");
+
+        // Clearing writes the epoch sentinel, which the scheduler skips — an
+        // organization with no agreed term is left alone rather than treated as
+        // one whose term ended in 1970.
+        const clearedResponse = await callEndpoint(setOrganizationTerm, { organizationId: organizationId, termEndsAt: "" });
+        assert(clearedResponse.body.success === true && clearedResponse.body.frozen === false, "Clearing the term releases the pool");
+        assert(new Date(clearedResponse.body.termEndsAt).getTime() === 0, "…and stores the epoch sentinel, which reads as \"Not set\"");
+
+        const sweepAfterClearing = await OrganizationTermScheduler.sweep(now);
+        assert(sweepAfterClearing.frozen === 0, "The sweep does not freeze an organization that has no agreed term");
+
+        const rejectedTermResponse = await callEndpoint(setOrganizationTerm, { organizationId: organizationId, termEndsAt: "not-a-date" });
+        assert(rejectedTermResponse.statusCode === 400 && rejectedTermResponse.body.error === ErrorCodes.INVALID_REQUEST, "An unparseable term is refused rather than stored as the current time");
+
+        const missingOrganizationTermResponse = await callEndpoint(setOrganizationTerm, { organizationId: "no-such-organization", termEndsAt: new Date(now.getTime() + 86400000).toISOString() });
+        assert(missingOrganizationTermResponse.statusCode === 404 && missingOrganizationTermResponse.body.error === ErrorCodes.ORG_NOT_FOUND, "Renewing an organization that does not exist is refused");
+
+        // Left renewed for whatever runs after this section.
+        await callEndpoint(setOrganizationTerm, { organizationId: organizationId, termEndsAt: new Date(now.getTime() + 30 * 86400000).toISOString() });
 
         // ── A super-admin top-up of the pool ──────────────────────────────
         section("Pool top-up (super-admin)");

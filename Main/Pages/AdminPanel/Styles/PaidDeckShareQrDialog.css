@@ -1,0 +1,21 @@
+/* The share dialog is DialogBox.modal wrapping the same panel the buyer-facing
+   details page renders. Without a width of its own it inherits the generic
+   60%-of-viewport cap, which stretches the link field and the actions across a
+   row far wider than they need and leaves a dead band under them. */
+
+.paid-deck-share-qr-dialog
+{
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: min(540px, 100%);
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+/* The 45px close button is pinned to the dialog's top-right corner, so the
+   title needs matching side padding to stay optically centred beneath it. */
+.paid-deck-share-qr-dialog .title-section
+{
+    padding: 14px 45px;
+}

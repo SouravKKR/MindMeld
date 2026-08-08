@@ -3,11 +3,14 @@ paid-deck-share-qr-panel
     display: block;
 }
 
+/* Centred rather than top-aligned: the details column is always shorter than
+   the 180px QR square, so aligning to the top leaves the gap stacked entirely
+   under the text instead of split evenly around it. */
 paid-deck-share-qr-panel .paid-deck-share-qr-layout
 {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-start;
+    align-items: center;
     gap: 16px;
 }
 
@@ -63,6 +66,9 @@ paid-deck-share-qr-panel .paid-deck-share-qr-hint
 paid-deck-share-qr-panel .paid-deck-share-qr-link-field
 {
     width: 100%;
+    /* No global border-box reset — without this the padding and border push the
+       field past the column it sits in. */
+    box-sizing: border-box;
     padding: 8px 10px;
     border-radius: 8px;
     border: 1px solid var(--outline-color-subtle);

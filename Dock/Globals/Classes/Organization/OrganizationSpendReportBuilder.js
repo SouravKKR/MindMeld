@@ -2,8 +2,7 @@ const DatabaseConnector = require("../Database/DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
 const OrganizationMemberQueryEngine = require("./OrganizationMemberQueryEngine");
 const CreditLedger = require("../Credits/CreditLedger");
-const { creditTransactionTypes } = require("../../Enumerations/CreditTransactionTypes");
-const { taskTypes } = require("../../Enumerations/TaskTypes");
+const CreditSpendCategoryNamer = require("./CreditSpendCategoryNamer");
 
 
 /**
@@ -33,46 +32,15 @@ class OrganizationSpendReportBuilder
 
     /**
      * Human labels for the transaction types a member's spending falls into.
-     * Anything unrecognised is reported as Other rather than dropped — a
-     * feature added later must not silently vanish from the totals.
+     *
+     * Delegated to CreditSpendCategoryNamer since the engagement report started
+     * counting the same charges this one prices. Two copies of the mapping would
+     * eventually disagree, and the same charge would appear under different
+     * names in two tables of the same document.
      */
     static #describeSpendCategory(transactionDocument)
     {
-        if (transactionDocument.type === creditTransactionTypes.STORAGE_CHARGE)
-        {
-            return "Storage";
-        }
-
-        if (transactionDocument.type === creditTransactionTypes.TASK_CHARGE)
-        {
-            if (transactionDocument.metadata?.source === "AskAi")
-            {
-                return "Ask AI";
-            }
-
-            const taskTypeValue = transactionDocument.metadata?.taskType;
-            for (const [taskTypeName, candidateValue] of Object.entries(taskTypes))
-            {
-                if (candidateValue === taskTypeValue)
-                {
-                    return OrganizationSpendReportBuilder.#humaniseName(taskTypeName);
-                }
-            }
-
-            return "Other AI usage";
-        }
-
-        return "Other";
-    }
-
-    static #humaniseName(enumName)
-    {
-        return String(enumName)
-            .toLowerCase()
-            .split("_")
-            .filter(word => word.length > 0)
-            .map((word, wordIndex) => wordIndex === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word)
-            .join(" ");
+        return CreditSpendCategoryNamer.describe(transactionDocument);
     }
 
     /**

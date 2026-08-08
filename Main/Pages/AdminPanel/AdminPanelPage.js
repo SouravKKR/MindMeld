@@ -5,6 +5,8 @@ import PaidDeckUploadDialog from "./Components/PaidDeckUploadDialog.js";
 import PaidDeckEditDialog from "./Components/PaidDeckEditDialog.js";
 import BulkApplyDialog from "./Components/BulkApplyDialog.js";
 import PaidDeckShareQrDialog from "./Components/PaidDeckShareQrDialog.js";
+import PaidDeckVerificationDialog from "./Components/PaidDeckVerificationDialog.js";
+import PaidDeckVerificationSourcesDialog from "./Components/PaidDeckVerificationSourcesDialog.js";
 import CreateOrganizationDialog from "./Components/CreateOrganizationDialog.js";
 import OrganizationDetailsDialog from "./Components/OrganizationDetailsDialog.js";
 import AddMembersDialog from "./Components/AddMembersDialog.js";
@@ -21,6 +23,7 @@ import { adminPanelTabs } from "../../Globals/Enumerations/AdminPanelTabs.js";
 import { adminListTypes } from "../../Globals/Enumerations/AdminListTypes.js";
 import { semVerBumpTypes } from "../../Globals/Enumerations/SemVerBumpTypes.js";
 import { organizationStatus } from "../../Globals/Enumerations/OrganizationStatus.js";
+import ErrorCodes from "../../Globals/Constants/ErrorCodes.js";
 
 /**
  * AdminPanelPage
@@ -566,6 +569,16 @@ class AdminPanelPage extends HTMLElement
                     { actionKey: "edit", label: "Edit" },
                     { actionKey: "publish", label: row.isPublished ? "Unpublish" : "Publish" },
                     { actionKey: "rotate", label: "Rotate key" },
+                    // The way a blocked publish gets answered. Offered on every
+                    // deck for the same reason the audit trail is: "this deck
+                    // has no verification record" is a real answer.
+                    { actionKey: "verification", label: "Verification" },
+                    // The documents this deck's content is checked AGAINST, and
+                    // the permanent record of the licence declared for each.
+                    // Offered on every deck for the same reason as the two
+                    // around it: "nothing is attached" is a real answer, and a
+                    // hidden button is not.
+                    { actionKey: "verificationSources", label: "Verification sources" },
                     // Offered on every deck. A deck the generation pipeline did
                     // not produce has no provenance record, and the handler says
                     // so plainly rather than the option being hidden — "there is
@@ -577,6 +590,21 @@ class AdminPanelPage extends HTMLElement
                     // leaving to guess why the button is missing.
                     { actionKey: "shareQrCode", label: "Share QR code" }
                 ];
+
+                // Retiring is the normal way a deck leaves the catalogue, so it
+                // is offered until it has been. Deleting is offered only once
+                // the deck is retired: it is refused server-side while anybody
+                // holds a licence, and putting it beside "Retire" on a live
+                // deck would invite an operator to reach for the destructive
+                // one first.
+                if (row.retiredAt && new Date(row.retiredAt).getTime() > 0)
+                {
+                    actions.push({ actionKey: "deletePermanently", label: "Delete permanently" });
+                }
+                else
+                {
+                    actions.push({ actionKey: "retire", label: "Retire" });
+                }
                 if (subdeckCount > 0)
                 {
                     actions.push({ actionKey: "apply-to-subdecks", label: "Apply to subdecks" });
@@ -643,6 +671,205 @@ class AdminPanelPage extends HTMLElement
         }
     }
 
+    /**
+     * Withdraws a deck from sale for good.
+     *
+     * The confirmation names what happens to the people who already bought it,
+     * because that is the part an operator is most likely to have assumed
+     * wrongly: they keep it. Nothing is revoked, and a perpetual buyer keeps it
+     * permanently.
+     */
+    async #retireDeck(deck)
+    {
+        const bConfirmed = await DialogBox.confirm
+        (
+            "Retire this deck?",
+            `
+                <p><strong>${AdminPanelPage.#escape(deck.title || deck.id)}</strong> will be withdrawn from sale permanently.</p>
+                <ul class="organization-view-switch-list">
+                    <li>Nobody new can get it — not by purchase, coupon, plan perk or an organisation's auto-assign.</li>
+                    <li>Everyone who already owns it <strong>keeps it</strong> until their own licence expires. Nothing is revoked.</li>
+                    <li>A licence sold as perpetual never expires, so those buyers keep it for good.</li>
+                    <li>Once a licence does lapse it cannot be renewed, because there is nothing left to buy.</li>
+                    <li>This cannot be undone. Bringing the deck back means uploading it again as a new deck.</li>
+                </ul>
+            `
+        );
+
+        if (!bConfirmed)
+        {
+            return;
+        }
+
+        try
+        {
+            const response = await fetch("/Admin/PaidDecks/Retire",
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ deckId: deck.id })
+            });
+            const responseJson = await response.json().catch(() => ({}));
+
+            if (!response.ok || responseJson.success !== true)
+            {
+                await DialogBox.alert("Couldn't retire the deck", responseJson.error || `HTTP ${response.status}`);
+                return;
+            }
+
+            const holders = responseJson.holders || {};
+            const holderNote = Number(holders.activeCount) > 0
+                ? ` ${holders.activeCount} buyer(s) keep it${Number(holders.perpetualCount) > 0 ? `, ${holders.perpetualCount} of them permanently` : ""}.`
+                : " Nobody held it.";
+
+            await DialogBox.alert("Retired", `The deck is off the market.${holderNote}`);
+            this.#refreshCurrentList();
+        }
+        catch (retireError)
+        {
+            await DialogBox.alert("Couldn't retire the deck", retireError.message);
+        }
+    }
+
+    /**
+     * Destroys a retired deck and its master content.
+     *
+     * The server refuses while anybody holds an active licence, so this asks
+     * for the deck's title to be typed: by the time it is reachable the content
+     * really is about to be destroyed, and no amount of confirmation copy makes
+     * a mis-click on a list row recoverable.
+     */
+    async #deleteDeckPermanently(deck)
+    {
+        const typedTitle = await DialogBox.prompt
+        (
+            "Delete this deck permanently?",
+            `
+                <p>This destroys <strong>${AdminPanelPage.#escape(deck.title || deck.id)}</strong> and its encrypted content, along with its prices, organisation perks and bundle links. It cannot be undone.</p>
+                <p>It is refused while anyone still holds a licence. Type the deck's title to confirm.</p>
+            `
+        );
+
+        if (typeof typedTitle !== "string" || typedTitle.trim() !== (deck.title || "").trim())
+        {
+            if (typedTitle !== null)
+            {
+                await DialogBox.alert("Not deleted", "The title didn't match, so nothing was changed.");
+            }
+            return;
+        }
+
+        try
+        {
+            const response = await fetch("/Admin/PaidDecks/Delete",
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ deckId: deck.id })
+            });
+            const responseJson = await response.json().catch(() => ({}));
+
+            if (!response.ok || responseJson.success !== true)
+            {
+                const holders = responseJson.holders || {};
+
+                // Held decks get a SECOND decision rather than a dead end. The
+                // first refusal is the right default; an operator who has read
+                // what forcing costs and still wants it should not have to go
+                // to the database to get it.
+                if (responseJson.error === ErrorCodes.PAID_DECK_STILL_HELD && Number(holders.activeCount) > 0)
+                {
+                    await this.#forceDeleteDeckWithHolders(deck, holders);
+                    return;
+                }
+
+                await DialogBox.alert("Couldn't delete the deck", `${responseJson.error || `HTTP ${response.status}`}.`);
+                return;
+            }
+
+            await DialogBox.alert("Deleted", "The deck and its content are gone.");
+            this.#refreshCurrentList();
+        }
+        catch (deleteError)
+        {
+            await DialogBox.alert("Couldn't delete the deck", deleteError.message);
+        }
+    }
+
+    /**
+     * The second decision, offered only after the ordinary delete has already
+     * refused over active holders.
+     *
+     * It states exactly who loses what, because the answer is not uniform and
+     * an operator who believes "they all keep their copies" would be making a
+     * different decision from the real one: a holder who already opened the
+     * deck keeps it, a holder who never did loses it for good.
+     *
+     * Typing the count is the confirmation rather than the title — the title
+     * was already typed to get here, and what needs acknowledging on this
+     * screen is the number of people affected.
+     */
+    async #forceDeleteDeckWithHolders(deck, holders)
+    {
+        const activeCount = Number(holders.activeCount) || 0;
+        const perpetualNote = Number(holders.perpetualCount) > 0
+            ? `<p>${holders.perpetualCount} of them are perpetual, so they will never expire on their own — this deck will not become deletable by waiting.</p>`
+            : "";
+
+        const typedCount = await DialogBox.prompt
+        (
+            "Delete anyway, taking it from its holders?",
+            `
+                <p><strong>${activeCount}</strong> ${activeCount === 1 ? "person holds" : "people hold"} an active licence to
+                <strong>${AdminPanelPage.#escape(deck.title || deck.id)}</strong>.</p>
+                ${perpetualNote}
+                <p>If you continue, every one of those licences is revoked and the encrypted content is destroyed:</p>
+                <ul>
+                    <li>Anyone who has already opened the deck <strong>keeps their own copy</strong>.</li>
+                    <li>Anyone who bought it and never opened it <strong>loses it permanently</strong>.</li>
+                    <li>Nobody can add it to another device, and its content can never be updated again.</li>
+                </ul>
+                <p>Type <strong>${activeCount}</strong> to confirm you accept this.</p>
+            `
+        );
+
+        if (typeof typedCount !== "string" || typedCount.trim() !== String(activeCount))
+        {
+            if (typedCount !== null)
+            {
+                await DialogBox.alert("Not deleted", "That didn't match the number of holders, so nothing was changed.");
+            }
+            return;
+        }
+
+        try
+        {
+            const response = await fetch("/Admin/PaidDecks/Delete",
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ deckId: deck.id, bForceDeleteWithActiveHolders: true })
+            });
+            const responseJson = await response.json().catch(() => ({}));
+
+            if (!response.ok || responseJson.success !== true)
+            {
+                await DialogBox.alert("Couldn't delete the deck", `${responseJson.error || `HTTP ${response.status}`}.`);
+                return;
+            }
+
+            await DialogBox.alert(
+                "Deleted",
+                `The deck and its content are gone. ${responseJson.revokedLicenseCount || 0} licence(s) were revoked.`,
+            );
+            this.#refreshCurrentList();
+        }
+        catch (deleteError)
+        {
+            await DialogBox.alert("Couldn't delete the deck", deleteError.message);
+        }
+    }
+
     async #handleDeckRowAction(action, deck)
     {
         if (!deck) return;
@@ -665,6 +892,18 @@ class AdminPanelPage extends HTMLElement
                 await this.#rotateKey(deck.id);
                 break;
             }
+            case "verification":
+            {
+                await PaidDeckVerificationDialog.show(deck);
+                this.#refreshCurrentList();
+                break;
+            }
+            case "verificationSources":
+            {
+                await PaidDeckVerificationSourcesDialog.show(deck);
+                this.#refreshCurrentList();
+                break;
+            }
             case "auditTrail":
             {
                 await this.#downloadAuditTrail(deck);
@@ -673,6 +912,16 @@ class AdminPanelPage extends HTMLElement
             case "shareQrCode":
             {
                 await PaidDeckShareQrDialog.show(deck);
+                break;
+            }
+            case "retire":
+            {
+                await this.#retireDeck(deck);
+                break;
+            }
+            case "deletePermanently":
+            {
+                await this.#deleteDeckPermanently(deck);
                 break;
             }
             case "apply-to-subdecks":
@@ -737,11 +986,37 @@ class AdminPanelPage extends HTMLElement
         if (response.ok)
         {
             this.#refreshCurrentList();
+            return;
         }
-        else
+
+        const errorJson = await response.json().catch(() => ({}));
+
+        // A 409 here is the review gate refusing, not a transport failure.
+        // Reporting it as "HTTP 409" told the admin nothing about what was wrong
+        // or what to do next, so it is explained and the review dialog is
+        // offered — that dialog is the only place a blocking flag can be
+        // resolved, and without this the refusal is a dead end.
+        if (response.status === 409)
         {
-            await DialogBox.alert("Update failed", `HTTP ${response.status}`);
+            const blockingFlagCount = Array.isArray(errorJson.blockingFlags) ? errorJson.blockingFlags.length : 0;
+
+            const bOpenReview = await DialogBox.confirm
+            (
+                "Publishing is blocked",
+                `${errorJson.detail || "This deck has unresolved blocking verification flags."}`
+                + `${blockingFlagCount > 0 ? ` (${blockingFlagCount} flag(s).)` : ""}`
+                + " Open the verification review to see them?"
+            );
+
+            if (bOpenReview)
+            {
+                await PaidDeckVerificationDialog.show(deck);
+                this.#refreshCurrentList();
+            }
+            return;
         }
+
+        await DialogBox.alert("Update failed", errorJson.error || `HTTP ${response.status}`);
     }
 
     #renderAlertsTab(content)
@@ -1521,7 +1796,7 @@ class AdminPanelPage extends HTMLElement
             listKey: adminListTypes.ORGANIZATIONS,
             rowActions:
             [
-                { actionKey: "view", label: "Terms" },
+                { actionKey: "view", label: "Plan & limits" },
                 { actionKey: "manage", label: "Manage" },
                 { actionKey: "delete", label: "Delete" }
             ],
@@ -1529,8 +1804,14 @@ class AdminPanelPage extends HTMLElement
             {
                 if (actionKey === "view")
                 {
-                    // Commercial terms only a super-admin sets: name, capacity
-                    // and the marketplace deck perks.
+                    // Everything only a super-admin sets: the name, the member
+                    // capacity, the entitlement ceilings (storage per member,
+                    // credits per member per month, publishable decks, which AI
+                    // features they may grant) and the marketplace deck perks.
+                    // Labelled "Plan & limits" rather than "Terms" because
+                    // "Terms" gave no hint the ceilings lived in here, and an
+                    // operator looking for the monthly credit cap concluded
+                    // there was no way to set one.
                     const refreshed = await OrganizationDetailsDialog.show(rowId);
                     if (refreshed)
                     {

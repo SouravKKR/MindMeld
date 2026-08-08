@@ -28,6 +28,11 @@
             "datatype": "enum:TagMatchModes",
             "defaultValue": 0
         },
+        "attributeConditions":
+        {
+            "datatype": "array<object>",
+            "defaultValue": []
+        },
         "allowedFeatures":
         {
             "datatype": "array<enum:PlanFeatures>",

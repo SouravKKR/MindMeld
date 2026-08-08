@@ -2,6 +2,7 @@ const webFetchReasons =
 {
   COVERAGE_CHECK: 0,
   CURRENCY_VERIFICATION: 1,
+  ADMIN_SOURCE_VERIFICATION: 2,
 }
 
 module.exports = { webFetchReasons };

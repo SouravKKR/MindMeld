@@ -257,3 +257,60 @@ information-source-selector
     resize: vertical;
     font-family: inherit;
 }
+
+/* ── Phones ─────────────────────────────────────────────────────────────────
+   The source rows are nested three containers deep (page container → generation
+   fields → sources panel → source item), so their padding compounds; trimming
+   each level is what keeps the controls inside them from being squeezed. The
+   page-range row is the tightest of them: two number boxes, a separator and a
+   delete button on one line. */
+@media (max-width: 600px)
+{
+    .information-sources-content
+    {
+        padding: 10px;
+        gap: 8px;
+    }
+
+    .information-source-item
+    {
+        padding: 10px;
+    }
+
+    .information-source-add-select
+    {
+        align-self: stretch;
+        padding: 11px 14px;
+        text-align: center;
+    }
+
+    .information-source-page-range-container,
+    .page-range-row
+    {
+        flex-wrap: wrap;
+    }
+
+    .information-source-start-page-input,
+    .information-source-end-page-input,
+    .page-range-start-input,
+    .page-range-end-input
+    {
+        flex: 1 1 0;
+        width: auto;
+        min-width: 0;
+        padding: 8px;
+    }
+
+    .page-range-delete-button
+    {
+        width: 30px;
+        height: 30px;
+    }
+
+    .page-range-add-button,
+    .page-range-mode-select
+    {
+        padding: 8px 12px;
+        min-height: 36px;
+    }
+}

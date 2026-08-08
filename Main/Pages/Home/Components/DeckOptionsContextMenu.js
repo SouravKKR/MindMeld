@@ -194,6 +194,34 @@ class DeckOptionsContextMenu extends ContextMenu
             });
         }
 
+        // Correcting generated content before it is published. Rendered on every
+        // non-paid deck and gated on CLICK rather than hidden by entitlement —
+        // matching Generate With AI above, so a user on a lower tier gets an
+        // upgrade prompt naming the feature instead of a button that silently
+        // is not there.
+        const refineWithAiButton = this.querySelector(".refine-with-ai-button");
+
+        if (refineWithAiButton)
+        {
+            refineWithAiButton.addEventListener("click", async () =>
+            {
+                if (!window["user"])
+                {
+                    await DialogBox.alert("Error", "You must be logged in to use this feature.");
+                    return;
+                }
+
+                if (!await AiFeatureGate.ensureAllowedOrShowAlert())
+                {
+                    return;
+                }
+
+                PageNavigator.open("content-refinement-page", this.#deck);
+                DeckOptionsContextMenu.removeAll();
+                HomePageContextMenu.removeAll();
+            });
+        }
+
         if (editButton)
         {
             editButton.addEventListener("click", () =>
@@ -636,6 +664,7 @@ class DeckOptionsContextMenu extends ContextMenu
                 <button class="insights-button">Insights</button>
                 <button class="add-button">Add</button>
                 <button class="generate-with-ai-button">Generate With AI</button>
+                <button class="refine-with-ai-button">Refine With AI</button>
                 <button class="expand-button">Expand</button>
                 <button class="edit-button">Edit</button>
                 <button class="browse-button">Browse</button>

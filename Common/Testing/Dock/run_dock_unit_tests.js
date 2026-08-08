@@ -1221,4 +1221,124 @@ harness.test("PaidDeckGenerationGate.validateSourceTypes: refuses other types an
     assert(thrownMessage.includes("Set this source's type to Curriculum Or Syllabus"), "says how to fix it");
 });
 
+// ── Content refinement ─────────────────────────────────────────────────────
+
+const RefinedEntityWriter = require("../../../Dock/Globals/Classes/Generation/RefinedEntityWriter");
+const RefinementTargetLocator = require("../../../Dock/Globals/Classes/Generation/RefinementTargetLocator");
+const SourceRetentionPolicy = require("../../../Dock/Globals/Classes/Content/SourceRetentionPolicy");
+const { refinementTargetKinds } = require("../../../Dock/Globals/Enumerations/RefinementTargetKinds");
+
+harness.test("RefinedEntityWriter.computeContentHash: a whitespace-only change is a different version", "RefinedEntityWriter.computeContentHash", () =>
+{
+    const originalContent = "<p>The gas constant is 8.314 J/(mol K).</p>";
+
+    assert(
+        RefinedEntityWriter.computeContentHash(originalContent) === RefinedEntityWriter.computeContentHash(originalContent),
+        "stable across calls",
+    );
+    assert(
+        RefinedEntityWriter.computeContentHash(originalContent) !== RefinedEntityWriter.computeContentHash(`${originalContent} `),
+        "whitespace counts — the proposal did not see that version",
+    );
+});
+
+harness.test("RefinedEntityWriter.isWritableTargetKind: a figure is not written directly", "RefinedEntityWriter.isWritableTargetKind", () =>
+{
+    assert(RefinedEntityWriter.isWritableTargetKind(refinementTargetKinds.STUDY_MATERIAL), "study material is writable");
+    assert(!RefinedEntityWriter.isWritableTargetKind(refinementTargetKinds.FIGURE), "a figure must be resolved to its holding field first");
+    assert(
+        RefinedEntityWriter.describeTargetKind(refinementTargetKinds.CARD_QUESTION).contentFieldName === "question"
+            && RefinedEntityWriter.describeTargetKind(refinementTargetKinds.CARD_ANSWER).contentFieldName === "answer",
+        "question and answer are separate fields",
+    );
+});
+
+harness.test("RefinementTargetLocator.normalizeForMatching: markup and entities do not defeat a match", "RefinementTargetLocator.normalizeForMatching", () =>
+{
+    assert(
+        RefinementTargetLocator.normalizeForMatching("<p>The <strong>value</strong> is 8.314</p>") === "the value is 8.314",
+        "markup stripped and case folded",
+    );
+    assert(RefinementTargetLocator.normalizeForMatching("a&nbsp;b") === "a b", "entities resolved");
+    assert(RefinementTargetLocator.normalizeForMatching(null) === "", "a non-string normalises rather than throwing");
+});
+
+harness.test("SourceRetentionPolicy.isSourceUnderLegalHold: only a cited hash is held", "SourceRetentionPolicy.isSourceUnderLegalHold", () =>
+{
+    const buildSource = (contentHash) => ({ getHash: () => contentHash, getExpiresAt: () => 0, getUploadedAt: () => 1000 });
+    const referencedProofHashes = new Set(["cited"]);
+
+    assert(SourceRetentionPolicy.isSourceUnderLegalHold(buildSource("cited"), referencedProofHashes), "a cited hash is held");
+    assert(!SourceRetentionPolicy.isSourceUnderLegalHold(buildSource("other"), referencedProofHashes), "an uncited hash is not");
+    assert(!SourceRetentionPolicy.isSourceUnderLegalHold(buildSource("cited"), null), "a skipped lookup does not silently hold everything");
+});
+
+harness.test("SourceRetentionPolicy.isSourceDue: a held proof survives, an unheld one is still reaped", "SourceRetentionPolicy.isSourceDue (with legal hold)", () =>
+{
+    const buildSource = (contentHash) => ({ getHash: () => contentHash, getExpiresAt: () => 0, getUploadedAt: () => 1000 });
+    const referencedProofHashes = new Set(["cited"]);
+    const lapsedPolicy = { bRetained: false, deleteBeforeMilliseconds: null };
+
+    assert(
+        SourceRetentionPolicy.isSourceDue(buildSource("other"), lapsedPolicy, 10000, referencedProofHashes) === true,
+        "the hold does not over-block",
+    );
+    assert(
+        SourceRetentionPolicy.isSourceDue(buildSource("cited"), lapsedPolicy, 10000, referencedProofHashes) === false,
+        "the proof survives a lapsed subscription",
+    );
+});
+
+harness.test("CreditConfiguration.ensureContentRefinementTaskRules: seeds both, prices them apart", "CreditConfiguration.ensureContentRefinementTaskRules", () =>
+{
+    const configuration = new CreditConfiguration({});
+
+    assert(configuration.ensureContentRefinementTaskRules() === true, "both rules seeded");
+    assert(configuration.ensureContentRefinementTaskRules() === false, "a second call overwrites nothing");
+
+    const contentRule = configuration.getRuleForTask(taskTypes.REFINE_CONTENT);
+    const visualRule = configuration.getRuleForTask(taskTypes.REFINE_VISUAL);
+
+    assert(contentRule !== null && contentRule.getEnabled(), "an absent rule would be free");
+    assert(visualRule.evaluate({}) > contentRule.evaluate({}), "a diagram costs more than a sentence");
+});
+
+// ── Organization engagement report ─────────────────────────────────────────
+
+const UserDailyActivityQueryEngine = require("../../../Dock/Globals/Classes/Database/UserDailyActivityQueryEngine");
+const CreditSpendCategoryNamer = require("../../../Dock/Globals/Classes/Organization/CreditSpendCategoryNamer");
+const { creditTransactionTypes } = require("../../../Dock/Globals/Enumerations/CreditTransactionTypes");
+
+harness.test("UserDailyActivityQueryEngine.isValidDayUtc: a day that is half of an upsert key is checked, not trusted", "UserDailyActivityQueryEngine.isValidDayUtc", () =>
+{
+    assert(UserDailyActivityQueryEngine.isValidDayUtc("2026-08-07"), "a real day is accepted");
+    assert(!UserDailyActivityQueryEngine.isValidDayUtc("2026-02-30"), "the 30th of February is refused — a Date would roll it silently to March");
+    assert(!UserDailyActivityQueryEngine.isValidDayUtc("07-08-2026"), "a non-ISO ordering is refused");
+    assert(!UserDailyActivityQueryEngine.isValidDayUtc(20260807), "a number is refused");
+});
+
+harness.test("UserDailyActivityQueryEngine.toDayUtc: buckets in UTC, and refuses to guess", "UserDailyActivityQueryEngine.toDayUtc", () =>
+{
+    assert(UserDailyActivityQueryEngine.toDayUtc("2026-08-07T23:59:59.000Z") === "2026-08-07", "late in the UTC day stays that day");
+    assert(UserDailyActivityQueryEngine.toDayUtc("2026-08-08T00:00:01.000Z") === "2026-08-08", "just after midnight is the next day");
+    assert(UserDailyActivityQueryEngine.toDayUtc("not a date") === "", "an unparseable value buckets to nothing rather than to today");
+});
+
+harness.test("CreditSpendCategoryNamer.describe: one naming, so two tables cannot disagree", "CreditSpendCategoryNamer.describe", () =>
+{
+    assert(CreditSpendCategoryNamer.describe({ type: creditTransactionTypes.TASK_CHARGE, metadata: { source: "AskAi" } }) === "Ask AI", "Ask AI by its source marker");
+    assert(CreditSpendCategoryNamer.describe({ type: creditTransactionTypes.STORAGE_CHARGE }) === "Storage", "storage recognised");
+    assert(
+        CreditSpendCategoryNamer.describe({ type: creditTransactionTypes.TASK_CHARGE, metadata: { taskType: 999999 } }) === "Other AI usage",
+        "an unrecognised task is named rather than dropped from the total",
+    );
+});
+
+harness.test("CreditSpendCategoryNamer.isInvokedAiFeature: storage is priced but not counted", "CreditSpendCategoryNamer.isInvokedAiFeature", () =>
+{
+    assert(!CreditSpendCategoryNamer.isInvokedAiFeature("Storage"), "storage is billed periodically — counting it reports billing ticks as things the student did");
+    assert(CreditSpendCategoryNamer.isInvokedAiFeature("Ask AI"), "an invoked feature counts");
+    assert(CreditSpendCategoryNamer.isInvokedAiFeature("Other AI usage"), "including one whose name we did not recognise");
+});
+
 harness.runAndWrite(RESULT_FILE);

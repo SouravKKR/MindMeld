@@ -6,6 +6,7 @@ const PaymentProvider = require("../../Globals/Classes/Payments/PaymentProvider"
 const CheckoutReceiptIdentifier = require("../../Globals/Classes/Payments/CheckoutReceiptIdentifier");
 const RegionResolver = require("../../Globals/Classes/Pricing/RegionResolver");
 const PaidDeckAudienceResolver = require("../../Globals/Classes/PaidDeck/PaidDeckAudienceResolver");
+const PaidDeckAcquisitionGate = require("../../Globals/Classes/PaidDeck/PaidDeckAcquisitionGate");
 const Purchase = require("../../Globals/Model/Purchase");
 const PendingOrderQueryEngine = require("../../Globals/Classes/Database/PendingOrderQueryEngine");
 const { getUser } = require("../Helpers/GetUser");
@@ -97,6 +98,22 @@ async function initiatePurchase(request, response)
     // independent guard, because "it costs nothing" and "it is not purchasable"
     // are different claims and only the second one keeps a deck out of the
     // checkout flow entirely.
+    // Every deck in the basket has to still be on sale. Checked before pricing,
+    // before any coupon is reserved and before any order exists, so a retired or
+    // unpublished deck cannot be bought by anybody who knows its id — which,
+    // until this gate existed, it could be.
+    const acquisitionDecision = await PaidDeckAcquisitionGate.evaluateMany(deckIds);
+    if (!acquisitionDecision.allowed)
+    {
+        response.statusCode = httpStatus.CONFLICT;
+        response.sendJson
+        ({
+            error: acquisitionDecision.refusals[0].reason,
+            refusals: acquisitionDecision.refusals
+        });
+        return;
+    }
+
     const audienceScopedDeckIds = await PaidDeckAudienceResolver.listOrganizationDeckIds(deckIds);
     if (audienceScopedDeckIds.length > 0)
     {

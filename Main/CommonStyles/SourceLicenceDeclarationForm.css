@@ -1,0 +1,111 @@
+/*
+    SourceLicenceDeclarationForm — the shared licence-declaration fields.
+
+    Lives in CommonStyles rather than beside one page because the form is shared
+    between the content-refinement page and the admin paid-deck verification
+    sources dialog. It used to sit in ContentRefinementPage.css, which meant the
+    admin dialog would have rendered the same markup unstyled — the fields
+    present, the layout absent.
+
+    Sized and stacked for a narrow viewport from the start: these fields appear
+    inside dialogs, and dialog-box is fixed and centred, so anything wider than
+    the viewport is not scrolled to, it is cut off.
+*/
+
+.source-licence-dialog
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+.source-licence-fields
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+.source-licence-field
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    font-size: 13px;
+}
+
+.source-licence-field input,
+.source-licence-field select
+{
+    padding: 8px 10px;
+    border: none;
+    border-radius: 6px;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-size: 14px;
+    box-sizing: border-box;
+    width: 100%;
+    /* 16px on a phone stops iOS Safari zooming the page on focus, which leaves
+       the dialog off-centre with no obvious way back. */
+    min-height: 44px;
+}
+
+.source-licence-field input:focus,
+.source-licence-field select:focus
+{
+    outline-color: var(--accent-color);
+}
+
+.source-licence-error
+{
+    padding: 8px 12px;
+    border-radius: 8px;
+    background-color: var(--danger-background-color);
+    color: var(--danger-text-color);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
+/*
+    dialog-box caps every dialog at max-width: 60%, which is far too wide for a
+    short form on a desktop and irrelevant on a phone. Both are set explicitly.
+*/
+dialog-box:has(.source-licence-dialog)
+{
+    max-width: min(620px, 94vw);
+    width: min(620px, 94vw);
+}
+
+@media (max-width: 600px)
+{
+    dialog-box:has(.source-licence-dialog)
+    {
+        max-width: 96vw;
+        width: 96vw;
+    }
+
+    .source-licence-dialog
+    {
+        /* dialog-box has no max-height of its own, so a dialog taller than the
+           viewport clips its own buttons off the bottom edge — the refused-save
+           failure AdminPanelPage.css documents. */
+        max-height: calc(92vh - 60px);
+        overflow-y: auto;
+        padding-right: 8px;
+    }
+
+    .source-licence-field input[type="text"],
+    .source-licence-field input[type="url"]
+    {
+        /* Below 16px iOS Safari zooms on focus. */
+        font-size: 16px;
+    }
+}

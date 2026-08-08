@@ -1,7 +1,9 @@
 const { PacketronRequest, PacketronResponse } = require("@gamiumgamers/packetron");
 const { getUser } = require("../Helpers/GetUser");
 const InformationSourceQueryEngine = require("../../Globals/Classes/Database/InformationSourceQueryEngine");
+const ReferencedProofSourceHashes = require("../../Globals/Classes/Content/ReferencedProofSourceHashes");
 const InformationSourcePurger = require("../../Globals/Classes/Content/InformationSourcePurger");
+const SourceRetentionPolicy = require("../../Globals/Classes/Content/SourceRetentionPolicy");
 const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
@@ -61,10 +63,32 @@ async function handleInformationSourceDelete(request, response)
         return;
     }
 
-    // The purger owns the whole cascade — row, then blob and derived content
-    // (embedding chunks + cached figures) when this was the last reference —
-    // and invalidates the cached storage measurement. Sharing it with the
-    // expiry reaper and the admin takedown path keeps the three from drifting.
+    // A source cited as a licensing basis cannot be deleted, by its owner or by
+    // the reaper — whether it was the reference a content correction was made
+    // from, or a document declared as a verification source for a paid deck. The
+    // declaration recorded against it asserts the platform was entitled to use
+    // the document, and that assertion is worth nothing once the document is
+    // gone — so the delete is refused with an explanation rather than the record
+    // being left pointing at bytes that no longer exist.
+    const referencedProofHashes = await ReferencedProofSourceHashes.findForUser(user.getId());
+
+    if (SourceRetentionPolicy.isSourceUnderLegalHold(informationSource, referencedProofHashes))
+    {
+        response.statusCode = httpStatus.CONFLICT;
+        response.sendJson({
+            error: ErrorCodes.SOURCE_UNDER_LEGAL_HOLD,
+            detail: "This document is recorded as the licensing basis for a content correction or for the verification "
+                + "of a paid deck, so it has to be kept as proof of that permission. It cannot be deleted while that "
+                + "record stands."
+        });
+        return;
+    }
+
+    // The purger owns the whole cascade — row, then blob, then derived content
+    // (embedding chunks, figure rows, and the figure images those rows point at
+    // in object storage) — and invalidates the cached storage measurement.
+    // Sharing it with the expiry reaper, account closure and the admin takedown
+    // path keeps the four from drifting.
     const purgeResult = await InformationSourcePurger.purgeSingleSource(informationSource);
 
     response.statusCode = httpStatus.OK;
@@ -72,7 +96,8 @@ async function handleInformationSourceDelete(request, response)
         success: true,
         contentRemoved: purgeResult.bContentRemoved,
         embeddingChunksRemoved: purgeResult.embeddingChunksRemoved,
-        figuresRemoved: purgeResult.figuresRemoved
+        figuresRemoved: purgeResult.figuresRemoved,
+        figureObjectsRemoved: purgeResult.figureObjectsRemoved
     });
 }
 

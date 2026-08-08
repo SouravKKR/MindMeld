@@ -33,6 +33,7 @@ require("dotenv").config({ path: path.join(currentDirectory, ".env") });
 
 const OrganizationScopeResolver = require("./Globals/Classes/Organization/OrganizationScopeResolver");
 const OrganizationFeatureResolver = require("./Globals/Classes/Organization/OrganizationFeatureResolver");
+const OrganizationFeatureSelection = require("./Globals/Classes/Organization/OrganizationFeatureSelection");
 const OrganizationPermissionRuleQueryEngine = require("./Globals/Classes/Organization/OrganizationPermissionRuleQueryEngine");
 const OrganizationQueryEngine = require("./Globals/Classes/Organization/OrganizationQueryEngine");
 const OrganizationMemberQueryEngine = require("./Globals/Classes/Organization/OrganizationMemberQueryEngine");
@@ -47,8 +48,12 @@ const Organization = require("./Globals/Model/Organization");
 const User = require("./Globals/Model/User");
 const DeckLicense = require("./Globals/Model/DeckLicense");
 const { handleOrganizationEndpoints } = require("./Endpoints/HandleOrganizationEndpoints");
+const { createOrganization } = require("./Endpoints/Organization/CreateOrganization");
+const { setOrganizationEntitlementLimits } = require("./Endpoints/Organization/SetOrganizationEntitlementLimits");
+const { getOrganizationPermissionRules } = require("./Endpoints/OrganizationAdmin/GetOrganizationPermissionRules");
 const { organizationStatus } = require("./Globals/Enumerations/OrganizationStatus");
 const { tagMatchModes } = require("./Globals/Enumerations/TagMatchModes");
+const { userRoles } = require("./Globals/Enumerations/UserRoles");
 const { planFeatures } = require("./Globals/Enumerations/PlanFeatures");
 const { planTiers } = require("./Globals/Enumerations/PlanTiers");
 const ErrorCodes = require("./Globals/Constants/ErrorCodes");
@@ -98,6 +103,35 @@ function buildRequest(organizationContextId, user)
         headers[OrganizationScopeResolver.CONTEXT_HEADER_NAME] = organizationContextId;
     }
     return { headers: headers, user: user || null };
+}
+
+/**
+ * The request shape an endpoint handler reads — a body, query parameters and
+ * the authenticated user the route plugin already resolved. Handlers are driven
+ * directly rather than over HTTP because the plugin chain is not what is under
+ * test here; what is under test is that a body reaches storage intact and that
+ * a malformed one is refused before it does.
+ */
+function buildEndpointRequest(body, queryParams, user)
+{
+    return {
+        getBody: async () => body || {},
+        getQueryParams: async () => queryParams || {},
+        user: user || null,
+        headers: {}
+    };
+}
+
+function buildEndpointResponse()
+{
+    return {
+        statusCode: 0,
+        body: null,
+        sendJson(responseJson)
+        {
+            this.body = responseJson;
+        }
+    };
 }
 
 
@@ -152,6 +186,48 @@ async function runAlwaysOnTier()
     assert(OrganizationPermissionRuleQueryEngine.validateRule({ ...validRule, storageGrantBytes: -1 }).valid === false, "A negative storage grant is refused");
     assert(OrganizationPermissionRuleQueryEngine.validateRule({ ...validRule, storageGrantBytes: 1.5 }).valid === false, "A fractional byte count is refused");
     assert(OrganizationPermissionRuleQueryEngine.MAXIMUM_RULES_PER_ORGANIZATION > 0, "A rule-count ceiling is declared");
+
+    // ── Feature-selection validation ──────────────────────────────────────
+    // Both feature lists a super-admin sets are stored verbatim, so a value
+    // outside the enum would sit in the database matching nothing — a feature
+    // the buyer believes they were sold that no gate will ever recognise.
+    const allFeatureValues = OrganizationFeatureSelection.getAllFeatureValues();
+    assert(allFeatureValues.length === Object.values(planFeatures).length, "The catalogue of grantable feature values is derived from the enumeration, so a new feature is offered automatically");
+    assert(allFeatureValues.every(featureValue => Number.isInteger(featureValue)), "Every feature value is an integer, as the stored form requires");
+
+    assert(OrganizationFeatureSelection.validate([planFeatures.ASK_AI, planFeatures.CHAT]).valid === true, "A well-formed feature selection validates");
+    assert(OrganizationFeatureSelection.validate([]).valid === true, "An EMPTY selection is valid — that is how a super-admin says 'the Free floor only'");
+    assert(OrganizationFeatureSelection.validate("ASK_AI").valid === false, "A non-array selection is refused");
+    assert(OrganizationFeatureSelection.validate([9999]).valid === false, "A value outside the enumeration is REFUSED, never silently dropped");
+    assert(OrganizationFeatureSelection.validate([1.5]).valid === false, "A fractional feature value is refused");
+    assert(OrganizationFeatureSelection.validate([planFeatures.CHAT, planFeatures.CHAT]).featureValues.length === 1, "A duplicated feature is stored once");
+    assert(OrganizationFeatureSelection.validate([9999]).invalidValue === 9999, "A refusal names the value that failed, so the caller can say which box was wrong");
+
+    // ── The owner's own grant ─────────────────────────────────────────────
+    // Ownership decides whether adminAllowedFeatures applies at all, so the
+    // predicate is checked directly rather than only through its consequences.
+    const ownedOrganization = new Organization({ name: "owner-test", adminEmail: "Owner@Example.Test", adminUserId: "owner-1" });
+
+    assert(OrganizationFeatureResolver.isOwner(ownedOrganization, "owner-1", "") === true, "The stored account id identifies the owner");
+    assert(OrganizationFeatureResolver.isOwner(ownedOrganization, "someone-else", "owner@example.test") === true, "…and so does the stored email, for the window before a first login binds the id");
+    assert(OrganizationFeatureResolver.isOwner(ownedOrganization, "someone-else", "  OWNER@EXAMPLE.TEST ") === true, "…matched with the same normalisation the stored address was written with");
+    assert(OrganizationFeatureResolver.isOwner(ownedOrganization, "someone-else", "other@example.test") === false, "Anyone else is not the owner");
+    assert(OrganizationFeatureResolver.isOwner(null, "owner-1", "owner@example.test") === false, "A missing organization has no owner rather than throwing");
+
+    const unboundOrganization = new Organization({ name: "unbound", adminEmail: "unbound@example.test", adminUserId: "" });
+    assert(OrganizationFeatureResolver.isOwner(unboundOrganization, "", "nobody@example.test") === false, "An unbound adminUserId never matches a caller with no id — otherwise every anonymous resolution would own the organization");
+
+    // ── The default the create flow applies ───────────────────────────────
+    const createSource = fs.readFileSync(path.join(currentDirectory, "Endpoints/Organization/CreateOrganization.js"), "utf8");
+    assert(createSource.includes("adminAllowedFeatures"), "Creating an organization sets what its owner may do in its view");
+    assert(createSource.includes("OrganizationFeatureSelection.getAllFeatureValues()"), "…defaulting to every feature, so an owner is never left administering an institute on the Free floor");
+
+    const limitsSource = fs.readFileSync(path.join(currentDirectory, "Endpoints/Organization/SetOrganizationEntitlementLimits.js"), "utf8");
+    assert(limitsSource.includes("adminAllowedFeatures"), "The owner's features can be changed after creation");
+
+    const createDialogSource = fs.readFileSync(path.join(currentDirectory, "..", "Main", "Pages", "AdminPanel", "Components", "CreateOrganizationDialog.js"), "utf8");
+    assert(createDialogSource.includes("PlanFeatureCatalogue.getAllFeatureValues()"), "The create dialog ticks every feature by default, matching what the server does when the field is absent");
+    assert(createDialogSource.includes("adminAllowedFeatures"), "…and posts the selection rather than relying on the default");
 
     // ── Routes ────────────────────────────────────────────────────────────
     const organizationRoutes = [];
@@ -399,6 +475,182 @@ async function runDatabaseTier()
 
         const forgedGate = await PlanEntitlementGate.requireFeatureForRequest(buildRequest(organization.getId(), outsiderUser), outsiderUserId, planFeatures.MOCK_TEST_EVALUATION);
         assert(forgedGate.organizationId === null, "A forged context cannot borrow an organization's entitlements");
+
+        // ── The owner's own entitlements ──────────────────────────────────
+        // An owner is not on their own roster unless somebody put them there,
+        // and inside an organization view the personal plan is not consulted at
+        // all. Everything here is about that gap.
+        section("Owner entitlements");
+
+        const proprietorUserId = `${TEST_NAME_PREFIX}proprietor-${uniqueSuffix}`;
+        const proprietorEmail = `${TEST_NAME_PREFIX}proprietor-${uniqueSuffix}@example.test`;
+        await usersCollection.insertOne(new User({ id: proprietorUserId, additionalData: { email: proprietorEmail } }).toJson());
+        createdUserIds.push(proprietorUserId);
+
+        const grantedOrganization = new Organization
+        ({
+            name: `${TEST_NAME_PREFIX}granted-${uniqueSuffix}`,
+            adminEmail: proprietorEmail,
+            adminUserId: proprietorUserId,
+            status: organizationStatus.ACTIVE,
+            maxMembers: 10,
+            // Sold to its MEMBERS: mock-test evaluation only. The owner's own
+            // grant deliberately names two features that are NOT on that list.
+            grantableFeatures: [planFeatures.MOCK_TEST_EVALUATION],
+            adminAllowedFeatures: [planFeatures.AUTOMATIC_GENERATION, planFeatures.IMAGE_GENERATION]
+        });
+        await OrganizationQueryEngine.createOrganization(grantedOrganization);
+        createdOrganizationIds.push(grantedOrganization.getId());
+
+        const proprietorUser = await AuthenticationQueryEngine.getUserById(proprietorUserId);
+
+        const noMemberRow = await OrganizationMemberQueryEngine.findMemberByUserIdOrEmail(grantedOrganization.getId(), proprietorUserId, proprietorEmail);
+        assert(noMemberRow === null, "The owner is NOT on their own roster — which is the whole reason this grant exists");
+
+        const ownerEntitlement = await OrganizationFeatureResolver.resolveForMember(grantedOrganization, proprietorUserId, proprietorEmail);
+        assert(ownerEntitlement.isOwnerGrant === true, "The resolution reports that it answered as the owner");
+        assert(ownerEntitlement.featureValues.includes(planFeatures.AUTOMATIC_GENERATION), "The owner holds what the platform granted them, with no membership and no rule");
+        assert(ownerEntitlement.featureValues.includes(planFeatures.IMAGE_GENERATION), "…every feature of it, not the first one");
+        assert(freeFloor.every(floorFeature => ownerEntitlement.featureValues.includes(floorFeature)), "…on top of the platform floor rather than instead of it");
+        assert(!grantedOrganization.getGrantableFeatures().includes(planFeatures.AUTOMATIC_GENERATION), "The fixture withholds that feature from the organization's own allow-list…");
+        assert(ownerEntitlement.featureValues.includes(planFeatures.AUTOMATIC_GENERATION), "…and the owner still holds it: the grant is the platform's, so an owner cannot strip themselves by editing what their rules may reach");
+        assert(ownerEntitlement.storageGrantBytes === 0, "The grant is features only — storage stays whatever their own plan gives them");
+
+        const strangerEntitlement = await OrganizationFeatureResolver.resolveForMember(grantedOrganization, outsiderUserId, outsiderEmail);
+        assert(strangerEntitlement.isOwnerGrant === false, "Someone who is not the owner is not treated as one");
+        assert(!strangerEntitlement.featureValues.includes(planFeatures.AUTOMATIC_GENERATION), "…and does not receive the owner's grant");
+
+        const ownerScope = await OrganizationScopeResolver.resolve(buildRequest(grantedOrganization.getId(), proprietorUser), proprietorUserId);
+        assert(ownerScope.organizationId === grantedOrganization.getId(), "The owner may enter their own view, so the grant is reachable at all");
+
+        const ownerScopes = await OrganizationScopeResolver.listAllScopeKeysForUser(proprietorUser);
+        assert(ownerScopes.organizations.some(candidate => candidate.getId() === grantedOrganization.getId()), "The organization they own appears among their views, so the switcher offers it");
+
+        const ownerGateInOrganization = await PlanEntitlementGate.requireFeatureForRequest(buildRequest(grantedOrganization.getId(), proprietorUser), proprietorUserId, planFeatures.AUTOMATIC_GENERATION);
+        assert(ownerGateInOrganization.allowed === true, "The gate honours the owner's grant inside the organization's view");
+        assert(ownerGateInOrganization.organizationId === grantedOrganization.getId(), "…and reports which view answered");
+
+        const ownerGateInPersonal = await PlanEntitlementGate.requireFeatureForRequest(buildRequest("", proprietorUser), proprietorUserId, planFeatures.AUTOMATIC_GENERATION);
+        assert(ownerGateInPersonal.allowed === PlanMetadata.hasFeature(planTiers.FREE, planFeatures.AUTOMATIC_GENERATION), "The grant does NOT follow the owner into their own library — it is capability inside the institute, not a free upgrade");
+
+        // The owner ALSO on the roster: the two sources add, they do not replace.
+        await OrganizationMemberQueryEngine.addMember(grantedOrganization.getId(), proprietorEmail, "harness");
+        await OrganizationMemberQueryEngine.backfillUserId(proprietorEmail, proprietorUserId);
+        await OrganizationPermissionRuleQueryEngine.replaceRules
+        (
+            grantedOrganization.getId(),
+            [{ name: "Everyone", tagFilter: [], matchMode: tagMatchModes.EVERYONE, allowedFeatures: [planFeatures.MOCK_TEST_EVALUATION], storageGrantBytes: 0 }],
+            grantedOrganization.getGrantableFeatures(),
+            grantedOrganization.getMaxStorageGrantBytesPerMember()
+        );
+
+        const ownerAsMemberEntitlement = await OrganizationFeatureResolver.resolveForMember(grantedOrganization, proprietorUserId, proprietorEmail);
+        assert(ownerAsMemberEntitlement.matchedRuleNames.includes("Everyone"), "An owner who is also a member is matched by the rules like anyone else");
+        assert(ownerAsMemberEntitlement.featureValues.includes(planFeatures.MOCK_TEST_EVALUATION), "…so they get what those rules grant");
+        assert(ownerAsMemberEntitlement.featureValues.includes(planFeatures.AUTOMATIC_GENERATION), "…and keep the owner grant as well — the rule path must not overwrite it");
+
+        // An explicitly empty grant is a decision, not an absence.
+        const withheldOrganization = new Organization
+        ({
+            name: `${TEST_NAME_PREFIX}withheld-${uniqueSuffix}`,
+            adminEmail: proprietorEmail,
+            adminUserId: proprietorUserId,
+            status: organizationStatus.ACTIVE,
+            maxMembers: 10,
+            adminAllowedFeatures: []
+        });
+        await OrganizationQueryEngine.createOrganization(withheldOrganization);
+        createdOrganizationIds.push(withheldOrganization.getId());
+
+        const withheldEntitlement = await OrganizationFeatureResolver.resolveForMember(withheldOrganization, proprietorUserId, proprietorEmail);
+        assert(withheldEntitlement.featureValues.length === freeFloor.length, "An empty owner grant leaves exactly the platform floor — an owner CAN be given nothing, deliberately");
+        assert(withheldEntitlement.isOwnerGrant === true, "…and is still recognised as the owner while holding nothing extra");
+
+        // Created before the owner had an account: the id is empty until their
+        // first login binds it, and the grant has to work in that window.
+        const unboundOrganization = new Organization
+        ({
+            name: `${TEST_NAME_PREFIX}unbound-${uniqueSuffix}`,
+            adminEmail: proprietorEmail,
+            adminUserId: "",
+            status: organizationStatus.ACTIVE,
+            maxMembers: 10,
+            adminAllowedFeatures: [planFeatures.CURATED_STUDY]
+        });
+        await OrganizationQueryEngine.createOrganization(unboundOrganization);
+        createdOrganizationIds.push(unboundOrganization.getId());
+
+        const unboundEntitlement = await OrganizationFeatureResolver.resolveForMember(unboundOrganization, proprietorUserId, proprietorEmail);
+        assert(unboundEntitlement.featureValues.includes(planFeatures.CURATED_STUDY), "An organization whose owner has not logged in yet still grants them by email");
+
+        // The write path: a stored grant has to survive the round trip, or the
+        // dialog would report a save that changed nothing.
+        await OrganizationQueryEngine.setEntitlementLimits(grantedOrganization.getId(), { adminAllowedFeatures: [planFeatures.CHAT] });
+        const reloadedOrganization = await OrganizationQueryEngine.getOrganizationById(grantedOrganization.getId());
+        assert(JSON.stringify(reloadedOrganization.getAdminAllowedFeatures()) === JSON.stringify([planFeatures.CHAT]), "Editing the owner's features REPLACES the stored list rather than merging into it");
+
+        const narrowedEntitlement = await OrganizationFeatureResolver.resolveForMember(reloadedOrganization, proprietorUserId, proprietorEmail);
+        assert(!narrowedEntitlement.featureValues.includes(planFeatures.AUTOMATIC_GENERATION), "…and narrowing it takes effect on the next read, with no migration and no cache to clear");
+
+        // ── The endpoints that carry all of this ──────────────────────────
+        // The resolvers above are only reachable through these three handlers,
+        // so the body has to survive the trip and a malformed one has to be
+        // refused before it reaches storage.
+        section("Endpoint surface");
+
+        const badCreateResponse = buildEndpointResponse();
+        await createOrganization
+        (
+            buildEndpointRequest({ name: "Refused", adminEmail: "refused@example.test", maxMembers: 5, adminAllowedFeatures: [9999] }),
+            badCreateResponse
+        );
+        assert(badCreateResponse.statusCode === 400, "Creating an organization with an unknown feature value is refused");
+        assert(badCreateResponse.body?.error === ErrorCodes.INVALID_FEATURE_SELECTION, "…with INVALID_FEATURE_SELECTION, before any organization row is written");
+
+        const badLimitsResponse = buildEndpointResponse();
+        await setOrganizationEntitlementLimits
+        (
+            buildEndpointRequest({ organizationId: grantedOrganization.getId(), adminAllowedFeatures: "everything" }),
+            badLimitsResponse
+        );
+        assert(badLimitsResponse.statusCode === 400, "Editing the owner's features with a non-array is refused");
+        assert(badLimitsResponse.body?.field === "adminAllowedFeatures", "…naming the field that failed rather than the whole request");
+
+        const goodLimitsResponse = buildEndpointResponse();
+        await setOrganizationEntitlementLimits
+        (
+            buildEndpointRequest({ organizationId: grantedOrganization.getId(), adminAllowedFeatures: [planFeatures.MOCK_TEST_EVALUATION, planFeatures.CURATED_STUDY] }),
+            goodLimitsResponse
+        );
+        assert(goodLimitsResponse.statusCode === 200, "A well-formed edit is accepted");
+
+        const savedOrganization = await OrganizationQueryEngine.getOrganizationById(grantedOrganization.getId());
+        const savedEntitlement = await OrganizationFeatureResolver.resolveForMember(savedOrganization, proprietorUserId, proprietorEmail);
+        assert(savedEntitlement.featureValues.includes(planFeatures.CURATED_STUDY), "…and what the endpoint stored is what the owner then holds — the whole trip, body to gate");
+
+        const permissionsResponse = buildEndpointResponse();
+        await getOrganizationPermissionRules
+        (
+            buildEndpointRequest({}, { organizationId: grantedOrganization.getId() }, proprietorUser),
+            permissionsResponse
+        );
+        assert(permissionsResponse.statusCode === 200, "The owner may read their organization's permission screen");
+        assert(permissionsResponse.body?.isOwner === true, "…and is told they are the owner, so the screen can explain their own access");
+        assert(Array.isArray(permissionsResponse.body?.adminAllowedFeatures) && permissionsResponse.body.adminAllowedFeatures.includes(planFeatures.CURATED_STUDY), "…including exactly what that access is");
+
+        // A super-admin reads the same screen and must NOT be flagged as the
+        // owner: the note it drives describes the reader's own access, and
+        // telling a visiting super-admin that the owner's grant is theirs would
+        // be a lie in the one place a person goes to find out what they have.
+        const superAdminUser = new User({ id: `${TEST_NAME_PREFIX}super-${uniqueSuffix}`, role: userRoles.ADMIN, additionalData: { email: `${TEST_NAME_PREFIX}super-${uniqueSuffix}@example.test` } });
+        const superAdminPermissionsResponse = buildEndpointResponse();
+        await getOrganizationPermissionRules
+        (
+            buildEndpointRequest({}, { organizationId: grantedOrganization.getId() }, superAdminUser),
+            superAdminPermissionsResponse
+        );
+        assert(superAdminPermissionsResponse.statusCode === 200, "A super-admin may read any organization's permission screen");
+        assert(superAdminPermissionsResponse.body?.isOwner !== true, "…and is not told the owner's grant is theirs");
 
         // ── Storage: one meter, both libraries ────────────────────────────
         section("Storage");

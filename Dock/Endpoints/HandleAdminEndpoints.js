@@ -11,6 +11,16 @@ const { listPaidDecks } = require("./Admin/ListPaidDecks");
 const { downloadAuditTrail } = require("./Admin/PaidDecks/DownloadAuditTrail");
 const { getGenerationProvenance } = require("./Admin/PaidDecks/GetGenerationProvenance");
 const { resolveVerificationFlag } = require("./Admin/PaidDecks/ResolveVerificationFlag");
+const { autoFixFlagProposal } = require("./Admin/PaidDecks/AutoFixFlagProposal");
+const { autoFixFlagApply } = require("./Admin/PaidDecks/AutoFixFlagApply");
+const { downloadRefinementProofSource } = require("./Admin/PaidDecks/DownloadRefinementProofSource");
+const {
+    listVerificationSources,
+    attachVerificationSource,
+    detachVerificationSource,
+    runVerificationAgainstSources,
+    getVerificationRunStatus,
+} = require("./Admin/PaidDecks/VerificationSources");
 const { setUserRole } = require("./Admin/SetUserRole");
 const { setUserStreak } = require("./Admin/Streak/SetUserStreak");
 const { bulkUpdatePaidDecks } = require("./Admin/BulkUpdatePaidDecks");
@@ -73,6 +83,9 @@ const { listDealPayments } = require("./Admin/Deals/ListDealPayments");
 const { renameOrganization } = require("./Organization/RenameOrganization");
 const { setOrganizationMaxMembers } = require("./Organization/SetOrganizationMaxMembers");
 const { setOrganizationEntitlementLimits } = require("./Organization/SetOrganizationEntitlementLimits");
+const { setOrganizationTerm } = require("./Organization/SetOrganizationTerm");
+const { retirePaidDeck } = require("./Admin/RetirePaidDeck");
+const { deletePaidDeck } = require("./Admin/DeletePaidDeck");
 const { createPromoCode } = require("./Admin/PromoCodes/CreatePromoCode");
 const { createPromoCodesBulk } = require("./Admin/PromoCodes/CreatePromoCodesBulk");
 const { setPromoCodeEnabled } = require("./Admin/PromoCodes/SetPromoCodeEnabled");
@@ -197,6 +210,98 @@ function handleAdminEndpoints(server)
         plugins: [ensureAdmin]
     });
 
+    // Verification auto-fix. Two steps on purpose: the first PROPOSES a
+    // correction for one flag and writes nothing, the second applies what an
+    // administrator approved. Neither clears the flag — resolving it stays a
+    // separate decision through ResolveVerificationFlag below, which is what
+    // keeps the review gate from answering itself.
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/AutoFixFlagProposal`,
+        handler: autoFixFlagProposal,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/AutoFixFlagApply`,
+        handler: autoFixFlagApply,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // The reference document a correction was made against, as recorded on the
+    // refinement. Reached from the audit trail; the storage path is rebuilt from
+    // the stored row and is never taken from the request.
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/RefinementProofSource`,
+        handler: downloadRefinementProofSource,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Verification sources (admin-declared grounding for the fact check) ────
+    //
+    // The documents and URLs a deck's generated content is checked AGAINST.
+    // They are never generation inputs — paid-deck generation still accepts a
+    // curriculum or syllabus and nothing else — and the pass they feed runs
+    // after content exists and can only raise flags.
+    //
+    // Attach and Detach each write a permanent licence-declaration event as well
+    // as updating the working set, so what a deck was checked against, on whose
+    // word and under what claimed licence stays answerable after the source is
+    // removed.
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/VerificationSources/List`,
+        handler: listVerificationSources,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/VerificationSources/Attach`,
+        handler: attachVerificationSource,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/VerificationSources/Detach`,
+        handler: detachVerificationSource,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // Starts the pass and returns immediately — it takes minutes, so the dialog
+    // polls Status below rather than holding the request open.
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/VerificationSources/Run`,
+        handler: runVerificationAgainstSources,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/VerificationSources/Status`,
+        handler: getVerificationRunStatus,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
     server.handle
     ({
         routePath: `/Admin/PaidDecks/Pricing`,
@@ -210,6 +315,27 @@ function handleAdminEndpoints(server)
     ({
         routePath: `/Admin/PaidDecks/Bundle`,
         handler: setPaidDeckBundle,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/Retire`,
+        handler: retirePaidDeck,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // Destroys the listing and its master content. Refused while anybody holds
+    // an active licence — see PaidDeckRetirementService for why that is a hard
+    // stop rather than a warning.
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/Delete`,
+        handler: deletePaidDeck,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureAdmin]
@@ -469,6 +595,18 @@ function handleAdminEndpoints(server)
     ({
         routePath: `/Admin/Organizations/SetLimits`,
         handler: setOrganizationEntitlementLimits,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // Renewing (or clearing) the contract term, and settling the credit pool's
+    // frozen flag with it. Separate from selling credits: extending a term must
+    // not require selling a block nobody asked for.
+    server.handle
+    ({
+        routePath: `/Admin/Organizations/SetTerm`,
+        handler: setOrganizationTerm,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureAdmin]

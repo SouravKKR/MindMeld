@@ -1,0 +1,13 @@
+Subject: {subject_name}
+
+REFERENCE PASSAGES (from documents a subject expert cleared and declared a licence for).
+--- START REFERENCE ---
+{reference_block}
+--- END REFERENCE ---
+
+TOPICS THIS DECK COVERS.
+--- START TOPICS ---
+{topic_block}
+--- END TOPICS ---
+
+Report only topics the reference passages show the source covers and the topic list above does not contain, under any name. If there are none, return an empty gaps array.

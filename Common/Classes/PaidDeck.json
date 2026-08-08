@@ -25,6 +25,16 @@
             "datatype": "string",
             "defaultValue": ""
         },
+        "sourceDeckId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
+        "provenanceDeckId":
+        {
+            "datatype": "string",
+            "defaultValue": ""
+        },
         "thumbnailUrl":
         {
             "datatype": "string",
@@ -95,6 +105,12 @@
         {
             "datatype": "boolean",
             "defaultValue": false
+        },
+        "retiredAt":
+        {
+            "datatype": "date",
+            "defaultValue": "forever",
+            "nullFallback": "forever"
         },
         "audienceOrganizationId":
         {

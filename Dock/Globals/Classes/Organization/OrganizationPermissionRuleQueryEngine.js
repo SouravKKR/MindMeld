@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const DatabaseConnector = require("../Database/DatabaseConnector");
 const DatabaseConstants = require("../../Constants/DatabaseConstants");
 const OrganizationPermissionRule = require("../../Model/OrganizationPermissionRule");
+const MemberConditionFilterFactory = require("./MemberConditionFilterFactory");
 const { planFeatures } = require("../../Enumerations/PlanFeatures");
 const { tagMatchModes } = require("../../Enumerations/TagMatchModes");
 const ErrorCodes = require("../../Constants/ErrorCodes");
@@ -26,6 +27,15 @@ class OrganizationPermissionRuleQueryEngine
     // A rule set an administrator cannot read at a glance is a rule set nobody
     // audits. Well past what any real organization needs.
     static MAXIMUM_RULES_PER_ORGANIZATION = 50;
+
+    // One condition per column is already more than a readable rule carries.
+    static MAXIMUM_CONDITIONS_PER_RULE = 32;
+
+    // The member-document paths a rule is allowed to read. Everything an
+    // institute stores about a person lives under these; membership internals
+    // such as delegatePowers and userId deliberately do not.
+    static TARGETABLE_FIELD_PREFIXES = ["attributes.", "attributesNormalised.", "attributesComparable."];
+    static TARGETABLE_FIELD_NAMES = ["tags", "email", "addedAt"];
 
     static async #getCollection()
     {
@@ -81,7 +91,97 @@ class OrganizationPermissionRuleQueryEngine
             return { valid: false, reason: ErrorCodes.INVALID_REQUEST };
         }
 
+        return OrganizationPermissionRuleQueryEngine.validateAttributeConditions(ruleInput.attributeConditions);
+    }
+
+    /**
+     * Validates the conditions a rule places on the institute's own columns.
+     *
+     * The field each condition reads is checked against an allow-list rather
+     * than trusted. A condition is a client-supplied path into the member
+     * document, and without this a crafted rule could be written against
+     * `delegatePowers` or `userId` — reading membership internals that are not
+     * the institute's to target, and that no screen offers.
+     *
+     * @param {Array<object>} attributeConditions
+     * @returns {{ valid: boolean, reason?: string }}
+     */
+    static validateAttributeConditions(attributeConditions)
+    {
+        if (attributeConditions === undefined || attributeConditions === null)
+        {
+            return { valid: true };
+        }
+
+        if (!Array.isArray(attributeConditions))
+        {
+            return { valid: false, reason: ErrorCodes.INVALID_SHAPE };
+        }
+
+        if (attributeConditions.length > OrganizationPermissionRuleQueryEngine.MAXIMUM_CONDITIONS_PER_RULE)
+        {
+            return { valid: false, reason: ErrorCodes.INVALID_REQUEST };
+        }
+
+        for (const condition of attributeConditions)
+        {
+            if (!condition || typeof condition !== "object")
+            {
+                return { valid: false, reason: ErrorCodes.INVALID_SHAPE };
+            }
+
+            if (typeof condition.key !== "string" || condition.key.trim().length === 0)
+            {
+                return { valid: false, reason: ErrorCodes.INVALID_REQUEST };
+            }
+
+            if (!OrganizationPermissionRuleQueryEngine.isTargetableField(condition.field))
+            {
+                return { valid: false, reason: ErrorCodes.INVALID_REQUEST };
+            }
+
+            // Refused at save time rather than silently selecting nobody later.
+            // A rule that quietly matches no one is indistinguishable on screen
+            // from one that is simply not being met.
+            if (!MemberConditionFilterFactory.isSupported(condition))
+            {
+                return { valid: false, reason: ErrorCodes.INVALID_REQUEST };
+            }
+        }
+
         return { valid: true };
+    }
+
+    /**
+     * Whether a field path is one a rule may read.
+     *
+     * @param {string} field
+     * @returns {boolean}
+     */
+    static isTargetableField(field)
+    {
+        if (typeof field !== "string" || field.length === 0)
+        {
+            return false;
+        }
+
+        if (OrganizationPermissionRuleQueryEngine.TARGETABLE_FIELD_NAMES.includes(field))
+        {
+            return true;
+        }
+
+        return OrganizationPermissionRuleQueryEngine.TARGETABLE_FIELD_PREFIXES.some((prefix) =>
+        {
+            // A prefix alone is the whole map, not a column within it, and the
+            // remainder must be a plain key — a dotted tail would reach deeper
+            // into the document than any column lives.
+            if (!field.startsWith(prefix) || field.length === prefix.length)
+            {
+                return false;
+            }
+            const remainder = field.slice(prefix.length);
+            return remainder.length > 0 && !remainder.includes(".") && !remainder.startsWith("$");
+        });
     }
 
     static async listRulesForOrganization(organizationId)
@@ -145,6 +245,19 @@ class OrganizationPermissionRuleQueryEngine
                 .map(tag => String(tag).trim().toLowerCase())
                 .filter(tag => tag.length > 0),
             matchMode: ruleInput.matchMode,
+            // Stored self-describing — the type and field travel with the key —
+            // so deciding a member's features needs no schema lookup on a path
+            // that runs for every request. A column rename rewrites the key and
+            // the field together, which is why they are kept side by side.
+            attributeConditions: (Array.isArray(ruleInput.attributeConditions) ? ruleInput.attributeConditions : [])
+                .filter(condition => OrganizationPermissionRuleQueryEngine.isTargetableField(condition?.field))
+                .map(condition => (
+                {
+                    key: String(condition.key).trim(),
+                    type: condition.type,
+                    field: String(condition.field).trim(),
+                    value: condition.value
+                })),
             // Clamped to what this organization was actually sold. An
             // organization can never grant a feature above its allow-list, so a
             // crafted request cannot buy capability the agreement did not

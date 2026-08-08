@@ -1,5 +1,7 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import OrganizationErrorMessages from "../../../Globals/Classes/Organization/OrganizationErrorMessages.js";
+import PlanFeatureCatalogue from "../../../Globals/Classes/Organization/PlanFeatureCatalogue.js";
+import FeatureCheckboxList from "../../../Globals/Classes/Organization/FeatureCheckboxList.js";
 import { organizationDeckPerkTypes } from "../../../Globals/Enumerations/OrganizationDeckPerkTypes.js";
 
 /**
@@ -9,8 +11,16 @@ import { organizationDeckPerkTypes } from "../../../Globals/Enumerations/Organiz
  *   1) Verification — the server emails a one-time code to the appointed owner;
  *      the super-admin types it back in and the server returns a one-shot
  *      verificationToken.
- *   2) Setup + create — name, currency, member capacity and the per-deck perk
- *      editor, posted to /Admin/Organizations/Create.
+ *   2) Setup + create — name, currency, member capacity, the owner's own
+ *      features and the per-deck perk editor, posted to
+ *      /Admin/Organizations/Create.
+ *
+ * The owner's features start fully ticked. Inside an organization's view the
+ * personal plan is not consulted, so an owner granted nothing here would
+ * administer their institute on the Free floor no matter what they pay for
+ * privately — which is never what creating an organization is meant to do.
+ * Un-ticking a box is the deliberate act; leaving them alone gives the owner
+ * the whole product.
  *
  * Creating an organization is free, so there is no amount field, no checkout and
  * no pending state: the organization is ACTIVE the moment it is created. Money
@@ -97,6 +107,12 @@ class CreateOrganizationDialog
                         </label>
 
                         <div class="admin-panel-add-field">
+                            <span>What the owner can do in this organization's view</span>
+                            <p class="admin-panel-add-subtitle">Everything is included by default. Inside the organization's view their own plan does not apply, so whatever is left unticked here they will not have while working in it.</p>
+                            <div class="organization-grantable-features" data-role="admin-features"></div>
+                        </div>
+
+                        <div class="admin-panel-add-field">
                             <span>Marketplace deck perks</span>
                             <div class="organization-perks-table" data-role="perks-table"></div>
                             <button type="button" class="organization-secondary-button organization-add-perk">+ Add deck perk</button>
@@ -123,11 +139,15 @@ class CreateOrganizationDialog
             const maxMembersInput = dialog.querySelector(".organization-max-members");
             const perksTable = dialog.querySelector('[data-role="perks-table"]');
             const addPerkButton = dialog.querySelector(".organization-add-perk");
+            const adminFeaturesHost = dialog.querySelector('[data-role="admin-features"]');
             const errorElement = dialog.querySelector('[data-role="error"]');
             const createButton = dialog.querySelector(".organization-create");
 
             let verificationToken = null;
             const perkRows = [];
+
+            const adminFeatureValues = new Set(PlanFeatureCatalogue.getAllFeatureValues());
+            FeatureCheckboxList.render(adminFeaturesHost, { selectedFeatureValues: adminFeatureValues });
 
             const showError = (message) =>
             {
@@ -380,7 +400,8 @@ class CreateOrganizationDialog
                             verificationToken: verificationToken,
                             currency: currency,
                             maxMembers: maxMembers,
-                            deckPerks: perkRows
+                            deckPerks: perkRows,
+                            adminAllowedFeatures: Array.from(adminFeatureValues)
                         })
                     });
                     const createJson = await createResponse.json().catch(() => ({}));

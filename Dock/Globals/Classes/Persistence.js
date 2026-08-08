@@ -225,16 +225,45 @@ class Persistence
      */
     static async list(prefix, target = Persistence.#defaultStorageTarget)
     {
+        const listedObjects = await Persistence.listWithMetadata(prefix, target);
+        return listedObjects.map(listedObject => listedObject.path);
+    }
+
+    /**
+     * Lists files under a path prefix together with the metadata a sweeper needs
+     * to decide whether an object is safe to remove.
+     *
+     * Two things separate this from `list`. It returns the last-modified time,
+     * without which an unattended reclaim job cannot distinguish an abandoned
+     * object from one written seconds ago by a worker that has not yet recorded
+     * it — deleting the second is data loss. And it can stop early, so a sweep
+     * over a prefix holding millions of objects stays a bounded unit of work
+     * instead of paging the whole bucket every tick.
+     *
+     * @param {string} prefix - The path prefix to list under.
+     * @param {storageTargets} [target=Persistence.#defaultStorageTarget] - The target to list in.
+     * @param {number} [maximumObjectCount=Number.MAX_SAFE_INTEGER] - Stop once this many objects have been collected.
+     * @param {string|null} [startAfterPath=null] - Resume from the key after this one, so successive bounded calls advance through the prefix instead of re-reading its head.
+     * @returns {Promise<Array<{path: string, lastModifiedMilliseconds: number, sizeBytes: number}>>}
+     */
+    static async listWithMetadata(prefix, target = Persistence.#defaultStorageTarget, maximumObjectCount = Number.MAX_SAFE_INTEGER, startAfterPath = null)
+    {
+        if (!Number.isFinite(maximumObjectCount) || maximumObjectCount <= 0)
+        {
+            maximumObjectCount = Number.MAX_SAFE_INTEGER;
+        }
+
+        const resumeAfterPath = typeof startAfterPath === "string" && startAfterPath.length > 0 ? startAfterPath : null;
+
         switch(target)
         {
             case storageTargets.LOCAL_FILE_SYSTEM:
             {
                 const normalizedPrefix = path.normalize(prefix);
+                const collectedObjects = [];
 
                 const collectFiles = async (directoryPath) =>
                 {
-                    const filePaths = [];
-
                     try
                     {
                         const entries = await fs.readdir(directoryPath, { withFileTypes: true });
@@ -245,11 +274,17 @@ class Persistence
 
                             if (entry.isDirectory())
                             {
-                                filePaths.push(...await collectFiles(fullPath));
+                                await collectFiles(fullPath);
                             }
                             else
                             {
-                                filePaths.push(fullPath);
+                                const entryStatistics = await fs.stat(fullPath);
+                                collectedObjects.push
+                                ({
+                                    path: fullPath,
+                                    lastModifiedMilliseconds: entryStatistics.mtimeMs,
+                                    sizeBytes: entryStatistics.size
+                                });
                             }
                         }
                     }
@@ -257,16 +292,23 @@ class Persistence
                     {
                         // Directory does not exist — return empty
                     }
-
-                    return filePaths;
                 };
 
-                return await collectFiles(normalizedPrefix);
+                await collectFiles(normalizedPrefix);
+
+                // Sorted so the local target honours the same key-order contract
+                // the object-storage target does — without it, resuming from a
+                // path would skip or repeat entries depending on readdir order.
+                collectedObjects.sort((firstObject, secondObject) => firstObject.path.localeCompare(secondObject.path));
+
+                return collectedObjects
+                    .filter(collectedObject => resumeAfterPath === null || collectedObject.path > resumeAfterPath)
+                    .slice(0, maximumObjectCount);
             }
 
             case storageTargets.LINODE_OBJECT_STORAGE:
             {
-                const objectKeys = [];
+                const collectedObjects = [];
                 let continuationToken;
 
                 do
@@ -275,19 +317,30 @@ class Persistence
                     ({
                         Bucket: Persistence.#LINODE_OBJECT_STORAGE_BUCKET_NAME,
                         Prefix: prefix,
-                        ContinuationToken: continuationToken
+                        ContinuationToken: continuationToken,
+                        StartAfter: continuationToken === undefined && resumeAfterPath !== null ? resumeAfterPath : undefined
                     }));
 
                     for (const object of response.Contents || [])
                     {
-                        objectKeys.push(object.Key);
+                        collectedObjects.push
+                        ({
+                            path: object.Key,
+                            lastModifiedMilliseconds: object.LastModified instanceof Date ? object.LastModified.getTime() : 0,
+                            sizeBytes: typeof object.Size === "number" ? object.Size : 0
+                        });
+
+                        if (collectedObjects.length >= maximumObjectCount)
+                        {
+                            return collectedObjects;
+                        }
                     }
 
                     continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
                 }
                 while (continuationToken);
 
-                return objectKeys;
+                return collectedObjects;
             }
         }
 

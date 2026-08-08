@@ -3,6 +3,7 @@ const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const PaidDeckPricingEngine = require("../../Globals/Classes/Pricing/PaidDeckPricingEngine");
 const RegionResolver = require("../../Globals/Classes/Pricing/RegionResolver");
 const PaidDeckAudienceResolver = require("../../Globals/Classes/PaidDeck/PaidDeckAudienceResolver");
+const PaidDeckStorefrontProjection = require("../../Globals/Classes/PaidDeck/PaidDeckStorefrontProjection");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
 async function browsePaidDeckLibrary(request, response)
@@ -55,7 +56,7 @@ async function browsePaidDeckLibrary(request, response)
             true
         );
 
-        const deckPayload = { ...deckDocument };
+        const deckPayload = PaidDeckStorefrontProjection.forBuyer(deckDocument);
         delete deckPayload._id;
         deckPayload.computedPrice = pricing.breakdown[0] || null;
         deckPayload.currency = pricing.currency;

@@ -123,6 +123,40 @@ class InformationSourceFileSelector extends HTMLElement
                 {
                     color: #555555;
                 }
+
+                /* Tighten the vertical rhythm on phones. The drop zone is the
+                   tallest single element in the upload dialog, and every pixel
+                   it gives back is a pixel closer to fitting the whole dialog —
+                   Upload button included — on one screen. */
+                @media (max-width: 600px)
+                {
+                    information-source-file-selector
+                    {
+                        gap: 12px;
+                    }
+
+                    .file-selector-drop-zone
+                    {
+                        padding: 16px 12px;
+                        gap: 6px;
+                    }
+
+                    .file-selector-drop-zone-icon
+                    {
+                        width: 28px;
+                        height: 28px;
+                    }
+
+                    .file-selector-drop-zone-primary-text
+                    {
+                        font-size: 0.82rem;
+                    }
+
+                    .file-selector-field-input
+                    {
+                        padding: 10px 12px;
+                    }
+                }
             </style>
 
             <div class="file-selector-drop-zone">

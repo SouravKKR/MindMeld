@@ -1,0 +1,14 @@
+Subject: {subject_name}
+Topic: {topic_chain}
+
+REFERENCE PASSAGES (from documents a subject expert cleared and declared a licence for). These are the authority for this check. Take facts from them; write any correction in your own words.
+--- START REFERENCE ---
+{reference_block}
+--- END REFERENCE ---
+
+CONTENT TO CHECK. Each item is numbered; use that number as itemIndex.
+--- START CONTENT ---
+{content_block}
+--- END CONTENT ---
+
+Report only where a reference passage above contradicts an item above. If nothing does, return an empty flags array.

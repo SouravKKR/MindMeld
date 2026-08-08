@@ -324,9 +324,15 @@ dialog-box .searchable-dropdown-status-line
         padding: 12px !important;
     }
 
+    /* An explicit width, not 100%. dialog-box sizes itself from its content on
+       phones (width: max-content — see DialogBox.css), and a percentage
+       contributes nothing to that calculation, so `width: 100%` left the dialog
+       to be sized by whatever the deck names happened to be. This pins it to
+       the dialog's phone cap (100vw - 16px) less the 12px of wrapper padding
+       forced on each side just below. */
     dialog-box .searchable-dropdown-content
     {
-        width: 100%;
+        width: calc(100vw - 40px);
         gap: 10px;
     }
 

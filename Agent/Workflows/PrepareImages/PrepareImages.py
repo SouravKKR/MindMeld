@@ -32,7 +32,6 @@ from Globals.Classes.Generation.PaidDeckActionLog import PaidDeckActionLog
 from Globals.Utility.RedactSourceName import redact_source_name
 
 
-_FIGURES_GCS_PREFIX = "figures"
 _VISION_BATCH_SIZE = 10
 _WEB_SOURCE_HASH_MARKER = "__web__"
 _WEB_CACHE_TOPICS_PREFIX = "web_cache/topics"
@@ -232,7 +231,14 @@ class PrepareImages(Workflow):
         else (a PDF-extracted figure, a web image, a generated raster
         illustration) has bytes and goes through the base64 <img> path, with web
         figures keeping their source attribution.
+
+        Every route carries the figure's perceptual hash into the markup as its
+        stable id. The hash is already what the pipeline uses to tell one figure
+        from another across a re-run; stamping it here is what lets a reviewer
+        later address ONE diagram for refinement or removal instead of guessing
+        at it by position.
         """
+        visual_id = figure.get("perceptualImageHash") or ""
         composite_parts = figure.get("compositeParts")
 
         if composite_parts:
@@ -240,6 +246,7 @@ class PrepareImages(Workflow):
                 composite_parts,
                 figure.get("captionText") or "",
                 figure_number,
+                visual_id = visual_id,
             )
 
             if composite_html:
@@ -252,6 +259,7 @@ class PrepareImages(Workflow):
                 markup_html,
                 figure.get("captionText") or "",
                 figure_number,
+                visual_id = visual_id,
             )
 
         return HtmlInjector.build_figure_html(
@@ -261,6 +269,7 @@ class PrepareImages(Workflow):
             source_url      = figure.get("_sourceUrl") if figure.get("_isWebFigure") else None,
             source_page_url = figure.get("_sourcePageUrl") if figure.get("_isWebFigure") else None,
             bounding_box    = figure.get("boundingBoxCoordinates"),
+            visual_id       = visual_id,
         )
 
     async def _generate_paid_deck_visuals(self) -> list:
@@ -614,8 +623,12 @@ class PrepareImages(Workflow):
                 text_embedding = embeddings[embed_offset].tolist()
 
                 if persist_to_database:
-                    gcs_path = f"{_FIGURES_GCS_PREFIX}/{owner_user_id}/{figure['perceptualImageHash']}.png"
-                    await Persistence.write(gcs_path, figure["imageBytes"])
+                    # The prefix is shared with Dock through the generated
+                    # PersistenceConstants: Dock's erasure cascade lists and
+                    # deletes objects under it, so the two services must never
+                    # disagree about where a figure crop lives.
+                    figure_storage_path = f"{PersistenceConstants.FIGURE_DIRECTORY}/{owner_user_id}/{figure['perceptualImageHash']}.png"
+                    await Persistence.write(figure_storage_path, figure["imageBytes"])
 
                     document = {
                         "userId": owner_user_id,
@@ -626,7 +639,7 @@ class PrepareImages(Workflow):
                         "captionText": figure["captionText"],
                         "visionModelGeneratedDescription": description,
                         "textEmbedding": text_embedding,
-                        "gcsPath": gcs_path,
+                        "gcsPath": figure_storage_path,
                     }
                     figures_collection.update_one(
                         {"userId": owner_user_id, "informationSourceHash": source_hash, "perceptualImageHash": figure["perceptualImageHash"]},
@@ -987,12 +1000,6 @@ class PrepareImages(Workflow):
         await self.__update_progress(1.0)
 
     async def run(self, args={}):
-        # PrepareImages always reaches fitz via ImageExtractor — pay the
-        # MuPDF silence cost once at the top so log noise stays out of
-        # the worker pipe.
-        from Globals.Classes.Generic.MuPdfBootstrap import MuPdfBootstrap
-        MuPdfBootstrap.silence_parser_warnings()
-
         # Checkpoint-resume: skip the whole stage if it already completed in a
         # prior run (the figure-assignment sidecar it wrote is still in GCS for
         # EnhanceImages to consume).
@@ -1041,10 +1048,9 @@ class PrepareImages(Workflow):
                 print(f"[PrepareImages] Could not read PDF '{redact_source_name(information_source.get_name())}': {read_error}")
                 continue
 
-            import fitz
-            pdf_document_for_count = fitz.open(stream=pdf_bytes, filetype="pdf")
-            total_pages = pdf_document_for_count.page_count
-            pdf_document_for_count.close()
+            from Globals.Classes.Pdf.PdfDocumentReader import PdfDocumentReader
+            with PdfDocumentReader(pdf_bytes) as pdf_reader_for_count:
+                total_pages = pdf_reader_for_count.get_page_count()
 
             allowed_pages = set(expand_page_ranges(extractable_source.get_page_ranges(), total_pages))
 

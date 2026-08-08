@@ -13,15 +13,21 @@ const { httpStatus } = require("../../../Globals/Enumerations/HttpStatus");
  * Actions a rightsholder infringement notice against one uploaded document,
  * identified by its content-addressed sha512 key.
  *
- * This endpoint exists because the store is content-addressed: one uploaded
- * file is shared by every user who uploaded the same bytes, so there is no
- * single owner to ask and no per-user delete that removes the content. Before
- * this, honouring a notice meant hand-editing rows across an unknown number of
- * tenants plus the blob, its embedding chunks and its cached figures — which
- * meant in practice that a notice could not be honoured at all.
+ * This endpoint exists because one uploaded file can be held by any number of
+ * accounts, so there is no single owner to ask and no per-user delete that
+ * removes the content. Before this, honouring a notice meant hand-editing rows
+ * across an unknown number of tenants plus their blobs, the embedding chunks
+ * and the cached figures — which meant in practice that a notice could not be
+ * honoured at all.
  *
  * The removal deliberately crosses the tenant boundary. That is the point: a
  * notice is about the content, not about one account.
+ *
+ * Storage is per-user, so N holders means N distinct stored copies rather than
+ * one shared blob. Both the dry run and the outcome report the copy count
+ * explicitly, and `contentRemoved` is only true when every one of them was
+ * deleted — a notice register that records surviving content as removed is
+ * worse than one that records the removal as partial.
  *
  * `dryRun: true` reports exactly what would be removed and changes nothing.
  * Operators should run it first — a takedown is irreversible, and the counts
@@ -103,6 +109,10 @@ async function takedownContent(request, response)
                 {
                     informationSourceRows: matchingSources.length,
                     affectedUserCount: affectedUserIds.length,
+                    // Distinct stored copies, which is not the same number as
+                    // rows: storage is per-user, so this is what the notice
+                    // actually has to erase from the bucket.
+                    storedCopies: InformationSourcePurger.countStoredCopies(matchingSources, contentHash),
                     embeddingChunks: derivedCounts.embeddingChunks,
                     figures: derivedCounts.figures,
                     sourceNames: [...new Set(matchingSources.map(informationSource => informationSource.getName()))]
@@ -122,10 +132,14 @@ async function takedownContent(request, response)
             actorUserId: requester.getId(),
             actorEmail: (requester.getAdditionalData() || {}).email || null,
             rowsRemoved: purgeResult.rowsRemoved,
+            rowsFailed: purgeResult.rowsFailed,
             affectedUserIds: purgeResult.affectedUserIds,
+            storedCopiesFound: purgeResult.storedCopiesFound,
+            storedCopiesRemoved: purgeResult.storedCopiesRemoved,
             bContentRemoved: purgeResult.bContentRemoved,
             embeddingChunksRemoved: purgeResult.embeddingChunksRemoved,
             figuresRemoved: purgeResult.figuresRemoved,
+            figureObjectsRemoved: purgeResult.figureObjectsRemoved,
             storageError: purgeResult.storageError
         });
 
@@ -133,16 +147,25 @@ async function takedownContent(request, response)
         // rows are gone and the notice is registered, so the operator needs the
         // partial outcome reported rather than an error that hides it. Re-running
         // the takedown is safe and will retry the storage step.
+        //
+        // storedCopiesFound vs storedCopiesRemoved is the pair that makes a
+        // partial removal legible: contentRemoved alone cannot distinguish "no
+        // copies existed" from "some copies survived", and the operator has to
+        // know which before replying to the rightsholder.
         response.sendJson({
             ok: true,
             noticeId: recordedNotice.id,
             removed:
             {
                 informationSourceRows: purgeResult.rowsRemoved,
+                informationSourceRowsFailed: purgeResult.rowsFailed,
                 affectedUserCount: purgeResult.affectedUserIds.length,
+                storedCopiesFound: purgeResult.storedCopiesFound,
+                storedCopiesRemoved: purgeResult.storedCopiesRemoved,
                 contentRemoved: purgeResult.bContentRemoved,
                 embeddingChunks: purgeResult.embeddingChunksRemoved,
-                figures: purgeResult.figuresRemoved
+                figures: purgeResult.figuresRemoved,
+                figureObjects: purgeResult.figureObjectsRemoved
             },
             storageError: purgeResult.storageError
         });

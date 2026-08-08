@@ -81,6 +81,17 @@ class StringRangeFilterInput extends PaidDeckFilterInput
             this.#endInputElement.value = "";
         }
     }
+
+    setValue(value)
+    {
+        if (this.#startInputElement === null || this.#endInputElement === null)
+        {
+            return;
+        }
+
+        this.#startInputElement.value = typeof value?.start === "string" ? value.start : "";
+        this.#endInputElement.value = typeof value?.end === "string" ? value.end : "";
+    }
 }
 
 export default StringRangeFilterInput;

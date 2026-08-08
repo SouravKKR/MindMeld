@@ -4,6 +4,7 @@ const { informationSourceTypes } = require('../Enumerations/InformationSourceTyp
 const { ocrModes } = require('../Enumerations/OcrModes');
 const { contentRetentionModes } = require('../Enumerations/ContentRetentionModes');
 const { curriculumPlausibility } = require('../Enumerations/CurriculumPlausibility');
+const { sourceLicenceTypes } = require('../Enumerations/SourceLicenceTypes');
 
 class InformationSource
 {
@@ -22,8 +23,11 @@ class InformationSource
     #uploadedAt;
     #curriculumPlausibility;
     #curriculumPlausibilityReason;
+    #licenceType;
+    #licenceNote;
+    #sourceUrl;
 
-    constructor({name = null, userId = null, sourceType = null, directoryPath = null, tags = [], mimeType = '', hash = '', ocrMode = 1, fileSizeBytes = 0, retentionMode = 1, expiresAt = 0, uploadedAt = 0, curriculumPlausibility = 0, curriculumPlausibilityReason = ''} = {})
+    constructor({name = null, userId = null, sourceType = null, directoryPath = null, tags = [], mimeType = '', hash = '', ocrMode = 1, fileSizeBytes = 0, retentionMode = 1, expiresAt = 0, uploadedAt = 0, curriculumPlausibility = 0, curriculumPlausibilityReason = '', licenceType = 0, licenceNote = '', sourceUrl = ''} = {})
     {
         this.#id = crypto.randomUUID();
         this.setName(name);
@@ -40,6 +44,9 @@ class InformationSource
         this.setUploadedAt(uploadedAt);
         this.setCurriculumPlausibility(curriculumPlausibility);
         this.setCurriculumPlausibilityReason(curriculumPlausibilityReason);
+        this.setLicenceType(licenceType);
+        this.setLicenceNote(licenceNote);
+        this.setSourceUrl(sourceUrl);
     }
 
     getId()
@@ -302,6 +309,60 @@ class InformationSource
         this.#curriculumPlausibilityReason = value;
     }
 
+    getLicenceType()
+    {
+        return this.#licenceType;
+    }
+
+    setLicenceType(value)
+    {
+        if (value !== null)
+        {
+            const enumValues = Object.values(sourceLicenceTypes);
+            if (!enumValues.includes(value))
+            {
+                value = enumValues[0] ?? null;
+            }
+        }
+        this.#licenceType = value;
+    }
+
+    getLicenceNote()
+    {
+        return this.#licenceNote;
+    }
+
+    setLicenceNote(value)
+    {
+        if (value !== null)
+        {
+            value = String(value);
+            if (value.length > 1024)
+            {
+                value = value.slice(0, 1024);
+            }
+        }
+        this.#licenceNote = value;
+    }
+
+    getSourceUrl()
+    {
+        return this.#sourceUrl;
+    }
+
+    setSourceUrl(value)
+    {
+        if (value !== null)
+        {
+            value = String(value);
+            if (value.length > 2048)
+            {
+                value = value.slice(0, 2048);
+            }
+        }
+        this.#sourceUrl = value;
+    }
+
     toJson()
     {
         return {
@@ -320,6 +381,9 @@ class InformationSource
             uploadedAt: this.getUploadedAt(),
             curriculumPlausibility: this.getCurriculumPlausibility() !== null ? Number(this.getCurriculumPlausibility()) : null,
             curriculumPlausibilityReason: this.getCurriculumPlausibilityReason(),
+            licenceType: this.getLicenceType() !== null ? Number(this.getLicenceType()) : null,
+            licenceNote: this.getLicenceNote(),
+            sourceUrl: this.getSourceUrl(),
         };
     }
 
@@ -339,7 +403,10 @@ class InformationSource
             expiresAt: json.expiresAt ?? null,
             uploadedAt: json.uploadedAt ?? null,
             curriculumPlausibility: json.curriculumPlausibility ?? null,
-            curriculumPlausibilityReason: json.curriculumPlausibilityReason ?? null
+            curriculumPlausibilityReason: json.curriculumPlausibilityReason ?? null,
+            licenceType: json.licenceType ?? null,
+            licenceNote: json.licenceNote ?? null,
+            sourceUrl: json.sourceUrl ?? null
         });
         instance._restoreId_id(json.id);
         return instance;

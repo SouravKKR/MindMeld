@@ -68,16 +68,16 @@ class SyllabusPlausibilityCheck:
         is not evidence of a textbook, and failing the upload on a parser quirk
         would be a worse outcome than accepting it. Those cases return plausible.
         """
-        import fitz
+        from Globals.Classes.Pdf.PdfDocumentReader import PdfDocumentReader
 
         try:
-            pdf_document = fitz.open(stream = pdf_bytes, filetype = "pdf")
+            pdf_reader = PdfDocumentReader(pdf_bytes)
         except Exception as open_error:
             print(f"[SyllabusPlausibilityCheck] Could not open the PDF ({open_error}) — declining to judge.")
             return {"plausible": True, "reason": None, "pageCount": 0, "proseLineRatio": None}
 
         try:
-            page_count = pdf_document.page_count
+            page_count = pdf_reader.get_page_count()
 
             if page_count > SyllabusPlausibilityCheck.MAXIMUM_SYLLABUS_PAGE_COUNT:
                 return {
@@ -96,7 +96,7 @@ class SyllabusPlausibilityCheck:
             if page_count < SyllabusPlausibilityCheck.PROSE_CHECK_MINIMUM_PAGE_COUNT:
                 return {"plausible": True, "reason": None, "pageCount": page_count, "proseLineRatio": None}
 
-            prose_line_ratio = SyllabusPlausibilityCheck.__measure_prose_line_ratio(pdf_document, page_count)
+            prose_line_ratio = SyllabusPlausibilityCheck.__measure_prose_line_ratio(pdf_reader, page_count)
 
             if prose_line_ratio is None:
                 return {"plausible": True, "reason": None, "pageCount": page_count, "proseLineRatio": None}
@@ -116,10 +116,10 @@ class SyllabusPlausibilityCheck:
 
             return {"plausible": True, "reason": None, "pageCount": page_count, "proseLineRatio": prose_line_ratio}
         finally:
-            pdf_document.close()
+            pdf_reader.close()
 
     @staticmethod
-    def __measure_prose_line_ratio(pdf_document, page_count: int) -> float | None:
+    def __measure_prose_line_ratio(pdf_reader, page_count: int) -> float | None:
         """
         Fraction of sampled non-empty lines that are prose-length. Returns None
         when the sample is too thin to mean anything (scanned pages with no text
@@ -132,9 +132,8 @@ class SyllabusPlausibilityCheck:
         prose_line_count = 0
 
         for page_index in range(first_sampled_page, last_sampled_page):
-            try:
-                page_text = pdf_document.load_page(page_index).get_text("text")
-            except Exception:
+            page_text = pdf_reader.get_page_text(page_index)
+            if not page_text:
                 continue
 
             for line in page_text.splitlines():

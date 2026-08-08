@@ -7,15 +7,22 @@ import PaidDeckSession from "./Crypto/PaidDeckSession.js";
  * Modal that collects the buyer's paid-deck password and feeds it to
  * PaidDeckSession.unlock() until the unlock succeeds or the user
  * cancels. Used in two modes:
- *   - `show(deckId)` — unlock path (default)
- *   - `showSetupPrompt()` — set initial password (returns the plaintext
- *     so the caller can POST it to /PaidDecks/SetPassword once)
+ *   - `show(deckId)` — unlock path (default). Cancellable: the deck is
+ *     already openable once the right password is entered, so backing
+ *     out costs the user nothing they cannot recover.
+ *   - `showSetupPrompt()` — set initial password. NOT cancellable, and
+ *     it resolves only with a password (returns the plaintext so the
+ *     caller can POST it to /PaidDecks/SetPassword once).
  *
  * The password string is never written anywhere besides the (passed by
  * reference) call into PaidDeckSession — no logging, no event payload.
  */
 class PaidDeckPasswordPrompt
 {
+    // Mirrors the floor the /PaidDecks/SetPassword endpoint enforces. Stated
+    // here so the message names the same number the server would refuse on.
+    static MINIMUM_PASSWORD_LENGTH = 6;
+
     static async show(deckId)
     {
         return await new Promise((resolveCaller) =>
@@ -109,21 +116,32 @@ class PaidDeckPasswordPrompt
                         for it once each browser session — and we can't recover it for you, so
                         keep it somewhere safe.
                     </p>
+                    <p class="paid-deck-password-prompt-message">
+                        Your decks stay locked until this is set, so it has to be done now.
+                    </p>
                     <input type="password" class="paid-deck-password-prompt-input" placeholder="New password" autocomplete="new-password">
                     <input type="password" class="paid-deck-password-prompt-confirm" placeholder="Confirm password" autocomplete="new-password">
                     <div class="paid-deck-password-prompt-error" data-role="prompt-error" hidden></div>
                     <div class="paid-deck-password-prompt-actions">
-                        <button type="button" class="paid-deck-password-prompt-cancel">Skip for now</button>
                         <button type="button" class="paid-deck-password-prompt-submit">Save password</button>
                     </div>
                 </div>
             `);
 
+            // There is deliberately no way out of this dialog. The password is
+            // what derives the key that unwraps every owned deck's content key,
+            // so a buyer who leaves without setting one owns decks that nothing
+            // in the app can open and offers no route back to this prompt — the
+            // "Skip for now" button was a one-way door into that state. Escape,
+            // the backdrop and the corner X are all removed for the same reason;
+            // the only exit is a password.
+            dialog.setDismissible(false);
+            dialog.querySelector(".close-button")?.remove();
+
             const passwordInput = dialog.querySelector(".paid-deck-password-prompt-input");
             const confirmInput = dialog.querySelector(".paid-deck-password-prompt-confirm");
             const errorElement = dialog.querySelector('[data-role="prompt-error"]');
             const submitButton = dialog.querySelector(".paid-deck-password-prompt-submit");
-            const cancelButton = dialog.querySelector(".paid-deck-password-prompt-cancel");
 
             passwordInput.focus();
 
@@ -133,22 +151,16 @@ class PaidDeckPasswordPrompt
                 resolveCaller(result);
             };
 
-            cancelButton.addEventListener("click", () => finalize({ confirmed: false }));
-
-            // Escape / the dialog X resolve as a skip so the setup caller
-            // isn't left awaiting a promise that never settles.
-            dialog.setDismissHandler(() => finalize({ confirmed: false }));
-
-            submitButton.addEventListener("click", () =>
+            const trySave = () =>
             {
                 errorElement.hidden = true;
 
                 const passwordValue = passwordInput.value;
                 const confirmValue = confirmInput.value;
 
-                if (passwordValue.length < 6)
+                if (passwordValue.length < PaidDeckPasswordPrompt.MINIMUM_PASSWORD_LENGTH)
                 {
-                    errorElement.textContent = "Password must be at least 6 characters.";
+                    errorElement.textContent = `Password must be at least ${PaidDeckPasswordPrompt.MINIMUM_PASSWORD_LENGTH} characters.`;
                     errorElement.hidden = false;
                     return;
                 }
@@ -159,7 +171,20 @@ class PaidDeckPasswordPrompt
                     return;
                 }
                 finalize({ confirmed: true, password: passwordValue });
-            });
+            };
+
+            submitButton.addEventListener("click", trySave);
+
+            for (const inputElement of [passwordInput, confirmInput])
+            {
+                inputElement.addEventListener("keydown", (keyDownEvent) =>
+                {
+                    if (keyDownEvent.key === "Enter")
+                    {
+                        trySave();
+                    }
+                });
+            }
         });
     }
 

@@ -46,36 +46,33 @@ def embed_pages(pdf_bytes: bytes, page_numbers: list[int], model: SentenceTransf
         embedding_documents : list of { pageNumber, content, embedding }
         empty_pages         : list of page numbers that had no extractable text
     """
-    # fitz (PyMuPDF) is a heavy native binding (~hundreds of ms cold).
-    # Importing it lazily here means callers that only want load_model
-    # (e.g. the AskAi streaming worker doing query-time embedding) don't
-    # drag mupdf into the process.
-    import fitz
-
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    # PDFium is a native binding with a non-trivial cold-load cost. Importing
+    # the reader lazily here means callers that only want load_model (e.g. the
+    # AskAi streaming worker doing query-time embedding) don't drag it into the
+    # process.
+    from Globals.Classes.Pdf.PdfDocumentReader import PdfDocumentReader
 
     all_chunks      = []
     all_page_labels = []
     empty_pages     = []
 
-    for page_number in page_numbers:
-        raw_text = doc[page_number - 1].get_text("text").strip()
+    with PdfDocumentReader(pdf_bytes) as pdf_reader:
+        for page_number in page_numbers:
+            raw_text = pdf_reader.get_page_text(page_number - 1).strip()
 
-        if not raw_text:
-            empty_pages.append(page_number)
-            continue
+            if not raw_text:
+                empty_pages.append(page_number)
+                continue
 
-        clean = _clean_text(raw_text)
+            clean = _clean_text(raw_text)
 
-        if not clean:
-            empty_pages.append(page_number)
-            continue
+            if not clean:
+                empty_pages.append(page_number)
+                continue
 
-        chunks = _chunk_text(clean)
-        all_chunks.extend(chunks)
-        all_page_labels.extend([page_number] * len(chunks))
-
-    doc.close()
+            chunks = _chunk_text(clean)
+            all_chunks.extend(chunks)
+            all_page_labels.extend([page_number] * len(chunks))
 
     if not all_chunks:
         return [], empty_pages

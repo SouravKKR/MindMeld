@@ -251,6 +251,11 @@ class TaskRunner:
                 from Workflows.PaidDeckVerification.PaidDeckVerification import PaidDeckVerification
                 return PaidDeckVerification(payload)
 
+            case TaskTypes.PAID_DECK_SOURCE_VERIFICATION:
+                print("PAID_DECK_SOURCE_VERIFICATION")
+                from Workflows.PaidDeckSourceVerification.PaidDeckSourceVerification import PaidDeckSourceVerification
+                return PaidDeckSourceVerification(payload)
+
             case _:
                 print("Invalid workflow")
                 return None

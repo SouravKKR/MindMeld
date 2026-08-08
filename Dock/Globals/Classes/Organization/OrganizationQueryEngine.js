@@ -301,12 +301,14 @@ class OrganizationQueryEngine
     /**
      * The ceilings a super-admin sells an organization, in one write.
      *
-     * These four are the platform's side of the agreement — the most storage it
-     * may grant each member, the most credits any member may receive in a
-     * month, how many decks it may publish, and which AI features its rules are
-     * allowed to reach. Everything the organization then configures for itself
-     * is clamped to them, on write and again on read, so lowering a ceiling
-     * takes effect immediately without needing a migration over stored rules.
+     * The first four are the platform's side of the agreement — the most
+     * storage it may grant each member, the most credits any member may receive
+     * in a month, how many decks it may publish, and which AI features its rules
+     * are allowed to reach. Everything the organization then configures for
+     * itself is clamped to them, on write and again on read, so lowering a
+     * ceiling takes effect immediately without needing a migration over stored
+     * rules. The fifth, adminAllowedFeatures, is a grant rather than a ceiling:
+     * it is what the organization's owner holds inside its view.
      *
      * Written together because they are agreed together: a partial application
      * would leave an organization sold a feature it has no storage to use, and
@@ -344,6 +346,14 @@ class OrganizationQueryEngine
         if (Array.isArray(limits?.grantableFeatures))
         {
             updates.grantableFeatures = limits.grantableFeatures;
+        }
+        // Not a ceiling like the others — what the organization's OWNER holds
+        // inside its view. Written through the same call because a super-admin
+        // agrees it in the same conversation, and because splitting it out would
+        // mean two writes that can disagree.
+        if (Array.isArray(limits?.adminAllowedFeatures))
+        {
+            updates.adminAllowedFeatures = limits.adminAllowedFeatures;
         }
 
         if (Object.keys(updates).length === 0)

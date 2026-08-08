@@ -311,6 +311,57 @@ async function runDatabaseTier()
         const vocabulary = await OrganizationMemberQueryEngine.listProfileVocabulary(organizationId);
         assert(vocabulary.attributeKeys.includes("rollNumber") && vocabulary.attributeKeys.includes("joinYear"), "The attribute vocabulary lists the keys in use");
         assert(!vocabulary.tags.includes("first-year"), "A tag whose only holder was removed leaves the vocabulary");
+
+        // ── Editing members in place ──────────────────────────────────────
+        // The three write paths — one member, a chosen set, and everyone a
+        // filter matches — all go through the same mutator, so what is checked
+        // here is that every one of them re-derives ALL FOUR stored copies.
+        // Writing `attributes` alone is the bug this replaced: the range filters
+        // read only from the comparable copy, so a corrected value that never
+        // reached it went on matching, removing and granting on the number the
+        // correction had replaced.
+        section("Tier 2b — editing members in place");
+
+        const survivingMember = (await OrganizationMemberQueryEngine.listMembers(organizationId))[0];
+
+        await OrganizationMemberQueryEngine.applyMutationToMemberIds(organizationId, [survivingMember.getId()],
+        {
+            setAttributes: { "Join Year": "2026" },
+            addTags: ["Scholarship"]
+        });
+
+        const editedMembers = await OrganizationMemberQueryEngine.listMembers(organizationId);
+        const editedMember = editedMembers.find(member => member.getId() === survivingMember.getId());
+
+        assert(editedMember.getAttributes().joinYear === "2026", "A single-member edit corrects the displayed value");
+        assert(editedMember.getAttributesComparable().joinYear === 2026, "The COMPARABLE copy follows it — the regression this guards");
+        assert(editedMember.getAttributesNormalised().joinYear === "2026", "The lowercased copy follows it too");
+        assert(editedMember.getTags().includes("scholarship"), "An added tag is stored lowercased");
+        assert(editedMember.getAttributes().name === survivingMember.getAttributes().name, "A column the edit never mentioned keeps its value");
+
+        // The corrected value is what the range filter now finds, and the old
+        // one matches nothing.
+        const { definition: editedDefinition } = await OrganizationMemberListBuilder.build(database, organizationId);
+        const correctedYearQuery = OrganizationMemberListBuilder.buildFilterQuery(editedDefinition, { "attribute:joinYear": { min: 2026, max: 2026 } }, "");
+        const correctedMatches = await OrganizationMemberQueryEngine.previewMembersMatching(organizationId, correctedYearQuery, 10);
+        assert(correctedMatches.matchedCount === 1, "A range over the corrected value finds the member");
+
+        // ── An edit cannot reach another organization ─────────────────────
+        const strayEdit = await OrganizationMemberQueryEngine.applyMutationToMemberIds(otherOrganization.getId(), [survivingMember.getId()], { addTags: ["leaked"] });
+        const unreachedMember = (await OrganizationMemberQueryEngine.listMembers(organizationId)).find(member => member.getId() === survivingMember.getId());
+        assert(strayEdit.matchedCount === 0 && !unreachedMember.getTags().includes("leaked"), "A member id from another organization is not editable through it");
+
+        // ── Removing a tag, and clearing a column ─────────────────────────
+        await OrganizationMemberQueryEngine.applyMutationToMemberIds(organizationId, [survivingMember.getId()],
+        {
+            removeTags: ["SCHOLARSHIP"],
+            clearAttributeKeys: ["joinYear"]
+        });
+
+        const clearedMember = (await OrganizationMemberQueryEngine.listMembers(organizationId)).find(member => member.getId() === survivingMember.getId());
+        assert(!clearedMember.getTags().includes("scholarship"), "A tag is removed case-insensitively");
+        assert(clearedMember.getAttributes().joinYear === undefined, "A cleared column becomes absent rather than blank");
+        assert(clearedMember.getAttributesComparable().joinYear === undefined, "The comparable copy is cleared with it, so no range still matches");
     }
     catch (databaseTierError)
     {

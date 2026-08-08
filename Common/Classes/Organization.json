@@ -75,6 +75,10 @@
             "datatype": "array<enum:PlanFeatures>",
             "defaultValue": []
         },
+        "adminAllowedFeatures": {
+            "datatype": "array<enum:PlanFeatures>",
+            "defaultValue": []
+        },
         "additionalData": {
             "datatype": "object",
             "defaultValue": {}

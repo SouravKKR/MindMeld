@@ -20,7 +20,7 @@ task queue, isn't tracked by Redis, and lives only for the duration of
 one HTTP request. Workflow plumbing (TaskManager, status updates,
 nextTaskIds) would add latency for no benefit here.
 
-Heavy imports (`fitz`, `sentence_transformers`) are deferred to the
+Heavy imports (the PDF reader, `sentence_transformers`) are deferred to the
 branches that need them, keeping the no-grounding cold start cheap.
 """
 
@@ -306,6 +306,12 @@ async def run() -> int:
             user_prompt = user_prompt,
             attached_image_parts = attached_image_parts,
             b_enable_google_search = b_enable_google_search,
+            # Attribution for the content guardrail's log entries. This is the
+            # one streaming path where the user is known at the call site, so a
+            # removal here lands in logEvents against a real account instead of
+            # only a task id. The "unknown" placeholder above is for log prose;
+            # accountId wants the empty string when there is no account.
+            account_id = "" if user_id == "unknown" else user_id,
         ):
             if not b_first_token_seen and event.get("type") == "text":
                 b_first_token_seen = True

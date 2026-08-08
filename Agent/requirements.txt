@@ -33,7 +33,6 @@ cycler==0.12.1
 ddgs==9.11.4
 distro==1.9.0
 dnspython==2.8.0
-doclayout_yolo==0.0.4
 einops==0.8.2
 filelock==3.25.2
 fonttools==4.62.1
@@ -89,8 +88,10 @@ pydantic==2.12.5
 pydantic_core==2.41.5
 Pygments==2.19.2
 pymongo==4.16.0
-PyMuPDF==1.27.2.2
 pyparsing==3.3.2
+# PDF reading (PDFium, BSD-3-Clause / Apache-2.0). Replaced PyMuPDF, which is
+# AGPL-3.0 unless an Artifex commercial licence is bought — see Deployment.md
+# "Dependency licence gate". Do NOT reintroduce an AGPL PDF library.
 pypdfium2==5.6.0
 python-dateutil==2.9.0.post0
 python-docx==1.2.0
@@ -100,6 +101,9 @@ PyYAML==6.0.3
 redis==7.3.0
 regex==2026.2.28
 reportlab==4.5.1
+# SVG -> ReportLab drawing, for SvgRasterizer. LGPL-3.0-or-later: acceptable
+# for a hosted service (no source-disclosure clause), unlike the AGPL.
+svglib==1.5.1
 requests==2.32.5
 rich==14.3.3
 rsa==4.9.1
@@ -124,6 +128,10 @@ tokenizers==0.22.2
 torch==2.11.0+cpu
 torchvision==0.26.0+cpu
 tqdm==4.67.3
+# Also carries the LAYOUT DETECTOR (ds4sd/docling-layout-heron, RT-DETRv2,
+# Apache-2.0 weights) via DoclingLayoutDetector, replacing doclayout_yolo which
+# was AGPL-3.0 in BOTH code and weights with no commercial licence obtainable.
+# This pin is behavioural, not routine - see Deployment.md "Dependency licence gate".
 transformers==5.3.0
 typer==0.24.1
 typing-inspection==0.4.2

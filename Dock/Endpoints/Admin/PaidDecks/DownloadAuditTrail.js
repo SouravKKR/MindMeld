@@ -5,6 +5,9 @@ const crypto = require("crypto");
 const { spawn } = require("child_process");
 
 const GenerationProvenanceQueryEngine = require("../../../Globals/Classes/Database/GenerationProvenanceQueryEngine");
+const ContentRefinementQueryEngine = require("../../../Globals/Classes/Database/ContentRefinementQueryEngine");
+const SourceLicenceDeclarationQueryEngine = require("../../../Globals/Classes/Database/SourceLicenceDeclarationQueryEngine");
+const PaidDeckProvenanceLinkResolver = require("../../../Globals/Classes/Generation/PaidDeckProvenanceLinkResolver");
 const { getPythonExecutablePathFromVenv } = require("../../../Globals/UtilityFunctions.js/GetPythonExecutablePathFromVenv");
 const ErrorCodes = require("../../../Globals/Constants/ErrorCodes");
 const { httpStatus } = require("../../../Globals/Enumerations/HttpStatus");
@@ -37,9 +40,10 @@ const AGENT_VENV_RELATIVE_PATH = path.join("..", "Agent", ".venv");
 const RENDER_TIMEOUT_MILLISECONDS = 120000;
 
 
-function buildDownloadFileName(provenanceRecord)
+function buildDownloadFileName(provenanceRecords)
 {
-    const rawName = provenanceRecord.deckName || provenanceRecord.deckId || "deck";
+    const firstRecord = provenanceRecords[0] || {};
+    const rawName = firstRecord.deckName || firstRecord.deckId || "deck";
     const safeName = String(rawName).replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80) || "deck";
     return `CogniumLearn-AuditTrail-${safeName}.pdf`;
 }
@@ -51,6 +55,21 @@ function renderAuditTrailPdf(provenanceJsonPath, outputPdfPath)
     {
         const pythonExecutablePath = getPythonExecutablePathFromVenv(path.join(__dirname, "..", "..", "..", AGENT_VENV_RELATIVE_PATH));
         const rendererPath = path.join(__dirname, "..", "..", "..", RENDERER_RELATIVE_PATH);
+
+        // Named explicitly rather than left to spawn's ENOENT. The renderer lives
+        // in Common/ while Dock deploys as its own directory, so "the file is not
+        // on this machine" is a real deployment state (it was the state of
+        // production until Common/Scripts/RenderPaidDeckAuditTrail.py was added to
+        // the deploy contexts) and it is worth saying so rather than reporting a
+        // bare errno against a path nobody reads.
+        for (const requiredPath of [pythonExecutablePath, rendererPath])
+        {
+            if (!fs.existsSync(requiredPath))
+            {
+                reject(new Error(`Audit-trail renderer is not installed on this server: ${requiredPath} is missing.`));
+                return;
+            }
+        }
 
         const rendererProcess = spawn(pythonExecutablePath, [rendererPath, provenanceJsonPath, outputPdfPath], { windowsHide: true });
 
@@ -96,9 +115,19 @@ async function downloadAuditTrail(request, response)
         return;
     }
 
-    const provenanceRecord = await GenerationProvenanceQueryEngine.findByDeckId(deckId);
+    // deckId is the listing id; the record is filed under the source deck it was
+    // published from. Without this bridge the lookup missed for every listing
+    // and the endpoint 404'd even for decks this pipeline demonstrably produced.
+    const provenanceDeckId = await PaidDeckProvenanceLinkResolver.resolveProvenanceDeckId(deckId);
 
-    if (provenanceRecord === null)
+    // EVERY run that put content into this deck, oldest first — one report
+    // covering all of them rather than a report about whichever run happened to
+    // be found first. A deck generated into twice was made by two acts, and an
+    // audit trail that showed only one would be a true document making a false
+    // impression, which is worse than no document.
+    const provenanceRecords = await GenerationProvenanceQueryEngine.findAllByDeckId(provenanceDeckId);
+
+    if (provenanceRecords.length === 0)
     {
         // 404 rather than an empty report. A deck with no provenance record was
         // not produced by this pipeline, and rendering a blank audit trail for it
@@ -116,7 +145,43 @@ async function downloadAuditTrail(request, response)
     try
     {
         await fs.promises.mkdir(workingDirectory, { recursive: true });
-        await fs.promises.writeFile(provenanceJsonPath, JSON.stringify(provenanceRecord), "utf8");
+
+        // Corrections applied after generation finished. They live in their own
+        // collection rather than on the provenance record — refinement is
+        // available on any deck, while provenance is scoped to paid ones — so
+        // they are joined here, at the one place that assembles the report.
+        //
+        // Attached to the FIRST run, not distributed across runs. A correction
+        // is made to the deck as it stands, which may be the product of several
+        // runs; filing it against one of them would assert a link to that
+        // particular act of generation that nobody established.
+        const contentRefinements = await ContentRefinementQueryEngine.findAllByDeckId(provenanceDeckId);
+
+        // Every intellectual-property declaration made about a document this
+        // deck's content was CHECKED AGAINST, attachments and detachments alike.
+        // Joined here for the same reason refinements are: declarations belong
+        // to the deck and outlive any one run, so they have no run to be stored
+        // on — and a source detached last month is still what a past check was
+        // carried out against, which is exactly what an auditor would ask about.
+        const verificationSourceDeclarations = await SourceLicenceDeclarationQueryEngine.findAllByDeckId(provenanceDeckId);
+
+        const recordsWithRefinements = provenanceRecords.map((provenanceRecord, recordIndex) => ({
+            ...provenanceRecord,
+            contentRefinements: recordIndex === 0 ? contentRefinements : [],
+            verificationSourceDeclarations: recordIndex === 0 ? verificationSourceDeclarations : [],
+        }));
+
+        // The multi-run envelope. The renderer also accepts a bare record, so a
+        // server and a renderer that are briefly out of step still produce a
+        // report rather than a stack trace.
+        const renderPayload =
+        {
+            deckId: provenanceDeckId,
+            deckName: provenanceRecords[0].deckName || null,
+            records: recordsWithRefinements,
+        };
+
+        await fs.promises.writeFile(provenanceJsonPath, JSON.stringify(renderPayload), "utf8");
 
         await renderAuditTrailPdf(provenanceJsonPath, outputPdfPath);
 
@@ -124,7 +189,7 @@ async function downloadAuditTrail(request, response)
 
         response.statusCode = httpStatus.OK;
         response.setHeader("Content-Type", "application/pdf");
-        response.setHeader("Content-Disposition", `attachment; filename="${buildDownloadFileName(provenanceRecord)}"`);
+        response.setHeader("Content-Disposition", `attachment; filename="${buildDownloadFileName(provenanceRecords)}"`);
         response.setHeader("Content-Length", String(pdfBuffer.length));
         response.end(pdfBuffer);
     }
@@ -141,4 +206,9 @@ async function downloadAuditTrail(request, response)
     }
 }
 
-module.exports = { downloadAuditTrail };
+// renderAuditTrailPdf is exported for VerifyPaidDeckPublishGate.mjs, which
+// renders a real record through this exact function rather than a copy of it —
+// the renderer being absent from the server is a failure mode this endpoint has
+// actually had, and a harness that reimplemented the spawn would not have caught
+// it.
+module.exports = { downloadAuditTrail, renderAuditTrailPdf };

@@ -73,11 +73,34 @@ class PaidDeckVisualGenerator:
     # page-less path web-sourced images use.
     SOURCE_HASH_MARKER = "__generated__"
 
-    def __init__(self, subject_name: str, coverage_summaries: dict, exam_name: str = "", action_log = None):
+    def __init__(
+        self,
+        subject_name: str,
+        coverage_summaries: dict,
+        exam_name: str = "",
+        action_log = None,
+        b_infer_additional_visuals: bool = True,
+    ):
         self.__subject_name = (subject_name or "").strip() or "the subject"
         self.__exam_name = (exam_name or "").strip()
         self.__coverage_summaries = coverage_summaries or {"topics": []}
         self.__action_log = action_log
+
+        # Inference exists because a syllabus lists topics, not figures, so a
+        # whole-deck run has to work out which visuals a competent textbook
+        # would include. A caller asking for ONE named visual — the refinement
+        # worker redrawing a diagram a reviewer objected to — has already said
+        # exactly what it wants, and inferring more would silently return
+        # figures nobody asked for alongside the one that was.
+        self.__b_infer_additional_visuals = b_infer_additional_visuals
+
+        # Figures that were produced and then failed vision review. The
+        # generation pipeline drops them deliberately — a wrong figure teaches
+        # something false to someone who paid for it — and it learns why from
+        # the action trail. A refinement run has no action trail to read and a
+        # reviewer waiting on an answer, so "the redraw was rejected because the
+        # angles are unlabelled" has to be reachable, not just "no figure".
+        self.__rejected_figures = []
 
     async def generate_all(self) -> list:
         """
@@ -90,11 +113,12 @@ class PaidDeckVisualGenerator:
         # visuals DECLARED in the coverage summaries are sparse by nature. Infer
         # the ones a competent textbook would include before generating anything;
         # declared visuals pass through untouched and inference only ever adds.
-        self.__coverage_summaries = await VisualNeedInferrer(
-            subject_name = self.__subject_name,
-            exam_name = self.__exam_name,
-            action_log = self.__action_log,
-        ).augment(self.__coverage_summaries)
+        if self.__b_infer_additional_visuals:
+            self.__coverage_summaries = await VisualNeedInferrer(
+                subject_name = self.__subject_name,
+                exam_name = self.__exam_name,
+                action_log = self.__action_log,
+            ).augment(self.__coverage_summaries)
 
         requests = self.__collect_requests()
 
@@ -156,9 +180,20 @@ class PaidDeckVisualGenerator:
 
             if review["acceptable"]:
                 accepted_figures.append(figure)
+            else:
+                self.__rejected_figures.append(figure)
 
         await asyncio.gather(*[review_one(figure) for figure in figures])
         return accepted_figures
+
+    def get_rejected_figures(self) -> list:
+        """
+        Figures produced by the last generate_all() that vision review turned
+        down, each carrying its _visionReviewOutcome. Empty before the first
+        run. Read by callers that must explain a refusal to a person rather
+        than only record it.
+        """
+        return self.__rejected_figures
 
     async def __review_one(self, figure: dict) -> dict:
         model_string, provider_class = ModelPool.PAID_DECK_VISUAL_VERIFICATION_MODEL
@@ -601,22 +636,14 @@ class PaidDeckVisualGenerator:
     @staticmethod
     def __rasterize_svg(svg_markup: str):
         """
-        Renders SVG to PNG with PyMuPDF so the vision review sees what a student
-        would see. Returns None when the markup will not render — which is itself
-        the verdict, not a missing nicety.
+        Renders SVG to PNG so the vision review sees what a student would see.
+        Returns None when the markup will not render — which is itself the
+        verdict, not a missing nicety.
         """
-        try:
-            import fitz
+        from Globals.Classes.Pdf.SvgRasterizer import SvgRasterizer
 
-            svg_document = fitz.open(stream = svg_markup.encode("utf-8"), filetype = "svg")
-            try:
-                pixel_map = svg_document.load_page(0).get_pixmap(dpi = PaidDeckVisualGenerator.REVIEW_RASTER_DPI)
-                return pixel_map.tobytes("png")
-            finally:
-                svg_document.close()
-        except Exception as rasterize_error:
-            print(f"[PaidDeckVisualGenerator] SVG did not render: {rasterize_error}")
-            return None
+        svg_rasterizer = SvgRasterizer(PaidDeckVisualGenerator.REVIEW_RASTER_DPI)
+        return svg_rasterizer.rasterize_to_png_bytes(svg_markup)
 
     async def __record(self, visual_request, method, model_string, reasoning_effort, outcome, b_succeeded, usage_metadata = None):
         if self.__action_log is None:

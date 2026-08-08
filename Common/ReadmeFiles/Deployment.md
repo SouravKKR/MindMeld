@@ -1053,7 +1053,7 @@ docker build -t cogniumlearn-agent -f Dockerfile .
 The image properties below are location-independent — they hold wherever you build it:
 
 - The image is **Debian/glibc, multi-stage** — deliberately not Alpine, because the
-  worker pulls `torch`, `opencv`, `scipy`, `PyMuPDF`, etc., which ship prebuilt
+  worker pulls `torch`, `opencv`, `scipy`, `pypdfium2`, etc., which ship prebuilt
   glibc wheels; musl (Alpine) would force slow, fragile source builds.
 - **Kept small for the 6 GB Image cap** (~2.5 GB): `requirements.txt` pins
   **`torch`/`torchvision` to the `+cpu` build** from the PyTorch CPU index (burst VMs
@@ -1073,6 +1073,9 @@ The image properties below are location-independent — they hold wherever you b
   > stdlib `asyncio` and breaks the container.
   > After a re-freeze, **re-add** the `--extra-index-url https://download.pytorch.org/whl/cpu`
   > line and the `+cpu` suffixes on `torch`/`torchvision` (freeze drops them).
+  > A re-freeze also drops the explanatory comments above `pypdfium2` and `svglib` —
+  > **re-add those too**; they are what stops someone reintroducing an AGPL PDF
+  > library. Then run the licence gate (§2.2.1) before baking.
 
 There's no image to move — you build it on the bake box in §1.10 and capture it there.
 
@@ -1280,6 +1283,37 @@ as their working directory). It needs:
 - `OPENAI_API_KEY` — only if you use OpenAI-backed workflows.
 - `WEB_SCRAPE_CONTACT_EMAIL` — optional contact email used in the web-scraping
   workflow's User-Agent.
+
+### Content guardrail (all optional; the defaults are the intended production posture)
+
+Every piece of text a model returns inside the Agent is scanned against the vendored
+LDNOOBW word list ([Agent/ThirdParty/Ldnoobw/](../../Agent/ThirdParty/Ldnoobw/README.md)).
+A hit is sent to `gemini-2.5-flash-lite` with 25 words of context either side to judge
+whether the usage is abusive or merely clinical, quoted or academic; an abusive verdict
+removes the sentence and writes a `CONTENT_GUARDRAIL` entry to `logEvents`. It is on by
+default and needs no configuration — these knobs exist for rollout and incident response.
+
+- `CONTENT_GUARDRAIL_ENABLED` — default `true`. The kill switch. `false` takes the whole
+  feature out of the path without a deploy.
+- `CONTENT_GUARDRAIL_ENFORCEMENT_ENABLED` — default `true`. `false` is shadow mode: it
+  still scans, adjudicates and logs (outcome `SHADOW_LOGGED`, with `wouldBeOutcomeName`
+  recording what enforcement would have done) but removes nothing. Run this for a week
+  on a new environment if you want the real hit rate before it starts editing text.
+- `CONTENT_GUARDRAIL_INCLUDE_CLINICAL_TERMS` — default `false`. The word list contains
+  `sex`, `rape`, `anus`, `semen`, `xx` and about ninety more terms that are ordinary
+  vocabulary in NEET Biology, medicine and IPC/POCSO law, so they are subtracted via
+  [AcademicTermAllowlist.txt](../../Agent/Globals/Classes/Compliance/AcademicTermAllowlist.txt).
+  Setting this to `true` scans the full upstream list — expect a verification call on
+  nearly every biology and law generation.
+- `CONTENT_GUARDRAIL_FAIL_CLOSED` — default `false` (fail **open**). When the
+  adjudication cannot be completed — timeout, provider error, unparseable reply — the
+  text is kept and the failure logged. A wrongly deleted sentence silently corrupts
+  study material a student paid for; a wrongly kept one is in `logEvents` and reviewable.
+  `true` inverts that and removes the sentence instead.
+
+Verify a change to any of these with
+`Agent/.venv/bin/python Verification/VerifyContentGuardrail.py` (add
+`VERIFY_CONTENT_GUARDRAIL_NETWORK=1` for one real adjudication).
 
 ## 1.7 Base node — build the frontend & generated files
 
@@ -1904,6 +1938,13 @@ needs a fresh Image:
    `./.venv/bin/pip install -r requirements.txt`.
 2. If dependencies changed, regenerate `requirements.txt`:
    `python -m pip freeze | grep -v -i '^asyncio==' > requirements.txt`.
+2a. **Run the dependency licence gate — mandatory before any production bake**
+   (see §2.2.1). A new transitive dependency under a network-copyleft licence is
+   the single easiest way to create a legal problem that nothing else in this
+   pipeline will notice:
+   ```bash
+   ./.venv/bin/python Verification/VerifyDependencyLicences.py   # exit 0 required
+   ```
 3. Rebuild the image **on a Debian 12 bake box** (not Windows — see §1.2): spin up a
    throwaway Linode, get the `Agent/` build context onto it (the `tar` + `scp` method in
    §1.10, or `git clone`), and run `docker build -t cogniumlearn-agent -f Dockerfile .`
@@ -1912,6 +1953,93 @@ needs a fresh Image:
    `Dock/.env`.
 5. Restart Dock: `sudo systemctl restart cogniumlearn-dock.service`. The startup teardown
    removes any burst VMs still running the old image; new ones boot the new Image.
+
+## 2.2.1 The dependency licence gate (run on every Agent dependency change)
+
+**Rule: no new Agent dependency ships to production without this gate passing.**
+
+CogniumLearn is a closed-source hosted service. A dependency under a
+**network-copyleft** licence — AGPL, SSPL, OSL — obliges us to offer every user
+the Corresponding Source of the whole service. That is flatly incompatible with
+paid decks, the paid-deck encryption scheme and the obfuscated frontend, and it
+applies whether the package was added deliberately or arrived as a *transitive*
+pull of something else.
+
+This is not hypothetical. **PyMuPDF** (`fitz`) sat in the worker for months as
+the backbone of every PDF workflow while being AGPL-3.0-or-Artifex-commercial,
+because nothing in this pipeline ever looked at a licence. It was replaced by
+**pypdfium2** (PDFium — BSD-3-Clause / Apache-2.0) behind
+`Agent/Globals/Classes/Pdf/PdfDocumentReader.py`.
+
+```bash
+# From Agent/, against the venv you are about to freeze:
+./.venv/bin/python Verification/VerifyDependencyLicences.py     # Linux / base node
+.venv/Scripts/python.exe Verification/VerifyDependencyLicences.py   # Windows dev box
+```
+
+Exit **0** = clean, **1** = a blocked licence is installed, **2** = the
+environment could not be inspected. A non-zero exit **blocks the bake** — do not
+re-freeze `requirements.txt` and do not build the image until it is resolved.
+
+What it reads, and why that matters: it inspects the licence metadata of
+everything **actually installed in the venv**, not just what is named in
+`requirements.txt`, because transitive pulls are the usual way a copyleft
+package arrives. It trusts `License-Expression` (SPDX) first, then the
+`License ::` trove classifiers, and only falls back to the free-text `License`
+field when that field is short enough to be a licence *name*. That last rule is
+load-bearing: scipy ships a 46 KB `License` field which bundles a GPLv3 whose
+section 13 mentions the Affero GPL, so a naive substring search reports
+BSD-licensed scipy as AGPL.
+
+**LGPL is deliberately allowed.** It carries no source-disclosure obligation for
+a hosted service, and `svglib` — the SVG-to-PNG path used by
+`PaidDeckVisualGenerator` — depends on that distinction.
+
+When the gate fails you have three options, in order of preference:
+
+1. **Replace the package** with a permissively licensed equivalent.
+2. **Buy a commercial licence** (some projects, like PyMuPDF via Artifex, are
+   dual-licensed) and record the purchase.
+3. **Acknowledge it** by adding an entry to `ACKNOWLEDGED_EXCEPTIONS` in the
+   harness *with a written reason*. That list is a decision log, not a snooze
+   button — anything in it is a debt someone has to clear.
+
+### Currently acknowledged debt
+
+**None — the PDF-stack licence migration is closed.**
+
+Both halves are done, and the gate is expected to run with an empty ACKNOWLEDGED
+section. If a row ever reappears here, it is a regression, not a plan.
+
+| Was | Licence | Replaced by |
+|---|---|---|
+| `PyMuPDF` (`fitz`) | AGPL-3.0 or Artifex commercial | `pypdfium2` — PDFium, BSD-3-Clause / Apache-2.0, behind `Agent/Globals/Classes/Pdf/PdfDocumentReader.py` |
+| `doclayout_yolo` | AGPL-3.0 (code **and** HF weights) | `ds4sd/docling-layout-heron` — Apache-2.0 weights, RT-DETRv2, behind `Agent/Globals/Classes/Layout/DoclingLayoutDetector.py` |
+
+The layout swap deserves a note because it is easy to undo by accident:
+
+* **It added no pip dependency.** Heron loads through plain `transformers`
+  (`RTDetrV2ForObjectDetection` + `AutoImageProcessor`), which the worker already
+  installs. `docling-ibm-models` is MIT but is **not** needed and must not be added.
+* **`transformers` is now load-bearing for figure extraction**, not just for
+  embeddings. Treat its pin as a behavioural pin, not a routine one.
+* **The weights download on first use**, exactly as the YOLO weights did, so the
+  Dockerfile is unchanged and a fresh burst VM pays a one-time fetch.
+* Unlike PyMuPDF, `doclayout_yolo` had **no commercial licence to buy** — it is a
+  fork of YOLOv10/Ultralytics, and its authors cannot relicense code they do not
+  own. Reintroducing it is not a decision anyone can make with a cheque.
+
+### Model weights are invisible to this gate
+
+`VerifyDependencyLicences.py` reads pip metadata. It cannot see the licence of a
+model downloaded from Hugging Face at runtime — and model weights are exactly
+where this project's licence debt came from twice. When you add or change a
+model, record its weights licence here by hand:
+
+| Model | Used by | Weights licence |
+|---|---|---|
+| `ds4sd/docling-layout-heron` | `DoclingLayoutDetector` (figure detection) | Apache-2.0 |
+| `sentence-transformers/all-mpnet-base-v2` | `PrepareImages`, `PrepareForSimilaritySearch` | Apache-2.0 |
 
 ## 2.3 Configuration / scaling change only
 

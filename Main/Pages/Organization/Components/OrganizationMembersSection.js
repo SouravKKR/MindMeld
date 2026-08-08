@@ -1,6 +1,9 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import AdminListView from "../../../CommonComponents/AdminListView.js";
 import AddMembersDialog from "../../AdminPanel/Components/AddMembersDialog.js";
+import EditMemberDialog from "./EditMemberDialog.js";
+import BulkEditMembersDialog from "./BulkEditMembersDialog.js";
+import OrganizationColumnsDialog from "./OrganizationColumnsDialog.js";
 import OrganizationErrorMessages from "../../../Globals/Classes/Organization/OrganizationErrorMessages.js";
 import SpreadsheetWriter from "../../../Globals/Classes/SpreadsheetWriter.js";
 import { organizationDelegatePowers } from "../../../Globals/Enumerations/OrganizationDelegatePowers.js";
@@ -24,6 +27,11 @@ import { organizationDelegatePowers } from "../../../Globals/Enumerations/Organi
  *     because the danger of removal-by-filter is a filter that matches more
  *     people than the person writing it expects.
  *
+ * Editing mirrors that shape for the same reason, and adds a third: one member
+ * from the Edit button on their own row. The filter-scoped version is not a
+ * convenience — the list drops its ticks when the page turns, so without it a
+ * four-hundred-strong cohort could only be tagged a screenful at a time.
+ *
  * Delegate powers are editable by the owner (and super-admins) only — a
  * delegate holding MANAGE_MEMBERS can add and remove people but cannot appoint
  * another delegate, or that one power would escalate into all of them. The
@@ -32,6 +40,11 @@ import { organizationDelegatePowers } from "../../../Globals/Enumerations/Organi
  */
 class OrganizationMembersSection extends HTMLElement
 {
+    // Carried on a row for the table's own machinery — selection, the delegate
+    // panel — rather than being anything an institute recorded about a member.
+    // Only used as a fallback if the column metadata has not arrived.
+    static #INTERNAL_ROW_KEYS = ["id", "tags", "userId", "delegatePowers"];
+
     static #POWER_DEFINITIONS =
     [
         { power: organizationDelegatePowers.MANAGE_MEMBERS, label: "Members" },
@@ -46,6 +59,7 @@ class OrganizationMembersSection extends HTMLElement
     #onChanged = null;
     #listView = null;
     #knownMembers = [];
+    #listColumns = [];
 
     initialize(context)
     {
@@ -62,7 +76,9 @@ class OrganizationMembersSection extends HTMLElement
             <div class="organization-members-toolbar">
                 <p class="admin-panel-add-subtitle" data-role="capacity">${this.#organization.currentMemberCount} of ${this.#organization.maxMembers} seats used.</p>
                 <div class="organization-form-actions">
+                    <button type="button" class="organization-secondary-button organization-manage-columns">Columns</button>
                     <button type="button" class="organization-secondary-button organization-export-members">Export</button>
+                    <button type="button" class="organization-secondary-button organization-edit-by-filter">Edit everything filtered</button>
                     <button type="button" class="organization-secondary-button organization-remove-by-filter">Remove everything filtered</button>
                     <button type="button" class="admin-panel-add-submit organization-add-members">Add members</button>
                 </div>
@@ -75,7 +91,9 @@ class OrganizationMembersSection extends HTMLElement
 
         this.querySelector(".organization-add-members").addEventListener("click", () => this.#handleAddMembers());
         this.querySelector(".organization-remove-by-filter").addEventListener("click", () => this.#handleRemoveByFilter());
+        this.querySelector(".organization-edit-by-filter").addEventListener("click", () => this.#handleEditByFilter());
         this.querySelector(".organization-export-members").addEventListener("click", () => this.#handleExport());
+        this.querySelector(".organization-manage-columns").addEventListener("click", () => this.#handleManageColumns());
 
         this.#mountListView();
         this.#renderDelegatePanel();
@@ -92,12 +110,28 @@ class OrganizationMembersSection extends HTMLElement
             searchEnabled: true,
             selectable: true,
             rowIdField: "id",
-            bulkActions: [{ actionKey: "removeSelected", label: "Remove selected" }],
+            rowActions: [{ actionKey: "edit", label: "Edit" }],
+            onRowAction: (actionKey, rowId, row) =>
+            {
+                if (actionKey === "edit")
+                {
+                    this.#handleEditMember(row);
+                }
+            },
+            bulkActions:
+            [
+                { actionKey: "editSelected", label: "Edit selected" },
+                { actionKey: "removeSelected", label: "Remove selected" }
+            ],
             onBulkAction: (actionKey, selectedRowIds) =>
             {
                 if (actionKey === "removeSelected")
                 {
                     this.#handleRemoveSelected(selectedRowIds);
+                }
+                else if (actionKey === "editSelected")
+                {
+                    this.#handleEditSelected(selectedRowIds);
                 }
             },
             customFetcher: (parameters) => this.#fetchMembersPage(parameters),
@@ -121,7 +155,16 @@ class OrganizationMembersSection extends HTMLElement
             const responseJson = await response.json().catch(() => ({}));
             throw new Error(OrganizationErrorMessages.describe(responseJson.error, response.status));
         }
-        return await response.json();
+
+        const metadata = await response.json();
+
+        // Kept so the export can head its columns the way the screen does. The
+        // row objects are keyed for the renderer — `attribute_joinYear`,
+        // `addedAtLabel` — and a spreadsheet headed with those internal keys is
+        // one the institute has to translate before it can use it.
+        this.#listColumns = Array.isArray(metadata.columns) ? metadata.columns : [];
+
+        return metadata;
     }
 
     async #fetchMembersPage(parameters)
@@ -237,6 +280,140 @@ class OrganizationMembersSection extends HTMLElement
         }
     }
 
+    /**
+     * The columns this organization keeps, and what they are called.
+     *
+     * Remounting afterwards rather than refreshing: a rename or a deletion
+     * changes which filters exist and what they are labelled, and the list view
+     * builds those once from its metadata.
+     */
+    async #handleManageColumns()
+    {
+        const bChanged = await OrganizationColumnsDialog.show
+        ({
+            organizationId: this.#organizationId,
+            bMayEdit: this.#mayManageMembers()
+        });
+
+        if (bChanged)
+        {
+            this.#mountListView();
+            await this.#onChanged();
+        }
+    }
+
+    /**
+     * Corrects one member from the Edit button on their row.
+     */
+    async #handleEditMember(row)
+    {
+        const columns = await this.#loadMemberColumns();
+        const bSaved = await EditMemberDialog.show
+        ({
+            organizationId: this.#organizationId,
+            member: row,
+            columns: columns
+        });
+
+        if (bSaved)
+        {
+            // Remounted rather than refreshed because an edit can introduce a
+            // column this organization had never stored, which has to become a
+            // filter and a table column without a page reload.
+            this.#mountListView();
+            await this.#onChanged();
+        }
+    }
+
+    /**
+     * Applies one change to everybody currently ticked.
+     */
+    async #handleEditSelected(selectedRowIds)
+    {
+        if (!Array.isArray(selectedRowIds) || selectedRowIds.length === 0)
+        {
+            return;
+        }
+
+        const columns = await this.#loadMemberColumns();
+        const bApplied = await BulkEditMembersDialog.show
+        ({
+            organizationId: this.#organizationId,
+            columns: columns,
+            memberIds: selectedRowIds,
+            scopeDescription: `${selectedRowIds.length} selected member${selectedRowIds.length === 1 ? "" : "s"} will be changed.`
+        });
+
+        if (bApplied)
+        {
+            this.#mountListView();
+            await this.#onChanged();
+        }
+    }
+
+    /**
+     * Applies one change to everyone the current filter matches.
+     *
+     * This is the path that scales. Ticking rows is bounded by what fits on a
+     * page — the list drops its selection when the page turns — so tagging a
+     * whole cohort has to be expressible as a description rather than as a
+     * hand-collected list.
+     */
+    async #handleEditByFilter()
+    {
+        const columns = await this.#loadMemberColumns();
+        const bApplied = await BulkEditMembersDialog.show
+        ({
+            organizationId: this.#organizationId,
+            columns: columns,
+            filterScope:
+            {
+                search: this.#listView ? this.#listView.getSearchValue() : "",
+                filters: this.#listView ? this.#listView.getFilterValues() : {}
+            },
+            scopeDescription: "Everyone matching the filters currently applied to the list will be changed. You will be told how many that is before anything happens."
+        });
+
+        if (bApplied)
+        {
+            this.#mountListView();
+            await this.#onChanged();
+        }
+    }
+
+    /**
+     * The organization's column schema, for the edit dialogs to lay out a field
+     * per column. Read fresh each time so a column added by an import a moment
+     * ago is offered without a reload.
+     */
+    async #loadMemberColumns()
+    {
+        try
+        {
+            const response = await fetch(`/Organization/Members/Columns/List?organizationId=${encodeURIComponent(this.#organizationId)}`);
+            const responseJson = await response.json().catch(() => ({}));
+
+            if (!response.ok || responseJson.success === false)
+            {
+                return [];
+            }
+
+            return Array.isArray(responseJson.columns) ? responseJson.columns : [];
+        }
+        catch (loadError)
+        {
+            // An edit dialog with no columns still edits tags, which is better
+            // than refusing to open at all.
+            return [];
+        }
+    }
+
+    #mayManageMembers()
+    {
+        const heldPowers = Number.isInteger(this.#authority?.delegatePowers) ? this.#authority.delegatePowers : 0;
+        return (heldPowers & organizationDelegatePowers.MANAGE_MEMBERS) === organizationDelegatePowers.MANAGE_MEMBERS;
+    }
+
     async #handleExport()
     {
         this.#clearStatus();
@@ -271,11 +448,36 @@ class OrganizationMembersSection extends HTMLElement
                 return;
             }
 
-            const columnKeys = Object.keys(items[0]).filter(key => key !== "id" && key !== "delegatePowers" && key !== "tags" && key !== "userId");
-            const rows = [columnKeys, ...items.map(item => columnKeys.map(key => item[key]))];
+            // Headed exactly as the table is: the institute's own column names,
+            // in the order it arranged them. The row objects are keyed for the
+            // renderer, so exporting their keys would hand back a sheet headed
+            // "attribute_joinYear" and "addedAtLabel" — names that mean
+            // something to this code and nothing to the person who opens it.
+            const exportColumns = this.#listColumns.length > 0
+                ? this.#listColumns
+                : Object.keys(items[0])
+                    .filter(rowKey => !OrganizationMembersSection.#INTERNAL_ROW_KEYS.includes(rowKey))
+                    .map(rowKey => ({ key: rowKey, label: rowKey }));
+
+            const rows =
+            [
+                exportColumns.map(column => column.label),
+                ...items.map(item => exportColumns.map(column => item[column.key] ?? ""))
+            ];
 
             SpreadsheetWriter.downloadWorkbook(rows, `CogniumLearn-Members-${this.#organization.name}`, "Members");
-            this.#showStatus(`Exported ${items.length} member${items.length === 1 ? "" : "s"}.`, true);
+
+            // Said out loud rather than swallowed: one page is all a single
+            // query returns, and an export that quietly stopped at the limit
+            // would read as the whole roster.
+            const bTruncated = Number(page.totalCount) > items.length;
+            this.#showStatus
+            (
+                bTruncated
+                    ? `Exported the first ${items.length} of ${page.totalCount} members. Narrow the filters to export the rest.`
+                    : `Exported ${items.length} member${items.length === 1 ? "" : "s"}.`,
+                !bTruncated
+            );
         }
         catch (exportError)
         {

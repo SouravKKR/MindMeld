@@ -1,11 +1,11 @@
 from collections import defaultdict
-import fitz
 
+from Globals.Classes.Pdf.PdfDocumentReader import PdfDocumentReader
 from Workflows.ProcessSyllabus.TextbookExtractionUtils import clean_text, looks_like_heading
 
 
-def extract_headings_by_font(doc: fitz.Document) -> list[dict]:
-    
+def extract_headings_by_font(pdf_reader: PdfDocumentReader) -> list[dict]:
+
     """
     Fallback when the PDF has no embedded TOC.
     Detects headings by font size and bold flag across all pages.
@@ -15,68 +15,45 @@ def extract_headings_by_font(doc: fitz.Document) -> list[dict]:
     FilterHeadingsByPageRange so the logic stays in one place.
     Font frequency sampling uses the full document for an accurate body-size baseline.
     """
-    freq = _get_font_freq(doc)
-    size_to_level = _heading_size_levels(freq)
+    font_size_frequency = _get_font_freq(pdf_reader)
+    size_to_level = _heading_size_levels(font_size_frequency)
     max_known_level = max(size_to_level.values(), default=0)
 
     headings = []
     seen: set[str] = set()
 
-    for page_num in range(len(doc)):
-        try:
-            blocks = doc[page_num].get_text("dict")["blocks"]
-        except Exception:
-            continue
-
-        for block in blocks:
-            if block["type"] != 0:
+    for page_index in range(pdf_reader.get_page_count()):
+        for text_line in pdf_reader.get_page_text_lines(page_index):
+            title = clean_text(text_line.get_text())
+            if not title or not looks_like_heading(title):
                 continue
-            for line in block["lines"]:
-                parts, max_size, is_bold = [], 0.0, False
-                for span in line["spans"]:
-                    parts.append(span["text"])
-                    if span["size"] > max_size:
-                        max_size = span["size"]
-                    if "bold" in span["font"].lower() or span["flags"] & 16:
-                        is_bold = True
 
-                title = clean_text(" ".join(parts))
-                if not title or not looks_like_heading(title):
-                    continue
+            level = size_to_level.get(round(text_line.get_maximum_font_size(), 1))
+            if level is None and text_line.is_bold():
+                level = max_known_level + 1
 
-                level = size_to_level.get(round(max_size, 1))
-                if level is None and is_bold:
-                    level = max_known_level + 1
-
-                if level is not None:
-                    key = title.lower()
-                    if key not in seen:
-                        seen.add(key)
-                        headings.append({"level": level, "title": title, "page": page_num + 1})
+            if level is not None:
+                key = title.lower()
+                if key not in seen:
+                    seen.add(key)
+                    headings.append({"level": level, "title": title, "page": page_index + 1})
 
     return headings
 
 
-def _get_font_freq(doc: fitz.Document, max_pages: int = 40) -> dict:
-    freq: dict[float, int] = defaultdict(int)
-    for page_num in range(min(len(doc), max_pages)):
-        try:
-            blocks = doc[page_num].get_text("dict")["blocks"]
-        except Exception:
-            continue
-        for block in blocks:
-            if block["type"] != 0:
-                continue
-            for line in block["lines"]:
-                for span in line["spans"]:
-                    size = round(span["size"], 1)
-                    freq[size] += len(span["text"].strip().split())
-    return freq
+def _get_font_freq(pdf_reader: PdfDocumentReader, max_pages: int = 40) -> dict:
+    font_size_frequency: dict[float, int] = defaultdict(int)
+    for page_index in range(min(pdf_reader.get_page_count(), max_pages)):
+        for text_line in pdf_reader.get_page_text_lines(page_index):
+            for span in text_line.get_spans():
+                size = round(span.get_font_size(), 1)
+                font_size_frequency[size] += span.get_word_count()
+    return font_size_frequency
 
 
-def _heading_size_levels(freq: dict) -> dict[float, int]:
-    if not freq:
+def _heading_size_levels(font_size_frequency: dict) -> dict[float, int]:
+    if not font_size_frequency:
         return {}
-    body_size = max(freq, key=freq.get)
-    larger = sorted([s for s in freq if s > body_size * 1.05], reverse=True)
-    return {size: (i + 1) for i, size in enumerate(larger)}
+    body_size = max(font_size_frequency, key=font_size_frequency.get)
+    larger = sorted([size for size in font_size_frequency if size > body_size * 1.05], reverse=True)
+    return {size: (level_index + 1) for level_index, size in enumerate(larger)}

@@ -1,0 +1,12 @@
+Subject: {subject_name}
+Topic: {topic_chain}
+
+What this diagram is meant to show, as the deck describes it:
+{visual_description}
+
+REFERENCE PASSAGES (from documents a subject expert cleared and declared a licence for).
+--- START REFERENCE ---
+{reference_block}
+--- END REFERENCE ---
+
+The rendered diagram is attached. Report only where a reference passage above contradicts what it depicts. If nothing does, return an empty flags array.

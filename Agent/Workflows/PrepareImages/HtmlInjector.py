@@ -103,7 +103,33 @@ class HtmlInjector:
         return max(120, min(css_pixel_width, HtmlInjector._ABSOLUTE_MAX_WIDTH_PIXELS))
 
     @staticmethod
-    def build_markup_figure_html(markup_html: str, caption_text: str, figure_number: int) -> str:
+    def build_visual_id_attribute(visual_id: str) -> str:
+        """
+        Renders the stable per-figure identity attribute, or nothing when the
+        caller has no id to stamp.
+
+        Until this existed a figure was addressable in the persisted HTML only
+        by its ordinal position among the other figures and by its caption
+        text — both of which move the moment anything above it is edited. That
+        is fine while the only thing that ever writes this HTML is the pipeline
+        that generated it in one pass, and it stops being fine as soon as a
+        reviewer can ask to refine or remove ONE diagram. The identity is
+        already computed (PaidDeckVisualGenerator's perceptual hash: topic
+        chain, description and render method) and was simply being discarded
+        here.
+
+        Emitted as a data-* attribute because HtmlSanitizer passes those
+        through: an id the client strips is an id that does not exist.
+        """
+        cleaned_visual_id = (visual_id or "").strip()
+
+        if not cleaned_visual_id:
+            return ""
+
+        return f' data-visual-id="{html_escape(cleaned_visual_id, quote = True)}"'
+
+    @staticmethod
+    def build_markup_figure_html(markup_html: str, caption_text: str, figure_number: int, visual_id: str = "") -> str:
         """
         Builds the figure snippet for a GENERATED symbolic visual — inline SVG, a
         Mermaid block, a KaTeX expression, a SMILES structure, or the labelled
@@ -123,7 +149,9 @@ class HtmlInjector:
         display_caption = caption_text.strip() if caption_text and caption_text.strip() else f"Fig. {figure_number}"
 
         return (
-            f'<figure class="generated-figure" style="margin: 1em 0; text-align: center;">'
+            f'<figure class="generated-figure"'
+            f'{HtmlInjector.build_visual_id_attribute(visual_id)}'
+            f' style="margin: 1em 0; text-align: center;">'
             f'{markup_html}'
             f'<figcaption style="font-size: 0.85em;'
             f' margin-top: 0.4em; word-wrap: break-word;">'
@@ -133,7 +161,7 @@ class HtmlInjector:
         )
 
     @staticmethod
-    def build_composite_figure_html(parts: list, caption_text: str, figure_number: int) -> str:
+    def build_composite_figure_html(parts: list, caption_text: str, figure_number: int, visual_id: str = "") -> str:
         """
         Builds a COMPOSITE figure: several related visuals shown together as one
         labelled plate, each panel keeping its own caption.
@@ -180,7 +208,9 @@ class HtmlInjector:
         display_caption = caption_text.strip() if caption_text and caption_text.strip() else f"Fig. {figure_number}"
 
         return (
-            f'<figure class="generated-figure composite-figure" style="margin: 1em 0; text-align: center;">'
+            f'<figure class="generated-figure composite-figure"'
+            f'{HtmlInjector.build_visual_id_attribute(visual_id)}'
+            f' style="margin: 1em 0; text-align: center;">'
             f'<div class="composite-panel-grid" style="display: flex; flex-wrap: wrap;'
             f' justify-content: center; align-items: flex-end; gap: 0.5em;">'
             f'{"".join(panel_html_fragments)}'
@@ -200,6 +230,7 @@ class HtmlInjector:
         source_url:     str = None,
         source_page_url: str = None,
         bounding_box:   list = None,
+        visual_id:      str = "",
     ) -> str:
         """
         Builds the self-contained HTML snippet for an extracted figure.
@@ -251,7 +282,9 @@ class HtmlInjector:
         )
 
         return (
-            f'<figure class="extracted-figure" style="margin: 1em 0;">'
+            f'<figure class="extracted-figure"'
+            f'{HtmlInjector.build_visual_id_attribute(visual_id)}'
+            f' style="margin: 1em 0;">'
             f'<img src="data:image/jpeg;base64,{base64_encoded_image}"'
             f' style="{image_style}" alt="Figure {figure_number}">'
             f'<figcaption style="font-size: 0.85em;'

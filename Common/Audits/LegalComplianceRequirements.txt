@@ -1,10 +1,41 @@
-Report: Common/Reports/LegalComplianceAuditReport.pdf
+Reports: this requirements file produces TWO separate PDFs. Do NOT merge them, and
+do not let either one summarise the other's findings in place of producing it.
+
+   1) Common/Reports/LegalComplianceAuditReport.pdf
+      Sections 1 to 5 — outbound exposure. Everything about user-uploaded documents
+      and the AI-generated derivatives built from them. Hand-authored per the
+      Presentation rules in Common/Audits/Audit.txt.
+
+   2) Common/Reports/DependencyLicenceReport.pdf
+      Section 6 — inbound dependency licensing. GENERATED, never hand-written, by
+      Common/Scripts/RenderDependencyLicenceReport.py, which collects its data live
+      from the manifests and installed package metadata at render time and computes
+      its own weighted rating from that data. Regenerate it as the first step of
+      section 6 and read the result; do not audit dependency licences from memory,
+      from requirements.txt alone, or from the previous PDF.
+
+   The split is deliberate. The dependency inventory is ~600 rows that change on
+   every npm install and every re-freeze, and it is mechanically derivable; folding
+   it into the hand-authored audit would either bury sections 1 to 5 or, worse,
+   invite someone to hand-copy a stale table forward. Keeping it a generated
+   artefact is what makes it trustworthy.
+
+   Report (2) is exempt from two of the Presentation rules in Common/Audits/Audit.txt,
+   and only those two: it carries no "Action" column, because a per-row disposition
+   on 600 transitive packages is noise rather than information — the Class column
+   already says which rows can cost anything; and it cites package identity and the
+   manifest it came from rather than file paths and line numbers, because a licence
+   lives in package metadata and not at a line of this repository's source. Every
+   other rule in Audit.txt applies to it in full, including the mandatory PDF theme,
+   the closing 1-to-10 rating, and re-deriving everything from current state.
 
 Role: Act as a Senior Software Architect and Legal-Tech Compliance Auditor.
 
-Objective: Scan this codebase to evaluate legal and compliance exposure regarding
-user-uploaded documents (such as coaching institute textbooks, PDFs, and notes)
-and AI-generated outputs (flashcards, notes, summaries, study material, mock tests).
+Objective: Scan this codebase to evaluate legal and compliance exposure on both
+sides of the licence boundary — outbound, for user-uploaded documents (such as
+coaching institute textbooks, PDFs, and notes) and AI-generated outputs
+(flashcards, notes, summaries, study material, mock tests); and inbound, for the
+third-party code and model weights the platform itself is built on.
 
 Conduct a systematic audit across the following specific architectural risk areas:
 
@@ -66,8 +97,70 @@ Conduct a systematic audit across the following specific architectural risk area
    - Check for contractual safeguards (UGC rights warranty, indemnity, infringing-content
      prohibition, named Grievance Officer with contact details and statutory timelines).
 
-Output requirements:
+6) Third-Party Dependency Licensing (Inbound Licence Exposure)
+   OUTPUT: Common/Reports/DependencyLicenceReport.pdf — its own report, not a
+   section of LegalComplianceAuditReport.pdf.
+
+   - Regenerate it first, before reading anything:
+         Agent/.venv/Scripts/python.exe Common/Scripts/RenderDependencyLicenceReport.py
+     It collects live from Agent/requirements.txt (resolved against the installed
+     venv metadata), Dock/node_modules, Common/node_modules, the hand-declared
+     vendored browser libraries in Main/ThirdParty, and the hand-declared runtime
+     model weights. Audit against what it reports, not against the previous run.
+   - That report contains a summary, the inventory tables, and a weighted rating out
+     of 10 — the same closing rating every other audit gives. The rating is computed
+     from the collected data, so DO NOT hand-edit a score into it. If a score looks
+     wrong, the fix is in the scoring constants on the LicenceRating class in the
+     renderer, and changing them is a deliberate re-weighting to be justified, not a
+     nudge to make a number read better.
+   - Everything the checks below surface belongs in that report. Extend the renderer
+     when a check needs a new column, table or dimension; the report stays generated.
+     The only thing that goes in LegalComplianceAuditReport.pdf is a one-line pointer
+     to it, with no restated findings and no restated rating.
+   - CogniumLearn is a closed-source hosted service. A network-copyleft licence
+     (AGPL, SSPL, OSL) obliges us to offer every user the Corresponding Source of
+     the whole service, which is flatly incompatible with paid decks, the paid-deck
+     encryption scheme and the obfuscated frontend. Flag every such dependency
+     regardless of whether it was added deliberately or arrived transitively.
+   - Weak copyleft (LGPL, MPL) is acceptable for a hosted service that does not
+     modify the library, and is NOT a finding on its own. Do not propose replacing
+     a working LGPL/MPL dependency to chase a cleaner licence column.
+   - Reconcile the inventory against Agent/Verification/VerifyDependencyLicences.py:
+     confirm the gate still passes, that ACKNOWLEDGED_EXCEPTIONS has not silently
+     grown, and that nothing acknowledged there has been forgotten. An entry in
+     that list is a decision log, not a snooze button.
+   - Reconcile it against Common/ReadmeFiles/Deployment.md §2.2.1. A licence
+     migration the documentation records as CLOSED while the pin, the acknowledged
+     exception or the installed package survives is a finding in its own right —
+     the documentation and the shipped artefact disagree, and only one of them
+     ships.
+   - Check the surfaces the pip-metadata gate structurally cannot see, because this
+     project's licence debt came from exactly there twice:
+       * model weights downloaded from Hugging Face at runtime (code licence and
+         weights licence are frequently different — verify the weights);
+       * pre-built libraries vendored under Main/ThirdParty, which carry no
+         manifest and whose licences are recorded by hand in the renderer;
+       * the Tauri desktop/mobile shell, whose Rust crate set lives in the
+         gitignored Build/Template and is therefore outside any repository scan.
+         State this coverage gap explicitly rather than implying the sweep is total.
+   - Check attribution: permissive licences (MIT, BSD, ISC, Apache-2.0) all require
+     the copyright and licence notices to be retained, and Apache-2.0 additionally
+     requires any NOTICE file to travel with redistribution. Verify this survives
+     the aggressive build — minification and obfuscation strip comments, and the
+     desktop/mobile installers redistribute binaries rather than serve them.
+   - Record any component whose metadata declares no licence at all; absent is not
+     the same as permissive, and each needs manual confirmation upstream.
+   - When a check above produces a finding the renderer cannot express as inventory
+     data — a stale acknowledged exception, a documentation-versus-pin disagreement,
+     a stripped attribution notice — add it to the renderer as a declared row or a
+     rating dimension rather than writing it into the other report. The rule is that
+     the whole of section 6 is answerable from one generated PDF.
+
+Output requirements (these apply to LegalComplianceAuditReport.pdf, sections 1 to 5;
+section 6's report is produced by its renderer and is not hand-authored):
 - Executive Risk Summary table rating each architectural component High / Medium / Low.
+  Inbound dependency licensing is NOT one of those rows — it has its own report and
+  its own rating. Carry a single pointer line to that report instead.
 - Flagged findings with exact File Path and Line Numbers.
 - Proposed Code Fixes & Prompt Refactor Specifications.
 - Every table (the executive summary and every findings table) MUST carry an "Action"

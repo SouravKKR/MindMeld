@@ -16,6 +16,7 @@ class PeriodicCreditAssignment
     #peopleEmails;
     #tagFilter;
     #tagMatchMode;
+    #attributeConditions;
     #amount;
     #amountMode;
     #scheduleType;
@@ -32,7 +33,7 @@ class PeriodicCreditAssignment
     #createdAt;
     #additionalData;
 
-    constructor({name = null, scopeType = 0, organizationId = '', peopleEmails = [], tagFilter = [], tagMatchMode = 0, amount = 0, amountMode = 1, scheduleType = 0, intervalDays = 0, dayOfWeek = 0, dayOfMonth = 1, onJoinMode = 0, startAt = new Date(), hasValidUntil = false, validUntil = new Date(), status = 0, terminatedAt = new Date(), createdByUserId = '', createdAt = new Date(), additionalData = {}} = {})
+    constructor({name = null, scopeType = 0, organizationId = '', peopleEmails = [], tagFilter = [], tagMatchMode = 0, attributeConditions = [], amount = 0, amountMode = 1, scheduleType = 0, intervalDays = 0, dayOfWeek = 0, dayOfMonth = 1, onJoinMode = 0, startAt = new Date(), hasValidUntil = false, validUntil = new Date(), status = 0, terminatedAt = new Date(), createdByUserId = '', createdAt = new Date(), additionalData = {}} = {})
     {
         this.#id = crypto.randomUUID();
         this.setName(name);
@@ -41,6 +42,7 @@ class PeriodicCreditAssignment
         this.setPeopleEmails(peopleEmails);
         this.setTagFilter(tagFilter);
         this.setTagMatchMode(tagMatchMode);
+        this.setAttributeConditions(attributeConditions);
         this.setAmount(amount);
         this.setAmountMode(amountMode);
         this.setScheduleType(scheduleType);
@@ -167,6 +169,23 @@ class PeriodicCreditAssignment
             }
         }
         this.#tagMatchMode = value;
+    }
+
+    getAttributeConditions()
+    {
+        return this.#attributeConditions;
+    }
+
+    setAttributeConditions(value)
+    {
+        if (value !== null)
+        {
+            if (!Array.isArray(value))
+            {
+                value = null;
+            }
+        }
+        this.#attributeConditions = value;
     }
 
     getAmount()
@@ -465,6 +484,7 @@ class PeriodicCreditAssignment
             peopleEmails: this.getPeopleEmails(),
             tagFilter: this.getTagFilter(),
             tagMatchMode: this.getTagMatchMode() !== null ? Number(this.getTagMatchMode()) : null,
+            attributeConditions: this.getAttributeConditions(),
             amount: this.getAmount(),
             amountMode: this.getAmountMode() !== null ? Number(this.getAmountMode()) : null,
             scheduleType: this.getScheduleType() !== null ? Number(this.getScheduleType()) : null,
@@ -492,6 +512,7 @@ class PeriodicCreditAssignment
             peopleEmails: json.peopleEmails ?? null,
             tagFilter: json.tagFilter ?? null,
             tagMatchMode: json.tagMatchMode ?? null,
+            attributeConditions: json.attributeConditions ?? null,
             amount: json.amount ?? null,
             amountMode: json.amountMode ?? null,
             scheduleType: json.scheduleType ?? null,
