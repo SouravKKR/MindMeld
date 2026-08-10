@@ -2,6 +2,7 @@ const OtpManager = require("../../Globals/Classes/Authentication/OtpManager");
 const AccessGate = require("../../Globals/Classes/Authentication/AccessGate");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const {otpPurposes} = require("../../Globals/Enumerations/OtpPurposes");
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -30,7 +31,10 @@ async function handleRequestOtp(request, response)
     let result;
     try
     {
-        result = await OtpManager.requestOtp(submittedEmail);
+        // Named explicitly rather than left to the default: this endpoint hands
+        // back a session on the other side of the code, and it must never be
+        // satisfiable by a code issued for anything else.
+        result = await OtpManager.requestOtp(submittedEmail, otpPurposes.LOGIN);
     }
     catch (otpError)
     {

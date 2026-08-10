@@ -636,6 +636,18 @@ run_browser_test_gates()
         run_browser_suite "Organization" "Common/Testing/Main/run_organization_ui_tests.js" "$REPOSITORY_ROOT/Common/Reports/.results/organization-ui.json" "$base_url" || gate_status=1
     fi
 
+    # The administrator's simulated plan views. Kept apart from the Organization
+    # suite above, which is built around a MEMBER fixture where this one needs an
+    # ADMINISTRATOR — run together they would be testing each other's leftovers.
+    # What it gates is mostly the things that must NOT be simulated: purchases,
+    # real credits, and above all the way OUT of a sandbox, since a view replaces
+    # the entire library and an administrator who cannot leave one is stuck in
+    # the product rather than on a screen.
+    if [ "$gate_status" -eq 0 ]
+    then
+        run_browser_suite "Plan views" "Common/Testing/Main/run_plan_view_ui_tests.js" "$REPOSITORY_ROOT/Common/Reports/.results/plan-view-ui.json" "$base_url" || gate_status=1
+    fi
+
     # The paid-deck lifecycle, and specifically the pair that has to hold in
     # both directions: a held deck refuses deletion by default, and a forced
     # deletion revokes every licence in the same operation. Forcing without

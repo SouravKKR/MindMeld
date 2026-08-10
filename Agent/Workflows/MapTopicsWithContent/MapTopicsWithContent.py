@@ -32,6 +32,8 @@ from Workflows.MapTopicsWithContent.ChunkUtils import (
 from Workflows.MapTopicsWithContent.MatchChunksToTopic import match_chunks_to_topics, encode_texts_to_cpu
 from Workflows.MapTopicsWithContent.CoverageReconciler import CoverageReconciler
 from Workflows.MapTopicsWithContent.KnowledgeChunkGenerator import KnowledgeChunkGenerator
+from Workflows.MapTopicsWithContent.SourceGroundedChunkGenerator import SourceGroundedChunkGenerator
+from Globals.Classes.Generation.AdminSourceCorpus import AdminSourceCorpus
 from Globals.Classes.Generation.PaidDeckActionLog import PaidDeckActionLog
 from Globals.Utility.RedactSourceName import redact_source_name
 
@@ -193,11 +195,11 @@ class MapTopicsWithContent(Workflow):
             if extractable_source.get_information_source().get_source_type() in MapTopicsWithContent.WEB_SOURCE_TYPES
         ]
 
-        if enabled_web_source_types:
-            reputed_shortlist = await self.__select_relevant_reputed_domains(leaves)
-            await self.__dispatch_web_fetches(main_task_id, leaves, enabled_web_source_types, reputed_shortlist)
-            await self.__update_progress(0.20)
-
+        # The web fetches are dispatched AFTER matching (below), not here, because
+        # which topics need them is not known until the documents have been
+        # matched. Fetching first meant scraping and summarising pages for topics
+        # the user's own textbook covered fully, then discarding them at save time
+        # — paid for, and never read.
         combined_text_parts = []
         # Global page provenance for full_text — a list of (character_offset,
         # source_hash, page_number) entries, kept in ascending offset order so
@@ -287,7 +289,29 @@ class MapTopicsWithContent(Workflow):
 
         await self.__update_progress(0.65)
 
-        # ── 4. Persist topic files (with web-source hints when applicable) ────
+        # ── 4. Web fallback — only for the topics the documents did not cover ──
+        #
+        # A topic whose bucket came back empty is one the user's sources say
+        # nothing about; those, and only those, are worth going to the web for.
+        # With no document text at all (description-only and web-only runs) every
+        # topic is uncovered, so this dispatches for the full set exactly as it
+        # did when it ran unconditionally.
+        if enabled_web_source_types:
+            uncovered_leaves = [
+                leaf for topic_index, leaf in enumerate(leaves)
+                if not topic_buckets.get(topic_index)
+            ]
+
+            if uncovered_leaves:
+                print(f"\n--- Web fallback for {len(uncovered_leaves)} of {len(leaves)} topic(s) the documents did not cover ---")
+                reputed_shortlist = await self.__select_relevant_reputed_domains(uncovered_leaves)
+                await self.__dispatch_web_fetches(main_task_id, uncovered_leaves, enabled_web_source_types, reputed_shortlist)
+            else:
+                print("\n--- Web fallback skipped: the provided documents covered every topic ---")
+
+            await self.__update_progress(0.70)
+
+        # ── 5. Persist topic files (with web-source hints when applicable) ────
         print("\n--- Saving results ---")
         saved_count = await self.__save_results(topic_buckets, leaves, main_task_id, enabled_web_source_types)
 
@@ -306,8 +330,19 @@ class MapTopicsWithContent(Workflow):
 
         Phase 2 (coverage reconciliation) audits the syllabus tree against the
         current exam pattern and writes an advisory report the review gate shows.
-        Phase 3 (knowledge-first chunk generation) writes the per-topic content
-        that replaces retrieval.
+        Phase 3 writes the per-topic content that replaces retrieval.
+
+        Phase 3 has TWO writers, and which one wrote a topic is recorded rather
+        than inferred:
+
+          - Topics a declared LICENSED SOURCE covers are written from passages of
+            that source by SourceGroundedChunkGenerator. Their basis is the
+            declared licence and the retained document.
+          - Every other topic is written from model knowledge by
+            KnowledgeChunkGenerator, whose basis is independent creation.
+
+        With no licensed content source admitted — the ordinary case — the first
+        writer does not run at all and this behaves exactly as it did before.
 
         The reconciliation is deliberately non-blocking: it informs a human
         decision at the review gate and must never stop content from being
@@ -316,13 +351,11 @@ class MapTopicsWithContent(Workflow):
         """
         action_log = PaidDeckActionLog(main_task_id, "MapTopicsWithContent")
 
-        await action_log.record_note(
-            phase_name = "KNOWLEDGE_CHUNK_GENERATION",
-            outcome = (
-                "Paid-deck mode: retrieval skipped entirely (no document was accepted). "
-                "Chunks are written from model knowledge against the Phase 1 coverage summaries."
-            ),
-        )
+        # Sources Dock admitted for CONTENT use. Never read from the settings
+        # object: a licensed document must not appear in informationSources,
+        # which is the list the paid-deck source-type gate polices. It rides
+        # alongside on the raw payload instead.
+        content_sources = (self._payload or {}).get("contentSources") or []
 
         # ── Phase 2: coverage reconciliation (advisory, web search permitted) ──
         reconciliation_path = join_path(
@@ -350,15 +383,8 @@ class MapTopicsWithContent(Workflow):
 
         await self.__update_progress(0.15)
 
-        # ── Phase 3: knowledge-first chunk generation ─────────────────────────
+        # ── Phase 3: chunk generation ─────────────────────────────────────────
         coverage_summaries = await self.__load_coverage_summaries(main_task_id)
-
-        generator = KnowledgeChunkGenerator(
-            subject_name = self.__general_generation_settings.get_subject_name(),
-            exam_name = self.__general_generation_settings.get_exam_name(),
-            coverage_summaries = coverage_summaries,
-            action_log = action_log,
-        )
 
         completed_topic_count = 0
 
@@ -366,16 +392,76 @@ class MapTopicsWithContent(Workflow):
             nonlocal completed_topic_count
             completed_topic_count += 1
             # Same 0.15 → 0.65 band the retrieval path creeps through, so the
-            # progress page behaves identically in both modes.
+            # progress page behaves identically in every mode. Shared by both
+            # writers, and each leaf advances it exactly once: the grounded
+            # writer reports only the topics it actually wrote, and hands the
+            # rest to the fallback, which reports those.
             await self.__update_progress(0.15 + 0.50 * (completed_topic_count / max(1, len(leaves))))
 
-        chunks_by_leaf_index = await generator.generate(leaves, on_topic_completed)
+        chunks_by_leaf_index = {}
+        provenance_by_leaf_index = {}
+        pending_leaf_indices = list(range(len(leaves)))
+        corpus = None
+
+        if content_sources:
+            corpus, pending_leaf_indices, chunks_by_leaf_index, provenance_by_leaf_index = \
+                await self.__run_source_grounded_generation(
+                    leaves, content_sources, coverage_summaries, action_log, on_topic_completed)
+        else:
+            await action_log.record_note(
+                phase_name = "KNOWLEDGE_CHUNK_GENERATION",
+                outcome = (
+                    "Paid-deck mode: retrieval skipped entirely (no document was accepted). "
+                    "Chunks are written from model knowledge against the Phase 1 coverage summaries."
+                ),
+            )
+
+        # ── The model-knowledge fallback, for everything the sources missed ────
+        #
+        # KnowledgeChunkGenerator is constructed with NO corpus and is handed no
+        # passages — deliberately, and asserted by VerifySourceGroundedGeneration.
+        # It sits inside the ROUTE BOUNDARY, and its content's defence is that it
+        # demonstrably had no document to work from.
+        if pending_leaf_indices:
+            fallback_generator = KnowledgeChunkGenerator(
+                subject_name = self.__general_generation_settings.get_subject_name(),
+                exam_name = self.__general_generation_settings.get_exam_name(),
+                coverage_summaries = coverage_summaries,
+                action_log = action_log,
+            )
+
+            pending_leaves = [leaves[leaf_index] for leaf_index in pending_leaf_indices]
+            fallback_chunks_by_position = await fallback_generator.generate(pending_leaves, on_topic_completed)
+
+            # generate() keys its result by position in the list it was HANDED,
+            # not by leaf index, so this remap is mandatory. Doing it here rather
+            # than teaching the generator about indices is what keeps that class
+            # free of any knowledge of this one.
+            for position, chunks in fallback_chunks_by_position.items():
+                leaf_index = pending_leaf_indices[position]
+                chunks_by_leaf_index[leaf_index] = chunks
+
+                if leaf_index not in provenance_by_leaf_index:
+                    leaf = leaves[leaf_index]
+                    provenance_by_leaf_index[leaf_index] = {
+                        "topicChain": leaf["path"] + [leaf["topic"]],
+                        "path": "MODEL_KNOWLEDGE",
+                        "modelIdentifier": None,
+                        "chunkCount": len(chunks),
+                        "passages": [],
+                    }
+                else:
+                    provenance_by_leaf_index[leaf_index]["chunkCount"] = len(chunks)
 
         if not chunks_by_leaf_index:
             raise RuntimeError(
-                f"Knowledge-first chunk generation produced no content for any of the {len(leaves)} "
-                f"syllabus topic(s). There is nothing for the downstream workers to generate from."
+                f"Chunk generation produced no content for any of the {len(leaves)} syllabus topic(s). "
+                f"There is nothing for the downstream workers to generate from."
             )
+
+        if content_sources:
+            await self.__write_source_grounded_provenance(
+                main_task_id, leaves, content_sources, provenance_by_leaf_index, corpus)
 
         await self.__update_progress(0.65)
 
@@ -395,6 +481,165 @@ class MapTopicsWithContent(Workflow):
             f"\nDone. {saved_count} topic file(s) written from generated content "
             f"({len(chunks_by_leaf_index)}/{len(leaves)} topic(s) produced chunks)."
         )
+
+    async def __run_source_grounded_generation(
+        self,
+        leaves: list,
+        content_sources: list,
+        coverage_summaries: dict,
+        action_log,
+        on_topic_completed,
+    ) -> tuple:
+        """
+        Loads the licensed sources and writes every topic they cover.
+
+        Returns (corpus, uncovered_leaf_indices, chunks_by_leaf_index,
+        provenance_by_leaf_index). The corpus is returned so the provenance
+        writer can report what was loaded and what could not be.
+
+        FAILS OPEN, LOUDLY. If no source can be read, every topic comes back
+        uncovered and the model-knowledge fallback writes the whole deck — a deck
+        still gets made, which is the right direction. But every unreadable
+        source is recorded as a FAILED note, and the provenance file reports the
+        count, because "0 topics were source-grounded" presented without saying
+        why is indistinguishable from "no sources were supplied".
+        """
+        await action_log.record_note(
+            phase_name = "SOURCE_GROUNDED_CHUNK_GENERATION",
+            outcome = (
+                f"Paid-deck mode with {len(content_sources)} licensed content source(s). "
+                "Topics these sources cover are written from their passages under the declared licence; "
+                "topics they do not cover fall back to model knowledge."
+            ),
+        )
+
+        corpus = AdminSourceCorpus()
+        await corpus.load(content_sources)
+
+        for problem in corpus.get_problems():
+            await action_log.record_note(
+                phase_name = "SOURCE_GROUNDED_CHUNK_GENERATION",
+                outcome = f"Licensed source problem: {problem}",
+                b_succeeded = False,
+            )
+
+        if corpus.is_empty():
+            await action_log.record_note(
+                phase_name = "SOURCE_GROUNDED_CHUNK_GENERATION",
+                outcome = (
+                    f"None of the {len(content_sources)} licensed content source(s) yielded readable text. "
+                    "The whole deck falls back to model knowledge."
+                ),
+                b_succeeded = False,
+            )
+            return corpus, list(range(len(leaves))), {}, {}
+
+        grounded_generator = SourceGroundedChunkGenerator(
+            subject_name = self.__general_generation_settings.get_subject_name(),
+            exam_name = self.__general_generation_settings.get_exam_name(),
+            coverage_summaries = coverage_summaries,
+            corpus = corpus,
+            action_log = action_log,
+        )
+
+        chunks_by_leaf_index, provenance_by_leaf_index, uncovered_leaf_indices = \
+            await grounded_generator.generate(leaves, on_topic_completed)
+
+        print(
+            f"[MapTopicsWithContent] Source-grounded: {len(chunks_by_leaf_index)}/{len(leaves)} topic(s) "
+            f"written from {len(corpus.get_loaded_source_names())} licensed source(s); "
+            f"{len(uncovered_leaf_indices)} fall back to model knowledge."
+        )
+
+        return corpus, uncovered_leaf_indices, chunks_by_leaf_index, provenance_by_leaf_index
+
+    async def __write_source_grounded_provenance(
+        self,
+        main_task_id: str,
+        leaves: list,
+        content_sources: list,
+        provenance_by_leaf_index: dict,
+        corpus,
+    ) -> None:
+        """
+        Writes the per-topic record of WHICH BASIS produced each topic, and which
+        passages of which document backed the source-grounded ones.
+
+        ONE FILE rather than a key on each MappedTopics entry, because
+        MoveToDatabase wipes the whole task folder once it has persisted the run,
+        and PaidDeckProvenanceAssembler already reads exactly this way — from the
+        task bucket, before the deletion, once the deck id is known.
+
+        Best-effort: a failure here must not destroy a generated deck. The cost
+        is a deck that cannot be published, since the publish gate refuses one
+        whose provenance is incomplete, which is the correct direction to fail in.
+        """
+        try:
+            topics = []
+
+            for leaf_index, leaf in enumerate(leaves):
+                provenance = provenance_by_leaf_index.get(leaf_index)
+
+                if provenance is not None:
+                    topics.append(provenance)
+                    continue
+
+                # A topic neither writer produced anything for. Recorded rather
+                # than omitted: a reader counting topics in this file against
+                # topics in the deck should not find a silent shortfall.
+                topics.append({
+                    "topicChain": leaf["path"] + [leaf["topic"]],
+                    "path": "NOT_PRODUCED",
+                    "modelIdentifier": None,
+                    "chunkCount": 0,
+                    "passages": [],
+                })
+
+            topic_counts_by_source_id = {}
+
+            for topic in topics:
+                for source_id in {passage.get("sourceId") for passage in topic.get("passages") or []}:
+                    if source_id:
+                        topic_counts_by_source_id[source_id] = topic_counts_by_source_id.get(source_id, 0) + 1
+
+            sources = [
+                {
+                    "sourceId": content_source.get("informationSourceId") or "",
+                    "sourceName": content_source.get("name") or "",
+                    "contentHash": content_source.get("contentHash") or "",
+                    "licenceType": content_source.get("licenceType"),
+                    "licenceNote": content_source.get("licenceNote") or "",
+                    "sourceNote": content_source.get("sourceNote") or "",
+                    "topicCount": topic_counts_by_source_id.get(content_source.get("informationSourceId") or "", 0),
+                }
+                for content_source in content_sources
+            ]
+
+            report = {
+                "version": 1,
+                "topics": topics,
+                "sources": sources,
+                "problems": corpus.get_problems() if corpus is not None else [],
+                "sourceGroundedTopicCount": len([topic for topic in topics if topic.get("path") == "SOURCE_GROUNDED"]),
+                "modelKnowledgeTopicCount": len([topic for topic in topics if topic.get("path") == "MODEL_KNOWLEDGE"]),
+            }
+
+            report_path = join_path(
+                "/",
+                PersistenceConstants.TASKS_DIRECTORY,
+                main_task_id,
+                PersistenceConstants.SOURCE_GROUNDED_CONTENT_FILE_NAME,
+            )
+
+            await Persistence.write(report_path, json.dumps(report, ensure_ascii=False))
+
+            print(
+                f"[MapTopicsWithContent] Source-grounded provenance written: "
+                f"{report['sourceGroundedTopicCount']} source-grounded, "
+                f"{report['modelKnowledgeTopicCount']} model-knowledge topic(s)."
+            )
+        except Exception as provenance_error:
+            print(f"[MapTopicsWithContent] Could not write source-grounded provenance: {provenance_error}")
 
     async def __load_coverage_summaries(self, main_task_id: str) -> dict:
         """
@@ -477,12 +722,32 @@ class MapTopicsWithContent(Workflow):
                 for (source_hash, page_number) in sorted(source_page_keys)
             ]
 
+            # The web is a per-topic FALLBACK, not a supplement. It is consulted
+            # only where the user's own documents said nothing about this topic.
+            #
+            # Merging it in unconditionally meant a user who uploaded a textbook
+            # AND left a web source enabled got scraped pages mixed into topics
+            # their book covers perfectly well — the retrieved passages and the
+            # web text carry equal weight downstream, so the document they chose
+            # was quietly diluted by material they did not.
+            #
+            # The decision is per topic rather than per run because a syllabus is
+            # rarely covered evenly: a book that covers eight of ten units should
+            # still get web help on the two it skips, and nowhere else.
+            b_documents_covered_topic = primary_chunk_count > 0
             web_chunk_count = 0
-            if enabled_web_source_types:
+
+            if enabled_web_source_types and not b_documents_covered_topic:
                 web_chunks = await self.__try_load_web_chunks(main_task_id, hierarchy + [topic_str])
                 content_chunks.extend(web_chunks)
                 web_chunk_count = len(web_chunks)
 
+            # Deliberately still keyed on enabled_web_source_types rather than on
+            # whether web chunks were actually loaded above. Description-only mode
+            # produces no primary chunks at all, and its downstream workers re-read
+            # the web cache themselves from the topic file — so an empty-chunk topic
+            # must still be written when web sources are on, or that mode generates
+            # nothing at all.
             if not content_chunks and not enabled_web_source_types:
                 continue
 

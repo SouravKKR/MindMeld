@@ -13,6 +13,7 @@ import SyncProgressReporter from "./SyncProgressReporter.js";
 import SyncTransport from "./SyncTransport.js";
 import SyncBlockingDialog from "../../../CommonComponents/SyncBlockingDialog.js";
 import TermsAndConditionsManager from "../TermsAndConditionsManager.js";
+import AgeVerificationManager from "../AgeVerificationManager.js";
 
 
 /**
@@ -376,6 +377,12 @@ class SyncOrchestrator
         // instantly once acceptance has settled, including for returning
         // users who already accepted.
         await TermsAndConditionsManager.whenLegalSettled();
+
+        // The same gate for the same reason, one step later: while the age
+        // declaration or a Child's guardian consent is outstanding the server
+        // 403s every sync endpoint (AGE_CONSENT_REQUIRED), and the blocking
+        // sync modal would stack on top of the age modal and trap the user.
+        await AgeVerificationManager.whenAgeSettled();
 
         if (!Deck.getRoot())
         {
@@ -1187,6 +1194,7 @@ class SyncOrchestrator
         // non-dismissible blocking modal, so it must never run while the
         // legal modal is still pending.
         await TermsAndConditionsManager.whenLegalSettled();
+        await AgeVerificationManager.whenAgeSettled();
 
         const bDiscardPendingChanges = options.bDiscardPendingChanges === true;
 

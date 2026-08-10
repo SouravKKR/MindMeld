@@ -117,6 +117,12 @@
         {
             "datatype": "boolean",
             "defaultValue": false
+        },
+        "referenceSources":
+        {
+            "datatype": "array<class:ExtractableInformationSource>",
+            "defaultValue": [],
+            "classRelativePath": "Globals/Classes/Decorators"
         }
     },
     "extends": 

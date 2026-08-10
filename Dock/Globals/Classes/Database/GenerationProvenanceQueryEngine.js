@@ -62,6 +62,15 @@ class GenerationProvenanceQueryEngine
             deckName: provenanceDetails.deckName || null,
             generatedByUserId: provenanceDetails.generatedByUserId || null,
 
+            // The organization this run was generated for, null when it was a
+            // personal run. Recorded because the terms of service make an
+            // organization answerable for the intellectual-property clearance of
+            // what is generated under it, and a record that cannot name the
+            // answerable party does not support that term. Null on every record
+            // written before this field existed, which reads correctly as
+            // "personal" — organization-scoped generation did not exist then.
+            organizationId: provenanceDetails.organizationId || null,
+
             // The decks this run created beneath deckId. deckId is the deck the
             // run was launched into and the deck that gets sold; this is what the
             // run actually added to it, which is the part a reader needs when the
@@ -87,6 +96,13 @@ class GenerationProvenanceQueryEngine
             // editing these.
             verification: provenanceDetails.verification || null,
             coverageReconciliation: provenanceDetails.coverageReconciliation || null,
+
+            // Which basis produced each topic — independent creation, or a
+            // declared licence over a supplied document — and, for the latter,
+            // the passages that backed it. Null on a run that admitted no
+            // content source, which reads correctly as "all model knowledge":
+            // that was the only possibility when those runs were recorded.
+            sourceGroundedContent: provenanceDetails.sourceGroundedContent || null,
 
             // Publication state. Written once at publish time by recordPublication.
             publishedByUserId: null,

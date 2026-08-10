@@ -1,6 +1,10 @@
 import { questionTypes } from "../../../Globals/Enumerations/QuestionTypes.js";
 import { sectionQuestionCountModes } from "../../../Globals/Enumerations/SectionQuestionCountModes.js";
+import { sectionMarksModes } from "../../../Globals/Enumerations/SectionMarksModes.js";
 import { enumerationToTitleCase } from "../../../Globals/UtilityFunctions/EnumerationToTitleCase.js";
+import MockTestSectionGeometry from "../../../Globals/Classes/MockTestSectionGeometry.js";
+import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
+import SettingsInfoButton from "./SettingsInfoButton.js";
 
 
 /**
@@ -11,31 +15,41 @@ import { enumerationToTitleCase } from "../../../Globals/UtilityFunctions/Enumer
  *   1. Paper-default marking rule       (correct / wrong / unattempted / partial)
  *   2. Per-question-type marking overrides (optional)
  *   3. Section structure                 (ordered list of sections — each carries
- *                                         name, question types, question count,
- *                                         total marks, optional marking-rule
- *                                         overrides)
+ *                                         name, question types, how many questions,
+ *                                         how they are marked, and optional
+ *                                         marking-rule overrides)
  *
  * Sections are the primary structural concept for templated papers: JEE
  * Advanced's three sections, GATE's 1-mark/2-mark tiers, CBSE's mark-band
- * sections, Engineering papers' unit-based sections. The section list is
- * always visible (no longer collapsed behind an "advanced" toggle) — every
- * exam-prep template seeds it, and the user is expected to configure it
- * directly for custom papers.
+ * sections, Engineering papers' unit-based sections.
  *
- * Blank number inputs are treated as "inherit from parent tier" — the
- * corresponding marking-rule key is omitted from the override entry so a
- * future scoring engine resolves it via the lookup hierarchy.
+ * A section describes three quantities — how many questions, what each is
+ * worth, and what the section totals — but the user only ever enters two of
+ * them. Which two is the marks mode's job, and the third is DERIVED and shown
+ * read-only. That is what makes "questions worth 4-10 marks, some number of
+ * them summing to 20" expressible, and it is also why nothing in this editor
+ * can be edited into disagreeing with itself. All of that arithmetic lives in
+ * MockTestSectionGeometry, which Dock re-checks and the assembler realises.
+ *
+ * Blank marking-rule inputs are treated as "inherit from parent tier" — the
+ * corresponding key is omitted from the override entry so the scoring engine
+ * resolves it through the section -> type -> paper hierarchy.
  *
  * The component is bound to a MockTestGenerationSettings instance via
  * setSettings(). Every change in the DOM writes back through the settings
- * setters; template-driven changes call rebuildFromSettings() to pull
+ * setters and raises ON_SECTION_STRUCTURE_CHANGED so the surrounding mock-test
+ * panel can react; template-driven changes call rebuildFromSettings() to pull
  * fresh values into the DOM.
  */
 class MockTestSectionStructureFields extends HTMLElement
 {
     static tagName = "mock-test-section-structure-fields";
 
-    static SECTION_HELP_TEXT = "Sections control how questions are grouped, counted, and scored. Templates pre-fill these for known exams; customize freely for your own paper layout.";
+    static SECTION_HELP_TEXT = "Sections are the parts your paper is divided into. Each one holds certain question types, a number of questions, and its own marking. Add none and the paper is grouped automatically.";
+
+    static DEFAULT_MARKS_PER_QUESTION = 4;
+
+    static DEFAULT_QUESTION_COUNT = 10;
 
     #settings = null;
 
@@ -63,6 +77,26 @@ class MockTestSectionStructureFields extends HTMLElement
         this.#renderTypeOverrideRows();
         this.#renderSectionRows();
         this.#updateSectionSummary();
+    }
+
+    /**
+     * The first thing wrong with the configured sections, phrased for the user,
+     * or null when everything is coherent. MockTestGenerationFields.validate()
+     * blocks submission on this, and Dock re-derives the same answer from the
+     * submitted payload.
+     */
+    getValidationFailure()
+    {
+        if (!this.#settings)
+        {
+            return null;
+        }
+
+        return MockTestSectionGeometry.describeStructureValidationFailure(
+            this.#settings.getSectionStructure() || [],
+            this.#settings.getNumQuestionsPerTest(),
+            this.#bIsPaperQuestionCountManual()
+        );
     }
 
     connectedCallback()
@@ -101,7 +135,10 @@ class MockTestSectionStructureFields extends HTMLElement
                 </div>
 
                 <div class="mock-test-marking-subgroup mock-test-section-structure-subgroup">
-                    <div class="mock-test-marking-subgroup-title">Section structure</div>
+                    <div class="mock-test-marking-subgroup-title">
+                        <span>Section structure</span>
+                        <settings-info-button topic="sectionStructure"></settings-info-button>
+                    </div>
                     <div class="mock-test-marking-section-hint">${MockTestSectionStructureFields.SECTION_HELP_TEXT}</div>
                     <div class="mock-test-marking-section-override-list"></div>
                     <div class="mock-test-section-structure-summary" aria-live="polite"></div>
@@ -118,6 +155,28 @@ class MockTestSectionStructureFields extends HTMLElement
         {
             this.rebuildFromSettings();
         }
+    }
+
+    /**
+     * The paper's own question count only has to be reconciled with the
+     * sections when the user pinned it themselves. The enumeration is not
+     * imported here — MockTestGenerationFields owns that mapping and passes the
+     * resolved flag down through the settings object it shares with us.
+     */
+    #bIsPaperQuestionCountManual()
+    {
+        return this.dataset.paperQuestionCountManual === "true";
+    }
+
+    setPaperQuestionCountManual(bIsManual)
+    {
+        this.dataset.paperQuestionCountManual = bIsManual ? "true" : "false";
+        this.#updateSectionSummary();
+    }
+
+    #notifyStructureChanged()
+    {
+        this.dispatchEvent(new CustomEvent(AutomaticGenerationEvents.ON_SECTION_STRUCTURE_CHANGED, { bubbles: true }));
     }
 
     #bindDefaultInputs()
@@ -177,17 +236,34 @@ class MockTestSectionStructureFields extends HTMLElement
                 return;
             }
             const sections = [...(this.#settings.getSectionStructure() || [])];
+
+            // A new section starts complete rather than blank. An empty section
+            // is invalid by every rule below, so seeding zeroes would greet the
+            // user with an error they did not cause; these defaults describe a
+            // small, valid 10-question section they can then edit.
             sections.push({
-                name: "",
+                name: `Section ${sections.length + 1}`,
                 questionTypes: [],
                 questionCountMode: sectionQuestionCountModes.FIXED,
-                questionCount: 0,
-                totalMarks: 0
+                questionCount: MockTestSectionStructureFields.DEFAULT_QUESTION_COUNT,
+                marksMode: sectionMarksModes.UNIFORM_PER_QUESTION,
+                marksPerQuestion: this.#resolveDefaultMarksPerQuestion(),
+                totalMarks: MockTestSectionStructureFields.DEFAULT_QUESTION_COUNT * this.#resolveDefaultMarksPerQuestion()
             });
+
             this.#settings.setSectionStructure(sections);
             this.#renderSectionRows();
             this.#updateSectionSummary();
+            this.#notifyStructureChanged();
         });
+    }
+
+    #resolveDefaultMarksPerQuestion()
+    {
+        const paperCorrectMarks = this.#settings ? this.#settings.getCorrectMarks() : 0;
+        return (Number.isFinite(paperCorrectMarks) && paperCorrectMarks > 0)
+            ? paperCorrectMarks
+            : MockTestSectionStructureFields.DEFAULT_MARKS_PER_QUESTION;
     }
 
     #renderTypeOverrideRows()
@@ -215,11 +291,23 @@ class MockTestSectionStructureFields extends HTMLElement
         rowElement.innerHTML =
         `
             <select class="mock-test-marking-override-type-select">${typeSelectHtml}</select>
-            <input type="number" step="0.01" class="mock-test-marking-override-correct-input" placeholder="correct" value="${MockTestSectionStructureFields.#numberToInputValue(ruleOverride.correctMarks)}">
-            <input type="number" step="0.01" class="mock-test-marking-override-wrong-input" placeholder="wrong" value="${MockTestSectionStructureFields.#numberToInputValue(ruleOverride.wrongMarks)}">
-            <input type="number" step="0.01" class="mock-test-marking-override-unattempted-input" placeholder="unattempted" value="${MockTestSectionStructureFields.#numberToInputValue(ruleOverride.unattemptedMarks)}">
-            <input type="number" step="0.01" class="mock-test-marking-override-partial-input" placeholder="partial" value="${MockTestSectionStructureFields.#numberToInputValue(ruleOverride.partialMarks)}">
-            <button type="button" class="mock-test-marking-override-remove-button" title="Remove">×</button>
+            <label class="mock-test-marking-override-field">
+                <span>Correct</span>
+                <input type="number" step="0.01" class="mock-test-marking-override-correct-input" value="${MockTestSectionStructureFields.#numberToInputValue(ruleOverride.correctMarks)}">
+            </label>
+            <label class="mock-test-marking-override-field">
+                <span>Wrong</span>
+                <input type="number" step="0.01" class="mock-test-marking-override-wrong-input" value="${MockTestSectionStructureFields.#numberToInputValue(ruleOverride.wrongMarks)}">
+            </label>
+            <label class="mock-test-marking-override-field">
+                <span>Unattempted</span>
+                <input type="number" step="0.01" class="mock-test-marking-override-unattempted-input" value="${MockTestSectionStructureFields.#numberToInputValue(ruleOverride.unattemptedMarks)}">
+            </label>
+            <label class="mock-test-marking-override-field">
+                <span>Partial</span>
+                <input type="number" step="0.01" class="mock-test-marking-override-partial-input" value="${MockTestSectionStructureFields.#numberToInputValue(ruleOverride.partialMarks)}">
+            </label>
+            <button type="button" class="mock-test-marking-override-remove-button" title="Remove">&times;</button>
         `;
 
         const typeSelect = rowElement.querySelector(".mock-test-marking-override-type-select");
@@ -294,133 +382,195 @@ class MockTestSectionStructureFields extends HTMLElement
         const typeCheckboxesHtml = Object.keys(questionTypes)
             .map((typeKey) =>
             {
-                const isChecked = currentTypeKeys.includes(typeKey);
+                const bIsChecked = currentTypeKeys.includes(typeKey);
                 return `
                     <label class="mock-test-marking-section-type-checkbox">
-                        <input type="checkbox" value="${typeKey}"${isChecked ? " checked" : ""}>
-                        ${enumerationToTitleCase(typeKey)}
+                        <input type="checkbox" value="${typeKey}"${bIsChecked ? " checked" : ""}>
+                        <span>${enumerationToTitleCase(typeKey)}</span>
                     </label>
                 `;
             })
             .join("");
 
-        const resolvedMode = MockTestSectionStructureFields.#resolveModeValue(sectionEntry);
-        const isRangeMode = resolvedMode === sectionQuestionCountModes.RANGE;
+        const resolvedCountMode = MockTestSectionGeometry.resolveQuestionCountMode(sectionEntry);
+        const resolvedMarksMode = MockTestSectionGeometry.resolveMarksMode(sectionEntry);
+        const marksBand = MockTestSectionGeometry.resolveMarksPerQuestionBand(sectionEntry);
+
+        // Legacy entries carry only questionCount + totalMarks; the geometry
+        // back-derives what each question was worth so the field is populated
+        // rather than blank on a template saved before marks modes existed.
+        const resolvedMarksPerQuestion = MockTestSectionGeometry.resolveMarksPerQuestion(sectionEntry, this.#resolveDefaultMarksPerQuestion());
+
+        const bIsMarksRangeMode = resolvedMarksMode === sectionMarksModes.RANGE_PER_QUESTION;
+        const bIsCountRangeMode = resolvedCountMode === sectionQuestionCountModes.RANGE;
 
         rowElement.innerHTML =
         `
             <div class="mock-test-marking-section-row-head">
                 <input type="text" class="mock-test-marking-section-name-input" placeholder="Section name (e.g. Unit 1, Section B Numerical)" value="${MockTestSectionStructureFields.#escapeHtml(sectionEntry.name || "")}">
-                <button type="button" class="mock-test-marking-section-remove-button" title="Remove">×</button>
+                <button type="button" class="mock-test-marking-section-remove-button" title="Remove this section">&times;</button>
             </div>
-            <div class="mock-test-marking-section-row-types">
-                ${typeCheckboxesHtml}
+
+            <div class="mock-test-section-group">
+                <div class="mock-test-section-group-title">
+                    <span>Question types</span>
+                    <settings-info-button topic="sectionQuestionTypes"></settings-info-button>
+                    <span class="mock-test-section-group-note">Tick none to allow any type</span>
+                </div>
+                <div class="mock-test-marking-section-row-types">
+                    ${typeCheckboxesHtml}
+                </div>
             </div>
-            <div class="mock-test-section-row-counts">
-                <label class="mock-test-section-row-count-label">
-                    <span>Mode</span>
-                    <select class="mock-test-section-mode-select">
-                        <option value="${sectionQuestionCountModes.FIXED}"${resolvedMode === sectionQuestionCountModes.FIXED ? " selected" : ""}>Fixed</option>
-                        <option value="${sectionQuestionCountModes.RANGE}"${resolvedMode === sectionQuestionCountModes.RANGE ? " selected" : ""}>Range</option>
-                    </select>
-                </label>
-                <label class="mock-test-section-row-count-label">
-                    <span>Total marks</span>
-                    <input type="number" min="0" step="0.01" class="mock-test-section-total-marks-input" placeholder="marks" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.totalMarks)}">
-                </label>
-            </div>
-            <div class="mock-test-section-row-fixed-count" ${isRangeMode ? "hidden" : ""}>
-                <label class="mock-test-section-row-count-label">
+
+            <div class="mock-test-section-group mock-test-section-group-questions" ${bIsMarksRangeMode ? "hidden" : ""}>
+                <div class="mock-test-section-group-title">
                     <span>Questions</span>
-                    <input type="number" min="0" step="1" class="mock-test-section-question-count-input" placeholder="count" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.questionCount)}">
-                </label>
-            </div>
-            <div class="mock-test-section-row-range" ${isRangeMode ? "" : "hidden"}>
-                <div class="mock-test-section-row-range-bounds">
-                    <label class="mock-test-section-row-count-label">
-                        <span>Min</span>
-                        <input type="number" min="0" step="1" class="mock-test-section-question-count-min-input" placeholder="min" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.questionCountMin)}">
+                    <settings-info-button topic="sectionQuestionCount"></settings-info-button>
+                </div>
+                <div class="mock-test-section-field-grid">
+                    <label class="mock-test-section-field">
+                        <span>How many</span>
+                        <select class="mock-test-section-count-mode-select">
+                            <option value="${sectionQuestionCountModes.FIXED}"${bIsCountRangeMode ? "" : " selected"}>Exactly</option>
+                            <option value="${sectionQuestionCountModes.RANGE}"${bIsCountRangeMode ? " selected" : ""}>Between</option>
+                        </select>
                     </label>
-                    <label class="mock-test-section-row-count-label">
-                        <span>Max</span>
-                        <input type="number" min="0" step="1" class="mock-test-section-question-count-max-input" placeholder="max" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.questionCountMax)}">
+                    <label class="mock-test-section-field mock-test-section-field-fixed-count" ${bIsCountRangeMode ? "hidden" : ""}>
+                        <span>Questions</span>
+                        <input type="number" min="1" step="1" class="mock-test-section-question-count-input" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.questionCount)}">
+                    </label>
+                    <label class="mock-test-section-field mock-test-section-field-range-count" ${bIsCountRangeMode ? "" : "hidden"}>
+                        <span>Fewest</span>
+                        <input type="number" min="1" step="1" class="mock-test-section-question-count-min-input" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.questionCountMin)}">
+                    </label>
+                    <label class="mock-test-section-field mock-test-section-field-range-count" ${bIsCountRangeMode ? "" : "hidden"}>
+                        <span>Most</span>
+                        <input type="number" min="1" step="1" class="mock-test-section-question-count-max-input" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.questionCountMax)}">
                     </label>
                 </div>
-                <details class="mock-test-section-row-weights-panel">
-                    <summary>Weights (advanced)</summary>
-                    <div class="mock-test-section-row-weights-grid"></div>
-                </details>
             </div>
-            <div class="mock-test-marking-section-row-rule">
-                <input type="number" step="0.01" class="mock-test-marking-section-correct-input" placeholder="correct" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.correctMarks)}">
-                <input type="number" step="0.01" class="mock-test-marking-section-wrong-input" placeholder="wrong" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.wrongMarks)}">
-                <input type="number" step="0.01" class="mock-test-marking-section-unattempted-input" placeholder="unattempted" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.unattemptedMarks)}">
-                <input type="number" step="0.01" class="mock-test-marking-section-partial-input" placeholder="partial" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.partialMarks)}">
+
+            <div class="mock-test-section-group">
+                <div class="mock-test-section-group-title">
+                    <span>Marks</span>
+                    <settings-info-button topic="sectionMarksMode"></settings-info-button>
+                </div>
+                <div class="mock-test-section-field-grid">
+                    <label class="mock-test-section-field mock-test-section-field-wide">
+                        <span>Each question is worth</span>
+                        <select class="mock-test-section-marks-mode-select">
+                            <option value="${sectionMarksModes.UNIFORM_PER_QUESTION}"${bIsMarksRangeMode ? "" : " selected"}>The same marks</option>
+                            <option value="${sectionMarksModes.RANGE_PER_QUESTION}"${bIsMarksRangeMode ? " selected" : ""}>A range of marks</option>
+                        </select>
+                    </label>
+                    <label class="mock-test-section-field mock-test-section-field-uniform-marks" ${bIsMarksRangeMode ? "hidden" : ""}>
+                        <span>Marks each</span>
+                        <input type="number" min="0" step="0.01" class="mock-test-section-marks-per-question-input" value="${MockTestSectionStructureFields.#numberToInputValue(resolvedMarksPerQuestion)}">
+                    </label>
+                    <label class="mock-test-section-field mock-test-section-field-range-marks" ${bIsMarksRangeMode ? "" : "hidden"}>
+                        <span>Least marks</span>
+                        <input type="number" min="0" step="0.01" class="mock-test-section-marks-per-question-min-input" value="${MockTestSectionStructureFields.#numberToInputValue(marksBand.minimum)}">
+                    </label>
+                    <label class="mock-test-section-field mock-test-section-field-range-marks" ${bIsMarksRangeMode ? "" : "hidden"}>
+                        <span>Most marks</span>
+                        <input type="number" min="0" step="0.01" class="mock-test-section-marks-per-question-max-input" value="${MockTestSectionStructureFields.#numberToInputValue(marksBand.maximum)}">
+                    </label>
+                    <label class="mock-test-section-field mock-test-section-field-total-marks" ${bIsMarksRangeMode ? "" : "hidden"}>
+                        <span>Section total</span>
+                        <input type="number" min="0" step="0.01" class="mock-test-section-total-marks-input" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.totalMarks)}">
+                    </label>
+                </div>
+                <div class="mock-test-section-derived-line" aria-live="polite"></div>
+            </div>
+
+            <div class="mock-test-section-group">
+                <div class="mock-test-section-group-title">
+                    <span>Scoring override</span>
+                    <settings-info-button topic="sectionScoringOverride"></settings-info-button>
+                    <span class="mock-test-section-group-note">Leave blank to use the paper default</span>
+                </div>
+                <div class="mock-test-marking-section-row-rule">
+                    <label class="mock-test-section-field">
+                        <span>Correct</span>
+                        <input type="number" step="0.01" class="mock-test-marking-section-correct-input" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.correctMarks)}">
+                    </label>
+                    <label class="mock-test-section-field">
+                        <span>Wrong</span>
+                        <input type="number" step="0.01" class="mock-test-marking-section-wrong-input" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.wrongMarks)}">
+                    </label>
+                    <label class="mock-test-section-field">
+                        <span>Unattempted</span>
+                        <input type="number" step="0.01" class="mock-test-marking-section-unattempted-input" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.unattemptedMarks)}">
+                    </label>
+                    <label class="mock-test-section-field">
+                        <span>Partial</span>
+                        <input type="number" step="0.01" class="mock-test-marking-section-partial-input" value="${MockTestSectionStructureFields.#numberToInputValue(sectionEntry.partialMarks)}">
+                    </label>
+                </div>
             </div>
         `;
 
         const nameInput = rowElement.querySelector(".mock-test-marking-section-name-input");
         const removeButton = rowElement.querySelector(".mock-test-marking-section-remove-button");
         const typeCheckboxes = Array.from(rowElement.querySelectorAll(".mock-test-marking-section-row-types input[type='checkbox']"));
-        const modeSelect = rowElement.querySelector(".mock-test-section-mode-select");
-        const fixedCountWrapper = rowElement.querySelector(".mock-test-section-row-fixed-count");
-        const rangeWrapper = rowElement.querySelector(".mock-test-section-row-range");
+        const questionsGroup = rowElement.querySelector(".mock-test-section-group-questions");
+        const countModeSelect = rowElement.querySelector(".mock-test-section-count-mode-select");
+        const fixedCountField = rowElement.querySelector(".mock-test-section-field-fixed-count");
+        const rangeCountFields = Array.from(rowElement.querySelectorAll(".mock-test-section-field-range-count"));
         const questionCountInput = rowElement.querySelector(".mock-test-section-question-count-input");
         const questionCountMinInput = rowElement.querySelector(".mock-test-section-question-count-min-input");
         const questionCountMaxInput = rowElement.querySelector(".mock-test-section-question-count-max-input");
-        const weightsGrid = rowElement.querySelector(".mock-test-section-row-weights-grid");
+        const marksModeSelect = rowElement.querySelector(".mock-test-section-marks-mode-select");
+        const uniformMarksField = rowElement.querySelector(".mock-test-section-field-uniform-marks");
+        const rangeMarksFields = Array.from(rowElement.querySelectorAll(".mock-test-section-field-range-marks"));
+        const totalMarksField = rowElement.querySelector(".mock-test-section-field-total-marks");
+        const marksPerQuestionInput = rowElement.querySelector(".mock-test-section-marks-per-question-input");
+        const marksPerQuestionMinInput = rowElement.querySelector(".mock-test-section-marks-per-question-min-input");
+        const marksPerQuestionMaxInput = rowElement.querySelector(".mock-test-section-marks-per-question-max-input");
         const totalMarksInput = rowElement.querySelector(".mock-test-section-total-marks-input");
+        const derivedLine = rowElement.querySelector(".mock-test-section-derived-line");
         const correctInput = rowElement.querySelector(".mock-test-marking-section-correct-input");
         const wrongInput = rowElement.querySelector(".mock-test-marking-section-wrong-input");
         const unattemptedInput = rowElement.querySelector(".mock-test-marking-section-unattempted-input");
         const partialInput = rowElement.querySelector(".mock-test-marking-section-partial-input");
 
-        let currentWeights = MockTestSectionStructureFields.#cloneWeights(sectionEntry.questionCountWeights);
+        // Sampling weights are no longer editable — the disclosure panel that
+        // exposed them rendered empty for most of its life and asked users to
+        // reason about something they had no way to judge. Templates that seed
+        // them still work: the loaded value is carried through every write so
+        // the assembler keeps sampling exactly as the template intended.
+        const seededQuestionCountWeights = MockTestSectionStructureFields.#cloneWeights(sectionEntry.questionCountWeights);
 
-        const renderWeightsGrid = () =>
+        const applyModeVisibility = () =>
         {
-            const minimumCount = MockTestSectionStructureFields.#parseIntOrZero(questionCountMinInput.value);
-            const maximumCount = MockTestSectionStructureFields.#parseIntOrZero(questionCountMaxInput.value);
+            const bMarksRangeSelected = parseInt(marksModeSelect.value, 10) === sectionMarksModes.RANGE_PER_QUESTION;
+            const bCountRangeSelected = parseInt(countModeSelect.value, 10) === sectionQuestionCountModes.RANGE;
 
-            weightsGrid.innerHTML = "";
-
-            if (maximumCount < minimumCount)
+            // In a marks-driven section the question count is not a setting at
+            // all — it is an outcome — so the entire group goes away rather
+            // than sitting there disabled and inviting clicks.
+            questionsGroup.hidden = bMarksRangeSelected;
+            fixedCountField.hidden = bCountRangeSelected;
+            for (const rangeCountField of rangeCountFields)
             {
-                return;
+                rangeCountField.hidden = !bCountRangeSelected;
             }
 
-            for (let candidateValue = minimumCount; candidateValue <= maximumCount; candidateValue++)
+            uniformMarksField.hidden = bMarksRangeSelected;
+            for (const rangeMarksField of rangeMarksFields)
             {
-                const existingWeight = currentWeights[String(candidateValue)];
-                const weightToShow = (typeof existingWeight === "number" && Number.isFinite(existingWeight)) ? existingWeight : 1;
-
-                const cellElement = document.createElement("label");
-                cellElement.className = "mock-test-section-row-weight-cell";
-                cellElement.innerHTML =
-                `
-                    <span>${candidateValue}</span>
-                    <input type="number" min="0" step="0.1" class="mock-test-section-row-weight-input" data-candidate-value="${candidateValue}" value="${weightToShow}">
-                `;
-                weightsGrid.appendChild(cellElement);
+                rangeMarksField.hidden = !bMarksRangeSelected;
             }
+            totalMarksField.hidden = !bMarksRangeSelected;
+        };
 
-            for (const weightInput of weightsGrid.querySelectorAll(".mock-test-section-row-weight-input"))
-            {
-                weightInput.addEventListener("input", () =>
-                {
-                    const candidateValue = weightInput.dataset.candidateValue;
-                    const parsedWeight = parseFloat(weightInput.value);
-                    if (Number.isFinite(parsedWeight) && parsedWeight >= 0)
-                    {
-                        currentWeights[candidateValue] = parsedWeight;
-                    }
-                    else
-                    {
-                        delete currentWeights[candidateValue];
-                    }
-                    writeBack();
-                });
-            }
+        const updateDerivedLine = () =>
+        {
+            const currentEntry = this.#readSectionEntryFromRow(rowElement, seededQuestionCountWeights);
+            derivedLine.textContent = MockTestSectionStructureFields.#describeDerivedGeometry(
+                currentEntry,
+                this.#resolveDefaultMarksPerQuestion()
+            );
         };
 
         const writeBack = () =>
@@ -435,47 +585,23 @@ class MockTestSectionStructureFields extends HTMLElement
                 return;
             }
 
-            const selectedMode = parseInt(modeSelect.value, 10);
-            const isInRangeMode = selectedMode === sectionQuestionCountModes.RANGE;
-
-            const updatedEntry = {
-                name: nameInput.value,
-                questionTypes: typeCheckboxes.filter(checkbox => checkbox.checked).map(checkbox => checkbox.value),
-                questionCountMode: selectedMode,
-                totalMarks: MockTestSectionStructureFields.#parseFloatOrDefault(totalMarksInput.value, 0)
-            };
-
-            if (isInRangeMode)
-            {
-                updatedEntry.questionCountMin = MockTestSectionStructureFields.#parseIntOrZero(questionCountMinInput.value);
-                updatedEntry.questionCountMax = MockTestSectionStructureFields.#parseIntOrZero(questionCountMaxInput.value);
-                updatedEntry.questionCountWeights = MockTestSectionStructureFields.#cloneWeights(currentWeights);
-            }
-            else
-            {
-                updatedEntry.questionCount = MockTestSectionStructureFields.#parseIntOrZero(questionCountInput.value);
-            }
-
-            MockTestSectionStructureFields.#assignFloatIfPresent(updatedEntry, "correctMarks", correctInput.value);
-            MockTestSectionStructureFields.#assignFloatIfPresent(updatedEntry, "wrongMarks", wrongInput.value);
-            MockTestSectionStructureFields.#assignFloatIfPresent(updatedEntry, "unattemptedMarks", unattemptedInput.value);
-            MockTestSectionStructureFields.#assignFloatIfPresent(updatedEntry, "partialMarks", partialInput.value);
-
-            previousSections[sectionIndex] = updatedEntry;
+            previousSections[sectionIndex] = this.#readSectionEntryFromRow(rowElement, seededQuestionCountWeights);
             this.#settings.setSectionStructure(previousSections);
+
+            updateDerivedLine();
             this.#updateSectionSummary();
+            this.#notifyStructureChanged();
         };
 
-        modeSelect.addEventListener("change", () =>
+        countModeSelect.addEventListener("change", () =>
         {
-            const selectedMode = parseInt(modeSelect.value, 10);
-            const isInRangeMode = selectedMode === sectionQuestionCountModes.RANGE;
-            fixedCountWrapper.hidden = isInRangeMode;
-            rangeWrapper.hidden = !isInRangeMode;
-            if (isInRangeMode)
-            {
-                renderWeightsGrid();
-            }
+            applyModeVisibility();
+            writeBack();
+        });
+
+        marksModeSelect.addEventListener("change", () =>
+        {
+            applyModeVisibility();
             writeBack();
         });
 
@@ -485,16 +611,11 @@ class MockTestSectionStructureFields extends HTMLElement
             checkbox.addEventListener("change", writeBack);
         }
         questionCountInput.addEventListener("input", writeBack);
-        questionCountMinInput.addEventListener("input", () =>
-        {
-            renderWeightsGrid();
-            writeBack();
-        });
-        questionCountMaxInput.addEventListener("input", () =>
-        {
-            renderWeightsGrid();
-            writeBack();
-        });
+        questionCountMinInput.addEventListener("input", writeBack);
+        questionCountMaxInput.addEventListener("input", writeBack);
+        marksPerQuestionInput.addEventListener("input", writeBack);
+        marksPerQuestionMinInput.addEventListener("input", writeBack);
+        marksPerQuestionMaxInput.addEventListener("input", writeBack);
         totalMarksInput.addEventListener("input", writeBack);
         correctInput.addEventListener("input", writeBack);
         wrongInput.addEventListener("input", writeBack);
@@ -512,14 +633,136 @@ class MockTestSectionStructureFields extends HTMLElement
             this.#settings.setSectionStructure(previousSections);
             this.#renderSectionRows();
             this.#updateSectionSummary();
+            this.#notifyStructureChanged();
         });
 
-        if (isRangeMode)
-        {
-            renderWeightsGrid();
-        }
+        applyModeVisibility();
+        updateDerivedLine();
 
         return rowElement;
+    }
+
+    /**
+     * Reads a section card's DOM back into a settings entry.
+     *
+     * Only the fields that belong to the selected modes are emitted, so an
+     * entry never carries a stale count from before the user switched to a
+     * marks budget — a leftover key would be read as authoritative by the
+     * assembler, which cannot see which controls were on screen.
+     */
+    #readSectionEntryFromRow(rowElement, seededQuestionCountWeights)
+    {
+        const selectedCountMode = parseInt(rowElement.querySelector(".mock-test-section-count-mode-select").value, 10);
+        const selectedMarksMode = parseInt(rowElement.querySelector(".mock-test-section-marks-mode-select").value, 10);
+        const bIsMarksRangeMode = selectedMarksMode === sectionMarksModes.RANGE_PER_QUESTION;
+        const bIsCountRangeMode = selectedCountMode === sectionQuestionCountModes.RANGE;
+
+        const updatedEntry = {
+            name: rowElement.querySelector(".mock-test-marking-section-name-input").value,
+            questionTypes: Array.from(rowElement.querySelectorAll(".mock-test-marking-section-row-types input[type='checkbox']"))
+                .filter(checkbox => checkbox.checked)
+                .map(checkbox => checkbox.value),
+            marksMode: selectedMarksMode
+        };
+
+        if (bIsMarksRangeMode)
+        {
+            updatedEntry.marksPerQuestionMin = MockTestSectionStructureFields.#parseFloatOrDefault(rowElement.querySelector(".mock-test-section-marks-per-question-min-input").value, 0);
+            updatedEntry.marksPerQuestionMax = MockTestSectionStructureFields.#parseFloatOrDefault(rowElement.querySelector(".mock-test-section-marks-per-question-max-input").value, 0);
+            updatedEntry.totalMarks = MockTestSectionStructureFields.#parseFloatOrDefault(rowElement.querySelector(".mock-test-section-total-marks-input").value, 0);
+
+            // The count band falls out of the budget, but the assembler and the
+            // scoring engine both read questionCountMode, so it is stamped to
+            // RANGE to describe what will actually happen.
+            updatedEntry.questionCountMode = sectionQuestionCountModes.RANGE;
+            const derivedCountBand = MockTestSectionGeometry.resolveQuestionCountBand(updatedEntry);
+            updatedEntry.questionCountMin = derivedCountBand.minimum;
+            updatedEntry.questionCountMax = derivedCountBand.maximum;
+        }
+        else
+        {
+            const marksPerQuestion = MockTestSectionStructureFields.#parseFloatOrDefault(rowElement.querySelector(".mock-test-section-marks-per-question-input").value, 0);
+            updatedEntry.marksPerQuestion = marksPerQuestion;
+            updatedEntry.questionCountMode = selectedCountMode;
+
+            if (bIsCountRangeMode)
+            {
+                updatedEntry.questionCountMin = MockTestSectionStructureFields.#parseIntOrZero(rowElement.querySelector(".mock-test-section-question-count-min-input").value);
+                updatedEntry.questionCountMax = MockTestSectionStructureFields.#parseIntOrZero(rowElement.querySelector(".mock-test-section-question-count-max-input").value);
+
+                if (Object.keys(seededQuestionCountWeights).length > 0)
+                {
+                    updatedEntry.questionCountWeights = MockTestSectionStructureFields.#cloneWeights(seededQuestionCountWeights);
+                }
+            }
+            else
+            {
+                updatedEntry.questionCount = MockTestSectionStructureFields.#parseIntOrZero(rowElement.querySelector(".mock-test-section-question-count-input").value);
+            }
+
+            const countBand = MockTestSectionGeometry.resolveQuestionCountBand(updatedEntry);
+            updatedEntry.totalMarks = countBand.maximum * marksPerQuestion;
+        }
+
+        MockTestSectionStructureFields.#assignFloatIfPresent(updatedEntry, "correctMarks", rowElement.querySelector(".mock-test-marking-section-correct-input").value);
+        MockTestSectionStructureFields.#assignFloatIfPresent(updatedEntry, "wrongMarks", rowElement.querySelector(".mock-test-marking-section-wrong-input").value);
+        MockTestSectionStructureFields.#assignFloatIfPresent(updatedEntry, "unattemptedMarks", rowElement.querySelector(".mock-test-marking-section-unattempted-input").value);
+        MockTestSectionStructureFields.#assignFloatIfPresent(updatedEntry, "partialMarks", rowElement.querySelector(".mock-test-marking-section-partial-input").value);
+
+        return updatedEntry;
+    }
+
+    /**
+     * The one-line "here is what that adds up to" under a section's marks
+     * group. It reports whichever quantity the user did NOT enter, which is the
+     * whole point of the two-of-three model — and says so plainly when the
+     * numbers cannot work out.
+     */
+    static #describeDerivedGeometry(sectionEntry, fallbackMarksPerQuestion)
+    {
+        if (MockTestSectionGeometry.resolveMarksMode(sectionEntry) === sectionMarksModes.RANGE_PER_QUESTION)
+        {
+            const marksBand = MockTestSectionGeometry.resolveMarksPerQuestionBand(sectionEntry);
+            const totalMarksBudget = MockTestSectionGeometry.resolveTotalMarksBudget(sectionEntry);
+
+            if (marksBand.minimum <= 0 || totalMarksBudget <= 0)
+            {
+                return "Set the marks range and the section total to see how many questions that takes.";
+            }
+
+            const countBand = MockTestSectionGeometry.resolveQuestionCountBand(sectionEntry);
+            if (countBand.minimum <= 0)
+            {
+                return `${MockTestSectionStructureFields.#formatMarks(totalMarksBudget)} marks cannot be split into questions worth `
+                    + `${MockTestSectionStructureFields.#formatMarks(marksBand.minimum)}-${MockTestSectionStructureFields.#formatMarks(marksBand.maximum)} marks each.`;
+            }
+
+            const countDescription = countBand.minimum === countBand.maximum
+                ? `${countBand.minimum} question(s)`
+                : `${countBand.minimum}-${countBand.maximum} questions`;
+
+            return `Works out to ${countDescription}, each worth `
+                + `${MockTestSectionStructureFields.#formatMarks(marksBand.minimum)}-${MockTestSectionStructureFields.#formatMarks(marksBand.maximum)} marks, `
+                + `totalling ${MockTestSectionStructureFields.#formatMarks(totalMarksBudget)}.`;
+        }
+
+        const marksPerQuestion = MockTestSectionGeometry.resolveMarksPerQuestion(sectionEntry, fallbackMarksPerQuestion);
+        const countBand = MockTestSectionGeometry.resolveQuestionCountBand(sectionEntry);
+
+        if (marksPerQuestion <= 0 || countBand.maximum <= 0)
+        {
+            return "Set the question count and the marks each to see the section total.";
+        }
+
+        const marksBand = MockTestSectionGeometry.resolveTotalMarksBand(sectionEntry, fallbackMarksPerQuestion);
+        if (marksBand.minimum === marksBand.maximum)
+        {
+            return `Section total: ${MockTestSectionStructureFields.#formatMarks(marksBand.maximum)} marks `
+                + `(${countBand.maximum} x ${MockTestSectionStructureFields.#formatMarks(marksPerQuestion)}).`;
+        }
+
+        return `Section total: ${MockTestSectionStructureFields.#formatMarks(marksBand.minimum)}-${MockTestSectionStructureFields.#formatMarks(marksBand.maximum)} marks `
+            + `(${countBand.minimum}-${countBand.maximum} questions x ${MockTestSectionStructureFields.#formatMarks(marksPerQuestion)}).`;
     }
 
     #updateSectionSummary()
@@ -538,48 +781,28 @@ class MockTestSectionStructureFields extends HTMLElement
             return;
         }
 
-        const totalQuestionsAcrossSections = sections.reduce(
-            (sum, entry) => sum + MockTestSectionStructureFields.#resolveExpectedQuestionCount(entry),
-            0
-        );
-        const totalMarksAcrossSections = sections.reduce(
-            (sum, entry) => sum + (Number.isFinite(entry?.totalMarks) ? entry.totalMarks : 0),
-            0
-        );
+        const countBand = MockTestSectionGeometry.resolveStructureQuestionCountBand(sections);
+        const marksBand = MockTestSectionGeometry.resolveStructureTotalMarksBand(sections, this.#resolveDefaultMarksPerQuestion());
 
-        const paperQuestionTarget = Number.isFinite(this.#settings.getNumQuestionsPerTest?.())
-            ? this.#settings.getNumQuestionsPerTest()
-            : null;
+        const countDescription = countBand.minimum === countBand.maximum
+            ? `${countBand.maximum}`
+            : `${countBand.minimum}-${countBand.maximum}`;
+        const marksDescription = marksBand.minimum === marksBand.maximum
+            ? MockTestSectionStructureFields.#formatMarks(marksBand.maximum)
+            : `${MockTestSectionStructureFields.#formatMarks(marksBand.minimum)}-${MockTestSectionStructureFields.#formatMarks(marksBand.maximum)}`;
 
-        let summaryText = `Total: ${totalQuestionsAcrossSections}`;
-        let bIsMismatch = false;
-        if (paperQuestionTarget !== null && paperQuestionTarget > 0)
-        {
-            summaryText += ` / ${paperQuestionTarget} questions`;
-            bIsMismatch = totalQuestionsAcrossSections !== paperQuestionTarget;
-        }
-        else
-        {
-            summaryText += ` question(s)`;
-        }
-        summaryText += ` · ${MockTestSectionStructureFields.#formatMarks(totalMarksAcrossSections)} marks across all sections`;
+        let summaryText = `${sections.length} section(s) · ${countDescription} question(s) · ${marksDescription} marks`;
+
+        const validationFailure = this.getValidationFailure();
+        const bIsMismatch = validationFailure !== null;
 
         if (bIsMismatch)
         {
-            summaryText += `  —  sections don't sum to paper total (paper questions setting is ${paperQuestionTarget})`;
+            summaryText += `  —  ${validationFailure}`;
         }
 
         summaryElement.textContent = summaryText;
         summaryElement.classList.toggle("mock-test-section-structure-summary-mismatch", bIsMismatch);
-    }
-
-    static #resolveModeValue(sectionEntry)
-    {
-        if (sectionEntry?.questionCountMode === sectionQuestionCountModes.RANGE)
-        {
-            return sectionQuestionCountModes.RANGE;
-        }
-        return sectionQuestionCountModes.FIXED;
     }
 
     static #cloneWeights(rawWeights)
@@ -597,42 +820,6 @@ class MockTestSectionStructureFields extends HTMLElement
             }
         }
         return clonedWeights;
-    }
-
-    static #resolveExpectedQuestionCount(sectionEntry)
-    {
-        if (!sectionEntry)
-        {
-            return 0;
-        }
-
-        if (sectionEntry.questionCountMode === sectionQuestionCountModes.RANGE)
-        {
-            const minimumCount = Number.isFinite(sectionEntry.questionCountMin) ? sectionEntry.questionCountMin : 0;
-            const maximumCount = Number.isFinite(sectionEntry.questionCountMax) ? sectionEntry.questionCountMax : minimumCount;
-            if (maximumCount < minimumCount)
-            {
-                return 0;
-            }
-
-            const configuredWeights = sectionEntry.questionCountWeights || {};
-            let weightedTotal = 0;
-            let weightSum = 0;
-            for (let candidateValue = minimumCount; candidateValue <= maximumCount; candidateValue++)
-            {
-                const rawWeight = configuredWeights[String(candidateValue)];
-                const candidateWeight = (typeof rawWeight === "number" && Number.isFinite(rawWeight) && rawWeight >= 0) ? rawWeight : 1;
-                weightedTotal += candidateValue * candidateWeight;
-                weightSum += candidateWeight;
-            }
-            if (weightSum === 0)
-            {
-                return Math.round((minimumCount + maximumCount) / 2);
-            }
-            return Math.round(weightedTotal / weightSum);
-        }
-
-        return Number.isFinite(sectionEntry.questionCount) ? sectionEntry.questionCount : 0;
     }
 
     static #findFirstUnusedTypeKey(currentOverrides)
@@ -674,7 +861,13 @@ class MockTestSectionStructureFields extends HTMLElement
 
     static #numberToInputValue(value)
     {
-        return typeof value === "number" && Number.isFinite(value) && value !== 0 ? String(value) : (value === 0 ? "0" : "");
+        if (typeof value !== "number" || !Number.isFinite(value))
+        {
+            return "";
+        }
+        // Back-derived marks land on values like 3.9999999999999996; the inputs
+        // step in hundredths, so anything finer is display noise.
+        return String(Math.round(value * 100) / 100);
     }
 
     static #formatMarks(value)
@@ -687,7 +880,7 @@ class MockTestSectionStructureFields extends HTMLElement
         {
             return String(value);
         }
-        return value.toFixed(2);
+        return String(Math.round(value * 100) / 100);
     }
 
     static #escapeHtml(rawString)

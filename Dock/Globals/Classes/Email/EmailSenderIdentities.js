@@ -40,6 +40,18 @@ class EmailSenderIdentities
      * reminders. The plain product name, because this is ordinary app traffic.
      */
     static NOTIFICATIONS = EmailSenderIdentities.DEFAULT;
+
+    /**
+     * Correspondence on a grievance or an intellectual-property complaint —
+     * the acknowledgment the platform owes within 24 hours, and the code that
+     * confirms a complainant's contact address.
+     *
+     * Separate from SUPPORT on purpose. The recipient is very often not a user
+     * of the product at all but a rightsholder or their agent, and the reply
+     * they are waiting on is a legal one with a deadline attached; filing it
+     * under the same name as "we fixed your bug" would bury it.
+     */
+    static GRIEVANCE = "CogniumLearn Grievance Office";
 }
 
 module.exports = EmailSenderIdentities;

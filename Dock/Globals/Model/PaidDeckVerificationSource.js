@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 
 const { sourceLicenceTypes } = require('../Enumerations/SourceLicenceTypes');
+const { sourceUsageModes } = require('../Enumerations/SourceUsageModes');
 
 class PaidDeckVerificationSource
 {
@@ -14,12 +15,14 @@ class PaidDeckVerificationSource
     #mimeType;
     #licenceType;
     #licenceNote;
+    #usageMode;
+    #sourceNote;
     #declaredByUserId;
     #attachedAt;
     #detachedAt;
     #active;
 
-    constructor({deckId = null, informationSourceId = '', name = null, sourceUrl = '', contentHash = '', storagePath = '', mimeType = '', licenceType = 0, licenceNote = '', declaredByUserId = '', attachedAt = 0, detachedAt = 0, active = true} = {})
+    constructor({deckId = null, informationSourceId = '', name = null, sourceUrl = '', contentHash = '', storagePath = '', mimeType = '', licenceType = 0, licenceNote = '', usageMode = 0, sourceNote = '', declaredByUserId = '', attachedAt = 0, detachedAt = 0, active = true} = {})
     {
         this.#id = crypto.randomUUID();
         this.setDeckId(deckId);
@@ -31,6 +34,8 @@ class PaidDeckVerificationSource
         this.setMimeType(mimeType);
         this.setLicenceType(licenceType);
         this.setLicenceNote(licenceNote);
+        this.setUsageMode(usageMode);
+        this.setSourceNote(sourceNote);
         this.setDeclaredByUserId(declaredByUserId);
         this.setAttachedAt(attachedAt);
         this.setDetachedAt(detachedAt);
@@ -208,6 +213,42 @@ class PaidDeckVerificationSource
         this.#licenceNote = value;
     }
 
+    getUsageMode()
+    {
+        return this.#usageMode;
+    }
+
+    setUsageMode(value)
+    {
+        if (value !== null)
+        {
+            const enumValues = Object.values(sourceUsageModes);
+            if (!enumValues.includes(value))
+            {
+                value = enumValues[0] ?? null;
+            }
+        }
+        this.#usageMode = value;
+    }
+
+    getSourceNote()
+    {
+        return this.#sourceNote;
+    }
+
+    setSourceNote(value)
+    {
+        if (value !== null)
+        {
+            value = String(value);
+            if (value.length > 2048)
+            {
+                value = value.slice(0, 2048);
+            }
+        }
+        this.#sourceNote = value;
+    }
+
     getDeclaredByUserId()
     {
         return this.#declaredByUserId;
@@ -297,6 +338,8 @@ class PaidDeckVerificationSource
             mimeType: this.getMimeType(),
             licenceType: this.getLicenceType() !== null ? Number(this.getLicenceType()) : null,
             licenceNote: this.getLicenceNote(),
+            usageMode: this.getUsageMode() !== null ? Number(this.getUsageMode()) : null,
+            sourceNote: this.getSourceNote(),
             declaredByUserId: this.getDeclaredByUserId(),
             attachedAt: this.getAttachedAt(),
             detachedAt: this.getDetachedAt(),
@@ -316,6 +359,8 @@ class PaidDeckVerificationSource
             mimeType: json.mimeType ?? null,
             licenceType: json.licenceType ?? null,
             licenceNote: json.licenceNote ?? null,
+            usageMode: json.usageMode ?? null,
+            sourceNote: json.sourceNote ?? null,
             declaredByUserId: json.declaredByUserId ?? null,
             attachedAt: json.attachedAt ?? null,
             detachedAt: json.detachedAt ?? null,

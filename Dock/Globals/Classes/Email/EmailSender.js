@@ -109,6 +109,84 @@ class EmailSender
         await EmailSender.send(emailMessage);
     }
 
+    /**
+     * The code that confirms the contact address on an intellectual-property
+     * complaint.
+     *
+     * Deliberately worded so it cannot be mistaken for a sign-in code. The
+     * recipient is usually not a user of the product, and a message that reads
+     * like an account login attempt would either alarm them or be dismissed as
+     * phishing — and either way the complaint stalls unconfirmed. It also says
+     * plainly that the complaint is already recorded, because the clock started
+     * when it was filed and a complainant should not believe otherwise.
+     *
+     * @param {string} toEmailAddress
+     * @param {string} sixDigitCode
+     * @returns {Promise<void>}
+     */
+    static async sendIntellectualPropertyComplaintCodeEmail(toEmailAddress, sixDigitCode)
+    {
+        const subject = "Confirm your CogniumLearn copyright complaint";
+        const plainTextBody =
+            `We've received a copyright / intellectual property complaint from this address and it is already recorded.\n\n` +
+            `To confirm it came from you, enter this code on the complaint form: ${sixDigitCode}\n\n` +
+            `This code expires in 10 minutes. This is NOT a sign-in code and it will not give anyone access to a ` +
+            `CogniumLearn account. If you did not submit a complaint, you can ignore this email and nothing further will happen.`;
+
+        const htmlBody = EmailTemplate.buildCodeEmail
+        (
+            "Confirm your copyright complaint",
+            "We've recorded a copyright / intellectual property complaint from this address. Enter this code on the complaint form to confirm that it came from you:",
+            sixDigitCode,
+            "This code expires in 10 minutes. It is not a sign-in code and grants no access to any CogniumLearn account. "
+                + "If you did not submit a complaint, you can safely ignore this email."
+        );
+
+        const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody, EmailSenderIdentities.GRIEVANCE);
+        await EmailSender.send(emailMessage);
+    }
+
+    /**
+     * The acknowledgment the platform owes a complainant, sent the moment the
+     * complaint is durable rather than on any later sweep.
+     *
+     * Clause 19.2 of the Terms commits to acknowledging within 24 hours. Sending
+     * this off the successful insert is what actually satisfies that: a job that
+     * acknowledges in arrears could only ever be late, and would be silently
+     * skipped for the one complaint whose row failed to reach a queue.
+     *
+     * The reference is quoted because it is the only handle either side has on
+     * the complaint afterwards, and the disposal date is stated outright so the
+     * commitment is on the record in the complainant's own inbox.
+     *
+     * @param {string} toEmailAddress
+     * @param {string} complaintReference
+     * @param {string} disposalDateText human-readable date the complaint will be disposed of by
+     * @returns {Promise<void>}
+     */
+    static async sendIntellectualPropertyComplaintAcknowledgmentEmail(toEmailAddress, complaintReference, disposalDateText)
+    {
+        const subject = `We've received your copyright complaint (${complaintReference})`;
+        const plainTextBody =
+            `Thank you — we've received your copyright / intellectual property complaint and recorded it.\n\n` +
+            `Your reference: ${complaintReference}\n\n` +
+            `Our Grievance Officer will review it and respond by ${disposalDateText}, within the 15 days our Terms of ` +
+            `Service commit to. If we need anything further to identify the material, we'll write to you at this address.\n\n` +
+            `Please quote your reference in any reply. You can reach the Grievance Officer directly at copyright@cogniumlabs.io.`;
+
+        const htmlBody = EmailTemplate.buildSupportTicketEmail
+        (
+            "We've received your copyright complaint",
+            "Thank you — your copyright / intellectual property complaint has been recorded and passed to our Grievance Officer.",
+            `Your reference: ${complaintReference}`,
+            `We will respond by ${disposalDateText}, within the 15 days our Terms of Service commit to.`,
+            "Please quote your reference in any reply. You can reach the Grievance Officer directly at copyright@cogniumlabs.io."
+        );
+
+        const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody, EmailSenderIdentities.GRIEVANCE);
+        await EmailSender.send(emailMessage);
+    }
+
     static async sendOrgAdminVerificationEmail(toEmailAddress, sixDigitCode, organizationName)
     {
         // Distinct subject + body from sendOtpEmail so the recipient knows

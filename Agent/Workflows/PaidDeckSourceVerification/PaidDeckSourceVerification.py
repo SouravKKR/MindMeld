@@ -18,7 +18,7 @@ from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
 from Globals.Enumerations.WebFetchReasons import WebFetchReasons
 from Globals.Utility.JoinPath import join_path
 from Globals.Utility.StripJsonMarkdown import strip_json_markdown
-from Workflows.PaidDeckSourceVerification.AdminSourceCorpus import AdminSourceCorpus
+from Globals.Classes.Generation.AdminSourceCorpus import AdminSourceCorpus
 from Workflows.Workflow import Workflow
 
 

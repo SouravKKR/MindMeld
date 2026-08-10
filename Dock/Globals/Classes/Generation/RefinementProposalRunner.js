@@ -28,6 +28,11 @@ class RefinementProposalRunner
     static TEXT_WORKER_TIMEOUT_MILLISECONDS = 120 * 1000;
     static VISUAL_WORKER_TIMEOUT_MILLISECONDS = 300 * 1000;
 
+    // The TAIL of the worker's stderr, not the head: the diagnosis is whatever
+    // it said last, and the head is import chatter. Capped so a worker having a
+    // bad day cannot push a megabyte per failure into the log store.
+    static #MAXIMUM_ATTACHED_STANDARD_ERROR_CHARACTERS = 4000;
+
     static #TEXT_WORKER_RELATIVE_PATH = ["Workflows", "RefineContent", "RefineContent.py"];
     static #VISUAL_WORKER_RELATIVE_PATH = ["Workflows", "RefineVisual", "RefineVisual.py"];
 
@@ -164,7 +169,21 @@ class RefinementProposalRunner
                     // The worker's own message, not a stack trace. It is written
                     // for the reviewer ("the redrawn diagram did not pass visual
                     // review: the angles are unlabelled") and is surfaced as-is.
-                    settle(reject, new Error(parsedOutput.error));
+                    const workerFailure = new Error(parsedOutput.error);
+
+                    // The worker's stderr carries WHY — the reply length, its
+                    // first few hundred characters, the retry chatter. It used
+                    // to be discarded on exactly this path, which is why a
+                    // recurring production failure left no evidence anywhere and
+                    // had to be diagnosed by reading the source. Attached rather
+                    // than folded into the message, so the reviewer still sees
+                    // the sentence written for them and the server log gets the
+                    // diagnosis.
+                    workerFailure.workerStandardError = stderrBuffer
+                        .trim()
+                        .slice(-RefinementProposalRunner.#MAXIMUM_ATTACHED_STANDARD_ERROR_CHARACTERS);
+
+                    settle(reject, workerFailure);
                     return;
                 }
 

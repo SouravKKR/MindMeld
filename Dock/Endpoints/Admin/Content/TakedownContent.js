@@ -2,6 +2,8 @@ const InformationSourceQueryEngine = require("../../../Globals/Classes/Database/
 const DerivedContentQueryEngine = require("../../../Globals/Classes/Database/DerivedContentQueryEngine");
 const ContentTakedownNoticeQueryEngine = require("../../../Globals/Classes/Database/ContentTakedownNoticeQueryEngine");
 const InformationSourcePurger = require("../../../Globals/Classes/Content/InformationSourcePurger");
+const EmbeddedFigurePurger = require("../../../Globals/Classes/Content/EmbeddedFigurePurger");
+const TakenDownFigureGuard = require("../../../Globals/Classes/Content/TakenDownFigureGuard");
 const ErrorCodes = require("../../../Globals/Constants/ErrorCodes");
 const { httpStatus } = require("../../../Globals/Enumerations/HttpStatus");
 
@@ -28,6 +30,15 @@ const { httpStatus } = require("../../../Globals/Enumerations/HttpStatus");
  * explicitly, and `contentRemoved` is only true when every one of them was
  * deleted — a notice register that records surviving content as removed is
  * worse than one that records the removal as partial.
+ *
+ * The removal reaches the GENERATED content too. Figures cropped from the
+ * document are embedded as base64 inside study material bodies and card faces,
+ * which are separate entities that survive the deletion of everything else and
+ * have already been synced to devices. Those are stripped and the entities
+ * republished, so the removal propagates on the next sync. This is reported
+ * separately in both the dry run and the outcome, because rewriting live study
+ * material is a bigger intervention than deleting an upload the user may have
+ * forgotten, and an operator should see it coming.
  *
  * `dryRun: true` reports exactly what would be removed and changes nothing.
  * Operators should run it first — a takedown is irreversible, and the counts
@@ -86,11 +97,21 @@ async function takedownContent(request, response)
     {
         const matchingSources = await InformationSourceQueryEngine.getInformationSourcesByHash(contentHash);
         const derivedCounts = await DerivedContentQueryEngine.countByContentHash(contentHash);
+        const embeddedCounts = await EmbeddedFigurePurger.countEmbeddedFigures(contentHash);
 
-        // Nothing anywhere — neither rows nor derived artefacts. Report it
-        // rather than recording a takedown that removed nothing, so a mistyped
-        // hash is visible instead of looking like a successful action.
-        if (matchingSources.length === 0 && derivedCounts.embeddingChunks === 0 && derivedCounts.figures === 0)
+        // Nothing anywhere — neither rows nor derived artefacts nor an embedded
+        // copy in something already generated. Report it rather than recording a
+        // takedown that removed nothing, so a mistyped hash is visible instead of
+        // looking like a successful action.
+        //
+        // The embedded count is part of this test, not just the report: a source
+        // row deleted by the reaper months ago can still have left its figures
+        // inside live study material, and answering NOT_FOUND to that notice
+        // would be wrong.
+        if (matchingSources.length === 0
+            && derivedCounts.embeddingChunks === 0
+            && derivedCounts.figures === 0
+            && embeddedCounts.figures === 0)
         {
             response.statusCode = httpStatus.NOT_FOUND;
             response.sendJson({ error: "No content found for that hash.", reason: ErrorCodes.CONTENT_NOT_FOUND });
@@ -115,6 +136,13 @@ async function takedownContent(request, response)
                     storedCopies: InformationSourcePurger.countStoredCopies(matchingSources, contentHash),
                     embeddingChunks: derivedCounts.embeddingChunks,
                     figures: derivedCounts.figures,
+                    // The copies a reader can actually see. Reported separately
+                    // from the figure cache above because they are a different
+                    // removal with a different blast radius: rewriting these
+                    // edits study material the user is part-way through.
+                    embeddedFigures: embeddedCounts.figures,
+                    studyMaterialsToRewrite: embeddedCounts.studyMaterials,
+                    cardsToRewrite: embeddedCounts.cards,
                     sourceNames: [...new Set(matchingSources.map(informationSource => informationSource.getName()))]
                 },
                 priorNoticeCount: priorNotices.length
@@ -123,6 +151,12 @@ async function takedownContent(request, response)
         }
 
         const purgeResult = await InformationSourcePurger.purgeAllSourcesWithContentHash(contentHash);
+
+        // The register is now the guard's source of truth for what may never be
+        // re-accepted on a sync push, so it has to see this notice before the
+        // next one arrives. Other processes pick it up when their own cache
+        // lapses; this makes the single-process case immediate.
+        TakenDownFigureGuard.invalidateCache();
 
         const recordedNotice = await ContentTakedownNoticeQueryEngine.record
         ({
@@ -140,6 +174,10 @@ async function takedownContent(request, response)
             embeddingChunksRemoved: purgeResult.embeddingChunksRemoved,
             figuresRemoved: purgeResult.figuresRemoved,
             figureObjectsRemoved: purgeResult.figureObjectsRemoved,
+            embeddedFiguresStripped: purgeResult.embeddedFiguresStripped,
+            studyMaterialsRewritten: purgeResult.studyMaterialsRewritten,
+            cardsRewritten: purgeResult.cardsRewritten,
+            unstrippableDocumentCount: purgeResult.unstrippableDocumentCount,
             storageError: purgeResult.storageError
         });
 
@@ -165,7 +203,11 @@ async function takedownContent(request, response)
                 contentRemoved: purgeResult.bContentRemoved,
                 embeddingChunks: purgeResult.embeddingChunksRemoved,
                 figures: purgeResult.figuresRemoved,
-                figureObjects: purgeResult.figureObjectsRemoved
+                figureObjects: purgeResult.figureObjectsRemoved,
+                embeddedFigures: purgeResult.embeddedFiguresStripped,
+                studyMaterialsRewritten: purgeResult.studyMaterialsRewritten,
+                cardsRewritten: purgeResult.cardsRewritten,
+                entitiesLeftUnmodified: purgeResult.unstrippableDocumentCount
             },
             storageError: purgeResult.storageError
         });

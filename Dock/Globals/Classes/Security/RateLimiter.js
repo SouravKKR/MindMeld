@@ -60,6 +60,23 @@ class RateLimiter
     static DEFAULT_OTP_MAX_REQUESTS = RateLimiter.#resolvePositiveIntegerSetting("RATE_LIMIT_OTP_MAX_REQUESTS", 20);
     static DEFAULT_OTP_WINDOW_MILLISECONDS = RateLimiter.#resolvePositiveIntegerSetting("RATE_LIMIT_OTP_WINDOW_SECONDS", 300) * 1000;
 
+    // Dedicated per-IP cap for the unauthenticated report channel
+    // (/Legal/IntellectualPropertyComplaint + its Verify and evidence routes,
+    // and the public account-access report). These are reachable with no session
+    // at all, and each one either writes a durable record or sends an email, so
+    // the loose per-user ceiling does not apply to them in any meaningful way.
+    //
+    // Sized ABOVE the OTP cap on purpose. A rightsholder's agent working through
+    // a catalogue legitimately files several complaints in a sitting, and the
+    // cost of turning one of those away is that the platform declined to receive
+    // a notice it has published a commitment to receiving. The durable per-day
+    // ceiling in PublicComplaintRateLimit is the one that shapes behaviour; this
+    // is only a volumetric backstop against a script.
+    //   env: RATE_LIMIT_PUBLIC_REPORT_MAX_REQUESTS    (default 40)
+    //   env: RATE_LIMIT_PUBLIC_REPORT_WINDOW_SECONDS  (default 300)
+    static DEFAULT_PUBLIC_REPORT_MAX_REQUESTS = RateLimiter.#resolvePositiveIntegerSetting("RATE_LIMIT_PUBLIC_REPORT_MAX_REQUESTS", 40);
+    static DEFAULT_PUBLIC_REPORT_WINDOW_MILLISECONDS = RateLimiter.#resolvePositiveIntegerSetting("RATE_LIMIT_PUBLIC_REPORT_WINDOW_SECONDS", 300) * 1000;
+
     // Dedicated per-user cap for the generation cost estimator
     // (/Generate/EstimateCost). Each call loads the credit config and walks the
     // whole settings body, so it is not free, but it is no longer an optional

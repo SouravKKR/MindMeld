@@ -33,7 +33,6 @@ from Globals.Utility.RedactSourceName import redact_source_name
 
 
 _VISION_BATCH_SIZE = 10
-_WEB_SOURCE_HASH_MARKER = "__web__"
 _WEB_CACHE_TOPICS_PREFIX = "web_cache/topics"
 
 # Per-task scratch path for figure bytes when EnhanceImages is enabled.
@@ -237,8 +236,15 @@ class PrepareImages(Workflow):
         from another across a re-run; stamping it here is what lets a reviewer
         later address ONE diagram for refinement or removal instead of guessing
         at it by position.
+
+        The base64 <img> route additionally carries the information-source hash,
+        because that route is the only one that can embed somebody else's
+        artwork. The markup and composite routes render visuals this pipeline
+        drew itself, which a takedown against the source document must NOT
+        remove.
         """
         visual_id = figure.get("perceptualImageHash") or ""
+        source_hash = figure.get("informationSourceHash") or ""
         composite_parts = figure.get("compositeParts")
 
         if composite_parts:
@@ -270,6 +276,7 @@ class PrepareImages(Workflow):
             source_page_url = figure.get("_sourcePageUrl") if figure.get("_isWebFigure") else None,
             bounding_box    = figure.get("boundingBoxCoordinates"),
             visual_id       = visual_id,
+            source_hash     = source_hash,
         )
 
     async def _generate_paid_deck_visuals(self) -> list:
@@ -904,6 +911,12 @@ class PrepareImages(Workflow):
                 "isWebFigure":             bool(figure.get("_isWebFigure")),
                 "sourceUrl":               figure.get("_sourceUrl") if figure.get("_isWebFigure") else None,
                 "sourcePageUrl":           figure.get("_sourcePageUrl") if figure.get("_isWebFigure") else None,
+                # Carried so EnhanceImages can stamp provenance onto the figure
+                # it re-embeds. Dropping it here would silently unmark every
+                # figure on the sidecar route while the inline route stayed
+                # marked — the worst kind of gap, because the marked half makes
+                # the takedown look like it works.
+                "informationSourceHash":   figure.get("informationSourceHash"),
                 "gcsImagePath":            self.__compute_gcs_image_path(figure),
             })
 
@@ -926,6 +939,7 @@ class PrepareImages(Workflow):
                     "isWebFigure":             bool(figure.get("_isWebFigure")),
                     "sourceUrl":               figure.get("_sourceUrl") if figure.get("_isWebFigure") else None,
                     "sourcePageUrl":           figure.get("_sourcePageUrl") if figure.get("_isWebFigure") else None,
+                    "informationSourceHash":   figure.get("informationSourceHash"),
                     "gcsImagePath":            self.__compute_gcs_image_path(figure),
                     "matchScore":              figure.get("_score", 0.0),
                 })
@@ -1142,7 +1156,7 @@ class PrepareImages(Workflow):
             # only one left embedding_model unbound and raised a TypeError the
             # moment any web-sourced (or, now, generated) figure existed.
             validated_web = await self._validate_figures_with_vision(
-                web_figures, _WEB_SOURCE_HASH_MARKER, _WEB_SOURCE_HASH_MARKER, embedding_model, persist_to_database=False
+                web_figures, HtmlInjector.WEB_SOURCE_HASH_MARKER, HtmlInjector.WEB_SOURCE_HASH_MARKER, embedding_model, persist_to_database=False
             )
             all_validated_figures.extend(validated_web)
 
@@ -1291,7 +1305,7 @@ class PrepareImages(Workflow):
 
             has_real_page = (
                 figure.get("pageNumber") is not None
-                and figure.get("informationSourceHash") not in (None, _WEB_SOURCE_HASH_MARKER)
+                and figure.get("informationSourceHash") not in (None, HtmlInjector.WEB_SOURCE_HASH_MARKER)
             )
             figure_page_key = (figure.get("informationSourceHash"), figure.get("pageNumber"))
             candidate_sm_indices = study_material_indices_by_page.get(figure_page_key, [])
@@ -1377,7 +1391,7 @@ class PrepareImages(Workflow):
             # decide relevance).
             has_real_page = (
                 figure.get("pageNumber") is not None
-                and figure.get("informationSourceHash") not in (None, _WEB_SOURCE_HASH_MARKER)
+                and figure.get("informationSourceHash") not in (None, HtmlInjector.WEB_SOURCE_HASH_MARKER)
             )
             figure_page_key = (figure.get("informationSourceHash"), figure.get("pageNumber"))
             allowed_flashcard_file_indices = (

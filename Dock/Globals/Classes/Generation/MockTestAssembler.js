@@ -3,7 +3,10 @@ const SyncQueryEngine = require("../Database/SyncQueryEngine");
 const Persistence = require("../Persistence");
 const PersistenceConstants = require("../../Constants/PersistenceConstants");
 const MarkingSchemeExtractor = require("./MarkingSchemeExtractor");
+const MockTestSectionGeometry = require("./MockTestSectionGeometry");
 const { questionTypes } = require("../../Enumerations/QuestionTypes");
+const { sectionQuestionCountModes } = require("../../Enumerations/SectionQuestionCountModes");
+const { sectionMarksModes } = require("../../Enumerations/SectionMarksModes");
 
 /**
  * Turns the generated mock-test question pool into persisted MockTest
@@ -14,8 +17,6 @@ const { questionTypes } = require("../../Enumerations/QuestionTypes");
  */
 class MockTestAssembler
 {
-    static #RANGE_MODE = 1;
-
     /**
      * Resolves a section entry's question count for assembly. For FIXED-mode
      * entries this just returns `questionCount`. For RANGE-mode entries it
@@ -23,17 +24,18 @@ class MockTestAssembler
      * `questionCountWeights` (missing values default to weight 1). If a payload
      * is malformed (e.g. RANGE flag set but min/max missing), falls back to the
      * midpoint so assembly never crashes.
+     *
+     * Marks-driven sections never come through here — their count is not a
+     * number to sample but an outcome of filling a marks budget, which is
+     * #claimQuestionsForMarksBudget's job.
      */
     static #resolveSectionQuestionCount(sectionEntry)
     {
-        if (sectionEntry?.questionCountMode === MockTestAssembler.#RANGE_MODE)
+        if (sectionEntry?.questionCountMode === sectionQuestionCountModes.RANGE)
         {
-            const minimumCount = Number.isFinite(sectionEntry.questionCountMin) && sectionEntry.questionCountMin >= 0
-                ? sectionEntry.questionCountMin
-                : 0;
-            const maximumCount = Number.isFinite(sectionEntry.questionCountMax) && sectionEntry.questionCountMax >= minimumCount
-                ? sectionEntry.questionCountMax
-                : minimumCount;
+            const countBand = MockTestSectionGeometry.resolveQuestionCountBand(sectionEntry);
+            const minimumCount = countBand.minimum;
+            const maximumCount = countBand.maximum;
 
             if (maximumCount <= 0)
             {
@@ -82,6 +84,118 @@ class MockTestAssembler
     }
 
     /**
+     * True when this candidate question is one the section is allowed to hold.
+     * An empty type filter means "any type", which is what an unconfigured
+     * section list has always meant.
+     */
+    static #matchesSectionTypeFilter(candidateQuestion, allowedTypeKeys, typeKeyByValue)
+    {
+        if (allowedTypeKeys.length === 0)
+        {
+            return true;
+        }
+
+        const candidateTypeValue = candidateQuestion.additionalData?.type ?? -1;
+        const candidateTypeKey = typeKeyByValue[candidateTypeValue];
+
+        return Boolean(candidateTypeKey) && allowedTypeKeys.includes(candidateTypeKey);
+    }
+
+    /**
+     * Fills a marks-driven section: take questions until their marks add up to
+     * the section's budget, rather than until a question count is reached.
+     *
+     * This is the half of "each question is worth 4-10 marks and some number of
+     * them sum to 20" that cannot be done by counting. The Agent generates
+     * questions whose marks fall inside the section's band, and this picks the
+     * subset that lands on the total.
+     *
+     * The selection is greedy-largest-fit: at each step take the biggest
+     * question that still fits in what is left. That reaches the budget exactly
+     * whenever the pool allows it and gets closest when it does not, without the
+     * cost of searching every subset — and it naturally front-loads the heavier
+     * questions, which is how a real paper of mixed-weight questions reads.
+     *
+     * Claimed questions are spliced out of `remainingQuestions`, matching the
+     * count-driven path so a later section cannot claim the same question twice.
+     */
+    static #claimQuestionsForMarksBudget(remainingQuestions, sectionEntry, allowedTypeKeys, typeKeyByValue)
+    {
+        const countBand = MockTestSectionGeometry.resolveQuestionCountBand(sectionEntry);
+        const totalMarksBudget = MockTestSectionGeometry.resolveTotalMarksBudget(sectionEntry);
+
+        const claimedQuestions = [];
+
+        if (totalMarksBudget <= 0 || countBand.maximum <= 0)
+        {
+            return claimedQuestions;
+        }
+
+        let remainingBudget = totalMarksBudget;
+
+        while (claimedQuestions.length < countBand.maximum && remainingBudget > MockTestSectionGeometry.FLOATING_POINT_TOLERANCE)
+        {
+            let bestFittingIndex = -1;
+            let bestFittingMarks = -1;
+            let smallestOverflowIndex = -1;
+            let smallestOverflowMarks = Number.POSITIVE_INFINITY;
+
+            for (let candidateIndex = 0; candidateIndex < remainingQuestions.length; candidateIndex++)
+            {
+                const candidateQuestion = remainingQuestions[candidateIndex];
+                if (!MockTestAssembler.#matchesSectionTypeFilter(candidateQuestion, allowedTypeKeys, typeKeyByValue))
+                {
+                    continue;
+                }
+
+                const candidateMarks = Number.isFinite(candidateQuestion.marks) && candidateQuestion.marks > 0
+                    ? candidateQuestion.marks
+                    : 0;
+
+                if (candidateMarks <= 0)
+                {
+                    continue;
+                }
+
+                if (candidateMarks <= remainingBudget + MockTestSectionGeometry.FLOATING_POINT_TOLERANCE)
+                {
+                    if (candidateMarks > bestFittingMarks)
+                    {
+                        bestFittingMarks = candidateMarks;
+                        bestFittingIndex = candidateIndex;
+                    }
+                }
+                else if (candidateMarks < smallestOverflowMarks)
+                {
+                    smallestOverflowMarks = candidateMarks;
+                    smallestOverflowIndex = candidateIndex;
+                }
+            }
+
+            // Nothing fits the remaining budget. Below the section's minimum
+            // count, a slight overshoot is the better failure: a section that is
+            // one question short of what its own configuration promised reads as
+            // a generation fault, while a couple of marks over reads as rounding.
+            let chosenIndex = bestFittingIndex;
+            if (chosenIndex === -1)
+            {
+                if (claimedQuestions.length >= countBand.minimum || smallestOverflowIndex === -1)
+                {
+                    break;
+                }
+                chosenIndex = smallestOverflowIndex;
+            }
+
+            const chosenQuestion = remainingQuestions[chosenIndex];
+            remainingQuestions.splice(chosenIndex, 1);
+            claimedQuestions.push(chosenQuestion);
+            remainingBudget -= chosenQuestion.marks;
+        }
+
+        return claimedQuestions;
+    }
+
+    /**
      * Walks the configured sectionStructure in order, claiming questions from the
      * pool that match each section's `questionTypes` filter (or any type if the
      * filter is empty). Each section item is emitted with its configured
@@ -101,31 +215,43 @@ class MockTestAssembler
             const configuredEntry = configuredSections[configuredIndex];
             const allowedTypeKeys = Array.isArray(configuredEntry.questionTypes) ? configuredEntry.questionTypes : [];
 
-            const resolvedQuestionCount = MockTestAssembler.#resolveSectionQuestionCount(configuredEntry);
+            let claimedQuestions = [];
+
+            if (MockTestSectionGeometry.resolveMarksMode(configuredEntry) === sectionMarksModes.RANGE_PER_QUESTION)
+            {
+                // The section states a marks budget, not a question count, so
+                // how many questions it ends up with is whatever adds up.
+                claimedQuestions = MockTestAssembler.#claimQuestionsForMarksBudget(
+                    remainingQuestions,
+                    configuredEntry,
+                    allowedTypeKeys,
+                    typeKeyByValue
+                );
+            }
+            else
+            {
+                const resolvedQuestionCount = MockTestAssembler.#resolveSectionQuestionCount(configuredEntry);
+                const desiredCount = resolvedQuestionCount > 0
+                    ? resolvedQuestionCount
+                    : remainingQuestions.length;
+
+                for (let candidateIndex = 0; candidateIndex < remainingQuestions.length && claimedQuestions.length < desiredCount; candidateIndex++)
+                {
+                    const candidate = remainingQuestions[candidateIndex];
+
+                    if (MockTestAssembler.#matchesSectionTypeFilter(candidate, allowedTypeKeys, typeKeyByValue))
+                    {
+                        claimedQuestions.push(candidate);
+                        remainingQuestions.splice(candidateIndex, 1);
+                        candidateIndex--;
+                    }
+                }
+            }
+
             // Stamp the realized count back onto the entry so the persisted
             // MockTest's per-section override reflects what was actually used
             // (instead of the range spec, which would be misleading at scoring time).
-            configuredEntry.questionCount = resolvedQuestionCount;
-
-            const claimedQuestions = [];
-            const desiredCount = resolvedQuestionCount > 0
-                ? resolvedQuestionCount
-                : remainingQuestions.length;
-
-            for (let candidateIndex = 0; candidateIndex < remainingQuestions.length && claimedQuestions.length < desiredCount; candidateIndex++)
-            {
-                const candidate = remainingQuestions[candidateIndex];
-                const candidateTypeValue = candidate.additionalData?.type ?? -1;
-                const candidateTypeKey = typeKeyByValue[candidateTypeValue];
-
-                const matchesFilter = allowedTypeKeys.length === 0 || (candidateTypeKey && allowedTypeKeys.includes(candidateTypeKey));
-                if (matchesFilter)
-                {
-                    claimedQuestions.push(candidate);
-                    remainingQuestions.splice(candidateIndex, 1);
-                    candidateIndex--;
-                }
-            }
+            configuredEntry.questionCount = claimedQuestions.length;
 
             // Even if the section ended up empty (no matching questions
             // survived), still emit the header so the user can see the

@@ -1,7 +1,7 @@
 const AuthenticationQueryEngine = require('../Database/AuthenticationQueryEngine');
 const PlanMetadata = require('./PlanMetadata');
 const PlanTierResolver = require('./PlanTierResolver');
-const OrganizationScopeResolver = require('../Organization/OrganizationScopeResolver');
+const ViewScopeResolver = require('../View/ViewScopeResolver');
 const OrganizationFeatureResolver = require('../Organization/OrganizationFeatureResolver');
 const { planTiers } = require('../../Enumerations/PlanTiers');
 const ErrorCodes = require('../../Constants/ErrorCodes');
@@ -21,6 +21,13 @@ const ErrorCodes = require('../../Constants/ErrorCodes');
 // working there. requireFeatureForRequest is the entry point that knows which
 // world a request is in; requireFeature remains the personal-only check for the
 // paths that have no request to read.
+//
+// Inside an administrator's SIMULATED PLAN VIEW the question changes again, to
+// "what would this tier allow" — evaluated in both directions, so a Pro Plus
+// administrator looking at the Free view is refused exactly as a Free user would
+// be. See #evaluateForPlanView. That branch grants and withholds FEATURES only;
+// nothing about it touches credits, subscriptions or payments, which key on the
+// real account and never come through here.
 
 class PlanEntitlementGate
 {
@@ -93,11 +100,16 @@ class PlanEntitlementGate
      */
     static async requireFeatureForRequest(request, userId, planFeature)
     {
-        const scope = await OrganizationScopeResolver.resolve(request, userId);
+        const scope = await ViewScopeResolver.resolve(request, userId);
+
+        if (scope.planViewTierName.length > 0)
+        {
+            return await PlanEntitlementGate.#evaluateForPlanView(scope, planFeature);
+        }
 
         if (scope.organizationId === null)
         {
-            return { ...await PlanEntitlementGate.requireFeature(userId, planFeature), organizationId: null };
+            return { ...await PlanEntitlementGate.requireFeature(userId, planFeature), organizationId: null, planViewTierName: "" };
         }
 
         const user = await AuthenticationQueryEngine.getUserById(userId);
@@ -119,7 +131,64 @@ class PlanEntitlementGate
             currentTier: user ? PlanTierResolver.getEffectiveTier(user) : planTiers.FREE,
             requiredTier: null,
             reason: bAllowed ? "OK" : ErrorCodes.FEATURE_NOT_IN_PLAN,
-            organizationId: scope.organizationId
+            organizationId: scope.organizationId,
+            planViewTierName: ""
+        };
+    }
+
+    /**
+     * The answer inside an administrator's simulated plan sandbox: what would
+     * THIS TIER allow, not what does this account pay for.
+     *
+     * It binds in BOTH directions, and that is the point. A simulation that only
+     * ever granted would leave the interesting half untested — the whole reason
+     * to look at the Free view is to see the refusal a Free user gets, and a
+     * client gate saying "no" in front of a server that would have said "yes" is
+     * a worse test than no simulation at all.
+     *
+     * Nothing here reaches money. The scope was already re-authorised as an
+     * administrator, the credit ledger and every subscription, payment and
+     * credit-grant path key on the real account and never pass through this
+     * request-scoped gate, and the credits an administrator spends inside a
+     * sandbox are their own real credits — which the switch dialog says plainly
+     * rather than this class pretending otherwise.
+     *
+     * @param {object} scope a resolved ViewScopeResolver scope in a plan view
+     * @param {number} planFeature a PlanFeatures value
+     */
+    static async #evaluateForPlanView(scope, planFeature)
+    {
+        // Same override refresh the personal path performs, so what is simulated
+        // is what an administrator has CONFIGURED for that tier rather than what
+        // was compiled into PlanMetadataConstants.
+        try
+        {
+            const PlanFeatureConfigurationStore = require("./PlanFeatureConfigurationStore");
+            await PlanFeatureConfigurationStore.load();
+        }
+        catch (configError)
+        {
+            console.warn(`[PlanEntitlementGate] Feature-config load failed: ${configError?.message || configError}`);
+        }
+
+        const simulatedTier = scope.planViewTier;
+        const bAllowed = PlanMetadata.hasFeature(simulatedTier, planFeature);
+
+        return {
+            allowed: bAllowed,
+            // The SIMULATED tier, unlike the organization branch which reports
+            // the personal one. There the tier was not what decided the answer;
+            // here it is exactly what decided it, and reporting anything else
+            // would make the client's refusal describe a different world from the
+            // one that produced the refusal.
+            currentTier: simulatedTier,
+            // The real minimum, unlike the organization branch which reports
+            // null. "Upgrade to Pro" is precisely what a real user at this tier
+            // would be told, and reproducing that faithfully is the feature.
+            requiredTier: PlanEntitlementGate.#minimumTierForFeature(planFeature),
+            reason: bAllowed ? "OK" : ErrorCodes.FEATURE_NOT_IN_PLAN,
+            organizationId: null,
+            planViewTierName: scope.planViewTierName
         };
     }
 

@@ -220,6 +220,41 @@ async function handleTranscribeOfflineAttempt(request, response)
         PersistenceConstants.MOCK_TEST_TRANSCRIPTIONS_DIRECTORY
     );
 
+    // Book the deletion record BEFORE a single byte is staged. These are images
+    // of a named student's handwriting, and nothing else in this flow will ever
+    // remove them: unlike the generation pipeline there is no moveToDatabase
+    // step, and the Agent worker deliberately does not delete what it reads.
+    // Registering first means no scan can exist unregistered, so there is no
+    // window in which a crash strands one permanently.
+    //
+    // A window rather than an immediate delete: the transcription is what gets
+    // graded, so a candidate disputing their marks needs the original scan to be
+    // re-readable. ANSWER_SHEET_RETENTION_DAYS is the period the Privacy Policy
+    // publishes, ExpiredInformationSourceReaper closes it, and account deletion
+    // purges it immediately regardless.
+    const bRegisteredForDeletion = await EphemeralUploadRegistry.register
+    ({
+        storagePrefix: transcriptionsDirectory,
+        kind: ephemeralUploadKinds.MOCK_TEST_ANSWER_SHEET,
+        userId: userId,
+        retentionDays: DatabaseConstants.ANSWER_SHEET_RETENTION_DAYS,
+        metadata: { mockTestId: mockTestId, attemptId: attemptId, scanCount: scanFiles.length },
+    });
+
+    if (!bRegisteredForDeletion)
+    {
+        // Refuse rather than store handwriting we cannot promise to delete. The
+        // registry has already logged the cause; the candidate can retry.
+        console.error(`[TranscribeOfflineAttempt] Refusing to stage scans for ${transcriptionTaskId}: retention could not be registered.`);
+        for (const scanFile of scanFiles)
+        {
+            try { await fs.unlink(scanFile.path); } catch (unlinkError) { /* best effort */ }
+        }
+        response.statusCode = httpStatus.SERVICE_UNAVAILABLE;
+        response.end("Could not accept the upload right now. Please try again.");
+        return;
+    }
+
     // Stage every scan blob to GCS under the task directory, then drop a
     // TranscriptionRequest.json describing the questions the worker maps against.
     const scanFileNames = [];
@@ -255,24 +290,6 @@ async function handleTranscribeOfflineAttempt(request, response)
             try { await fs.unlink(scanFile.path); } catch (unlinkError) { /* best effort */ }
         }
     }
-
-    // The scans are images of this user's handwriting and, before this, nothing
-    // ever deleted them — unlike the generation pipeline, this flow has no
-    // moveToDatabase step to wipe its task folder. Register the prefix so the
-    // reaper reclaims it once the dispute window elapses.
-    //
-    // A window rather than an immediate delete: the transcription is what gets
-    // graded, so a candidate disputing their marks needs the original scan to be
-    // re-readable. ANSWER_SHEET_RETENTION_DAYS bounds that, and account deletion
-    // purges it immediately regardless.
-    await EphemeralUploadRegistry.register
-    ({
-        storagePrefix: transcriptionsDirectory,
-        kind: ephemeralUploadKinds.MOCK_TEST_ANSWER_SHEET,
-        userId: userId,
-        retentionDays: DatabaseConstants.ANSWER_SHEET_RETENTION_DAYS,
-        metadata: { mockTestId: mockTestId, attemptId: attemptId, scanCount: scanFileNames.length },
-    });
 
     await TaskManager.setTask(transcriptionTaskDescriptor);
     await TaskManager.trackForUser(userId, transcriptionTaskId);

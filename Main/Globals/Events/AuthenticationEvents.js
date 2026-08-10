@@ -3,8 +3,11 @@ import UserIdentityManager from "../Classes/UserIdentityManager.js";
 import UserIdentityConstants from "../Constants/UserIdentityConstants.js";
 import OfflineSessionManager from "../Classes/Authentication/OfflineSessionManager.js";
 import OrganizationContextRegistry from "../Classes/Organization/OrganizationContextRegistry.js";
+import PlanViewRegistry from "../Classes/View/PlanViewRegistry.js";
 import BadgeCelebrationController from "../Classes/Streak/BadgeCelebrationController.js";
 import MilestoneBadgeCelebrationController from "../Classes/Metrics/MilestoneBadgeCelebrationController.js";
+import { userRoles } from "../Enumerations/UserRoles.js";
+import { userViewKinds } from "../Enumerations/UserViewKinds.js";
 
 class AuthenticationEvents
 {
@@ -61,9 +64,12 @@ class AuthenticationEvents
             await OfflineSessionManager.clearCachedSession();
 
             // Drop the institutes with the account, so the next person to sign
-            // in on this device never sees the previous one's views offered.
+            // in on this device never sees the previous one's views offered. The
+            // view record is cleared outright rather than set to a personal
+            // organization view, so a simulated plan sandbox cannot survive a
+            // logout either.
             await OrganizationContextRegistry.clear();
-            await UserIdentityManager.setOrganizationContext(UserIdentityConstants.ANONYMOUS_IDENTITY, "");
+            await UserIdentityManager.clearViewContext(UserIdentityConstants.ANONYMOUS_IDENTITY);
 
             document.querySelectorAll("profile-component").forEach((component) =>
             {
@@ -147,13 +153,33 @@ class AuthenticationEvents
      * is honoured only while it is still one the server just listed for this
      * account, so a membership that ended resolves cleanly to the personal view
      * instead of a namespace nothing will ever sync.
+     *
+     * The same rule applies to a simulated plan sandbox, keyed on the
+     * administrator role instead of a membership: someone who lost the role while
+     * a device still had the view open must land back in their own library rather
+     * than in a namespace the server will now refuse to sync.
+     *
+     * Both branches read ONE stored record, so the two views cannot both be
+     * restored — whichever branch runs writes a record that erases the other.
      */
     static async #restoreViewForUser(user)
     {
-        const storedContextId = await UserIdentityManager.readStoredOrganizationContextId();
-        const bStillAMember = storedContextId.length > 0 && OrganizationContextRegistry.findContext(storedContextId) !== null;
+        const storedView = await UserIdentityManager.readStoredViewContext();
 
-        await UserIdentityManager.setOrganizationContext(user.getId(), bStillAMember ? storedContextId : "");
+        if (storedView.kind === userViewKinds.PLAN)
+        {
+            // Answerable offline: the cached session user carries its role, and
+            // the tier list is a shipped constant rather than anything fetched.
+            const bStillAnAdministrator = typeof user.getRole === "function" && user.getRole() === userRoles.ADMIN;
+            const bKnownTier = PlanViewRegistry.isKnownTierName(storedView.value);
+
+            await UserIdentityManager.setPlanViewContext(user.getId(), (bStillAnAdministrator && bKnownTier) ? storedView.value : "");
+            return;
+        }
+
+        const bStillAMember = storedView.value.length > 0 && OrganizationContextRegistry.findContext(storedView.value) !== null;
+
+        await UserIdentityManager.setOrganizationContext(user.getId(), bStillAMember ? storedView.value : "");
     }
 
     /**
@@ -207,6 +233,15 @@ class AuthenticationEvents
         if (UserIdentityManager.isOrganizationContext() && OrganizationContextRegistry.findContext(UserIdentityManager.getOrganizationContextId()) === null)
         {
             await UserIdentityManager.setOrganizationContext(user.getId(), "");
+        }
+
+        // The same collapse for a simulated plan sandbox whose administrator role
+        // has just been revoked. Done here rather than only at boot because this
+        // runs on every refresh, and the alternative is a client that keeps
+        // pushing a sandbox the server will refuse until the next reload.
+        if (UserIdentityManager.isPlanViewContext() && (typeof user.getRole !== "function" || user.getRole() !== userRoles.ADMIN))
+        {
+            await UserIdentityManager.clearViewContext(user.getId());
         }
 
         sessionStorage.setItem("user", JSON.stringify(user.toJson()));

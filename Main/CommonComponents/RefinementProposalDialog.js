@@ -26,7 +26,19 @@ import GeneratedVisualRenderer from "../Globals/Classes/GeneratedVisualRenderer.
  *
  * BOTH panes are sanitised before rendering. The "after" markup has passed only
  * the Python screen in the generator; HtmlSanitizer is the client's own boundary
- * and applies to model output exactly as it does to anything else.
+ * and applies to model output exactly as it does to anything else. That was
+ * true of the visual pane and false of the text one for as long as the text
+ * diff emitted its own escaped string — the moment it started returning real
+ * markup, the sanitiser had to be there, and the claim in this paragraph became
+ * something the code actually does.
+ *
+ * A RUN of proposals passes through the same dialog rather than a second review
+ * surface of its own. Reviewing thirty changes is the same act thirty times, and
+ * a batch-only screen would be a second place for the sanitising, the diff and
+ * the vision verdict to drift out of step with this one. `batchContext` adds a
+ * position line and the two decisions that only exist inside a run — apply the
+ * rest unseen, or stop here — and changes nothing when it is absent, which is
+ * every single-entity refinement in the product.
  */
 class RefinementProposalDialog
 {
@@ -34,12 +46,19 @@ class RefinementProposalDialog
     static RESULT_REFINE_AGAIN = "REFINE_AGAIN";
     static RESULT_DISCARDED = "DISCARDED";
 
+    // Run-only outcomes. Both mean the current proposal was applied or abandoned
+    // AND that the caller should change how it treats the remaining ones.
+    static RESULT_APPLIED_ALL_REMAINING = "APPLIED_ALL_REMAINING";
+    static RESULT_STOPPED = "STOPPED";
+
     /**
      * Shows a proposal and resolves with what the reviewer decided.
      *
      * @param {object} proposal — beforeHtml, afterHtml, summary, concerns,
      *   consultedUrls, modelIdentifier, visionReviewOutcome, visualMethod
-     * @param {object} options — bVisualComparison, applyLabel, onApply
+     * @param {object} options — bVisualComparison, applyLabel, onApply,
+     *   batchContext ({ currentIndex, totalCount }) when this is one proposal of
+     *   a run
      * @return {Promise<{result: string, refinementId: (string|null)}>}
      */
     static show(proposal, options = {})
@@ -47,14 +66,32 @@ class RefinementProposalDialog
         return new Promise((resolve) =>
         {
             const bVisualComparison = options.bVisualComparison === true;
+            const batchContext = options.batchContext || null;
+
+            const progressMarkup = batchContext
+                ? `<span class="refinement-proposal-progress">Item ${batchContext.currentIndex} of ${batchContext.totalCount}</span>`
+                : "";
+
+            // "Skip" rather than "Discard" inside a run: the reviewer is
+            // declining THIS change, not abandoning the whole set, and the two
+            // read very differently when there are twenty-nine still to come.
+            const discardLabel = batchContext ? "Skip this" : "Discard";
+
+            const batchActionsMarkup = batchContext
+                ? `
+                    <button type="button" class="refinement-proposal-stop">Stop the run</button>
+                    <button type="button" class="refinement-proposal-apply-remaining">Apply all remaining</button>
+                `
+                : "";
 
             const dialog = DialogBox.modal(`
                 <div class="refinement-proposal-dialog">
-                    <div class="title-section">Before and after</div>
+                    <div class="title-section">Before and after${progressMarkup}</div>
                     <div class="refinement-proposal-body" data-role="proposal-body"></div>
                     <div class="refinement-proposal-error" data-role="proposal-error" hidden></div>
                     <div class="refinement-proposal-actions">
-                        <button type="button" class="refinement-proposal-discard">Discard</button>
+                        ${batchActionsMarkup}
+                        <button type="button" class="refinement-proposal-discard">${discardLabel}</button>
                         <button type="button" class="refinement-proposal-refine">Refine further</button>
                         <button type="button" class="refinement-proposal-apply">${options.applyLabel || "Apply this change"}</button>
                     </div>
@@ -66,6 +103,8 @@ class RefinementProposalDialog
             const applyButton = dialog.querySelector(".refinement-proposal-apply");
             const refineButton = dialog.querySelector(".refinement-proposal-refine");
             const discardButton = dialog.querySelector(".refinement-proposal-discard");
+            const stopButton = dialog.querySelector(".refinement-proposal-stop");
+            const applyRemainingButton = dialog.querySelector(".refinement-proposal-apply-remaining");
 
             bodyElement.innerHTML = bVisualComparison
                 ? RefinementProposalDialog.#buildVisualComparisonMarkup(proposal)
@@ -89,32 +128,53 @@ class RefinementProposalDialog
                 resolve({ result: result, refinementId: refinementId });
             };
 
+            // Inside a run the close control ends the RUN rather than skipping
+            // one item. Treating it as a skip would mean a reviewer who wants
+            // out of a thirty-item batch has to dismiss the dialog thirty times.
+            const closeResult = batchContext
+                ? RefinementProposalDialog.RESULT_STOPPED
+                : RefinementProposalDialog.RESULT_DISCARDED;
+
             const closeButton = dialog.querySelector(".close-button");
             if (closeButton)
             {
-                closeButton.addEventListener("click", () => finalize(RefinementProposalDialog.RESULT_DISCARDED));
+                closeButton.addEventListener("click", () => finalize(closeResult));
             }
 
             discardButton.addEventListener("click", () => finalize(RefinementProposalDialog.RESULT_DISCARDED));
             refineButton.addEventListener("click", () => finalize(RefinementProposalDialog.RESULT_REFINE_AGAIN));
 
-            applyButton.addEventListener("click", async () =>
+            if (stopButton)
+            {
+                stopButton.addEventListener("click", () => finalize(RefinementProposalDialog.RESULT_STOPPED));
+            }
+
+            /**
+             * Both apply buttons write the SAME change through the same call and
+             * differ only in what they say about the items after this one, so
+             * they share one handler. A second copy would be a second place for
+             * the disable-and-restore and the keep-open-on-failure rules to be
+             * got wrong.
+             */
+            const performApply = async (triggerButton, resultOnSuccess) =>
             {
                 if (typeof options.onApply !== "function")
                 {
-                    finalize(RefinementProposalDialog.RESULT_APPLIED);
+                    finalize(resultOnSuccess);
                     return;
                 }
 
-                applyButton.disabled = true;
-                refineButton.disabled = true;
-                applyButton.textContent = "Applying…";
+                const triggerLabel = triggerButton.textContent;
+                const actionButtons = [applyButton, refineButton, stopButton, applyRemainingButton].filter(Boolean);
+
+                actionButtons.forEach(actionButton => { actionButton.disabled = true; });
+                triggerButton.textContent = "Applying…";
                 errorElement.hidden = true;
 
                 try
                 {
                     const applyOutcome = await options.onApply(proposal);
-                    finalize(RefinementProposalDialog.RESULT_APPLIED, applyOutcome ? applyOutcome.refinementId : null);
+                    finalize(resultOnSuccess, applyOutcome ? applyOutcome.refinementId : null);
                 }
                 catch (applyError)
                 {
@@ -123,11 +183,19 @@ class RefinementProposalDialog
                     // "Refine further" — which needs the dialog still on screen.
                     errorElement.textContent = applyError.message;
                     errorElement.hidden = false;
-                    applyButton.disabled = false;
-                    refineButton.disabled = false;
-                    applyButton.textContent = options.applyLabel || "Apply this change";
+                    actionButtons.forEach(actionButton => { actionButton.disabled = false; });
+                    triggerButton.textContent = triggerLabel;
                 }
-            });
+            };
+
+            applyButton.addEventListener("click", async () =>
+                await performApply(applyButton, RefinementProposalDialog.RESULT_APPLIED));
+
+            if (applyRemainingButton)
+            {
+                applyRemainingButton.addEventListener("click", async () =>
+                    await performApply(applyRemainingButton, RefinementProposalDialog.RESULT_APPLIED_ALL_REMAINING));
+            }
         });
     }
 
@@ -135,24 +203,42 @@ class RefinementProposalDialog
     {
         const difference = HtmlDiffBuilder.build(proposal.beforeHtml, proposal.afterHtml);
 
-        const noChangeNotice = difference.bAnyChange
-            ? ""
-            : `<div class="refinement-proposal-notice">The wording is unchanged. Only formatting or figures differ.</div>`;
-
         return `
             ${RefinementProposalDialog.#buildSummaryMarkup(proposal)}
-            ${noChangeNotice}
+            ${RefinementProposalDialog.#buildComparisonNotice(difference)}
             <div class="refinement-comparison">
                 <div class="refinement-pane">
                     <div class="refinement-pane-heading">Now</div>
-                    <div class="refinement-pane-body">${difference.beforeHtml}</div>
+                    <div class="refinement-pane-body refinement-rendered-passage">${HtmlSanitizer.sanitize(difference.beforeHtml)}</div>
                 </div>
                 <div class="refinement-pane">
                     <div class="refinement-pane-heading">Proposed</div>
-                    <div class="refinement-pane-body">${difference.afterHtml}</div>
+                    <div class="refinement-pane-body refinement-rendered-passage">${HtmlSanitizer.sanitize(difference.afterHtml)}</div>
                 </div>
             </div>
         `;
+    }
+
+    /**
+     * The one line above the panes that says what kind of comparison this is.
+     *
+     * Three states, not two. "Too large to compare" used to be indistinguishable
+     * from "everything changed", which is the worst of both: the reviewer is
+     * shown a wall of marks and told nothing about why.
+     */
+    static #buildComparisonNotice(difference)
+    {
+        if (difference.bComparisonTooLarge)
+        {
+            return `<div class="refinement-proposal-notice">This passage is too long to highlight word by word, so both versions are shown unmarked. Read them side by side.</div>`;
+        }
+
+        if (!difference.bAnyChange)
+        {
+            return `<div class="refinement-proposal-notice">The wording is unchanged. Only formatting or figures differ.</div>`;
+        }
+
+        return "";
     }
 
     static #buildVisualComparisonMarkup(proposal)

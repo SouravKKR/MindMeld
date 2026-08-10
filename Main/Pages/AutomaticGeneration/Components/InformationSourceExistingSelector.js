@@ -1,6 +1,6 @@
 import InformationSource from "../../../Globals/Model/InformationSource.js";
 import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
-import { enumerationToTitleCase } from "../../../Globals/UtilityFunctions/EnumerationToTitleCase.js";
+import { describeInformationSourceType } from "../../../Globals/UtilityFunctions/DescribeInformationSourceType.js";
 import { informationSourceTypes } from "../../../Globals/Enumerations/InformationSourceTypes.js";
 import { formatBytes } from "../../../Globals/UtilityFunctions/FormatBytes.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
@@ -265,7 +265,7 @@ class InformationSourceExistingSelector extends HTMLElement
 
         // Meta line shows the source type and the stored file size, so a user
         // deciding what to delete can see how much each source is costing them.
-        const sourceTypeLabel = sourceTypeKey.length > 0 ? enumerationToTitleCase(sourceTypeKey) : "";
+        const sourceTypeLabel = sourceTypeKey.length > 0 ? describeInformationSourceType(sourceTypeKey) : "";
         const fileSizeBytes = informationSource.getFileSizeBytes() ?? 0;
         const sizeLabel = fileSizeBytes > 0 ? formatBytes(fileSizeBytes) : "";
         meta.textContent = [sourceTypeLabel, sizeLabel].filter(part => part.length > 0).join(" · ");

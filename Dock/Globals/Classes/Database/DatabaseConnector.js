@@ -645,10 +645,32 @@ class DatabaseConnector
         await AllowedLoginEmailSeeder.seedFromJsonFile();
 
         // ── OTP requests ───────────────────────────────────────────────────────
-        // One active OTP per email; the absolute-expiry TTL mirrors the
-        // sessions collection so the cleanup pattern is consistent.
+        // One active OTP per (email, purpose); the absolute-expiry TTL mirrors
+        // the sessions collection so the cleanup pattern is consistent.
+        //
+        // The uniqueness is COMPOUND because codes are scoped by purpose — a
+        // sign-in code and a copyright-complaint confirmation for the same
+        // address are two different rows that must be able to coexist. The old
+        // unique index on email alone is dropped first: leaving it in place
+        // would let the compound index be created and then have every second
+        // upsert fail E11000 on the index nobody was looking at, which reads at
+        // the call site as "the email would not send".
         const otpRequestsCollection = database.collection(DatabaseConstants.OTP_REQUESTS_COLLECTION);
-        await otpRequestsCollection.createIndex({ email: 1 }, { unique: true });
+        try
+        {
+            await otpRequestsCollection.dropIndex("email_1");
+            console.warn("[DatabaseConnector] Dropped the legacy unique index on otpRequests.email in favour of (email, purpose).");
+        }
+        catch (dropIndexError)
+        {
+            // IndexNotFound (27) is the expected outcome on a fresh database and
+            // on every boot after the first.
+            if (dropIndexError?.code !== 27)
+            {
+                console.error("[DatabaseConnector] Could not drop the legacy otpRequests.email index:", dropIndexError);
+            }
+        }
+        await otpRequestsCollection.createIndex({ email: 1, purpose: 1 }, { unique: true });
         await otpRequestsCollection.createIndex({ expirationDate: 1 }, { expireAfterSeconds: 0 });
 
         // ── Release notes ──────────────────────────────────────────────────────
@@ -978,6 +1000,29 @@ class DatabaseConnector
         await supportTicketReportsCollection.createIndex({ userId: 1, createdAt: -1 });
         await supportTicketReportsCollection.createIndex({ ticketId: 1, notifiedAt: 1 });
         await supportTicketReportsCollection.createIndex({ groupingStatus: 1, createdAt: -1 });
+
+        // ── Intellectual-property complaints ────────────────────────────────────
+        // The public infringement-complaint register. `receivedAt` ascending is
+        // the deadline order for the admin queue — every deadline is a fixed
+        // offset from receipt — and the (contactEmail, receivedAt) compound backs
+        // both the confirmation lookup and the per-complainant rate count. The
+        // sourceIpAddress index serves the same count for a complainant who
+        // changes the address on every submission.
+        //
+        // ABSOLUTELY NO TTL INDEX HERE, and none may be added later. This is the
+        // register the platform would have to produce to evidence that a notice
+        // was received and acted on, and that day is routinely years after the
+        // content was removed. An expiry on this collection would delete the
+        // proof and leave the takedowns it justified looking unattributed —
+        // which is exactly the state the takedown register was built to avoid.
+        // The same rule covers the attached evidence, which is deliberately not
+        // registered with EphemeralUploadRegistry.
+        const intellectualPropertyComplaintsCollection = database.collection(DatabaseConstants.INTELLECTUAL_PROPERTY_COMPLAINTS_COLLECTION);
+        await intellectualPropertyComplaintsCollection.createIndex({ id: 1 }, { unique: true });
+        await intellectualPropertyComplaintsCollection.createIndex({ receivedAt: 1 });
+        await intellectualPropertyComplaintsCollection.createIndex({ contactEmail: 1, receivedAt: -1 });
+        await intellectualPropertyComplaintsCollection.createIndex({ sourceIpAddress: 1, receivedAt: -1 });
+        await intellectualPropertyComplaintsCollection.createIndex({ bContactVerified: 1, receivedAt: 1 });
 
         // ── Support ticket deduplication locks ──────────────────────────────────
         // A single-document lease mutex serialising the Agent's deduplication runs.

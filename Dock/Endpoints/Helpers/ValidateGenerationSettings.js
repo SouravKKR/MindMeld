@@ -4,10 +4,28 @@ const StudyMaterialGenerationSettings = require("../../Globals/Classes/Task/Auto
 const MockTestGenerationSettings = require("../../Globals/Classes/Task/AutoGeneration/MockTestGenerationSettings");
 const PublicUrlValidator = require("../../Globals/Classes/Security/PublicUrlValidator");
 const PaidDeckGenerationGate = require("../../Globals/Classes/Generation/PaidDeckGenerationGate");
+const MockTestSectionGeometry = require("../../Globals/Classes/Generation/MockTestSectionGeometry");
 const { informationSourceTypes } = require("../../Globals/Enumerations/InformationSourceTypes");
+const { automationLevels } = require("../../Globals/Enumerations/AutomationLevels");
 
 const MAXIMUM_INFORMATION_SOURCES = 5;
 const MAXIMUM_PAGE_RANGES_PER_SOURCE = 10;
+const MAXIMUM_REFERENCE_SOURCES = 5;
+
+// A paper divided into more parts than this is not a paper any more, and each
+// section costs a pass over the generated pool during assembly. The editor
+// offers no upper bound of its own, so this is where a pasted or scripted
+// payload stops being accepted.
+const MAXIMUM_SECTIONS = 30;
+
+// The only source types a mock-test reference may be. Kept as an explicit
+// allow-list rather than a deny-list because the failure mode of the latter is
+// silent: a type added to the enumeration later would become an accepted
+// reference input without anyone deciding that it should be.
+const ALLOWED_REFERENCE_SOURCE_TYPES = new Set([
+    informationSourceTypes.QUESTION_PAPER,
+    informationSourceTypes.SPECIFIC_URL_ON_THE_INTERNET
+]);
 
 
 function validatePageRanges(extractableSource, sourceLabel)
@@ -120,6 +138,130 @@ function validateSourcesOnSettings(settings, settingsLabel)
 
 
 /**
+ * Validates the mock-test reference papers.
+ *
+ * These live on their own member rather than on informationSources because the
+ * generation page mirrors the general source list into every secondary settings
+ * object wholesale, which would overwrite anything stored alongside it. They are
+ * therefore a list the general rules above never see, and need their own caps.
+ *
+ * Refused outright in paid-deck mode. A reference paper is third-party
+ * expression, and the route by which one may legitimately reach sellable content
+ * is the licensed-source channel, where a licence is declared and retained as
+ * proof. Accepting one here would put an undeclared document into the pipeline
+ * through a door that asks no questions.
+ *
+ * @param {MockTestGenerationSettings|null} mockTestSettings
+ * @param {boolean} bPaidDeckMode
+ * @throws {Error} on the first violation.
+ */
+function validateReferenceSources(mockTestSettings, bPaidDeckMode)
+{
+    if (!mockTestSettings || typeof mockTestSettings.getReferenceSources !== "function")
+    {
+        return;
+    }
+
+    const referenceSources = mockTestSettings.getReferenceSources() || [];
+
+    if (referenceSources.length === 0)
+    {
+        return;
+    }
+
+    if (bPaidDeckMode)
+    {
+        throw new Error(
+            "Paid deck mode does not accept reference papers on the mock-test settings. "
+            + "Attach the paper as a licensed source instead, so its licence is declared "
+            + "and retained as proof of the basis on which it was used."
+        );
+    }
+
+    if (referenceSources.length > MAXIMUM_REFERENCE_SOURCES)
+    {
+        throw new Error(`You can select a maximum of ${MAXIMUM_REFERENCE_SOURCES} reference papers.`);
+    }
+
+    for (let sourceIndex = 0; sourceIndex < referenceSources.length; sourceIndex++)
+    {
+        const sourceLabel = `Reference paper #${sourceIndex + 1}`;
+        const extractableSource = referenceSources[sourceIndex];
+        const informationSource = extractableSource.getInformationSource();
+        const sourceType = informationSource ? informationSource.getSourceType() : null;
+
+        if (!ALLOWED_REFERENCE_SOURCE_TYPES.has(sourceType))
+        {
+            throw new Error(
+                `${sourceLabel}: a reference paper must be an uploaded question paper / mock test, `
+                + "or a link to one."
+            );
+        }
+
+        validatePageRanges(extractableSource, sourceLabel);
+        validateInformationSourceUrl(extractableSource, sourceLabel);
+    }
+}
+
+
+/**
+ * Validates the mock-test section structure.
+ *
+ * A section says how many questions it holds, what each is worth, and what the
+ * section totals — but only two of those are ever entered, and the third is
+ * derived. That makes it possible to ask for something arithmetically
+ * impossible ("20 marks, in questions worth 7-9 marks each"), or for the
+ * sections to disagree with the paper's own question count.
+ *
+ * The editor already blocks both, but a client is never trusted: the settings
+ * arriving here are the ones that become the Agent task payload, and a section
+ * structure that cannot be satisfied would otherwise be discovered only as a
+ * half-empty paper after the credits had been spent.
+ *
+ * MockTestSectionGeometry is the shared arithmetic, so the message the user
+ * sees is the same one the editor would have shown.
+ *
+ * @param {MockTestGenerationSettings|null} mockTestSettings
+ * @throws {Error} on the first violation.
+ */
+function validateSectionStructure(mockTestSettings)
+{
+    if (!mockTestSettings || typeof mockTestSettings.getSectionStructure !== "function")
+    {
+        return;
+    }
+
+    const sectionStructure = mockTestSettings.getSectionStructure() || [];
+
+    if (!Array.isArray(sectionStructure) || sectionStructure.length === 0)
+    {
+        return;
+    }
+
+    if (sectionStructure.length > MAXIMUM_SECTIONS)
+    {
+        throw new Error(`A mock test can have at most ${MAXIMUM_SECTIONS} sections.`);
+    }
+
+    // The paper's own question count only has to agree with the sections when
+    // the user pinned it. On AUTOMATIC the sections are what decide the paper's
+    // size, so there are not two numbers that could disagree.
+    const bPaperQuestionTargetIsManual = mockTestSettings.getNumQuestionsMethod() === automationLevels.MANUAL;
+
+    const structureFailure = MockTestSectionGeometry.describeStructureValidationFailure(
+        sectionStructure,
+        mockTestSettings.getNumQuestionsPerTest(),
+        bPaperQuestionTargetIsManual
+    );
+
+    if (structureFailure !== null)
+    {
+        throw new Error(structureFailure);
+    }
+}
+
+
+/**
  * Validates different types of generation settings used for auto-generation tasks.
  *
  * @param {GeneralGenerationSettings} generalSettings
@@ -182,6 +324,8 @@ function validateGenerationSettings(generalSettings, flashcardSettings, studyMat
     validateSourcesOnSettings(flashcardSettings, "Flashcard generation");
     validateSourcesOnSettings(studyMaterialSettings, "Study material generation");
     validateSourcesOnSettings(mockTestSettings, "Mock test generation");
+    validateReferenceSources(mockTestSettings, bPaidDeckMode);
+    validateSectionStructure(mockTestSettings);
 
     if (!flashcardSettings && !studyMaterialSettings && !mockTestSettings)
     {

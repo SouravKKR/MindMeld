@@ -1,6 +1,7 @@
 import AuthenticationEvents from "../Events/AuthenticationEvents.js";
 import InitializationEvents from "../Events/InitializationEvents.js";
 import TermsAndConditionsManager from "./TermsAndConditionsManager.js";
+import AgeVerificationManager from "./AgeVerificationManager.js";
 import TutorialBootstrap from "./TutorialBootstrap.js";
 import ReleaseNotesBootstrap from "./ReleaseNotesBootstrap.js";
 
@@ -128,6 +129,23 @@ class LoginPopupSequence
         catch (termsError)
         {
             console.error("[LoginPopupSequence] Terms step failed:", termsError);
+            return;
+        }
+
+        // Step 1b — age declaration, and guardian consent when the declared age
+        // makes this a Child's account. Runs immediately after the legal step
+        // and before anything else for two reasons: the server 403s every
+        // protected endpoint until it is satisfied, so nothing later in this
+        // sequence would work anyway; and the user needs to have been offered
+        // the Privacy Policy explaining why a date of birth is collected before
+        // being asked for one.
+        try
+        {
+            await AgeVerificationManager.runForLogin(user);
+        }
+        catch (ageVerificationError)
+        {
+            console.error("[LoginPopupSequence] Age verification step failed:", ageVerificationError);
             return;
         }
 

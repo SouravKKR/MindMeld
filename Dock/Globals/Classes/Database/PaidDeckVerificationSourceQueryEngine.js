@@ -12,13 +12,26 @@ const DatabaseConstants = require("../../Constants/DatabaseConstants");
  * records both acts, so removing a source here never removes the fact that the
  * deck was once checked against it.
  *
- * ATTACHED SOURCES NEVER ENTER GENERATION. They are read only by the
- * source-grounded verification pass, which runs after content already exists
- * and can only raise flags. This is not a detail of the current implementation
- * — it is the reason the feature is safe to have at all. Paid-deck generation
- * accepts one source type (a curriculum or syllabus) and writes content from
- * model knowledge, and the audit trail says so. A verification source that
- * leaked into generation would make that statement false.
+ * WHAT A SOURCE IS USED FOR IS PER SOURCE, and is the usageMode field.
+ *
+ *   VERIFICATION_ONLY — the default, and what every source could do before this
+ *       field existed. The document is read only by the source-grounded
+ *       verification pass, which runs after content already exists and can only
+ *       raise flags. Nothing generated was written from it.
+ *   CONTENT_AND_VERIFICATION — the deck's content may also be WRITTEN from this
+ *       document. Admissible only under a licence that records a right to create
+ *       new material from it (see SourceUsageGate), because the defence for such
+ *       content is the licence itself and not independent creation.
+ *
+ * The two rest on DIFFERENT legal bases and the audit trail reports them
+ * separately, per topic. A verification-only source contributes nothing to the
+ * independent-creation position; a content source replaces it with an evidenced
+ * licence. Merging the two would leave a deck that can claim neither cleanly,
+ * which is why the mode lives on the row rather than on the run.
+ *
+ * Either way, no document reaches a PAID_DECK_* model. Content sources are read
+ * by a generator wired to its own ModelPool entry outside that namespace — see
+ * the ROUTE BOUNDARY block in ModelPool.py.
  *
  * Rows are keyed on deckId, which is the deck the generation run was launched
  * into — the same identifier PaidDeckProvenanceLinkResolver resolves to. Never
@@ -32,6 +45,14 @@ class PaidDeckVerificationSourceQueryEngine
      * verification run into an unbounded one.
      */
     static MAXIMUM_SOURCES_PER_DECK = 12;
+
+    /**
+     * Matches the maxLength on PaidDeckVerificationSource.sourceNote. Clamped
+     * rather than refused: a note is a free-text aid to a human reader, and
+     * losing the tail of an over-long one is a better outcome than refusing an
+     * edit that was otherwise fine.
+     */
+    static MAXIMUM_SOURCE_NOTE_LENGTH = 2048;
 
     static async #getCollection()
     {
@@ -125,6 +146,62 @@ class PaidDeckVerificationSourceQueryEngine
         delete documentToStore._id;
 
         return documentToStore;
+    }
+
+    /**
+     * Corrects the note or the usage mode on an attached source.
+     *
+     * The ONLY mutation this class offers besides detach, and it is confined to
+     * the two fields an administrator can legitimately revise after the fact: a
+     * note they want to add detail to, and a decision about what the source is
+     * used for. Everything identifying the document — its hash, its storage
+     * path, its licence, who declared it and when — is fixed at attach time and
+     * has no setter here, because those are the facts the record exists to hold.
+     *
+     * The caller writes the corresponding declaration event FIRST. This method
+     * deliberately does not write one itself: an update that logged its own
+     * history could be called from somewhere that had not checked the licence,
+     * and would then produce a log entry asserting a change was permitted.
+     *
+     * Active rows only. A detached source is a historical fact and editing its
+     * note would rewrite what the deck was checked against.
+     *
+     * @param {string} verificationSourceId
+     * @param {{sourceNote: (string|undefined), usageMode: (number|undefined)}} revisions
+     * @return {Promise<boolean>} True when a still-active row was updated.
+     */
+    static async updateDeclaration(verificationSourceId, revisions)
+    {
+        if (typeof verificationSourceId !== "string" || verificationSourceId.length === 0)
+        {
+            return false;
+        }
+
+        const fieldsToSet = {};
+
+        if (typeof revisions?.sourceNote === "string")
+        {
+            fieldsToSet.sourceNote = revisions.sourceNote.slice(0, PaidDeckVerificationSourceQueryEngine.MAXIMUM_SOURCE_NOTE_LENGTH);
+        }
+
+        if (typeof revisions?.usageMode === "number")
+        {
+            fieldsToSet.usageMode = revisions.usageMode;
+        }
+
+        if (Object.keys(fieldsToSet).length === 0)
+        {
+            return false;
+        }
+
+        const collection = await PaidDeckVerificationSourceQueryEngine.#getCollection();
+
+        const updateResult = await collection.updateOne(
+            { id: verificationSourceId, active: true },
+            { $set: fieldsToSet },
+        );
+
+        return updateResult.modifiedCount > 0;
     }
 
     /**

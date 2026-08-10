@@ -92,12 +92,13 @@ class SupportTicketResolutionDispatcher
 
                 for (const report of reports)
                 {
-                    const bAlreadyHandledThisReporter = reportersHandledThisRun.has(report.getUserId());
+                    const reporterKey = SupportTicketResolutionDispatcher.#buildReporterKey(report);
+                    const bAlreadyHandledThisReporter = reportersHandledThisRun.has(reporterKey);
                     const outcome = bAlreadyHandledThisReporter
                         ? { bCreditGranted: false, bNotified: false, creditAmount: 0 }
                         : await SupportTicketResolutionDispatcher.#deliverToReporter(supportTicket, report, creditsPerReporter, bResolved);
 
-                    reportersHandledThisRun.add(report.getUserId());
+                    reportersHandledThisRun.add(reporterKey);
 
                     processedCount++;
                     if (outcome.bCreditGranted)
@@ -156,6 +157,34 @@ class SupportTicketResolutionDispatcher
         console.log(`[SupportTicketResolutionDispatcher] Ticket ${ticketId}: ${processedCount} reporters processed, ${creditedCount} credited, ${notifiedCount} notified.`);
 
         return { processedCount: processedCount, creditedCount: creditedCount, notifiedCount: notifiedCount, bComplete: true };
+    }
+
+    /**
+     * The identity two report rows have to share before the second one is
+     * treated as the same person already dealt with.
+     *
+     * Anonymous reports have no user id, so keying on the id alone would make
+     * every anonymous reporter on a ticket look like one reporter — the first
+     * would get the outcome email and the rest would be silently marked
+     * dispatched having been told nothing. Their contact address is the next
+     * best identity; failing even that, the report stands alone as itself.
+     *
+     * @param {SupportTicketReport} report
+     * @returns {string}
+     */
+    static #buildReporterKey(report)
+    {
+        if (report.getUserId().length > 0)
+        {
+            return `user:${report.getUserId()}`;
+        }
+
+        if (report.getUserEmail().length > 0)
+        {
+            return `email:${report.getUserEmail().toLowerCase()}`;
+        }
+
+        return `report:${report.getId()}`;
     }
 
     /**
@@ -233,6 +262,15 @@ class SupportTicketResolutionDispatcher
             {
                 console.warn(`[SupportTicketResolutionDispatcher] Resolution email failed for report ${report.getId()}: ${emailError?.message || emailError}`);
             }
+        }
+
+        // An anonymous report has no account to deliver an in-app notification
+        // to, and dispatching against an empty user id would write a row nobody
+        // can ever read. The email above is the whole channel for those, which
+        // is why the unauthenticated form asks for an address.
+        if (report.isAnonymous())
+        {
+            return { bCreditGranted: bCreditGranted, bNotified: bNotified, creditAmount: grantedAmount };
         }
 
         try

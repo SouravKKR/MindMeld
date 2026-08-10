@@ -36,6 +36,10 @@ const PaidDeckGenerationGate = require("../../Globals/Classes/Generation/PaidDec
 const GenerationProvenanceQueryEngine = require("../../Globals/Classes/Database/GenerationProvenanceQueryEngine");
 const SourceVerificationRunner = require("../../Globals/Classes/PaidDeck/SourceVerificationRunner");
 const VerificationSourceAdmission = require("./Helpers/VerificationSourceAdmission");
+const OrganizationScopeResolver = require("../../Globals/Classes/Organization/OrganizationScopeResolver");
+const ViewScopeResolver = require("../../Globals/Classes/View/ViewScopeResolver");
+const PlanViewScopeKey = require("../../Globals/Classes/View/PlanViewScopeKey");
+const SyncQueryEngine = require("../../Globals/Classes/Database/SyncQueryEngine");
 
 
 const VIRTUAL_WEB_SOURCE_TYPES = [
@@ -86,15 +90,25 @@ function buildVirtualWebSource(sourceTypeValue)
  * @param {object} generalGenerationJson
  * @param {string[]} failedScopes  subset of the scope body-keys
  * @param {{ [scopeKey: string]: (object|null) }} scopeJsonByKey
+ * @param {string} organizationId  the organization the original run wrote into, "" for personal
  * @returns {object}
  */
-function buildRetryBody(parentDeckId, generalGenerationJson, failedScopes, scopeJsonByKey)
+function buildRetryBody(parentDeckId, generalGenerationJson, failedScopes, scopeJsonByKey, organizationId)
 {
     const retryBody =
     {
         parentDeckId: parentDeckId,
         generalGeneration: generalGenerationJson,
     };
+
+    // Carried forward explicitly. A retry that dropped it would resolve from the
+    // header instead, and land the missing content type in whichever library the
+    // user happens to be viewing when they press retry — splitting one deck's
+    // output across two namespaces.
+    if (typeof organizationId === "string" && organizationId.length > 0)
+    {
+        retryBody["organizationId"] = organizationId;
+    }
 
     for (const scopeKey of failedScopes)
     {
@@ -137,8 +151,102 @@ async function handleGenerate(request, response)
         return;
     }
 
-    const deckId = body["parentDeckId"] || "0";
-    const userId = user.getId();
+    let deckId = body["parentDeckId"] || "0";
+    const personalUserId = user.getId();
+
+    // ── Which library does this run write into? ───────────────────────────────
+    //
+    // Two ids, and the split matters. personalUserId is the ACCOUNT — it owns
+    // the task, the credits, the notifications and the resume state, all of
+    // which belong to a person and not to an institute. persistenceScopeKey is
+    // the LIBRARY the generated decks land in, which is the organization's when
+    // the user chose to generate for one.
+    //
+    // The organization is read from the BODY, not from the X-Organization-Context
+    // header, even though the header is what every other endpoint uses. A resume
+    // re-POSTs the payload that was saved when the run started, while the header
+    // is stamped by the client from whatever view is open at the time — so a user
+    // who resumed after switching views would silently have their run retargeted
+    // at a different library. The body travels with the run; the header does not.
+    // The header remains the fallback so a first run launched from inside an
+    // organization view still lands there without the client having to opt in.
+    //
+    // The claim is re-authorised against stored membership either way. An
+    // unauthorised one falls back to personal rather than failing the request,
+    // matching OrganizationScopeResolver.resolve — but it is logged, because for
+    // a resume the fallback quietly changes where the output goes.
+    const requestedOrganizationId = typeof body["organizationId"] === "string" ? body["organizationId"].trim() : "";
+    const headerScope = await ViewScopeResolver.resolve(request, personalUserId, user);
+
+    let resolvedOrganizationId = headerScope.organizationId || "";
+
+    if (requestedOrganizationId.length > 0 && requestedOrganizationId !== resolvedOrganizationId)
+    {
+        const organizationAuthorization = await OrganizationScopeResolver.authoriseContext(personalUserId, requestedOrganizationId, user);
+
+        if (organizationAuthorization.permitted)
+        {
+            resolvedOrganizationId = requestedOrganizationId;
+        }
+        else
+        {
+            console.warn(
+                `[Generate] User ${personalUserId} asked to generate for organization ${requestedOrganizationId} `
+                + "but is not an active member — falling back to their personal library."
+            );
+            resolvedOrganizationId = "";
+        }
+    }
+
+    // A run launched inside an administrator's simulated plan sandbox stays in
+    // that sandbox. There is deliberately NO body equivalent of the plan view:
+    // a sandbox is not a library a resumed run should be able to name, and the
+    // header is re-authorised against the administrator role on every request,
+    // so a revoked role sends the output back to the personal library rather
+    // than into a namespace the account may no longer reach.
+    const resolvedPlanViewTierName = resolvedOrganizationId.length > 0 ? "" : headerScope.planViewTierName;
+
+    let persistenceScopeKey = OrganizationScopeResolver.buildScopeKey(personalUserId, resolvedOrganizationId);
+
+    if (resolvedPlanViewTierName.length > 0)
+    {
+        persistenceScopeKey = PlanViewScopeKey.build(personalUserId, resolvedPlanViewTierName);
+    }
+
+    if (resolvedOrganizationId.length > 0)
+    {
+        console.log(`[Generate] Generating into organization ${resolvedOrganizationId} (scope ${persistenceScopeKey}).`);
+    }
+    else if (resolvedPlanViewTierName.length > 0)
+    {
+        console.log(`[Generate] Generating into the simulated ${resolvedPlanViewTierName} plan sandbox (scope ${persistenceScopeKey}).`);
+    }
+
+    // The parent deck must live in the library being written to.
+    //
+    // It usually does — the user right-clicked a deck in the view they are in.
+    // But the target is now a separate choice from the view, so someone browsing
+    // their own library can pick an institute, and the deck they started from
+    // exists only in their personal namespace. Building under it anyway would
+    // produce decks in the institute's library whose parent id resolves to
+    // nothing there: invisible, because the home grid walks down from the root.
+    //
+    // Falling back to the target library's root is the recoverable failure. The
+    // decks appear at the top level of the library the user asked for, which is
+    // visible and movable, rather than correct-looking and lost.
+    if (deckId !== "0")
+    {
+        const parentDeckInTargetScope = await SyncQueryEngine.getDeck(persistenceScopeKey, deckId);
+
+        if (!parentDeckInTargetScope)
+        {
+            console.warn(
+                `[Generate] Parent deck ${deckId} does not exist in scope ${persistenceScopeKey} `
+                + "— generating at the root of that library instead."
+            );
+            deckId = "0";
+        }
+    }
 
     // Checkpoint-resume: a resumed run carries the paused run's main task id so
     // the whole pipeline reuses the same Tasks/{mainTaskId}/ GCS namespace and
@@ -194,13 +302,19 @@ async function handleGenerate(request, response)
     // validateGenerationSettings, so it also covers any other caller of it.
     const bPaidDeckMode = PaidDeckGenerationGate.isRequested(generalGenerationSettings);
 
-    // Verification sources the administrator picked for this run. A SEPARATE
-    // list from informationSources on purpose: these are never generation
-    // inputs, so they must not pass through the source-type restriction that
-    // defines what paid-deck generation is allowed to read. They are checked
-    // now, before any work starts, and attached to the produced deck after
-    // MoveToDatabase — see VerificationSourceAdmission.
+    // Declared sources the administrator picked for this run. A SEPARATE list
+    // from informationSources on purpose: each carries a licence declaration and
+    // a usage mode, which is what lets one be admitted as CONTENT without
+    // relaxing the source-type restriction that defines what the ordinary
+    // generation source list may hold. They are checked now, before any work
+    // starts, and attached to the produced deck after MoveToDatabase — see
+    // VerificationSourceAdmission.
     let admittedVerificationSources = [];
+
+    // The subset the pipeline may WRITE from, in the shape the Agent reads. Only
+    // ever non-empty for a paid-deck run in which the administrator explicitly
+    // set a source to content usage under a licence that permits it.
+    let admittedContentSources = [];
 
     if (bPaidDeckMode)
     {
@@ -212,8 +326,14 @@ async function handleGenerate(request, response)
             return;
         }
 
+        // `verificationSources` is the current field and carries the usage mode
+        // and note per source; `verificationSourceIds` is the bare id list it
+        // replaced. Both are accepted because a run paused before this shipped
+        // replays its saved body verbatim, and TASK_STATES_TTL_DAYS means such a
+        // body can arrive a week later. VerificationSourceAdmission normalises
+        // the older form to verification-only, which is what it meant.
         const verificationSourceAdmission = await VerificationSourceAdmission.resolveAndValidate(
-            body["verificationSourceIds"], userId);
+            body["verificationSources"] || body["verificationSourceIds"], personalUserId);
 
         if (!verificationSourceAdmission.allowed)
         {
@@ -223,6 +343,15 @@ async function handleGenerate(request, response)
         }
 
         admittedVerificationSources = verificationSourceAdmission.resolvedSources;
+        admittedContentSources = VerificationSourceAdmission.selectContentSources(admittedVerificationSources);
+
+        if (admittedContentSources.length > 0)
+        {
+            console.log(
+                `[Generate] ${admittedContentSources.length} licensed content source(s) admitted for run — `
+                + "topics they cover will be written from them rather than from model knowledge."
+            );
+        }
     }
 
     try
@@ -246,7 +375,7 @@ async function handleGenerate(request, response)
     // the user sees an upgrade prompt rather than an out-of-credits message.
     // Re-authorized server-side against the stored plan; the client is never
     // trusted.
-    const generationEntitlement = await PlanEntitlementGate.requireFeatureForRequest(request, userId, planFeatures.AUTOMATIC_GENERATION);
+    const generationEntitlement = await PlanEntitlementGate.requireFeatureForRequest(request, personalUserId, planFeatures.AUTOMATIC_GENERATION);
     if (!generationEntitlement.allowed)
     {
         response.statusCode = httpStatus.FORBIDDEN;
@@ -311,7 +440,7 @@ async function handleGenerate(request, response)
         }));
     if (runWillGenerateImages)
     {
-        const imageEntitlement = await PlanEntitlementGate.requireFeatureForRequest(request, userId, planFeatures.IMAGE_GENERATION);
+        const imageEntitlement = await PlanEntitlementGate.requireFeatureForRequest(request, personalUserId, planFeatures.IMAGE_GENERATION);
         if (!imageEntitlement.allowed)
         {
             response.statusCode = httpStatus.FORBIDDEN;
@@ -324,7 +453,7 @@ async function handleGenerate(request, response)
     // charges each task authoritatively; this just refuses an obviously
     // unaffordable generation up front. Runs AFTER the plan gates so a
     // tier-locked feature reports FEATURE_NOT_IN_PLAN (403) ahead of a 402.
-    const creditPreflight = await CreditPreflight.check(userId, taskTypes.PREPARE_FOR_GENERATION);
+    const creditPreflight = await CreditPreflight.check(personalUserId, taskTypes.PREPARE_FOR_GENERATION);
     if (!creditPreflight.allowed)
     {
         // Out-of-credits is recoverable: save a resumable task state so the
@@ -333,12 +462,12 @@ async function handleGenerate(request, response)
         const bIsResumable = creditPreflight.reason === ErrorCodes.INSUFFICIENT_CREDITS;
         if (bIsResumable)
         {
-            try { await TaskStateManager.save({ userId: userId, taskType: taskTypes.PREPARE_FOR_GENERATION, route: "/Generate", payload: body, pausedReason: creditPreflight.reason }); }
+            try { await TaskStateManager.save({ userId: personalUserId, taskType: taskTypes.PREPARE_FOR_GENERATION, route: "/Generate", payload: body, pausedReason: creditPreflight.reason }); }
             catch (saveError) { console.warn(`[Generate] Failed to save resumable task state: ${saveError.message}`); }
 
             // Leave a persistent in-app record so the user can find + resume this
             // later. In-app only — they already have the inline 402 on screen now.
-            try { await NotificationDispatcher.dispatch(userId, NotificationContent.outOfCredits("generation"), notificationChannels.IN_APP); }
+            try { await NotificationDispatcher.dispatch(personalUserId, NotificationContent.outOfCredits("generation"), notificationChannels.IN_APP); }
             catch (notifyError) { console.warn(`[Generate] Failed to dispatch out-of-credits notification: ${notifyError.message}`); }
         }
         response.statusCode = httpStatus.PAYMENT_REQUIRED;
@@ -378,10 +507,17 @@ async function handleGenerate(request, response)
         prepareForSimilaritySearchTasks.push(prepareForSimilaritySearchTask);
     }
 
+    // contentSources rides alongside the settings rather than inside them.
+    // MapTopicsWithContent parses this payload through
+    // GeneralGenerationSettings.from_json, whose codegen reads named members
+    // only — so an extra top-level key is inert to the settings object and is
+    // read separately off the raw payload. Keeping it out of the settings is
+    // also what stops a licensed document from ever appearing in
+    // informationSources, which is the list the paid-deck gate polices.
     const mapTopicToContentTask = new TaskDescriptor({
         type: taskTypes.MAP_TOPICS_WITH_CONTENT,
         executionTarget: taskExecutionTargets.LOCAL,
-        payload: normalizedGeneralGenerationJson,
+        payload: { ...normalizedGeneralGenerationJson, contentSources: admittedContentSources },
         nextTaskIds: [],
     });
 
@@ -401,7 +537,7 @@ async function handleGenerate(request, response)
     const mainTaskDescriptor = new TaskDescriptor({
         type: taskTypes.PREPARE_FOR_GENERATION,
         executionTarget: taskExecutionTargets.LOCAL,
-        userId: userId,
+        userId: personalUserId,
         payload: normalizedGeneralGenerationJson,
         nextTaskIds: [processSyllabusTaskDescriptor.getId()],
     });
@@ -416,7 +552,7 @@ async function handleGenerate(request, response)
     }
 
     await TaskManager.setTask(mainTaskDescriptor);
-    await TaskManager.trackForUser(userId, mainTaskDescriptor.getId());
+    await TaskManager.trackForUser(personalUserId, mainTaskDescriptor.getId());
 
     // Register the run's staging folder for deletion BEFORE any of it is
     // written. The success path still purges it eagerly at the end of
@@ -446,7 +582,7 @@ async function handleGenerate(request, response)
     ({
         storagePrefix: GenerationStagingPolicy.buildStoragePrefix(mainTaskDescriptor.getId()),
         kind: ephemeralUploadKinds.GENERATION_TASK_STAGING,
-        userId: userId,
+        userId: personalUserId,
         retentionDays: DatabaseConstants.GENERATION_STAGING_RETENTION_DAYS,
         metadata: { mainTaskId: mainTaskDescriptor.getId() },
     });
@@ -463,7 +599,7 @@ async function handleGenerate(request, response)
     try
     {
         await TaskStateManager.save({
-            userId: userId,
+            userId: personalUserId,
             taskType: taskTypes.PREPARE_FOR_GENERATION,
             route: "/Generate",
             payload: { ...body, resumeMainTaskId: mainTaskDescriptor.getId() },
@@ -668,10 +804,16 @@ async function handleGenerate(request, response)
     {
         console.log("Generating mock tests...");
 
+        // Carries contentSources for the same reason MAP_TOPICS_WITH_CONTENT
+        // does, plus one of its own: a licensed question paper admitted here is
+        // how a paid-deck run gets reference papers at all, since the ordinary
+        // QUESTION_PAPER route is closed to paid decks (no licence is declared
+        // on that path). GenerateMockTests reads it to decide the web is not
+        // needed.
         mockTestGenerationTask = new TaskDescriptor({
             type: taskTypes.GENERATE_MOCK_TESTS,
             executionTarget: taskExecutionTargets.LOCAL,
-            payload: mockTestGenerationSettingsJson,
+            payload: { ...mockTestGenerationSettingsJson, contentSources: admittedContentSources },
             nextTaskIds: [],
         });
 
@@ -729,7 +871,7 @@ async function handleGenerate(request, response)
             try
             {
                 await TaskStateManager.save({
-                    userId: userId,
+                    userId: personalUserId,
                     taskType: taskTypes.PREPARE_FOR_GENERATION,
                     route: "/Generate",
                     // Carry the main task id so Resume continues from midway,
@@ -756,7 +898,7 @@ async function handleGenerate(request, response)
                 console.error(`[Generate] Failed to record taskHistory (paused path) for ${mainTaskId}: ${historyError.message}`);
             }
 
-            await TaskManager.untrackForUser(userId, mainTaskId);
+            await TaskManager.untrackForUser(personalUserId, mainTaskId);
             return;
         }
 
@@ -777,7 +919,7 @@ async function handleGenerate(request, response)
             try
             {
                 await TaskStateManager.save({
-                    userId: userId,
+                    userId: personalUserId,
                     taskType: taskTypes.PREPARE_FOR_GENERATION,
                     route: "/Generate",
                     // Carry the main task id so Resume continues from midway,
@@ -809,7 +951,7 @@ async function handleGenerate(request, response)
             }
 
             await TaskManager.clearPaused(mainTaskId);
-            await TaskManager.untrackForUser(userId, mainTaskId);
+            await TaskManager.untrackForUser(personalUserId, mainTaskId);
             return;
         }
 
@@ -858,6 +1000,7 @@ async function handleGenerate(request, response)
                         studyMaterialGeneration: studyMaterialGenerationSettingsJson,
                         mockTestGeneration: mockTestGenerationSettingsJson,
                     },
+                    resolvedOrganizationId,
                 ),
             };
         }
@@ -871,7 +1014,7 @@ async function handleGenerate(request, response)
                 const beautifyDeckShortNamesTask = new TaskDescriptor({
                     type: taskTypes.BEAUTIFY_DECK_SHORT_NAMES,
                     executionTarget: taskExecutionTargets.LOCAL,
-                    userId: userId,
+                    userId: personalUserId,
                     payload: {},
                     nextTaskIds: [],
                 });
@@ -961,7 +1104,7 @@ async function handleGenerate(request, response)
                 try
                 {
                     await TaskStateManager.save({
-                        userId: userId,
+                        userId: personalUserId,
                         taskType: taskTypes.PREPARE_FOR_GENERATION,
                         route: "/Generate",
                         // Carry the main task id so Resume continues from midway,
@@ -996,7 +1139,7 @@ async function handleGenerate(request, response)
                 {
                     await TaskManager.clearPaused(mainTaskId);
                 }
-                await TaskManager.untrackForUser(userId, mainTaskId);
+                await TaskManager.untrackForUser(personalUserId, mainTaskId);
 
                 // Return (do NOT fall through): skips moveToDatabase (nothing
                 // persisted — IPR-safe) and skips the success tail that would
@@ -1033,7 +1176,7 @@ async function handleGenerate(request, response)
                 const verificationTask = new TaskDescriptor({
                     type: taskTypes.PAID_DECK_VERIFICATION,
                     executionTarget: taskExecutionTargets.LOCAL,
-                    userId: userId,
+                    userId: personalUserId,
                     payload: { subjectName: generalGenerationSettings.getSubjectName() || "" },
                     nextTaskIds: [],
                 });
@@ -1049,8 +1192,13 @@ async function handleGenerate(request, response)
             }
         }
 
+        // The SCOPE KEY, not the account id: this is the one call that decides
+        // which library the generated decks appear in, and an organization run
+        // must land in the organization's namespace or the view it was launched
+        // from will never show it. The account id follows separately, because
+        // provenance still has to name the person who ran it.
         const moveResult = await moveToDatabase(
-            userId,
+            persistenceScopeKey,
             mainTaskId,
             deckId,
             completedTask,
@@ -1060,6 +1208,8 @@ async function handleGenerate(request, response)
             generationFailureContext,
             bIsRetry,
             generalGenerationSettings,
+            personalUserId,
+            resolvedOrganizationId,
         );
 
         console.log(`[Generate] Database move complete for task ${mainTaskId}.`);
@@ -1090,7 +1240,7 @@ async function handleGenerate(request, response)
                     const attachedCount = await VerificationSourceAdmission.attachToGeneratedDeck({
                         provenanceDeckId: provenanceRecord.deckId,
                         resolvedSources: admittedVerificationSources,
-                        actorUserId: userId,
+                        actorUserId: personalUserId,
                         actorEmail: (user.getAdditionalData() || {}).email || "",
                     });
 
@@ -1118,7 +1268,9 @@ async function handleGenerate(request, response)
         {
             try
             {
-                await clearPartialCompletionOnDecks(userId, clearPartialCompletionDeckIds);
+                // Scope-keyed for the same reason moveToDatabase is: the partial
+                // decks these ids name live in whichever library the run wrote to.
+                await clearPartialCompletionOnDecks(persistenceScopeKey, clearPartialCompletionDeckIds);
                 console.log(`[Generate] Cleared partial-completion marker on ${clearPartialCompletionDeckIds.length} deck(s) after successful retry of ${mainTaskId}.`);
             }
             catch (clearError)
@@ -1193,7 +1345,7 @@ async function handleGenerate(request, response)
         {
             console.error(`[Generate] Failed to record taskHistory for ${mainTaskId}: ${historyError.message}`);
         }
-        await TaskManager.untrackForUser(userId, mainTaskId);
+        await TaskManager.untrackForUser(personalUserId, mainTaskId);
 
         // Notify the user their study set is ready on every channel. This is the
         // promise the progress page makes — it tells the user to close the page
@@ -1205,7 +1357,7 @@ async function handleGenerate(request, response)
         {
             try
             {
-                await NotificationDispatcher.dispatch(userId, NotificationContent.generationComplete(deckId), NotificationDispatcher.IN_APP_AND_PUSH_AND_EMAIL);
+                await NotificationDispatcher.dispatch(personalUserId, NotificationContent.generationComplete(deckId), NotificationDispatcher.IN_APP_AND_PUSH_AND_EMAIL);
             }
             catch (notifyError)
             {
@@ -1215,7 +1367,7 @@ async function handleGenerate(request, response)
         // The completion handler finished, so this run is NOT orphaned — clear the
         // start-saved resumable snapshot. (Credit/pause stops returned earlier and
         // keep their own saved state.)
-        try { await TaskStateManager.delete(userId); }
+        try { await TaskStateManager.delete(personalUserId); }
         catch (clearError) { console.warn(`[Generate] Failed to clear resumable state for ${mainTaskId}: ${clearError.message}`); }
     })
     .catch(async (error) =>
@@ -1230,10 +1382,10 @@ async function handleGenerate(request, response)
         {
             console.error(`[Generate] Failed to record taskHistory (failure path) for ${mainTaskId}: ${historyError.message}`);
         }
-        await TaskManager.untrackForUser(userId, mainTaskId);
+        await TaskManager.untrackForUser(personalUserId, mainTaskId);
         // Handled failure (not an orphaned interruption) — clear the start-saved
         // resumable snapshot so a failed run doesn't leave a stale resume banner.
-        try { await TaskStateManager.delete(userId); }
+        try { await TaskStateManager.delete(personalUserId); }
         catch (clearError) { console.warn(`[Generate] Failed to clear resumable state (failure path) for ${mainTaskId}: ${clearError.message}`); }
     })
     .finally(async () =>

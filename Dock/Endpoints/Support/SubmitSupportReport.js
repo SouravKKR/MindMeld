@@ -5,26 +5,34 @@ const SupportTicketLimits = require("../../Globals/Classes/Support/SupportTicket
 const SupportAttachmentPolicy = require("../../Globals/Classes/Support/SupportAttachmentPolicy");
 const SupportTicketQuota = require("../../Globals/Classes/Support/SupportTicketQuota");
 const SupportTicketReport = require("../../Globals/Model/SupportTicketReport");
+const PublicReportPolicy = require("../../Globals/Classes/Support/PublicReportPolicy");
+const CredentialScrubber = require("../../Globals/Classes/Support/CredentialScrubber");
+const EphemeralUploadRegistry = require("../../Globals/Classes/Content/EphemeralUploadRegistry");
 const Persistence = require("../../Globals/Classes/Persistence");
 const TaskDescriptor = require("../../Globals/Classes/Task/TaskDescriptor");
 const TaskManager = require("../../Globals/Classes/Task/TaskManager");
+const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const { storageTargets } = require("../../Globals/Enumerations/StorageTargets");
 const { supportTicketTypes } = require("../../Globals/Enumerations/SupportTicketTypes");
 const { supportTicketReportStatus } = require("../../Globals/Enumerations/SupportTicketReportStatus");
+const { ephemeralUploadKinds } = require("../../Globals/Enumerations/EphemeralUploadKinds");
 const { taskTypes } = require("../../Globals/Enumerations/TaskTypes");
 const { taskExecutionTargets } = require("../../Globals/Enumerations/TaskExecutionTargets");
 const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 const VALID_ISSUE_TYPE_VALUES = new Set(Object.values(supportTicketTypes));
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
- * POST /Support/Report/Submit   (multipart, MULTIPART_FORM_DATA)
+ * POST /Support/Report/Submit         (multipart, login required)
+ * POST /Support/Report/SubmitPublic   (multipart, no session)
  *
- * The single entry point for the Report Issue dialog. Form fields carry
- * issueType / description / bNotifyOnResolution; zero or more files arrive under
- * the repeated "attachments" field. Packetron's multipart parser fills the body
- * and the file map in one pass, so no separate metadata request is needed.
+ * The entry point for the Report Issue dialog, in both of its modes. Form fields
+ * carry issueType / description / bNotifyOnResolution (plus contactEmail when
+ * nobody is signed in); zero or more files arrive under the repeated
+ * "attachments" field. Packetron's multipart parser fills the body and the file
+ * map in one pass, so no separate metadata request is needed.
  *
  * The report is stored verbatim and immediately handed to the Agent, which is the
  * only service able to embed text and therefore the only one able to decide which
@@ -34,17 +42,23 @@ const VALID_ISSUE_TYPE_VALUES = new Set(Object.values(supportTicketTypes));
  * Validation order is deliberate: everything cheap and rejectable happens before
  * a single byte is promoted to cloud storage, and the quota is checked before the
  * attachments so a user over their allowance never uploads for nothing.
+ *
+ * ── The unauthenticated mode ───────────────────────────────────────────────
+ *
+ * Both routes run this handler, and the handler decides what it is allowed to
+ * accept from the session it actually has. With no session, only the types
+ * PublicReportPolicy calls public may be filed — in practice the account-access
+ * report, whose reporter is by definition the person who cannot sign in — and a
+ * contact address is required in place of the account.
+ *
+ * A signed-in caller hitting the public route is still attributed to their
+ * account rather than being treated as anonymous: the session is the better
+ * identity when it exists, and dropping it would cost them the quota, the
+ * reward and their own "Your reports" view.
  */
 async function submitSupportReport(request, response)
 {
     const user = await getUser(request);
-
-    if (!user)
-    {
-        response.statusCode = httpStatus.UNAUTHORIZED;
-        response.sendJson({ error: ErrorCodes.INVALID_REQUEST });
-        return;
-    }
 
     const body = await request.getBody();
     const files = await request.getFiles();
@@ -58,6 +72,42 @@ async function submitSupportReport(request, response)
         response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: ErrorCodes.INVALID_BODY, reason: "issueType" });
         return;
+    }
+
+    // An intellectual-property complaint is never a support report. It has its
+    // own record, its own deadlines and its own confirmation step, and letting
+    // it in through this door would file a legal notice as a bug report — with
+    // no complainant particulars, no clock and an attachment lifecycle that
+    // deletes the evidence when the ticket closes.
+    if (PublicReportPolicy.isIntellectualPropertyComplaint(issueType))
+    {
+        await discardUploadedFiles(uploadedFiles);
+        response.statusCode = httpStatus.BAD_REQUEST;
+        response.sendJson({ error: ErrorCodes.INVALID_BODY, reason: "issueType", useEndpoint: "/Legal/IntellectualPropertyComplaint" });
+        return;
+    }
+
+    const contactEmail = typeof body?.contactEmail === "string" ? body.contactEmail.trim().toLowerCase() : "";
+
+    if (!user)
+    {
+        if (!PublicReportPolicy.isAcceptedWithoutAuthentication(issueType))
+        {
+            await discardUploadedFiles(uploadedFiles);
+            response.statusCode = httpStatus.UNAUTHORIZED;
+            response.sendJson({ error: ErrorCodes.REPORT_TYPE_NOT_PUBLIC });
+            return;
+        }
+
+        // Without an account there is no other way to reach this reporter, and
+        // an account-access report that cannot be replied to is a dead letter.
+        if (!EMAIL_REGEX.test(contactEmail))
+        {
+            await discardUploadedFiles(uploadedFiles);
+            response.statusCode = httpStatus.BAD_REQUEST;
+            response.sendJson({ error: ErrorCodes.INVALID_EMAIL });
+            return;
+        }
     }
 
     const description = String(body?.description ?? "").trim();
@@ -90,7 +140,13 @@ async function submitSupportReport(request, response)
         return;
     }
 
-    const quotaOutcome = await SupportTicketQuota.check(user.getId());
+    // The durable daily allowance is per ACCOUNT, so it only applies when there
+    // is one. An anonymous report is bounded by the per-IP plugin on its route
+    // instead — counting a hand-typed address as an identity would let anyone
+    // exhaust a stranger's allowance by typing their email.
+    const quotaOutcome = user
+        ? await SupportTicketQuota.check(user.getId())
+        : { allowed: true, limit: 0, used: 0, remaining: 0, retryAfterSeconds: 0 };
 
     if (!quotaOutcome.allowed)
     {
@@ -116,16 +172,22 @@ async function submitSupportReport(request, response)
 
     const supportTicketReport = new SupportTicketReport
     ({
-        userId: user.getId(),
-        userEmail: resolveUserEmail(user),
+        userId: user ? user.getId() : "",
+        userEmail: user ? resolveUserEmail(user) : contactEmail,
         issueType: issueType,
-        description: description,
-        bNotifyOnResolution: body?.bNotifyOnResolution,
+        // An account-access report is the one place a reporter is genuinely
+        // likely to type a password — "my password Hunter2 stopped working" —
+        // and the description is about to be sent to an embedding model and
+        // stored beside every other report. Scrubbed once, here, before it is
+        // durable anywhere. Scoped by type rather than applied to everything:
+        // see PublicReportPolicy.CREDENTIAL_SCRUB_ISSUE_TYPES.
+        description: PublicReportPolicy.requiresCredentialScrub(issueType) ? CredentialScrubber.scrub(description) : description,
+        bNotifyOnResolution: user ? body?.bNotifyOnResolution : true,
         createdAt: Date.now(),
         groupingStatus: supportTicketReportStatus.PENDING_GROUPING
     });
 
-    const attachmentOutcome = await storeAttachments(supportTicketReport.getId(), uploadedFiles);
+    const attachmentOutcome = await storeAttachments(supportTicketReport.getId(), supportTicketReport.getUserId(), uploadedFiles);
 
     if (attachmentOutcome.error !== null)
     {
@@ -233,10 +295,11 @@ async function discardUploadedFiles(uploadedFiles)
  * anything the client claimed.
  *
  * @param {string} reportId
+ * @param {string} userId owner of the upload, or "" for an anonymous report
  * @param {Array<object>} uploadedFiles
  * @returns {Promise<{attachments: Array<object>, error: string|null, reason: string, statusCode: number}>}
  */
-async function storeAttachments(reportId, uploadedFiles)
+async function storeAttachments(reportId, userId, uploadedFiles)
 {
     const attachments = [];
 
@@ -331,9 +394,13 @@ async function storeAttachments(reportId, uploadedFiles)
         ({
             storagePrefix: SupportAttachmentPolicy.buildStoragePrefix(reportId),
             kind: ephemeralUploadKinds.SUPPORT_ATTACHMENT,
-            userId: userId,
+            // Empty for an anonymous report. The registry treats that as "no
+            // owner", which is correct: there is no account for an erasure
+            // request to sweep it under, and the retention window is what
+            // reclaims it instead.
+            userId: userId.length > 0 ? userId : null,
             retentionDays: DatabaseConstants.SUPPORT_ATTACHMENT_RETENTION_DAYS,
-            metadata: { reportId: reportId, attachmentCount: attachments.length },
+            metadata: { reportId: reportId, attachmentCount: attachments.length }
         });
     }
 
@@ -409,6 +476,14 @@ function resolveUserEmail(user)
  */
 async function queueDeduplication(supportTicketReport)
 {
+    // Some report types are never clustered — see PublicReportPolicy. They are
+    // not "ungrouped by failure", so the report is left in its pending state
+    // rather than flagged, and nothing is queued.
+    if (PublicReportPolicy.isGroupingExempt(supportTicketReport.getIssueType()))
+    {
+        return;
+    }
+
     const deduplicationTask = new TaskDescriptor
     ({
         type: taskTypes.DEDUPLICATE_SUPPORT_TICKET,

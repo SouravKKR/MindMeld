@@ -1,5 +1,6 @@
 import AuthenticationEvents from "../../../Globals/Events/AuthenticationEvents.js";
 import TermsAndConditionsManager from "../../../Globals/Classes/TermsAndConditionsManager.js";
+import ReportIssueDialog from "../../../CommonComponents/ReportIssueDialog.js";
 
 /**
  * SignInLegalNoticeComponent
@@ -39,10 +40,17 @@ class SignInLegalNoticeComponent extends HTMLElement
             link.addEventListener("click", (clickEvent) =>
             {
                 clickEvent.preventDefault();
+
                 const documentKey = link.getAttribute("data-doc");
                 if (documentKey)
                 {
                     TermsAndConditionsManager.downloadDocument(documentKey);
+                    return;
+                }
+
+                if (link.hasAttribute("data-report-copyright"))
+                {
+                    ReportIssueDialog.showPublic("INTELLECTUAL_PROPERTY");
                 }
             });
         }
@@ -56,6 +64,8 @@ class SignInLegalNoticeComponent extends HTMLElement
             <a href="#" data-doc="TERMS_OF_SERVICE" class="sign-in-legal-link">Terms of Service</a>
             <span>and</span>
             <a href="#" data-doc="PRIVACY_POLICY" class="sign-in-legal-link">Privacy Policy</a>
+            <span>·</span>
+            <a href="#" data-report-copyright class="sign-in-legal-link">Report copyright / IP infringement</a>
         `;
 
         this.#handleEvents();

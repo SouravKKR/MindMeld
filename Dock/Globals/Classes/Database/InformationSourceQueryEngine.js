@@ -124,6 +124,76 @@ class InformationSourceQueryEngine
     }
 
     /**
+     * Finds uploaded documents whose NAME contains the given text, grouped by
+     * content hash.
+     *
+     * This exists for the infringement-complaint console, and the grouping is
+     * the point. A rightsholder describes their work by its title — "Concepts of
+     * Physics, Volume 1" — and cannot possibly supply a sha512, which is the
+     * only thing the takedown endpoint accepts. Document names are the one field
+     * that routinely carries the title, because a user uploads a file called
+     * what the book is called.
+     *
+     * Grouped by hash rather than returned row-by-row because the storage is
+     * content-addressed: forty accounts holding the same PDF are forty rows and
+     * ONE takedown, and a list that showed them as forty results would invite an
+     * administrator to action the same content forty times.
+     *
+     * Deliberately a case-insensitive substring match with the input escaped. It
+     * is a search aid an administrator reads and then judges, not an automatic
+     * matcher — nothing acts on the result without a human picking from it.
+     *
+     * @param {string} searchText
+     * @param {number} limit Maximum distinct documents to return.
+     * @return {Promise<Array<{contentHash: string, names: string[], holderCount: number, mimeType: string, totalSizeBytes: number, mostRecentUploadAt: number}>>}
+     */
+    static async findDistinctDocumentsByNameSearch(searchText, limit)
+    {
+        const trimmedSearchText = String(searchText ?? "").trim();
+
+        // A blank search would match every document ever uploaded. Refused
+        // rather than answered, because "here is the whole corpus" is not a
+        // useful answer to "which of these is my book".
+        if (trimmedSearchText.length < 3)
+        {
+            return [];
+        }
+
+        const escapedSearchText = trimmedSearchText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const collection = await (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.INFORMATION_SOURCES_COLLECTION);
+
+        return await collection.aggregate
+        ([
+            { $match: { name: { $regex: escapedSearchText, $options: "i" }, hash: { $nin: [null, ""] } } },
+            {
+                $group:
+                {
+                    _id: "$hash",
+                    names: { $addToSet: "$name" },
+                    holderCount: { $addToSet: "$userId" },
+                    mimeType: { $first: "$mimeType" },
+                    fileSizeBytes: { $first: "$fileSizeBytes" },
+                    mostRecentUploadAt: { $max: "$uploadedAt" }
+                }
+            },
+            {
+                $project:
+                {
+                    _id: 0,
+                    contentHash: "$_id",
+                    names: 1,
+                    holderCount: { $size: "$holderCount" },
+                    mimeType: 1,
+                    totalSizeBytes: "$fileSizeBytes",
+                    mostRecentUploadAt: 1
+                }
+            },
+            { $sort: { holderCount: -1 } },
+            { $limit: Math.min(Math.max(Number(limit) || 25, 1), 200) }
+        ]).toArray();
+    }
+
+    /**
      * Lists user ids that currently own at least one information source.
      *
      * The retention reaper sweeps by account rather than by row, because whether

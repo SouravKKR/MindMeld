@@ -477,7 +477,24 @@ class StaticBundler
                     {
                         continue;
                     }
-                    fs.unlinkSync(entryPath);
+                    // Same Windows hazard CopyStaticFiles.js already guards
+                    // against: antivirus and IDE watchers hold a handle on a
+                    // file for a moment after it is written, and these were
+                    // written seconds ago by the copy step. fs.unlinkSync has
+                    // no retry option, so use fs.rmSync's — otherwise one
+                    // scanned stylesheet aborts the whole build at its last
+                    // stage, after every expensive step has already run.
+                    //
+                    // A longer window than the wipe in CopyStaticFiles: that
+                    // one retries a single recursive remove, while this runs
+                    // per file across thousands of them, immediately behind
+                    // the copy that a real-time scanner is still working
+                    // through. The wait is only ever paid on contention.
+                    fs.rmSync(entryPath, {
+                        force:      true,
+                        maxRetries: 60,
+                        retryDelay: 250,
+                    });
                     deletedCount++;
                 }
             }

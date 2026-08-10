@@ -323,6 +323,84 @@ class NotificationContent
             data: { target: "support", ticketId: ticketId ?? "" }
         };
     }
+
+    // ── Intellectual-property complaints (administrators only) ───────────────
+    //
+    // These go to the people who hold the Grievance Officer's queue, not to
+    // users. They are the only notifications in this catalogue whose deadline is
+    // a commitment in a published document rather than a service expectation, so
+    // they name the date outright instead of saying "soon".
+
+    /**
+     * A complaint is approaching or has passed one of its published deadlines.
+     *
+     * One builder for both, with the wording switching on `bBreached`, because
+     * "this is about to be late" and "this is late" are the same fact at two
+     * moments and splitting them into two builders is how the two drift apart.
+     *
+     * @param {string} complaintReference
+     * @param {string} deadlineName human-readable name of the deadline
+     * @param {string} deadlineText the date, already formatted
+     * @param {boolean} bBreached
+     */
+    static intellectualPropertyComplaintDeadline(complaintReference, deadlineName, deadlineText, bBreached)
+    {
+        return {
+            type: notificationTypes.SYSTEM,
+            title: bBreached
+                ? `Overdue: copyright complaint ${complaintReference}`
+                : `Due soon: copyright complaint ${complaintReference}`,
+            body: bBreached
+                ? `The ${deadlineName} for complaint ${complaintReference} passed on ${deadlineText}. This is a commitment in our Terms of Service.`
+                : `The ${deadlineName} for complaint ${complaintReference} falls on ${deadlineText}.`,
+            data: { target: "adminLegal", complaintReference: complaintReference ?? "" },
+            email:
+            {
+                subject: bBreached
+                    ? `Overdue: CogniumLearn copyright complaint ${complaintReference}`
+                    : `Due soon: CogniumLearn copyright complaint ${complaintReference}`,
+                headingText: bBreached ? "A copyright complaint is overdue" : "A copyright complaint is due soon",
+                introText: bBreached
+                    ? `The ${deadlineName} for complaint ${complaintReference} passed on ${deadlineText}. Clause 19 of the Terms of Service commits us to this deadline.`
+                    : `The ${deadlineName} for complaint ${complaintReference} falls on ${deadlineText}. It is still open in the Grievance Officer's queue.`,
+                highlightText: `Complaint ${complaintReference} — ${deadlineName}: ${deadlineText}`,
+                callToActionLabel: NotificationContent.DEFAULT_EMAIL_CALL_TO_ACTION_LABEL,
+                footerText: "You're receiving this because you are a CogniumLearn administrator."
+            }
+        };
+    }
+
+    /**
+     * The twenty-one-day block under Section 52(1)(c) has run its course and no
+     * court order has been produced, so access may be restored.
+     *
+     * Notified rather than acted on automatically. Restoring content is a
+     * decision with the same weight as removing it, and the platform may well
+     * have been served an order that never made it onto the record.
+     *
+     * @param {string} complaintReference
+     * @param {string} blockExpiryText
+     */
+    static intellectualPropertyBlockWindowElapsed(complaintReference, blockExpiryText)
+    {
+        return {
+            type: notificationTypes.SYSTEM,
+            title: `Block window elapsed: ${complaintReference}`,
+            body: `The 21-day block for complaint ${complaintReference} expired on ${blockExpiryText}. Unless a court order has been served, access may be restored.`,
+            data: { target: "adminLegal", complaintReference: complaintReference ?? "" },
+            email:
+            {
+                subject: `CogniumLearn: the 21-day block on ${complaintReference} has elapsed`,
+                headingText: "A Section 52(1)(c) block window has elapsed",
+                introText: `The twenty-one-day block applied for complaint ${complaintReference} expired on ${blockExpiryText}. `
+                    + `Under Section 52(1)(c) of the Copyright Act, access may be restored unless an order of a competent court has been served on us. `
+                    + `Nothing has been restored automatically — this needs a decision.`,
+                highlightText: `Complaint ${complaintReference} — block expired ${blockExpiryText}`,
+                callToActionLabel: NotificationContent.DEFAULT_EMAIL_CALL_TO_ACTION_LABEL,
+                footerText: "You're receiving this because you are a CogniumLearn administrator."
+            }
+        };
+    }
 }
 
 module.exports = NotificationContent;

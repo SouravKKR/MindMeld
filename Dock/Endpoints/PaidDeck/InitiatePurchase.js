@@ -19,6 +19,7 @@ const LicenseDurationConfigurationResolver = require("../../Globals/Classes/Pric
 const GrantSources = require("../../Globals/Constants/GrantSources");
 const PlanDeckPerkService = require("../../Globals/Classes/Plans/PlanDeckPerkService");
 const PlanTierResolver = require("../../Globals/Classes/Plans/PlanTierResolver");
+const ViewScopeResolver = require("../../Globals/Classes/View/ViewScopeResolver");
 const { planTiers } = require("../../Globals/Enumerations/PlanTiers");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
@@ -111,6 +112,25 @@ async function initiatePurchase(request, response)
             error: acquisitionDecision.refusals[0].reason,
             refusals: acquisitionDecision.refusals
         });
+        return;
+    }
+
+    // A simulated plan view is a sandbox; a purchase is not simulable. The money
+    // is real, the licence is real, and the Pro Plus monthly free-deck claim
+    // below is a real once-a-month entitlement keyed to the ACCOUNT — so
+    // simulating the tier that carries it would hand an administrator genuine
+    // marketplace content for nothing, every month, whatever they actually pay
+    // for. A paid purchase would be no better: it would create a real order and
+    // seed the deck into the personal library, invisible from the sandbox the
+    // buyer is looking at.
+    //
+    // Refused here, before pricing and before any coupon is reserved, so no
+    // payment path is reachable at all rather than merely unattractive.
+    const purchaseScope = await ViewScopeResolver.resolve(request, session.getUserId(), user);
+    if (purchaseScope.planViewTierName.length > 0)
+    {
+        response.statusCode = httpStatus.FORBIDDEN;
+        response.sendJson({ error: ErrorCodes.SIMULATED_VIEW_NOT_PURCHASABLE, planViewTierName: purchaseScope.planViewTierName });
         return;
     }
 

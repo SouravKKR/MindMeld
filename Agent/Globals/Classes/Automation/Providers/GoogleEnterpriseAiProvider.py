@@ -387,9 +387,15 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
             GoogleEnterpriseAiProvider.__safe_response_text(response),
         )
 
+        # Before anything reads the text: a reply cut off by the output-token
+        # budget is an HTTP 200 whose text simply stops mid-token, and nothing
+        # about the returned object says so except the finish reason.
+        GoogleEnterpriseAiProvider.__raise_if_truncated(response, request.get_model())
+
         outputs = []
-        if response.text:
-            outputs.append(AutomationContent(AutomationContentTypes.TEXT, response.text))
+        response_text = GoogleEnterpriseAiProvider.__safe_response_text(response)
+        if response_text:
+            outputs.append(AutomationContent(AutomationContentTypes.TEXT, response_text))
 
         if hasattr(response, "candidates"):
             for candidate in response.candidates:
@@ -411,6 +417,56 @@ class GoogleEnterpriseAiProvider(AutomationProvider):
         grounding_sources = GoogleEnterpriseAiProvider.__extract_citation_sources(response)
 
         return AutomationResponse(outputs, usage_metadata, grounding_sources)
+
+    # The finish reason a truncated reply carries. Compared by NAME rather than
+    # against the SDK enum so a version bump that moves the symbol cannot turn
+    # this guard into a silent no-op.
+    TRUNCATED_FINISH_REASON_NAME = "MAX_TOKENS"
+
+    @staticmethod
+    def __raise_if_truncated(response, model: str) -> None:
+        """
+        Fails loudly when the model ran out of output budget mid-reply.
+
+        Truncation is the way this call can "succeed" while returning something
+        unusable, and it is far quieter than a refusal: the response is a normal
+        HTTP 200 whose text simply stops once the budget is exhausted, and on a
+        thinking-enabled model the thinking tokens draw from that same budget.
+
+        Left undetected it is actively misleading. A caller expecting JSON gets a
+        string that ends halfway through an object, fails to parse it, and
+        reports that the MODEL produced a malformed shape — sending whoever reads
+        that after a prompt or a schema when the real cause was the token budget.
+        That is exactly how content refinement's intermittent "unusable response
+        shape" presented, for months, with no way to tell the two apart.
+
+        AnthropicProvider has carried this guard since it shipped; this is the
+        same check on the other provider, and deliberately the same narrow scope.
+        Only MAX_TOKENS raises. Widening it to the safety family would change the
+        failure behaviour of every workflow on this provider for a symptom none
+        of them reported — a blocked candidate already surfaces as empty outputs,
+        which callers handle.
+
+        Streaming is out of scope on purpose: execute_stream has already
+        delivered its text to the browser by the time a final chunk lands, so
+        raising there would break the event contract rather than prevent
+        anything.
+        """
+        candidates = getattr(response, "candidates", None) or []
+
+        for candidate in candidates:
+            finish_reason = getattr(candidate, "finish_reason", None)
+
+            if finish_reason is None:
+                continue
+
+            finish_reason_name = getattr(finish_reason, "name", None) or str(finish_reason)
+
+            if GoogleEnterpriseAiProvider.TRUNCATED_FINISH_REASON_NAME in finish_reason_name.upper():
+                raise RuntimeError(
+                    f"The reply from {model} was cut off by the output-token budget before it finished. "
+                    "Shorten the input, or raise max_output_tokens for this call."
+                )
 
     @staticmethod
     def __safe_response_text(response) -> str | None:

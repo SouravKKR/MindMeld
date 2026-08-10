@@ -2502,6 +2502,42 @@ dialog-box:has(.paid-deck-verification-sources-dialog)
     margin-top: 4px;
 }
 
+/* The two non-destructive card actions share the detach button's shape but not
+   its danger colour — only detach changes what the deck is checked against. */
+.verification-source-edit,
+.verification-source-download
+{
+    padding: 8px 14px;
+    border: none;
+    border-radius: 8px;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    min-height: 44px;
+}
+
+.verification-source-edit:hover,
+.verification-source-download:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+/* The usage badge is the one thing on a card that changes what claim the deck
+   can make, so the two states are colour-separated rather than left as text. */
+.verification-source-usage
+{
+    font-weight: 600;
+}
+
+.verification-source-usage-content
+{
+    color: var(--accent-color);
+}
+
 .verification-source-detach
 {
     padding: 8px 14px;

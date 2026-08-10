@@ -1,0 +1,5 @@
+from enum import IntEnum
+
+class OtpPurposes(IntEnum):
+    LOGIN = 1
+    INTELLECTUAL_PROPERTY_COMPLAINT_VERIFICATION = 2

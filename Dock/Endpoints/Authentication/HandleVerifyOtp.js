@@ -8,6 +8,7 @@ const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organizatio
 const OrganizationAutoAssigner = require("../../Globals/Classes/Organization/OrganizationAutoAssigner");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
+const {otpPurposes} = require("../../Globals/Enumerations/OtpPurposes");
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -42,7 +43,10 @@ async function handleVerifyOtp(request, response)
         return;
     }
 
-    const result = await OtpManager.verifyOtp(submittedEmail, submittedCode, submittedDisplayName);
+    // LOGIN, explicitly. A code issued to confirm an intellectual-property
+    // complaint reaches an address that may not belong to any account, and
+    // accepting it here would turn "can you read this inbox" into a session.
+    const result = await OtpManager.verifyOtp(submittedEmail, submittedCode, otpPurposes.LOGIN, submittedDisplayName);
 
     if (!result.ok)
     {

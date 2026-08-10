@@ -1,6 +1,7 @@
 import LoginProviderRegistry from "./Classes/LoginProviderRegistry.js";
 import GoogleLoginProvider from "./Classes/GoogleLoginProvider.js";
 import LegalDocumentDownloader from "./Classes/LegalDocumentDownloader.js";
+import ReportIssueDialog from "../../CommonComponents/ReportIssueDialog.js";
 import "./Components/EmailOtpForm.js";
 
 /**
@@ -73,6 +74,17 @@ class LoginPage extends HTMLElement
                         <span>and</span>
                         <a href="#" data-doc="PRIVACY_POLICY" class="login-page-legal-link">Privacy Policy</a>.
                     </div>
+                    <!-- The two things a person can genuinely need before they
+                         have a session: reporting that their own work is on the
+                         platform, and reporting that they cannot get in. Both
+                         are spelled out with the words someone would actually
+                         search for rather than hidden behind a generic
+                         "support" link. -->
+                    <div class="login-page-legal login-page-public-report">
+                        <a href="#" data-report-type="INTELLECTUAL_PROPERTY" class="login-page-legal-link">Report copyright / IP infringement</a>
+                        <span>·</span>
+                        <a href="#" data-report-type="ACCOUNT_ACCESS" class="login-page-legal-link">Can't sign in?</a>
+                    </div>
                     <div class="login-page-attribution">
                         <span class="login-page-attribution-label">by</span>
                         <img class="login-page-attribution-logo"
@@ -113,12 +125,45 @@ class LoginPage extends HTMLElement
             legalLink.addEventListener("click", (clickEvent) =>
             {
                 clickEvent.preventDefault();
+
                 const documentKey = legalLink.getAttribute("data-doc");
                 if (documentKey)
                 {
                     LegalDocumentDownloader.download(documentKey);
+                    return;
+                }
+
+                const reportTypeName = legalLink.getAttribute("data-report-type");
+                if (reportTypeName)
+                {
+                    ReportIssueDialog.showPublic(reportTypeName);
                 }
             });
+        }
+
+        this.#openComplaintDialogWhenArrivingFromCopyrightLink();
+    }
+
+    /**
+     * Opens the complaint form straight away when the visitor arrived at
+     * /copyright.
+     *
+     * That path is the one printed in Clause 19.3 of the Terms of Service and in
+     * every acknowledgment email, so somebody following it has already decided
+     * what they want to do — landing them on a sign-in screen and asking them to
+     * find a link would be a worse answer than the mailto: this replaced.
+     *
+     * The path is compared case-insensitively because a URL typed off a printed
+     * page or a legal document rarely preserves casing, and this is a route
+     * people copy by hand.
+     */
+    #openComplaintDialogWhenArrivingFromCopyrightLink()
+    {
+        const currentPath = String(window.location?.pathname ?? "").toLowerCase().replace(/\/+$/, "");
+
+        if (currentPath === "/copyright")
+        {
+            ReportIssueDialog.showPublic("INTELLECTUAL_PROPERTY");
         }
     }
 }

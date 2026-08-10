@@ -1,0 +1,25 @@
+class IntellectualPropertyComplaintConstants
+{
+    static GRIEVANCE_OFFICER_NAME = 'Lokesh S Sharma';
+    static COPYRIGHT_CONTACT_EMAIL = 'copyright@cogniumlabs.io';
+    static GRIEVANCE_CONTACT_EMAIL = 'support@cogniumlabs.io';
+    static ACKNOWLEDGMENT_HOURS = 24;
+    static DISPOSAL_DAYS = 15;
+    static COURT_ORDER_HOURS = 36;
+    static BLOCK_PENDING_ORDER_DAYS = 21;
+    static COMPLAINANT_NAME_MAXIMUM_LENGTH = 200;
+    static CONTACT_EMAIL_MAXIMUM_LENGTH = 254;
+    static CAPACITY_STATEMENT_MAXIMUM_LENGTH = 500;
+    static WORK_DESCRIPTION_MINIMUM_LENGTH = 20;
+    static WORK_DESCRIPTION_MAXIMUM_LENGTH = 4000;
+    static LOCATION_DESCRIPTION_MINIMUM_LENGTH = 20;
+    static LOCATION_DESCRIPTION_MAXIMUM_LENGTH = 4000;
+    static ENTITY_REFERENCE_MAXIMUM_LENGTH = 128;
+    static STATUS_NOTE_MAXIMUM_LENGTH = 2000;
+    static EVIDENCE_UPLOAD_TOKEN_MINUTES = 60;
+    static MAXIMUM_COMPLAINTS_PER_EMAIL_PER_DAY = 10;
+    static MAXIMUM_COMPLAINTS_PER_ADDRESS_PER_DAY = 20;
+    static TARGET_RESOLUTION_CANDIDATE_LIMIT = 50;
+}
+
+module.exports = IntellectualPropertyComplaintConstants;

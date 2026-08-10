@@ -1,0 +1,39 @@
+/* Replaces what used to be a separate "Reference Papers / Mock Tests" picker.
+   Past papers are ordinary information sources now, so this row's whole job is
+   to point at the one source list rather than to be a second one. */
+.mock-test-generation-past-paper-notice
+{
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 0.8rem;
+    line-height: 1.55;
+    opacity: 0.75;
+    padding: 10px 12px;
+    margin-bottom: 4px;
+    border-radius: 8px;
+    background-color: rgba(0, 152, 196, 0.07);
+    border: 1px solid rgba(0, 152, 196, 0.22);
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.mock-test-generation-past-paper-notice strong
+{
+    font-weight: 600;
+    opacity: 1;
+}
+
+/* Shown in place of the question-type weightage block once sections exist, so
+   the setting reads as having moved rather than as having vanished. */
+.mock-test-generation-deferred-notice-text
+{
+    flex: 1 1 160px;
+    min-width: 0;
+    font-size: 0.82rem;
+    font-style: italic;
+    opacity: 0.6;
+    line-height: 1.4;
+}

@@ -1,9 +1,10 @@
 import uuid
 from Globals.Enumerations.SourceLicenceTypes import SourceLicenceTypes
+from Globals.Enumerations.SourceUsageModes import SourceUsageModes
 
 
 class PaidDeckVerificationSource:
-    def __init__(self, deck_id: str = None, information_source_id: str = '', name: str = None, source_url: str = '', content_hash: str = '', storage_path: str = '', mime_type: str = '', licence_type: SourceLicenceTypes = SourceLicenceTypes(0), licence_note: str = '', declared_by_user_id: str = '', attached_at: int = 0, detached_at: int = 0, active: bool = True) -> None:
+    def __init__(self, deck_id: str = None, information_source_id: str = '', name: str = None, source_url: str = '', content_hash: str = '', storage_path: str = '', mime_type: str = '', licence_type: SourceLicenceTypes = SourceLicenceTypes(0), licence_note: str = '', usage_mode: SourceUsageModes = SourceUsageModes(0), source_note: str = '', declared_by_user_id: str = '', attached_at: int = 0, detached_at: int = 0, active: bool = True) -> None:
         self.__id = str(uuid.uuid4())
         self.set_deck_id(deck_id)
         self.set_information_source_id(information_source_id)
@@ -14,6 +15,8 @@ class PaidDeckVerificationSource:
         self.set_mime_type(mime_type)
         self.set_licence_type(licence_type)
         self.set_licence_note(licence_note)
+        self.set_usage_mode(usage_mode)
+        self.set_source_note(source_note)
         self.set_declared_by_user_id(declared_by_user_id)
         self.set_attached_at(attached_at)
         self.set_detached_at(detached_at)
@@ -114,6 +117,26 @@ class PaidDeckVerificationSource:
                 value = value[:1024]
         self.__licence_note = value
 
+    def get_usage_mode(self) -> SourceUsageModes:
+        return self.__usage_mode
+
+    def set_usage_mode(self, value: SourceUsageModes) -> None:
+        if value is not None:
+            valid_values = list(SourceUsageModes)
+            if value not in valid_values:
+                value = valid_values[0] if valid_values else None
+        self.__usage_mode = value
+
+    def get_source_note(self) -> str:
+        return self.__source_note
+
+    def set_source_note(self, value: str) -> None:
+        if value is not None:
+            value = str(value)
+            if len(value) > 2048:
+                value = value[:2048]
+        self.__source_note = value
+
     def get_declared_by_user_id(self) -> str:
         return self.__declared_by_user_id
 
@@ -172,6 +195,8 @@ class PaidDeckVerificationSource:
             'mimeType': self.get_mime_type(),
             'licenceType': int(self.get_licence_type().value) if self.get_licence_type() is not None else None,
             'licenceNote': self.get_licence_note(),
+            'usageMode': int(self.get_usage_mode().value) if self.get_usage_mode() is not None else None,
+            'sourceNote': self.get_source_note(),
             'declaredByUserId': self.get_declared_by_user_id(),
             'attachedAt': self.get_attached_at(),
             'detachedAt': self.get_detached_at(),
@@ -190,6 +215,8 @@ class PaidDeckVerificationSource:
             mime_type=data.get('mimeType'),
             licence_type=SourceLicenceTypes(data.get('licenceType')) if data.get('licenceType') is not None else None,
             licence_note=data.get('licenceNote'),
+            usage_mode=SourceUsageModes(data.get('usageMode')) if data.get('usageMode') is not None else None,
+            source_note=data.get('sourceNote'),
             declared_by_user_id=data.get('declaredByUserId'),
             attached_at=data.get('attachedAt'),
             detached_at=data.get('detachedAt'),

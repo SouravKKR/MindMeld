@@ -86,6 +86,7 @@ const { staticCachePolicy } = require("./Endpoints/Plugins/StaticCachePolicy");
 const { handleSyncEndpoints } = require("./Endpoints/HandleSyncEndpoints");
 const { handleAdminEndpoints } = require("./Endpoints/HandleAdminEndpoints");
 const { handleLegalEndpoints } = require("./Endpoints/HandleLegalEndpoints");
+const { handleAgeEndpoints } = require("./Endpoints/HandleAgeEndpoints");
 const { handleReleaseNotesEndpoints } = require("./Endpoints/HandleReleaseNotesEndpoints");
 const { handleNotificationEndpoints } = require("./Endpoints/HandleNotificationEndpoints");
 const { handleSupportEndpoints } = require("./Endpoints/HandleSupportEndpoints");
@@ -111,6 +112,7 @@ const Logger = require("./Globals/Classes/Logger");
 const LogIngester = require("./Globals/Classes/Logging/LogIngester");
 const LogArchivalScheduler = require("./Globals/Classes/Logging/LogArchivalScheduler");
 const ExpiredInformationSourceReaper = require("./Globals/Classes/Content/ExpiredInformationSourceReaper");
+const OverdueComplaintSweeper = require("./Globals/Classes/Legal/OverdueComplaintSweeper");
 const KeyManagementService = require("./Globals/Classes/Security/KeyManagementService");
 const KeyRotationScheduler = require("./Globals/Classes/Security/KeyRotationScheduler");
 const ScriptIntegrityMonitor = require("./Globals/Classes/Security/ScriptIntegrityMonitor");
@@ -123,6 +125,7 @@ const PaidDeckShareConstants = require("./Globals/Constants/PaidDeckShareConstan
 const { rateLimitPlugin } = require("./Endpoints/Plugins/EnsureRateLimit");
 const { requestLoggingPlugin } = require("./Endpoints/Plugins/RequestLogging");
 const { legalAcceptancePlugin } = require("./Endpoints/Plugins/EnsureLegalAcceptance");
+const { ageConsentPlugin } = require("./Endpoints/Plugins/EnsureAgeConsent");
 const { securityHeadersPlugin } = require("./Endpoints/Plugins/SecurityHeaders");
 const RateLimiter = require("./Globals/Classes/Security/RateLimiter");
 const PaymentEnvironmentValidator = require("./Globals/Classes/Payments/PaymentEnvironmentValidator");
@@ -275,6 +278,14 @@ if (!process.argv.includes("--debug"))
 // told are temporary — the retention promise must not depend on a launch flag.
 ExpiredInformationSourceReaper.start();
 
+// Deadline watch for the public infringement-complaint channel. Runs in every
+// mode for the same reason as the reaper above, and more sharply: the 24-hour
+// acknowledgment and the 15-day disposal are commitments published in Clause 19
+// of the Terms of Service, and a commitment that only holds when the server was
+// started without --debug is not a commitment. It notifies; it never disposes
+// of a complaint or restores blocked content on its own.
+OverdueComplaintSweeper.start();
+
 if (process.argv.includes("--logout"))
 {
     AuthenticationQueryEngine.deleteAllSessions()
@@ -348,6 +359,17 @@ server.insertGlobalPlugin(requestLoggingPlugin);
 // The login handshake, /GetUser, /Logout, /LegalDocuments, /Legal/Accept and
 // all static assets stay reachable so the user can read and accept.
 server.insertGlobalPlugin(legalAcceptancePlugin);
+
+// Blocks every protected endpoint with 403 AGE_CONSENT_REQUIRED while an
+// authenticated account has no date of birth on file, or is a Child (under 18,
+// the definition the Privacy Policy uses) whose parent or guardian has not
+// consented. The Policy already promised this; until it was enforced here the
+// document described a control that did not exist.
+//
+// Registered AFTER the legal gate and at a lower priority so terms clear first:
+// a user must be able to read the Privacy Policy explaining why a date of birth
+// is being collected before being asked to supply one.
+server.insertGlobalPlugin(ageConsentPlugin);
 
 const registerHandler = server.handle.bind(server);
 server.handle = (options = {}) =>
@@ -423,11 +445,28 @@ server.handle({ routePath: "/index.html", handler: handleSpaEntry, plugins: [noC
 // The route table is case-sensitive, so the URL must be exactly this casing.
 server.handle({ routePath: PaidDeckShareConstants.DEEP_LINK_ROUTE_PATH, handler: handleSpaEntry, plugins: [noCache] });
 
+// The copyright / IP complaint landing page. Another door onto the same SPA
+// shell — CopyrightPageBootstrap (app shell) and LoginPage (sign-in shell) each
+// read the path and open the complaint form once booted.
+//
+// It goes through handleSpaEntry rather than always serving the login shell so
+// a signed-in user following the link gets the app they are already in, and a
+// signed-out rightsholder gets the sign-in shell, which carries the same public
+// form. Neither has to authenticate to file a complaint.
+//
+// Registered under BOTH casings because the route table is case-sensitive while
+// this path is one people copy by hand out of the Terms of Service, out of an
+// acknowledgment email, and off a printed page. The lower-case form is the one
+// published; the other exists so a capitalised retype is not a 404.
+server.handle({ routePath: "/copyright", handler: handleSpaEntry, plugins: [noCache] });
+server.handle({ routePath: "/Copyright", handler: handleSpaEntry, plugins: [noCache] });
+
 handleAuthenticationEndpoints(server);
 handleAutomaticGenerationEndpoints(server);
 handleSyncEndpoints(server);
 handleAdminEndpoints(server);
 handleLegalEndpoints(server);
+handleAgeEndpoints(server);
 handleReleaseNotesEndpoints(server);
 handleNotificationEndpoints(server);
 handleSupportEndpoints(server);

@@ -2,7 +2,7 @@ const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnec
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const LicenseClientView = require("../../Globals/Classes/Security/LicenseClientView");
 const LicenseContentVersionResolver = require("../../Globals/Classes/PaidDeck/LicenseContentVersionResolver");
-const OrganizationScopeResolver = require("../../Globals/Classes/Organization/OrganizationScopeResolver");
+const ViewScopeResolver = require("../../Globals/Classes/View/ViewScopeResolver");
 const PaidDeckScopeResolver = require("../../Globals/Classes/PaidDeck/PaidDeckScopeResolver");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 
@@ -37,7 +37,11 @@ async function pullLicenses(request, response)
     // personal-view surface. Selecting by scope keeps each view's registry
     // matching the decks that view actually holds. "" is the legacy value every
     // license issued before scoping carries, and means personal.
-    const scope = await OrganizationScopeResolver.resolve(request, session.getUserId());
+    //
+    // A simulated plan sandbox resolves the same way and therefore sees no
+    // licenses at all, which is the correct fresh-account behaviour: nothing can
+    // be bought from inside a sandbox, so nothing can be licensed to one.
+    const scope = await ViewScopeResolver.resolve(request, session.getUserId());
     const visibleScopeCondition = PaidDeckScopeResolver.buildVisibleScopeCondition(scope.scopeKey, session.getUserId());
 
     const licenseDocuments = await database

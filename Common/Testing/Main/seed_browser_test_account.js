@@ -84,12 +84,30 @@ async function buildAcceptedLegalFields(database)
             $set:
             {
                 id: TEST_ACCOUNT_ID,
-                name: "Browser Suite Test",
+                // `displayName`, not `name`: the field the User model actually
+                // reads (Common/Classes/User.json). Seeded under the wrong key
+                // the account has no name at all, and every surface that shows
+                // one — the profile pill above all — renders a fixture that no
+                // real account resembles.
+                displayName: "Browser Suite Test",
                 additionalData:
                 {
                     displayPicture: "",
                     email: `${TEST_ACCOUNT_ID}@localhost.test`,
                     credits: 100,
+                    // Same reasoning as the legal fields above, for the age
+                    // gate: EnsureAgeConsent 403s every protected endpoint
+                    // while an account has no date of birth on file, so an
+                    // unseeded fixture would fail every suite with a blocking
+                    // modal over the app — the identical failure mode the
+                    // legal-acceptance comment describes, which presents as
+                    // "the click had no effect" rather than as a gate.
+                    //
+                    // A fixed adult date, not a computed one: the suites assert
+                    // on rendered state, and a date of birth that drifts with
+                    // the run date is a fixture that changes under the tests.
+                    dateOfBirth: "1990-01-01",
+                    dateOfBirthRecordedAt: new Date().toISOString(),
                     ...acceptedLegalFields
                 }
             }

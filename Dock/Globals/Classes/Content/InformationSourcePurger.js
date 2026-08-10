@@ -1,5 +1,6 @@
 const InformationSourceQueryEngine = require("../Database/InformationSourceQueryEngine");
 const DerivedContentPurger = require("./DerivedContentPurger");
+const EmbeddedFigurePurger = require("./EmbeddedFigurePurger");
 const StorageQuotaEnforcer = require("../Storage/StorageQuotaEnforcer");
 const Persistence = require("../Persistence");
 const { joinPath } = require("../../UtilityFunctions.js/JoinPath");
@@ -27,6 +28,12 @@ const { storageTargets } = require("../../Enumerations/StorageTargets");
  *      embedding chunks, the figure rows and the figure PNGs those rows point
  *      at. They are keyed on (user, hash) rather than reachable from the row, so
  *      they would otherwise outlive the document.
+ *   4. Hand the SYNCED entities to EmbeddedFigurePurger, which strips the
+ *      figures the document contributed out of study material bodies and card
+ *      faces and republishes them so devices drop their copies. Steps 2 and 3
+ *      remove the copies the server keeps for itself; this removes the copy the
+ *      reader is actually looking at, which is a base64 payload living inside a
+ *      different entity and reachable from nothing the first three steps touch.
  *
  * A storage-layer failure never fails the purge — the row is already gone — but
  * it is always reported back to the caller, and a partial removal is never
@@ -53,6 +60,10 @@ class InformationSourcePurger
             embeddingChunksRemoved: 0,
             figuresRemoved: 0,
             figureObjectsRemoved: 0,
+            embeddedFiguresStripped: 0,
+            studyMaterialsRewritten: 0,
+            cardsRewritten: 0,
+            unstrippableDocumentCount: 0,
             storageError: null
         };
 
@@ -107,6 +118,10 @@ class InformationSourcePurger
             embeddingChunksRemoved: 0,
             figuresRemoved: 0,
             figureObjectsRemoved: 0,
+            embeddedFiguresStripped: 0,
+            studyMaterialsRewritten: 0,
+            cardsRewritten: 0,
+            unstrippableDocumentCount: 0,
             storageError: null
         };
 
@@ -192,13 +207,38 @@ class InformationSourcePurger
             console.warn(`[InformationSourcePurger] Takedown derived-content cascade failed for hash ${contentHash}: ${derivedError?.message || derivedError}`);
         }
 
-        // Complete means EVERY located copy went, no row resisted deletion, and
-        // no row was unlocatable. Anything less is reported as incomplete so the
-        // register never records surviving content as removed.
+        try
+        {
+            // Crosses the tenant boundary like everything else on this path, and
+            // for the same reason: the embedded copy is a copy of the noticed
+            // work no matter whose library it ended up in.
+            const embeddedFigureCounts = await EmbeddedFigurePurger.purgeByContentHash(contentHash);
+            result.embeddedFiguresStripped = embeddedFigureCounts.figuresStripped;
+            result.studyMaterialsRewritten = embeddedFigureCounts.studyMaterialsUpdated;
+            result.cardsRewritten = embeddedFigureCounts.cardsUpdated;
+            result.unstrippableDocumentCount = embeddedFigureCounts.unbalancedDocumentCount;
+
+            if (embeddedFigureCounts.unbalancedDocumentCount > 0)
+            {
+                cascadeErrors.push(`${embeddedFigureCounts.unbalancedDocumentCount} entity/entities carried an unclosed figure element and were left unmodified.`);
+            }
+        }
+        catch (embeddedFigureError)
+        {
+            cascadeErrors.push(`embedded figures: ${embeddedFigureError?.message || embeddedFigureError}`);
+            console.warn(`[InformationSourcePurger] Takedown embedded-figure sweep failed for hash ${contentHash}: ${embeddedFigureError?.message || embeddedFigureError}`);
+        }
+
+        // Complete means EVERY located copy went, no row resisted deletion, no
+        // row was unlocatable, and no entity still carries an embedded copy of
+        // the artwork. That last clause is what stops the register recording a
+        // notice as honoured while the picture is still on screen — the exact
+        // failure this sweep was added for.
         result.bContentRemoved = result.storedCopiesFound > 0
             && result.storedCopiesRemoved === result.storedCopiesFound
             && result.rowsFailed === 0
-            && result.unlocatableRowCount === 0;
+            && result.unlocatableRowCount === 0
+            && result.unstrippableDocumentCount === 0;
 
         if (result.unlocatableRowCount > 0)
         {
@@ -284,6 +324,31 @@ class InformationSourcePurger
         result.embeddingChunksRemoved = purgeCounts.embeddingChunksRemoved;
         result.figuresRemoved = purgeCounts.figuresRemoved;
         result.figureObjectsRemoved = purgeCounts.figureObjectsRemoved;
+
+        // Runs even when the blob delete failed, for the same reason the derived
+        // purge does: the embedded copies are the ones a reader can see, so they
+        // are the last thing that should be skipped because an object-storage
+        // call went wrong.
+        try
+        {
+            const embeddedFigureCounts = await EmbeddedFigurePurger.purgeForUserAndContentHash(
+                informationSource.getUserId(),
+                informationSource.getHash(),
+            );
+            result.embeddedFiguresStripped = embeddedFigureCounts.figuresStripped;
+            result.studyMaterialsRewritten = embeddedFigureCounts.studyMaterialsUpdated;
+            result.cardsRewritten = embeddedFigureCounts.cardsUpdated;
+            result.unstrippableDocumentCount = embeddedFigureCounts.unbalancedDocumentCount;
+
+            if (embeddedFigureCounts.unbalancedDocumentCount > 0)
+            {
+                cascadeErrors.push(`${embeddedFigureCounts.unbalancedDocumentCount} entity/entities carried an unclosed figure element and were left unmodified.`);
+            }
+        }
+        catch (embeddedFigureError)
+        {
+            cascadeErrors.push(`embedded figures: ${embeddedFigureError?.message || embeddedFigureError}`);
+        }
 
         // The rows are gone but an object survived. Surfacing it keeps the
         // caller's "removed" report honest and lets the reaper's orphan sweep be

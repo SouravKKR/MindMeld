@@ -208,30 +208,51 @@ class ModelPool:
     #      GOVERNANCE block on AnthropicProvider). That window means something
     #      very different for a learner's private textbook than for a public
     #      syllabus topic list.
-    #   2. The independent-creation position. Paid-deck content is defensible
-    #      because the pipeline demonstrably had no third-party document to work
-    #      from. Routing uploaded text through any stage of it would defeat that
+    #   2. The independent-creation position. Content written by these entries is
+    #      defensible because they demonstrably had no third-party document to
+    #      work from. Routing uploaded text through any of them would defeat that
     #      argument regardless of which model served the call.
     #
     # Reason 2 is provider-agnostic, so the boundary binds every entry below —
     # including the ones that now route to Google rather than Anthropic. Do not
     # read a Gemini-tier entry as the relaxed one.
     #
-    # The boundary holds structurally today — PaidDeckGenerationGate refuses
-    # every source type except CURRICULUM_OR_SYLLABUS, so there is no uploaded
-    # document in a paid-deck run to pass along. A caller that reaches these
-    # entries from outside paid-deck mode would break that guarantee.
+    # The boundary holds structurally — PaidDeckGenerationGate refuses every
+    # information-source type except CURRICULUM_OR_SYLLABUS, so nothing in the
+    # generation source list of a paid-deck run is a document to pass along. A
+    # caller that reaches these entries from outside paid-deck mode would break
+    # that guarantee.
     #
-    # POST-GENERATION REFINEMENT is the one authorised route by which a
-    # user-supplied document reaches a model in service of sellable content, and
-    # it deliberately does NOT come through here — it has its own entry
-    # (REFINE_CONTENT_MODEL, below). The reviewer attaching that document
-    # declares its licence and the declaration plus the file itself are retained
-    # as retrievable proof, which is a different and explicitly evidenced basis
-    # from the independent-creation argument reason 2 rests on. Keeping the two
-    # on separate entries is what stops one being quietly used to justify the
-    # other: nothing that reaches a PAID_DECK_* entry has ever seen a
+    # THREE ROUTES BY WHICH A DOCUMENT MAY REACH A MODEL IN SERVICE OF SELLABLE
+    # CONTENT, and none of them comes through here. Each has its own entry below:
+    #
+    #   REFINE_CONTENT_MODEL          — a reviewer correcting content against a
+    #                                   document they declared a licence for.
+    #   SOURCE_GROUNDED_VERIFICATION_MODEL — checking written content against
+    #                                   such a document; raises flags, writes
+    #                                   nothing.
+    #   SOURCE_GROUNDED_CHUNK_MODEL   — WRITING a topic from such a document,
+    #                                   where the declared licence records a
+    #                                   right to create new material from it.
+    #
+    # In all three the document's licence is declared and the file itself is
+    # retained as retrievable proof. That is a different and explicitly evidenced
+    # basis from the independent-creation argument reason 2 rests on. Keeping
+    # them on separate entries is what stops one being quietly used to justify
+    # the other: nothing that reaches a PAID_DECK_* entry has ever seen a
     # third-party document, and that sentence must stay literally true.
+    #
+    # A deck may therefore contain topics of two kinds — some written from model
+    # knowledge by the entries below, some written from a licensed document by
+    # SOURCE_GROUNDED_CHUNK_MODEL. Which is which is recorded per topic in
+    # SourceGroundedContent.json and reported separately in the audit trail. The
+    # thing that must never exist is a topic whose basis nobody can name, and
+    # that is what this separation buys.
+    #
+    # VerifySourceGroundedGeneration.py asserts the sentence above mechanically:
+    # no file referencing a PAID_DECK_* entry may also reference the corpus or
+    # the content-source payload. A comment saying "do not do X" is not a
+    # control; a test that fails when someone does X is.
     PAID_DECK_COVERAGE_SUMMARY_MODEL = ("gemini-3.1-flash-lite", GoogleEnterpriseAiProvider)
 
     # Decides which topics need a visual nobody explicitly asked for. A bounded
@@ -279,14 +300,36 @@ class ModelPool:
     # the sentence at the end of the boundary note above false — and that
     # sentence is what the independent-creation position rests on.
     #
-    # The separation is real, not cosmetic. The admin's sources never enter
-    # GENERATION: the content was already written from model knowledge against a
-    # syllabus, by models that never saw a third-party document, and this pass
-    # runs afterwards and can only RAISE FLAGS. So both statements stay true at
-    # once — the deck was independently created, and it was independently
-    # checked. Wiring a source into any generation stage would collapse the two.
+    # The separation is real, not cosmetic. This pass runs AFTER content exists
+    # and can only RAISE FLAGS; it never writes a chunk. So a deck checked here
+    # was still written by models that never saw a third-party document, and both
+    # statements stay true at once — independently created, independently checked.
     #
     # Google rather than Anthropic for the same reason REFINE_CONTENT_MODEL is:
     # the 30-day abuse-monitoring retention window is a poor fit for a document
     # someone attached, even a permissively licensed one.
     SOURCE_GROUNDED_VERIFICATION_MODEL = ("gemini-3.1-flash-lite", GoogleEnterpriseAiProvider)
+
+    # Source-grounded chunk generation: WRITING a topic's content from passages
+    # of a document an administrator has declared a licence for, where that
+    # licence records a right to create new material from it.
+    #
+    # Outside the PAID_DECK_* boundary ON PURPOSE. This is the third entry that
+    # may receive third-party document text, and putting it on a PAID_DECK_*
+    # entry would make the boundary sentence above false.
+    #
+    # WHAT IS DIFFERENT ABOUT THIS ONE, and why it is a separate entry rather
+    # than a second caller of SOURCE_GROUNDED_VERIFICATION_MODEL: this one
+    # produces sellable content, and its defence is NOT independent creation. A
+    # topic written here is defended by the declared licence and the retained
+    # document behind it — a different and explicitly evidenced basis, which is
+    # exactly why it must not be merged with the entries whose contract is that
+    # they never read a document.
+    #
+    # The two bases are recorded PER TOPIC, in SourceGroundedContent.json, and
+    # the audit report keeps them apart. A deck may hold topics of both kinds;
+    # what it must never hold is a topic whose basis nobody can name.
+    #
+    # Google rather than Anthropic for the same retention reason as the two
+    # entries above.
+    SOURCE_GROUNDED_CHUNK_MODEL = ("gemini-3.1-flash-lite", GoogleEnterpriseAiProvider)

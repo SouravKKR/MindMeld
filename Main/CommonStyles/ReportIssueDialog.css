@@ -1,14 +1,33 @@
 /* ReportIssueDialog — the "Report an issue" modal that replaced the support
    mailto: link. Two tabbed panels inside a dialog-box: the submission form and
-   the reporter's own status list. */
+   the reporter's own status list. The same markup serves the public
+   copyright / IP complaint form, which shows a different subset of the fields. */
 
 .report-issue-dialog
 {
     display: flex;
     flex-direction: column;
     gap: 14px;
-    width: 540px;
+    width: min(540px, 100%);
     max-width: 100%;
+}
+
+/* ── The [hidden] repair, and why it has to be !important ──────────────────
+   Every structural element below sets `display: flex`, and an author rule beats
+   the user-agent's `[hidden] { display: none }` — so toggling the `hidden`
+   property in JavaScript did nothing at all. Two visible symptoms came from
+   this one line being absent: the "Your reports" tab appeared dead (both panels
+   were always rendered, stacked), and the copyright-complaint fields showed on
+   a plain bug report.
+
+   Scoped to this dialog and applied to every descendant, so a field added later
+   inherits the fix instead of rediscovering the bug. !important is load-bearing
+   here rather than lazy: the rules it has to beat are ordinary class selectors
+   in this same file, and matching them by specificity would mean restating
+   `display: none` for each one and remembering to do it again next time. */
+.report-issue-dialog [hidden]
+{
+    display: none !important;
 }
 
 .report-issue-title
@@ -80,8 +99,14 @@
     color: var(--secondary-text-color);
 }
 
+/* Text inputs are listed explicitly alongside select and textarea. They were
+   missing, so every single-line field the complaint form added — name, contact
+   address, capacity, entity id — rendered as bare unstyled text with no box,
+   no padding and no border. */
 .report-issue-field select,
-.report-issue-field textarea
+.report-issue-field textarea,
+.report-issue-field input[type="text"],
+.report-issue-field input[type="email"]
 {
     width: 100%;
     padding: 10px 12px;
@@ -90,14 +115,35 @@
     background-color: var(--tertiary-background-color);
     color: var(--primary-text-color);
     font-family: inherit;
+    /* 16px on the narrow breakpoint below. Anything smaller makes iOS Safari
+       zoom the whole page in on focus, which on this dialog scrolls the field
+       the user just tapped off the screen. */
     font-size: 0.9rem;
+    line-height: 1.4;
     box-sizing: border-box;
+}
+
+.report-issue-field select:focus-visible,
+.report-issue-field textarea:focus-visible,
+.report-issue-field input[type="text"]:focus-visible,
+.report-issue-field input[type="email"]:focus-visible
+{
+    outline: none;
+    border-color: var(--accent-color, var(--primary-text-color));
+}
+
+.report-issue-field input::placeholder,
+.report-issue-field textarea::placeholder
+{
+    color: var(--secondary-text-color);
+    opacity: 1;
 }
 
 .report-issue-field textarea
 {
     resize: vertical;
     line-height: 1.5;
+    min-height: 96px;
 }
 
 .report-issue-counter
@@ -191,13 +237,30 @@
 
 /* ── Checkbox, errors, actions ─────────────────────────────────────────────── */
 
+/* align-items: flex-start, not center. The two good-faith / accuracy statements
+   on the complaint form wrap to two or three lines on a phone, and a centred
+   box floats into the middle of that block instead of sitting against the first
+   line of the sentence it governs. */
 .report-issue-checkbox
 {
     display: flex;
-    align-items: center;
-    gap: 8px;
+    align-items: flex-start;
+    gap: 10px;
     font-size: 0.9rem;
+    line-height: 1.45;
     color: var(--primary-text-color);
+    cursor: pointer;
+}
+
+.report-issue-checkbox input[type="checkbox"]
+{
+    /* Bigger than the default and prevented from being squeezed by the wrapping
+       label beside it, so it stays a comfortable tap target. */
+    flex: 0 0 auto;
+    width: 17px;
+    height: 17px;
+    margin: 1px 0 0 0;
+    accent-color: var(--accent-color, var(--primary-text-color));
     cursor: pointer;
 }
 
@@ -373,10 +436,89 @@
     color: var(--secondary-text-color);
 }
 
+/* A complainant pastes a deck id, and an admin's reply can carry a long URL.
+   Without this either one widens the dialog past the viewport, which on a phone
+   scrolls the whole modal sideways. */
+.report-issue-card-description,
+.report-issue-card-message,
+.report-issue-attachment-name,
+.report-issue-submitted p
+{
+    overflow-wrap: anywhere;
+}
+
 @media (max-width: 600px)
 {
     .report-issue-dialog
     {
         width: 100%;
+        gap: 12px;
+    }
+
+    /* Two tabs fit; the labels are what overflow first. Allowing a horizontal
+       scroll here keeps "Your reports" reachable rather than clipped. */
+    .report-issue-tabs
+    {
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .report-issue-tabs::-webkit-scrollbar
+    {
+        display: none;
+    }
+
+    .report-issue-tab
+    {
+        flex: 1 0 auto;
+        padding: 8px 10px;
+        font-size: 0.9rem;
+        white-space: nowrap;
+    }
+
+    /* 16px exactly. Below that iOS Safari zooms the page on focus and the field
+       being typed into scrolls out of view. */
+    .report-issue-field select,
+    .report-issue-field textarea,
+    .report-issue-field input[type="text"],
+    .report-issue-field input[type="email"]
+    {
+        font-size: 16px;
+    }
+
+    .report-issue-field textarea
+    {
+        min-height: 88px;
+    }
+
+    .report-issue-drop-zone
+    {
+        padding: 16px 12px;
+    }
+
+    /* Stacked and full width. Side by side, the two buttons on the confirmation
+       step ("I'll confirm later" / "Confirm my address") are too narrow to read
+       and too close together to hit reliably. */
+    .report-issue-actions
+    {
+        flex-direction: column-reverse;
+        align-items: stretch;
+        gap: 8px;
+    }
+
+    .report-issue-actions button
+    {
+        width: 100%;
+        padding: 12px 18px;
+    }
+
+    .report-issue-card-header
+    {
+        flex-wrap: wrap;
+    }
+
+    .report-issue-my-reports
+    {
+        max-height: 46dvh;
     }
 }

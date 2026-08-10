@@ -71,6 +71,8 @@
                         "MULTIPLE_CHOICE"
                     ],
                     "questionCount": 60,
+                    "marksMode": 0,
+                    "marksPerQuestion": 4,
                     "totalMarks": 240,
                     "correctMarks": 4,
                     "wrongMarks": -1
@@ -81,6 +83,8 @@
                         "OBJECTIVE_SINGLE_WORD_OR_PHRASE"
                     ],
                     "questionCount": 15,
+                    "marksMode": 0,
+                    "marksPerQuestion": 4,
                     "totalMarks": 60,
                     "correctMarks": 4,
                     "wrongMarks": 0
@@ -157,6 +161,8 @@
                         "MULTIPLE_CHOICE"
                     ],
                     "questionCount": 18,
+                    "marksMode": 0,
+                    "marksPerQuestion": 4,
                     "totalMarks": 72,
                     "correctMarks": 4,
                     "wrongMarks": -1
@@ -167,6 +173,8 @@
                         "MULTIPLE_CORRECT"
                     ],
                     "questionCount": 18,
+                    "marksMode": 0,
+                    "marksPerQuestion": 4,
                     "totalMarks": 72,
                     "correctMarks": 4,
                     "wrongMarks": -2,
@@ -178,6 +186,8 @@
                         "OBJECTIVE_SINGLE_WORD_OR_PHRASE"
                     ],
                     "questionCount": 18,
+                    "marksMode": 0,
+                    "marksPerQuestion": 4,
                     "totalMarks": 72,
                     "correctMarks": 4,
                     "wrongMarks": 0
@@ -254,6 +264,8 @@
                         "MULTIPLE_CHOICE"
                     ],
                     "questionCount": 200,
+                    "marksMode": 0,
+                    "marksPerQuestion": 4,
                     "totalMarks": 800,
                     "correctMarks": 4,
                     "wrongMarks": -1
@@ -331,6 +343,8 @@
                         "OBJECTIVE_SINGLE_WORD_OR_PHRASE"
                     ],
                     "questionCount": 20,
+                    "marksMode": 0,
+                    "marksPerQuestion": 1,
                     "totalMarks": 20,
                     "correctMarks": 1
                 },
@@ -340,6 +354,8 @@
                         "SHORT_SUBJECTIVE"
                     ],
                     "questionCount": 6,
+                    "marksMode": 0,
+                    "marksPerQuestion": 2,
                     "totalMarks": 12,
                     "correctMarks": 2
                 },
@@ -349,6 +365,8 @@
                         "MEDIUM_SUBJECTIVE"
                     ],
                     "questionCount": 7,
+                    "marksMode": 0,
+                    "marksPerQuestion": 3,
                     "totalMarks": 21,
                     "correctMarks": 3
                 },
@@ -358,6 +376,8 @@
                         "LONG_SUBJECTIVE"
                     ],
                     "questionCount": 5,
+                    "marksMode": 0,
+                    "marksPerQuestion": 5,
                     "totalMarks": 25,
                     "correctMarks": 5
                 }
@@ -434,6 +454,8 @@
                         "OBJECTIVE_SINGLE_WORD_OR_PHRASE"
                     ],
                     "questionCount": 18,
+                    "marksMode": 0,
+                    "marksPerQuestion": 1,
                     "totalMarks": 18,
                     "correctMarks": 1
                 },
@@ -443,6 +465,8 @@
                         "SHORT_SUBJECTIVE"
                     ],
                     "questionCount": 7,
+                    "marksMode": 0,
+                    "marksPerQuestion": 2,
                     "totalMarks": 14,
                     "correctMarks": 2
                 },
@@ -452,6 +476,8 @@
                         "MEDIUM_SUBJECTIVE"
                     ],
                     "questionCount": 5,
+                    "marksMode": 0,
+                    "marksPerQuestion": 3,
                     "totalMarks": 15,
                     "correctMarks": 3
                 },
@@ -461,6 +487,8 @@
                         "LONG_SUBJECTIVE"
                     ],
                     "questionCount": 5,
+                    "marksMode": 0,
+                    "marksPerQuestion": 5,
                     "totalMarks": 25,
                     "correctMarks": 5
                 }
@@ -536,6 +564,8 @@
                         "SHORT_SUBJECTIVE"
                     ],
                     "questionCount": 16,
+                    "marksMode": 0,
+                    "marksPerQuestion": 2,
                     "totalMarks": 32,
                     "correctMarks": 2
                 },
@@ -545,6 +575,8 @@
                         "MEDIUM_SUBJECTIVE"
                     ],
                     "questionCount": 16,
+                    "marksMode": 0,
+                    "marksPerQuestion": 4,
                     "totalMarks": 64,
                     "correctMarks": 4
                 },
@@ -554,6 +586,8 @@
                         "LONG_SUBJECTIVE"
                     ],
                     "questionCount": 8,
+                    "marksMode": 0,
+                    "marksPerQuestion": 6,
                     "totalMarks": 48,
                     "correctMarks": 6
                 }
@@ -629,6 +663,8 @@
                         "SHORT_SUBJECTIVE"
                     ],
                     "questionCount": 10,
+                    "marksMode": 0,
+                    "marksPerQuestion": 2,
                     "totalMarks": 20,
                     "correctMarks": 2
                 },
@@ -638,6 +674,8 @@
                         "MEDIUM_SUBJECTIVE"
                     ],
                     "questionCount": 15,
+                    "marksMode": 0,
+                    "marksPerQuestion": 4,
                     "totalMarks": 60,
                     "correctMarks": 4
                 },
@@ -647,6 +685,8 @@
                         "LONG_SUBJECTIVE"
                     ],
                     "questionCount": 10,
+                    "marksMode": 0,
+                    "marksPerQuestion": 6,
                     "totalMarks": 60,
                     "correctMarks": 6
                 }
@@ -722,6 +762,8 @@
                         "MULTIPLE_CHOICE"
                     ],
                     "questionCount": 60,
+                    "marksMode": 0,
+                    "marksPerQuestion": 1,
                     "totalMarks": 60,
                     "correctMarks": 1,
                     "wrongMarks": 0
@@ -798,6 +840,8 @@
                         "MULTIPLE_CHOICE"
                     ],
                     "questionCount": 50,
+                    "marksMode": 0,
+                    "marksPerQuestion": 1,
                     "totalMarks": 50,
                     "correctMarks": 1,
                     "wrongMarks": -0.25
@@ -808,6 +852,8 @@
                         "OBJECTIVE_SINGLE_WORD_OR_PHRASE"
                     ],
                     "questionCount": 15,
+                    "marksMode": 0,
+                    "marksPerQuestion": 2,
                     "totalMarks": 30,
                     "correctMarks": 2,
                     "wrongMarks": -0.5
@@ -818,6 +864,8 @@
                         "MULTIPLE_CORRECT"
                     ],
                     "questionCount": 15,
+                    "marksMode": 0,
+                    "marksPerQuestion": 2,
                     "totalMarks": 30,
                     "correctMarks": 2,
                     "wrongMarks": -0.25,
@@ -895,6 +943,8 @@
                         "MULTIPLE_CHOICE"
                     ],
                     "questionCount": 130,
+                    "marksMode": 0,
+                    "marksPerQuestion": 3,
                     "totalMarks": 390,
                     "correctMarks": 3,
                     "wrongMarks": -1
@@ -971,6 +1021,8 @@
                         "MULTIPLE_CHOICE"
                     ],
                     "questionCount": 125,
+                    "marksMode": 0,
+                    "marksPerQuestion": 1,
                     "totalMarks": 125,
                     "correctMarks": 1,
                     "wrongMarks": 0
@@ -1047,7 +1099,9 @@
                         "MULTIPLE_CHOICE"
                     ],
                     "questionCount": 150,
-                    "totalMarks": 200,
+                    "marksMode": 0,
+                    "marksPerQuestion": 1,
+                    "totalMarks": 150,
                     "correctMarks": 1,
                     "wrongMarks": 0
                 }
@@ -1123,6 +1177,8 @@
                         "MULTIPLE_CHOICE"
                     ],
                     "questionCount": 160,
+                    "marksMode": 0,
+                    "marksPerQuestion": 1,
                     "totalMarks": 160,
                     "correctMarks": 1,
                     "wrongMarks": 0
@@ -1199,6 +1255,8 @@
                         "MULTIPLE_CHOICE"
                     ],
                     "questionCount": 180,
+                    "marksMode": 0,
+                    "marksPerQuestion": 1,
                     "totalMarks": 180,
                     "correctMarks": 1,
                     "wrongMarks": 0
@@ -1270,8 +1328,10 @@
                     "questionTypes": [],
                     "questionCountMode": 1,
                     "questionCountMin": 2,
-                    "questionCountMax": 6,
-                    "questionCountWeights": { "2": 1, "3": 5, "4": 2, "5": 1, "6": 1 },
+                    "questionCountMax": 5,
+                    "marksMode": 1,
+                    "marksPerQuestionMin": 4,
+                    "marksPerQuestionMax": 10,
                     "totalMarks": 20
                 },
                 {
@@ -1279,8 +1339,10 @@
                     "questionTypes": [],
                     "questionCountMode": 1,
                     "questionCountMin": 2,
-                    "questionCountMax": 6,
-                    "questionCountWeights": { "2": 1, "3": 5, "4": 2, "5": 1, "6": 1 },
+                    "questionCountMax": 5,
+                    "marksMode": 1,
+                    "marksPerQuestionMin": 4,
+                    "marksPerQuestionMax": 10,
                     "totalMarks": 20
                 },
                 {
@@ -1288,8 +1350,10 @@
                     "questionTypes": [],
                     "questionCountMode": 1,
                     "questionCountMin": 2,
-                    "questionCountMax": 6,
-                    "questionCountWeights": { "2": 1, "3": 5, "4": 2, "5": 1, "6": 1 },
+                    "questionCountMax": 5,
+                    "marksMode": 1,
+                    "marksPerQuestionMin": 4,
+                    "marksPerQuestionMax": 10,
                     "totalMarks": 20
                 },
                 {
@@ -1297,8 +1361,10 @@
                     "questionTypes": [],
                     "questionCountMode": 1,
                     "questionCountMin": 2,
-                    "questionCountMax": 6,
-                    "questionCountWeights": { "2": 1, "3": 5, "4": 2, "5": 1, "6": 1 },
+                    "questionCountMax": 5,
+                    "marksMode": 1,
+                    "marksPerQuestionMin": 4,
+                    "marksPerQuestionMax": 10,
                     "totalMarks": 20
                 },
                 {
@@ -1306,8 +1372,10 @@
                     "questionTypes": [],
                     "questionCountMode": 1,
                     "questionCountMin": 2,
-                    "questionCountMax": 6,
-                    "questionCountWeights": { "2": 1, "3": 5, "4": 2, "5": 1, "6": 1 },
+                    "questionCountMax": 5,
+                    "marksMode": 1,
+                    "marksPerQuestionMin": 4,
+                    "marksPerQuestionMax": 10,
                     "totalMarks": 20
                 }
             ]
@@ -1388,6 +1456,8 @@
                     "name": "1-mark questions",
                     "questionTypes": [],
                     "questionCount": 25,
+                    "marksMode": 0,
+                    "marksPerQuestion": 1,
                     "totalMarks": 25,
                     "correctMarks": 1,
                     "wrongMarks": -0.33
@@ -1396,6 +1466,8 @@
                     "name": "2-mark questions",
                     "questionTypes": [],
                     "questionCount": 40,
+                    "marksMode": 0,
+                    "marksPerQuestion": 2,
                     "totalMarks": 80,
                     "correctMarks": 2,
                     "wrongMarks": -0.67
@@ -1476,6 +1548,8 @@
                         "MULTIPLE_CHOICE"
                     ],
                     "questionCount": 24,
+                    "marksMode": 0,
+                    "marksPerQuestion": 3,
                     "totalMarks": 72,
                     "correctMarks": 3,
                     "wrongMarks": -1
@@ -1487,6 +1561,8 @@
                         "OBJECTIVE_SINGLE_WORD_OR_PHRASE"
                     ],
                     "questionCount": 20,
+                    "marksMode": 0,
+                    "marksPerQuestion": 3,
                     "totalMarks": 60,
                     "correctMarks": 3,
                     "wrongMarks": -1
@@ -1498,6 +1574,8 @@
                         "OBJECTIVE_SINGLE_WORD_OR_PHRASE"
                     ],
                     "questionCount": 22,
+                    "marksMode": 0,
+                    "marksPerQuestion": 3,
                     "totalMarks": 66,
                     "correctMarks": 3,
                     "wrongMarks": -1
@@ -1574,6 +1652,8 @@
                         "MULTIPLE_CHOICE"
                     ],
                     "questionCount": 100,
+                    "marksMode": 0,
+                    "marksPerQuestion": 2,
                     "totalMarks": 200,
                     "correctMarks": 2,
                     "wrongMarks": -0.66
@@ -1650,6 +1730,8 @@
                         "MULTIPLE_CHOICE"
                     ],
                     "questionCount": 100,
+                    "marksMode": 0,
+                    "marksPerQuestion": 2,
                     "totalMarks": 200,
                     "correctMarks": 2,
                     "wrongMarks": -0.5
@@ -1726,6 +1808,8 @@
                         "MULTIPLE_CHOICE"
                     ],
                     "questionCount": 120,
+                    "marksMode": 0,
+                    "marksPerQuestion": 2.5,
                     "totalMarks": 300,
                     "correctMarks": 2.5,
                     "wrongMarks": -0.83

@@ -1,3 +1,10 @@
+/* The single source of truth for the uploaded-source card.
+   InformationSourceCard.js used to inject a near-identical copy of these rules
+   as an inline <style> in its light DOM, which won on document order and had
+   quietly drifted from this file — this sheet was missing the min-width: 0 that
+   makes the filename's ellipsis work. The two are merged here and the inline
+   block is gone; there is one place to change a card rule. */
+
 information-source-card
 {
     display: flex;
@@ -9,6 +16,9 @@ information-source-card
     border: 1px solid #2c2c2c;
     margin-top: 5px;
     transition: border-color 0.3s ease-in-out;
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
 }
 
 information-source-card.state-uploading
@@ -31,6 +41,11 @@ information-source-card.state-error
     display: flex;
     align-items: center;
     gap: 10px;
+    /* Let the flex row shrink below its content width so the name's
+       text-overflow: ellipsis can actually engage — without this a long file
+       name overflows the card, and the page's overflow-x: hidden then clips it
+       out of reach rather than letting it scroll. */
+    min-width: 0;
 }
 
 .information-source-card-icon
@@ -38,11 +53,20 @@ information-source-card.state-error
     width: 16px;
     height: 16px;
     flex-shrink: 0;
+    display: block;
+}
+
+.information-source-card-check-icon
+{
+    width: 14px;
+    height: 14px;
+    display: block;
 }
 
 .information-source-card-name
 {
     flex: 1;
+    min-width: 0;
     font-size: 13px;
     font-weight: 600;
     color: #ffffff;
@@ -100,6 +124,7 @@ information-source-card.state-error .information-source-card-status-label
     display: flex;
     flex-wrap: wrap;
     gap: 5px;
+    min-width: 0;
 }
 
 .information-source-card-tag
@@ -111,6 +136,12 @@ information-source-card.state-error .information-source-card-status-label
     border: 1px solid rgba(0, 152, 196, 0.25);
     border-radius: 4px;
     padding: 2px 7px;
+    /* Tag text is derived from the uploaded file, so it can be a single long
+       unbroken token. Without a break opportunity that token sets the card's
+       minimum width and pushes the whole field row off screen. */
+    max-width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 /* Error message */
@@ -119,4 +150,29 @@ information-source-card.state-error .information-source-card-status-label
 {
     font-size: 11px;
     color: #DC5050;
+    overflow-wrap: anywhere;
+}
+
+/* ── Phones ──────────────────────────────────────────────────────────────────
+   The card is the widest element in the source list and had no narrow-screen
+   treatment at all. Its 15px side padding sits inside three other padded
+   containers, so it is the last place worth reclaiming space from. */
+@media (max-width: 600px)
+{
+    information-source-card
+    {
+        padding: 10px 11px;
+    }
+
+    .information-source-card-name
+    {
+        font-size: 12px;
+    }
+
+    .information-source-card-status-label,
+    .information-source-card-tag,
+    .information-source-card-error-message
+    {
+        font-size: 10px;
+    }
 }

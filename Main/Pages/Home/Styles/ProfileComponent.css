@@ -36,6 +36,27 @@ profile-component .profile-display-name
     white-space: nowrap;
 }
 
+/* Only present while a non-personal view is active. The plan variant borrows
+   the danger colour from ViewContextIndicator on purpose: the two marks name the
+   same state and must not look like two different things. */
+profile-component .profile-view-badge
+{
+    flex-shrink: 0;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background-color: var(--quaternary-background-color);
+    color: var(--secondary-text-color);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+profile-component .profile-view-badge[data-view-kind="PLAN"]
+{
+    background-color: var(--danger-background-color);
+    color: var(--danger-text-color);
+    font-weight: 600;
+}
+
 @media (max-width: 600px)
 {
     profile-component

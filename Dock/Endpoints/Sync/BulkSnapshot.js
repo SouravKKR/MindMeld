@@ -1,4 +1,5 @@
-const OrganizationScopeResolver = require("../../Globals/Classes/Organization/OrganizationScopeResolver");
+const ViewScopeResolver = require("../../Globals/Classes/View/ViewScopeResolver");
+const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 const { PacketronRequest, PacketronResponse } = require("@gamiumgamers/packetron");
 const { getUser } = require("../Helpers/GetUser");
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
@@ -47,9 +48,22 @@ class BulkSnapshotEndpoint
         }
 
         // The same scope resolution the incremental sync performs, so a full
-        // snapshot of an organization view returns that view rather than the
-        // caller's personal library.
-        const scope    = await OrganizationScopeResolver.resolve(request, user.getId());
+        // snapshot of an organization view or a simulated plan sandbox returns
+        // that view rather than the caller's personal library.
+        const scope    = await ViewScopeResolver.resolve(request, user.getId(), user);
+
+        // A rejected plan-view claim is refused rather than quietly answered
+        // from the personal library, for the same reason Sync refuses it: a
+        // client that still believes it is in a sandbox would take a snapshot of
+        // the real library as the sandbox's contents and push it back.
+        if (ViewScopeResolver.hasRejectedPlanViewClaim(request, scope))
+        {
+            console.warn(`[BulkSnapshot] Refusing a snapshot for user ${user.getId()} for a plan view they may no longer use.`);
+            response.statusCode = httpStatus.CONFLICT;
+            response.sendJson({ error: ErrorCodes.VIEW_NO_LONGER_AVAILABLE });
+            return;
+        }
+
         const userId   = scope.scopeKey;
         // Licenses belong to the buyer, not to a library, so the content key is
         // always looked up under the account id.

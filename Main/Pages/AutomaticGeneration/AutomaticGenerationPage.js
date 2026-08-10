@@ -22,6 +22,8 @@ import TutorialEngine from "../../Globals/Classes/TutorialEngine.js";
 import { generationEstimateOutcomes } from "../../Globals/Enumerations/GenerationEstimateOutcomes.js";
 import GenerationEstimateDialog from "./Components/GenerationEstimateDialog.js";
 import CreditPurchaseFlow from "../../Globals/Classes/Credits/CreditPurchaseFlow.js";
+import OrganizationContextRegistry from "../../Globals/Classes/Organization/OrganizationContextRegistry.js";
+import UserIdentityManager from "../../Globals/Classes/UserIdentityManager.js";
 
 class AutomaticGenerationPage extends HTMLElement
 {
@@ -55,6 +57,8 @@ class AutomaticGenerationPage extends HTMLElement
         flashcardGenerationContainer.appendChild(FlashcardGenerationFields.create());
         studyMaterialGenerationContainer.appendChild(StudyMaterialGenerationFields.create());
         mockTestGenerationContainer.appendChild(MockTestGenerationFields.create());
+
+        this.#setupGenerationTargetScopeSelect();
     }
 
     #getSecondaryGenerationFields()
@@ -862,12 +866,12 @@ class AutomaticGenerationPage extends HTMLElement
                 return;
             }
 
-            // This check MUST come before #validate(). A source that is still
-            // uploading or processing has no resolved server record yet, so
-            // getSources() omits it and the form reads as though no source was
-            // ever chosen — #validate() then fails and reports "fill out all the
-            // fields", which is both wrong and unactionable when the only real
-            // problem is that the upload has not landed yet.
+            // This check MUST come before #resolveValidationFailure(). A source
+            // that is still uploading or processing has no resolved server
+            // record yet, so getSources() omits it and the form reads as though
+            // no source was ever chosen — validation then fails and reports
+            // "fill out all the fields", which is both wrong and unactionable
+            // when the only real problem is that the upload has not landed yet.
             if (this.#hasPendingUploads())
             {
                 await DialogBox.alert(
@@ -877,9 +881,10 @@ class AutomaticGenerationPage extends HTMLElement
                 return;
             }
 
-            if (!this.#validate())
+            const validationFailure = this.#resolveValidationFailure();
+            if (validationFailure !== null)
             {
-                await DialogBox.alert("Error", "Please fill out all the fields and make sure the values are valid.");
+                await DialogBox.alert("Can't start generation", validationFailure);
                 return;
             }
 
@@ -1101,22 +1106,137 @@ class AutomaticGenerationPage extends HTMLElement
 
         generationSettingsMap["parentDeckId"] = this.#parentDeck?.getId() ?? "0";
 
-        // A TOP-LEVEL field, deliberately outside the settings blocks. These
-        // sources are checked against, never generated from, and the settings
-        // object is what the paid-deck source-type restriction is enforced
-        // against — carrying them inside it would submit a textbook to a gate
-        // that accepts only a syllabus, and be refused. Empty for every
-        // non-paid-deck run, where the picker is hidden.
-        const verificationSourceIds = typeof generalFields.getVerificationSourceIds === "function"
-            ? generalFields.getVerificationSourceIds()
+        // A TOP-LEVEL field, deliberately outside the settings blocks. Each entry
+        // carries a licence declaration and a usage mode, and it is that pairing
+        // — not the absence of the source from the pipeline — which decides what
+        // the source may be used for. The settings object is what the paid-deck
+        // source-type restriction is enforced against, and a source there carries
+        // no declaration at all, so carrying these inside it would submit a
+        // textbook to a gate that (rightly) accepts only a syllabus. Empty for
+        // every non-paid-deck run, where the picker is hidden.
+        const verificationSources = typeof generalFields.getVerificationSources === "function"
+            ? generalFields.getVerificationSources()
             : [];
 
-        if (verificationSourceIds.length > 0)
+        if (verificationSources.length > 0)
         {
-            generationSettingsMap["verificationSourceIds"] = verificationSourceIds;
+            generationSettingsMap["verificationSources"] = verificationSources;
+        }
+
+        // Which library the generated decks land in. Sent in the BODY rather
+        // than relying on the X-Organization-Context header that decorates every
+        // request, because this value has to survive a resume: TaskStateClient
+        // re-POSTs the saved payload, while the header would be re-stamped from
+        // whatever view is open at that later moment. Omitted entirely for a
+        // personal run, so the server's header fallback still works for a client
+        // that predates this field.
+        const generationTargetOrganizationId = this.#readGenerationTargetOrganizationId();
+
+        if (generationTargetOrganizationId.length > 0)
+        {
+            generationSettingsMap["organizationId"] = generationTargetOrganizationId;
         }
 
         return generationSettingsMap;
+    }
+
+    /**
+     * The organization id currently chosen in the action bar, or "" for the
+     * user's personal profile.
+     */
+    #readGenerationTargetOrganizationId()
+    {
+        const scopeSelect = this.querySelector(".generation-target-scope-select");
+        return scopeSelect ? (scopeSelect.value || "") : "";
+    }
+
+    /**
+     * Builds the "Generate for" picker from the organizations this account
+     * belongs to.
+     *
+     * Hidden entirely when there are none, which is the overwhelming majority of
+     * users — a one-option dropdown reading "My profile" is a question nobody
+     * was asking.
+     *
+     * Defaults to the view the user is already in. Someone who switched into an
+     * institute's view and then opened generation almost always means to
+     * generate for that institute, and making them say so again is a step whose
+     * only outcome is the occasional run landing in the wrong library.
+     */
+    #setupGenerationTargetScopeSelect()
+    {
+        const scopeContainer = this.querySelector(".generation-target-scope-container");
+        const scopeSelect = this.querySelector(".generation-target-scope-select");
+        const scopeHint = this.querySelector(".generation-target-scope-hint");
+
+        if (!scopeContainer || !scopeSelect)
+        {
+            return;
+        }
+
+        const organizationContexts = OrganizationContextRegistry.getContexts() || [];
+
+        if (organizationContexts.length === 0)
+        {
+            scopeContainer.hidden = true;
+            return;
+        }
+
+        scopeSelect.innerHTML = "";
+
+        const personalOption = document.createElement("option");
+        personalOption.value = "";
+        personalOption.textContent = "My personal profile";
+        scopeSelect.appendChild(personalOption);
+
+        for (const organizationContext of organizationContexts)
+        {
+            const organizationOption = document.createElement("option");
+            organizationOption.value = organizationContext.organizationId;
+            organizationOption.textContent = organizationContext.organizationName || organizationContext.organizationId;
+            scopeSelect.appendChild(organizationOption);
+        }
+
+        const activeOrganizationId = UserIdentityManager.getOrganizationContextId() || "";
+        scopeSelect.value = organizationContexts.some(context => context.organizationId === activeOrganizationId)
+            ? activeOrganizationId
+            : "";
+
+        scopeContainer.hidden = false;
+
+        const refreshScopeHint = () =>
+        {
+            if (!scopeHint)
+            {
+                return;
+            }
+
+            const chosenOrganizationId = scopeSelect.value || "";
+
+            // Only warned about when the choice differs from the view the user
+            // is looking at. Generating into the view you are already in needs
+            // no explanation, and a notice that is always on screen is one
+            // nobody reads on the day it matters.
+            if (chosenOrganizationId.length > 0 && chosenOrganizationId !== activeOrganizationId)
+            {
+                const organizationName = OrganizationContextRegistry.getOrganizationName(chosenOrganizationId) || chosenOrganizationId;
+                scopeHint.textContent = `These decks will be created in ${organizationName}'s library. `
+                    + "Switch to that view from your profile menu to see them.";
+                scopeHint.hidden = false;
+            }
+            else if (chosenOrganizationId.length === 0 && activeOrganizationId.length > 0)
+            {
+                scopeHint.textContent = "These decks will be created in your personal library, not the organization you are currently viewing.";
+                scopeHint.hidden = false;
+            }
+            else
+            {
+                scopeHint.hidden = true;
+            }
+        };
+
+        scopeSelect.addEventListener("change", refreshScopeHint);
+        refreshScopeHint();
     }
 
     #handleGenerationContainerCheckboxEvents()
@@ -1182,7 +1302,13 @@ class AutomaticGenerationPage extends HTMLElement
         }
     }
 
-    #validate()
+    /**
+     * @returns {string|null} the reason the form cannot be submitted, or null
+     *          when every enabled panel is happy. A panel that knows why it
+     *          refused says so through getValidationMessage(); the caller falls
+     *          back to a generic sentence for the ones that don't.
+     */
+    #resolveValidationFailure()
     {
         const fields = this.querySelectorAll(".generation-fields");
 
@@ -1190,11 +1316,14 @@ class AutomaticGenerationPage extends HTMLElement
         {
             if (!field.validate())
             {
-                return false;
+                const fieldMessage = typeof field.getValidationMessage === "function" ? field.getValidationMessage() : null;
+                return (typeof fieldMessage === "string" && fieldMessage.trim().length > 0)
+                    ? fieldMessage
+                    : "Please fill out all the fields and make sure the values are valid.";
             }
         }
 
-        return true;
+        return null;
     }
 
     async connectedCallback()
@@ -1245,8 +1374,13 @@ class AutomaticGenerationPage extends HTMLElement
                 </div>
             </div>
             <div class="automatic-generation-action-bar">
+                <div class="generation-target-scope-container" hidden>
+                    <label for="generation-target-scope-select">Generate for: </label>
+                    <select class="generation-target-scope-select" id="generation-target-scope-select"></select>
+                </div>
                 <button class="automatic-generation-start-button">Start Generation</button>
             </div>
+            <div class="generation-target-scope-hint" hidden></div>
             <div class="automatic-generation-deck-library-hint">
                 Finding automatic generation expensive? <a class="automatic-generation-deck-library-link" href="#">Buy a premade deck instead</a> which are 90% cheaper.
             </div>

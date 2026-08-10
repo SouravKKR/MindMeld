@@ -1,6 +1,6 @@
 const { getUser } = require("../Helpers/GetUser");
 const UserDailyActivityQueryEngine = require("../../Globals/Classes/Database/UserDailyActivityQueryEngine");
-const OrganizationScopeResolver = require("../../Globals/Classes/Organization/OrganizationScopeResolver");
+const ViewScopeResolver = require("../../Globals/Classes/View/ViewScopeResolver");
 const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
 
 /**
@@ -69,7 +69,7 @@ async function recordDailyUsage(request, response)
         }
     }
 
-    const scope = await OrganizationScopeResolver.resolve(request, user.getId());
+    const scope = await ViewScopeResolver.resolve(request, user.getId(), user);
 
     const bRecorded = await UserDailyActivityQueryEngine.recordDailyUsage
     ({

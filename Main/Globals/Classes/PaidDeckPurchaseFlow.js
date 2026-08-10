@@ -7,6 +7,7 @@ import SyncManager from "./SyncManager.js";
 import PaymentCheckout from "./Payments/PaymentCheckout.js";
 import TutorialEngine from "./TutorialEngine.js";
 import TutorialSampleDeckBuilder from "./Tutorials/TutorialSampleDeckBuilder.js";
+import UserIdentityManager from "./UserIdentityManager.js";
 import ErrorCodes from "../Constants/ErrorCodes.js";
 
 /**
@@ -22,6 +23,12 @@ import ErrorCodes from "../Constants/ErrorCodes.js";
  */
 class PaidDeckPurchaseFlow
 {
+    // Declared before the map below, which reads it: static fields initialise in
+    // declaration order, so the other way round would put `undefined` in the map.
+    static SIMULATED_VIEW_MESSAGE =
+        "You're viewing the app as a different plan. Purchases are real money and a real licence, "
+        + "so they can't be made from a simulated view — switch back to viewing as yourself first.";
+
     // Server error codes that deserve a sentence a buyer can act on instead of
     // the raw token. Anything not listed still falls back to the code itself,
     // which is what support needs for the rarer failures.
@@ -29,13 +36,24 @@ class PaidDeckPurchaseFlow
     {
         [ErrorCodes.PRICING_DURATION_NOT_CONFIGURED]: "This deck isn't available to acquire just yet — its access terms haven't been published. Please try again later.",
         [ErrorCodes.PAYMENT_PROVIDER_NOT_CONFIGURED]: "Payments are temporarily unavailable. Please try again later.",
-        [ErrorCodes.ALREADY_OWNED]: "You already own this deck — it's on your home page."
+        [ErrorCodes.ALREADY_OWNED]: "You already own this deck — it's on your home page.",
+        [ErrorCodes.SIMULATED_VIEW_NOT_PURCHASABLE]: PaidDeckPurchaseFlow.SIMULATED_VIEW_MESSAGE
     };
 
     static async run(deck, region)
     {
         if (!deck)
         {
+            return false;
+        }
+
+        // Refused here as well as on the server, because a buyer who clicks Buy
+        // and gets a payment sheet before being told no has already been asked
+        // for money that could not have been taken. The server refusal is the
+        // control; this is the courtesy.
+        if (UserIdentityManager.isPlanViewContext())
+        {
+            await DialogBox.alert("Not available in this view", PaidDeckPurchaseFlow.SIMULATED_VIEW_MESSAGE);
             return false;
         }
 

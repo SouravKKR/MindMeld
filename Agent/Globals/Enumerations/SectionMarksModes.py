@@ -1,0 +1,5 @@
+from enum import IntEnum
+
+class SectionMarksModes(IntEnum):
+    UNIFORM_PER_QUESTION = 0
+    RANGE_PER_QUESTION = 1

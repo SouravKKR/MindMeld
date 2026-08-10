@@ -1,6 +1,7 @@
 const { getUser } = require("../Helpers/GetUser");
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
 const LegalAcceptanceService = require("../../Globals/Classes/Authentication/LegalAcceptanceService");
+const AgeVerificationService = require("../../Globals/Classes/Authentication/AgeVerificationService");
 const CreditLedger = require("../../Globals/Classes/Credits/CreditLedger");
 const StreakManager = require("../../Globals/Classes/Streak/StreakManager");
 const MetricBadgeManager = require("../../Globals/Classes/Metrics/MetricBadgeManager");
@@ -48,6 +49,15 @@ async function handleUpdateUserAdditionalData(request, response)
     for (const fieldKey of Object.keys(partialAdditionalData))
     {
         if (LegalAcceptanceService.isReservedConsentKey(fieldKey))
+        {
+            continue;
+        }
+        // Age and guardian-consent state is written only by the /Age endpoints,
+        // which derive it server-side. A client that could merge its own
+        // dateOfBirth or guardianConsent through here would be able to declare
+        // itself an adult, or consent on its own guardian's behalf, and the
+        // gate would be decorative.
+        if (AgeVerificationService.isReservedAgeKey(fieldKey))
         {
             continue;
         }

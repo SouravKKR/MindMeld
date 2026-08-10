@@ -27,8 +27,9 @@ class MockTestGenerationSettings extends AutoGenerationSettings
     #mockTestName;
     #recursive;
     #skipRootDeck;
+    #referenceSources;
 
-    constructor({type = null, additionalInstructions = '', description = '', informationSources = [], enhanceImages = false, imageSources = [], subjectName = '', examName = '', numTestsMethod = 0, numberOfTests = 2, difficultyMethod = 0, veryEasyQuestions = 1, easyQuestions = 1, mediumQuestions = 1, hardQuestions = 1, veryHardQuestions = 1, questionTypesMethod = 0, questionTypesWithWeights = {}, numQuestionsMethod = 0, numQuestionsPerTest = 30, correctMarks = 4, wrongMarks = -1, unattemptedMarks = 0, partialMarks = 0, perTypeMarkingOverrides = {}, sectionStructure = [], showSolvingSteps = true, durationMinutes = 0, mockTestName = '', recursive = false, skipRootDeck = false} = {})
+    constructor({type = null, additionalInstructions = '', description = '', informationSources = [], enhanceImages = false, imageSources = [], subjectName = '', examName = '', numTestsMethod = 0, numberOfTests = 2, difficultyMethod = 0, veryEasyQuestions = 1, easyQuestions = 1, mediumQuestions = 1, hardQuestions = 1, veryHardQuestions = 1, questionTypesMethod = 0, questionTypesWithWeights = {}, numQuestionsMethod = 0, numQuestionsPerTest = 30, correctMarks = 4, wrongMarks = -1, unattemptedMarks = 0, partialMarks = 0, perTypeMarkingOverrides = {}, sectionStructure = [], showSolvingSteps = true, durationMinutes = 0, mockTestName = '', recursive = false, skipRootDeck = false, referenceSources = []} = {})
     {
         super({type, additionalInstructions, description, informationSources, enhanceImages, imageSources, subjectName, examName});
         this.setNumTestsMethod(numTestsMethod);
@@ -54,6 +55,7 @@ class MockTestGenerationSettings extends AutoGenerationSettings
         this.setMockTestName(mockTestName);
         this.setRecursive(recursive);
         this.setSkipRootDeck(skipRootDeck);
+        this.setReferenceSources(referenceSources);
     }
 
     getNumTestsMethod()
@@ -437,6 +439,23 @@ class MockTestGenerationSettings extends AutoGenerationSettings
         this.#skipRootDeck = value;
     }
 
+    getReferenceSources()
+    {
+        return this.#referenceSources;
+    }
+
+    setReferenceSources(value)
+    {
+        if (value !== null)
+        {
+            if (!Array.isArray(value))
+            {
+                value = null;
+            }
+        }
+        this.#referenceSources = value;
+    }
+
     toJson()
     {
         return {
@@ -464,6 +483,7 @@ class MockTestGenerationSettings extends AutoGenerationSettings
             mockTestName: this.getMockTestName(),
             recursive: this.getRecursive(),
             skipRootDeck: this.getSkipRootDeck(),
+            referenceSources: this.getReferenceSources() !== null ? this.getReferenceSources().map(item => item.toJson()) : null,
         };
     }
 
@@ -500,7 +520,8 @@ class MockTestGenerationSettings extends AutoGenerationSettings
             durationMinutes: json.durationMinutes ?? null,
             mockTestName: json.mockTestName ?? null,
             recursive: json.recursive ?? null,
-            skipRootDeck: json.skipRootDeck ?? null
+            skipRootDeck: json.skipRootDeck ?? null,
+            referenceSources: json.referenceSources != null ? json.referenceSources.map(item => ExtractableInformationSource.fromJson(item)) : null
         });
         instance._restoreId_id(json.id);
         return instance;

@@ -18,6 +18,11 @@ class AutomaticGenerationEvents
     static ON_TEMPLATED_FIELD_CHANGED              = "ON_TEMPLATED_FIELD_CHANGED";
     static ON_CAPTURE_IMAGES_CHANGED               = "ON_CAPTURE_IMAGES_CHANGED";
     static ON_GENERATION_MODE_CHANGED              = "ON_GENERATION_MODE_CHANGED";
+    // Raised by MockTestSectionStructureFields whenever a section is added,
+    // removed or edited. MockTestGenerationFields listens so it can hide the
+    // paper-level question-type weightage once sections exist — with sections
+    // configured, those two controls would be two answers to one question.
+    static ON_SECTION_STRUCTURE_CHANGED = "ON_SECTION_STRUCTURE_CHANGED";
 }
 
 export default AutomaticGenerationEvents;

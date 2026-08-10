@@ -1,7 +1,9 @@
+import ViewIdentity from "../View/ViewIdentity.js";
+
 /**
  * OrganizationContextIdentity
  *
- * Composes and parses the storage identity of an organization view.
+ * The organization-specific face of ViewIdentity.
  *
  * The app already namespaces every stored path under `Users/<identity>/`, and
  * `Deck` rebuilds itself from scratch whenever the identity changes. Making an
@@ -14,15 +16,19 @@
  *     personal      <userId>
  *     org view      <userId>::org:<organizationId>
  *
- * The separator is byte-identical to the one
- * Dock/Globals/Classes/Organization/OrganizationScopeResolver.js builds server
- * side, because the two must agree on the owner key of every synced row. Change
- * it in one place and every organization library silently orphans, so it is
- * defined here once and never inlined.
+ * The grammar itself moved to ViewIdentity when a second kind of view (the
+ * administrator's simulated plan sandbox) arrived, because extractUserId has to
+ * be correct for EVERY kind and two parsers would eventually disagree about a
+ * malformed identity. This class stayed rather than being deleted, and every
+ * body below is a one-line delegate: its callers ask an ORGANIZATION question
+ * and must keep getting an organization answer. PaidDeckStudyGate in particular
+ * uses isOrganizationIdentity to decide whether to try the passwordless
+ * organization unlock — a plan-scoped licence must never take that path, and it
+ * cannot, because the check below still only looks for `::org:`.
  */
 class OrganizationContextIdentity
 {
-    static SEPARATOR = "::org:";
+    static SEPARATOR = ViewIdentity.ORGANIZATION_SEPARATOR;
 
     /**
      * The identity for a view. A blank organization id means the personal view,
@@ -34,12 +40,7 @@ class OrganizationContextIdentity
      */
     static compose(userId, organizationId)
     {
-        if (typeof organizationId !== "string" || organizationId.length === 0)
-        {
-            return userId;
-        }
-
-        return `${userId}${OrganizationContextIdentity.SEPARATOR}${organizationId}`;
+        return ViewIdentity.composeOrganization(userId, organizationId);
     }
 
     /**
@@ -50,13 +51,7 @@ class OrganizationContextIdentity
      */
     static extractUserId(identity)
     {
-        if (typeof identity !== "string")
-        {
-            return "";
-        }
-
-        const separatorIndex = identity.indexOf(OrganizationContextIdentity.SEPARATOR);
-        return separatorIndex > 0 ? identity.slice(0, separatorIndex) : identity;
+        return ViewIdentity.extractUserId(identity);
     }
 
     /**
@@ -67,21 +62,16 @@ class OrganizationContextIdentity
      */
     static extractOrganizationId(identity)
     {
-        if (typeof identity !== "string")
-        {
-            return "";
-        }
-
-        const separatorIndex = identity.indexOf(OrganizationContextIdentity.SEPARATOR);
-        return separatorIndex > 0 ? identity.slice(separatorIndex + OrganizationContextIdentity.SEPARATOR.length) : "";
+        return ViewIdentity.extractOrganizationId(identity);
     }
 
     /**
-     * True when this identity names an organization view.
+     * True when this identity names an organization view. Deliberately false for
+     * a plan sandbox — see the note in the class comment.
      */
     static isOrganizationIdentity(identity)
     {
-        return OrganizationContextIdentity.extractOrganizationId(identity).length > 0;
+        return ViewIdentity.isOrganizationIdentity(identity);
     }
 }
 

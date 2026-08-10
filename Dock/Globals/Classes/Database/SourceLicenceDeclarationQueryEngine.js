@@ -41,13 +41,39 @@ const DatabaseConstants = require("../../Constants/DatabaseConstants");
 class SourceLicenceDeclarationQueryEngine
 {
     /**
-     * The two things that can happen to a declared source. Recorded as separate
+     * The things that can happen to a declared source. Recorded as separate
      * events rather than as a status field on one row, so the history reads as a
      * sequence of acts by named people rather than as a current state whose past
      * has been overwritten.
+     *
+     * NOTE_UPDATED and USAGE_CHANGED exist because the working-set row is
+     * mutable — an administrator can correct a note or change what a source is
+     * used for — and the whole value of this collection is that it does not lose
+     * what the earlier answer was. The edit lands on the row; the fact that it
+     * happened, and what it changed from, lands here.
      */
     static EVENT_ATTACHED = "ATTACHED";
     static EVENT_DETACHED = "DETACHED";
+    static EVENT_NOTE_UPDATED = "NOTE_UPDATED";
+    static EVENT_USAGE_CHANGED = "USAGE_CHANGED";
+
+    /**
+     * Every event this collection is allowed to hold.
+     *
+     * A validated set rather than a comparison, because the previous form —
+     * "DETACHED if it says DETACHED, otherwise ATTACHED" — silently relabelled
+     * anything it did not recognise as an attachment. That is the one failure
+     * this collection cannot tolerate: a note edit recorded as an attachment is
+     * a false entry in the log whose only purpose is being true. Unknown values
+     * still fall back to ATTACHED, but only after failing to match anything
+     * real, and the fallback is now visible rather than implied.
+     */
+    static KNOWN_EVENTS = new Set([
+        SourceLicenceDeclarationQueryEngine.EVENT_ATTACHED,
+        SourceLicenceDeclarationQueryEngine.EVENT_DETACHED,
+        SourceLicenceDeclarationQueryEngine.EVENT_NOTE_UPDATED,
+        SourceLicenceDeclarationQueryEngine.EVENT_USAGE_CHANGED,
+    ]);
 
     /**
      * Appends one declaration event.
@@ -64,8 +90,8 @@ class SourceLicenceDeclarationQueryEngine
         {
             declarationId: crypto.randomUUID(),
 
-            event: declarationDetails.event === SourceLicenceDeclarationQueryEngine.EVENT_DETACHED
-                ? SourceLicenceDeclarationQueryEngine.EVENT_DETACHED
+            event: SourceLicenceDeclarationQueryEngine.KNOWN_EVENTS.has(declarationDetails.event)
+                ? declarationDetails.event
                 : SourceLicenceDeclarationQueryEngine.EVENT_ATTACHED,
 
             // Which deck this source was declared for.
@@ -84,6 +110,14 @@ class SourceLicenceDeclarationQueryEngine
             // The declaration proper.
             licenceType: typeof declarationDetails.licenceType === "number" ? declarationDetails.licenceType : 0,
             licenceNote: SourceLicenceDeclarationQueryEngine.#clampString(declarationDetails.licenceNote, 1024),
+
+            // What the source was being used FOR at the moment of this event,
+            // and whatever free-text the declarer added. Both are stamped on
+            // EVERY event rather than only on the one that changed them, so a
+            // reader can take any single row and see the full state it recorded
+            // without replaying the sequence to reconstruct it.
+            usageMode: typeof declarationDetails.usageMode === "number" ? declarationDetails.usageMode : 0,
+            sourceNote: SourceLicenceDeclarationQueryEngine.#clampString(declarationDetails.sourceNote, 2048),
 
             // Whose word it is. The email is denormalised deliberately: an
             // account can be deleted, and a log naming only a user id that no

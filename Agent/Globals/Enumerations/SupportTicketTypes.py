@@ -13,3 +13,4 @@ class SupportTicketTypes(IntEnum):
     CONTENT_ERROR = 9
     FEATURE_REQUEST = 10
     OTHER = 11
+    INTELLECTUAL_PROPERTY = 12

@@ -397,6 +397,12 @@ class EnhanceImages(Workflow):
             # The enhancement call failed (transient API error, refusal, or no
             # usable output). Embed the ORIGINAL extracted figure so the diagram
             # still appears and any "see Figure N" reference keeps resolving.
+            #
+            # This is the ONE branch here that re-embeds somebody else's artwork,
+            # so it is the one that carries the source hash into the markup. The
+            # generated branch above deliberately does not: that PNG is new
+            # expression, and a notice against the source document is not a
+            # notice against it.
             return HtmlInjector.build_figure_html(
                 original_image_bytes,
                 assignment.get("captionText") or "",
@@ -404,6 +410,7 @@ class EnhanceImages(Workflow):
                 source_url      = assignment.get("sourceUrl"),
                 source_page_url = assignment.get("sourcePageUrl"),
                 bounding_box    = assignment.get("boundingBoxCoordinates"),
+                source_hash     = assignment.get("informationSourceHash") or "",
             )
 
         raise RuntimeError(

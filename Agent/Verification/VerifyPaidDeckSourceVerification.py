@@ -35,12 +35,12 @@ sys.path.insert(0, str(AGENT_DIRECTORY))
 from Globals.Classes.Automation.Pools.ModelPool import ModelPool
 from Globals.Classes.Automation.Pools.PromptPool import PromptPool
 from Globals.Enumerations.WebFetchReasons import WebFetchReasons
-from Workflows.PaidDeckSourceVerification.AdminSourceCorpus import AdminSourceCorpus
+from Globals.Classes.Generation.AdminSourceCorpus import AdminSourceCorpus
 from Workflows.PaidDeckSourceVerification.PaidDeckSourceVerification import PaidDeckSourceVerification
 
 
 WORKFLOW_PATH = AGENT_DIRECTORY / "Workflows" / "PaidDeckSourceVerification" / "PaidDeckSourceVerification.py"
-CORPUS_PATH = AGENT_DIRECTORY / "Workflows" / "PaidDeckSourceVerification" / "AdminSourceCorpus.py"
+CORPUS_PATH = AGENT_DIRECTORY / "Globals" / "Classes" / "Generation" / "AdminSourceCorpus.py"
 
 passed_count = 0
 failed_count = 0
@@ -110,31 +110,50 @@ def verify_route_boundary() -> None:
         "the entry names a model",
     )
 
-    # The generation stages must be untouched by this feature. If a verification
-    # source ever reached one of them, the audit trail's central claim — that
-    # the pipeline had no third-party document to work from — would be false
-    # while still being printed.
-    generation_stage_files = [
-        AGENT_DIRECTORY / "Workflows" / "MapTopicsWithContent" / "KnowledgeChunkGenerator.py",
-        AGENT_DIRECTORY / "Workflows" / "ProcessSyllabus" / "CoverageSummaryGenerator.py",
-        AGENT_DIRECTORY / "Workflows" / "PrepareImages" / "PaidDeckVisualGenerator.py",
-    ]
+    # THE BOUNDARY RULE, ASSERTED OVER THE WHOLE AGENT rather than over a list of
+    # files someone remembered to add.
+    #
+    # This replaced a hard-coded three-file check. That check passed while its own
+    # sentence stopped being true the moment a fourth generation file was added,
+    # which is worse than no check: it reported a guarantee it was no longer
+    # measuring. The rule below cannot be bypassed by adding a file.
+    #
+    # The rule: NO file that references a PAID_DECK_* model entry may also
+    # reference a declared source — the corpus that reads one, the collection they
+    # live in, or the payload key they arrive on. Both halves are needed, and
+    # either alone is fine: SourceGroundedChunkGenerator legitimately reads the
+    # corpus (and uses no PAID_DECK_* entry), while KnowledgeChunkGenerator
+    # legitimately uses a PAID_DECK_* entry (and never touches a document).
+    source_reference_markers = ("AdminSourceCorpus", "paidDeckVerificationSources", "contentSources")
 
+    scanned_file_count = 0
     leaking_files = []
 
-    for stage_path in generation_stage_files:
-        if not stage_path.exists():
-            continue
+    for scan_root in (AGENT_DIRECTORY / "Workflows", AGENT_DIRECTORY / "Globals" / "Classes"):
+        for python_path in sorted(scan_root.rglob("*.py")):
+            if "__pycache__" in python_path.parts:
+                continue
 
-        stage_source = stage_path.read_text(encoding="utf-8")
+            scanned_file_count += 1
+            file_source = python_path.read_text(encoding="utf-8")
 
-        if "AdminSourceCorpus" in stage_source or "paidDeckVerificationSources" in stage_source:
-            leaking_files.append(stage_path.name)
+            if not paid_deck_model_pattern.search(file_source):
+                continue
+
+            matched_markers = [marker for marker in source_reference_markers if marker in file_source]
+
+            if matched_markers:
+                leaking_files.append(f"{python_path.name} ({', '.join(matched_markers)})")
+
+    assert_that(
+        scanned_file_count > 20,
+        f"the scan actually walked the tree ({scanned_file_count} file(s)) rather than silently matching nothing",
+    )
 
     assert_that(
         len(leaking_files) == 0,
-        "no generation stage reads a verification source"
-        + ("" if not leaking_files else f" -- offenders: {', '.join(leaking_files)}"),
+        "no file that uses a PAID_DECK_* model entry also reads a declared source"
+        + ("" if not leaking_files else f" -- offenders: {'; '.join(leaking_files)}"),
     )
 
 

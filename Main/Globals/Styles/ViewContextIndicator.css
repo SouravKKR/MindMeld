@@ -1,0 +1,95 @@
+/*
+    ViewContextIndicator — the "which library am I in" banner.
+
+    Global rather than page-scoped, because the element is mounted once in
+    index.html and has to look the same on all of them.
+
+    Fixed to the top edge and above the pages, but BELOW dialogs: it must never
+    be the thing covering a confirmation someone is trying to read. It is only
+    ever in the document when a non-personal view is active, so the personal
+    view pays nothing for it — there is no reserved strip and no layout shift.
+*/
+
+view-context-indicator
+{
+    position: fixed;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 900;
+
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: min(92vw, 640px);
+    padding: 6px 8px 6px 14px;
+    border-radius: 0 0 10px 10px;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: var(--secondary-background-color);
+    font-size: 12px;
+    box-sizing: border-box;
+}
+
+/* Nothing is rendered in the personal view, and an empty flex box would still
+   paint its own outline and padding. */
+view-context-indicator:empty
+{
+    display: none;
+}
+
+.view-context-indicator-label
+{
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--secondary-text-color);
+}
+
+.view-context-indicator-exit
+{
+    flex: 0 0 auto;
+    padding: 4px 12px;
+    border: none;
+    border-radius: 999px;
+    outline: 1px solid var(--outline-color-strong);
+    outline-offset: -1px;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.view-context-indicator-exit:hover
+{
+    background-color: var(--tertiary-background-color);
+}
+
+/*
+    A simulated plan is marked in the danger colour rather than the accent one.
+    An organization view shows real decks belonging to a real institute; a plan
+    sandbox shows a simulation in which real credits are still spent, and it must
+    never be possible to mistake it for the running product at a glance. This is
+    the one place in the app where "you are not where you think you are" is the
+    entire message, so it does not share a look with anything else.
+*/
+view-context-indicator[data-view-kind="PLAN"]
+{
+    outline-color: var(--danger-text-color);
+    background-color: var(--danger-background-color);
+}
+
+view-context-indicator[data-view-kind="PLAN"] .view-context-indicator-label
+{
+    color: var(--danger-text-color);
+    font-weight: 600;
+}
+
+view-context-indicator[data-view-kind="PLAN"] .view-context-indicator-exit
+{
+    outline-color: var(--danger-text-color);
+    color: var(--danger-text-color);
+}

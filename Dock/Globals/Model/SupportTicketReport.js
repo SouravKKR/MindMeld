@@ -14,6 +14,14 @@ const SupportTicketLimits = require("../Classes/Support/SupportTicketLimits");
  * `userEmail` is snapshotted at submission time so a resolution mail still reaches
  * the person who reported the problem even if they later change their profile.
  *
+ * A report may be ANONYMOUS — `userId` empty, `userEmail` typed in by hand. That
+ * exists for the one report type whose reporter is by definition unable to sign
+ * in: an account-access problem. Everything downstream already keys the reward
+ * and the in-app notification on a non-empty userId, so an anonymous report is
+ * simply one that gets the email and nothing else. It cannot be shown in "Your
+ * reports" either, which is why the acknowledgment that comes back names the
+ * address the outcome will be sent to.
+ *
  * `createdAt` doubles as the log-correlation anchor: the admin can pull this
  * reporter's server logs for the 24 hours preceding it.
  *
@@ -99,7 +107,22 @@ class SupportTicketReport
 
     setUserId(value)
     {
+        // Null and undefined both collapse to the empty string rather than being
+        // preserved as null: every consumer already tests `getUserId().length`,
+        // and introducing a second "no account" sentinel would mean each of them
+        // has to be right about which one it is looking at.
         this.#userId = String(value ?? "");
+    }
+
+    /**
+     * True when nobody was signed in — the report carries a hand-typed contact
+     * address and no account behind it.
+     *
+     * @returns {boolean}
+     */
+    isAnonymous()
+    {
+        return this.#userId.length === 0;
     }
 
     getUserEmail()
@@ -244,6 +267,7 @@ class SupportTicketReport
             bNotifyOnResolution: this.getNotifyOnResolution(),
             createdAt: this.getCreatedAt(),
             createdAtIsoString: this.getCreatedAtIsoString(),
+            bAnonymous: this.isAnonymous(),
             groupingStatus: this.getGroupingStatus(),
             groupedAt: this.getGroupedAt(),
             notifiedAt: this.getNotifiedAt(),

@@ -1,0 +1,7 @@
+const sectionMarksModes =
+{
+  UNIFORM_PER_QUESTION: 0,
+  RANGE_PER_QUESTION: 1,
+}
+
+module.exports = { sectionMarksModes };

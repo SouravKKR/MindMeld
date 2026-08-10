@@ -5,6 +5,8 @@ import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import UserIdentityManager from "../../../Globals/Classes/UserIdentityManager.js";
 import OrganizationContextRegistry from "../../../Globals/Classes/Organization/OrganizationContextRegistry.js";
 import OrganizationViewSwitcher from "../../../Globals/Classes/Organization/OrganizationViewSwitcher.js";
+import PlanViewRegistry from "../../../Globals/Classes/View/PlanViewRegistry.js";
+import PlanViewSwitcher from "../../../Globals/Classes/View/PlanViewSwitcher.js";
 import { settingsMenus } from "../../../Globals/Enumerations/SettingsMenus.js";
 import { userRoles } from "../../../Globals/Enumerations/UserRoles.js";
 
@@ -55,30 +57,27 @@ class ProfileContextMenu extends ContextMenu
     }
 
     /**
-     * Adds the view switcher: one "View as <organization>" entry per
-     * organization this account belongs to, plus "View as yourself" while one of
-     * them is active.
+     * Adds the view switcher: "View as yourself" whenever any other view is
+     * active, one "View as <organization>" entry per organization this account
+     * belongs to, and — for administrators — one "View as a <tier> user" entry
+     * per plan.
      *
-     * Read straight from the registry /GetUser already populated, so the menu
-     * never waits on the network for the entries most members care about — and
-     * so it still offers them offline, where the library is on the device and
-     * switching to it is perfectly valid.
+     * The exit is emitted FIRST and independently of either list. It used to be
+     * nested inside the organization block, which meant an administrator with no
+     * organizations could enter a plan sandbox and find no way out of it in this
+     * menu at all. Anything that can be entered has to be leavable from here
+     * without depending on why it was offered.
      *
-     * Everyone who belongs to an organization gets these, unlike the "Manage"
-     * entries below, which are for the people who administer one.
+     * Read straight from state the app already holds — the registry /GetUser
+     * populated, and a shipped constant for the tiers — so the menu never waits
+     * on the network and still offers both offline, where the library is on the
+     * device and switching to it is perfectly valid.
      */
     #appendViewSwitchEntries()
     {
-        const contexts = OrganizationContextRegistry.getContexts();
-        if (contexts.length === 0)
-        {
-            return;
-        }
-
-        const activeOrganizationId = UserIdentityManager.getOrganizationContextId();
         const viewProfileButton = this.querySelector(".view-profile-button");
 
-        if (activeOrganizationId.length > 0)
+        if (!UserIdentityManager.isPersonalView())
         {
             const personalViewButton = document.createElement("button");
             personalViewButton.className = "view-as-personal-button";
@@ -86,12 +85,31 @@ class ProfileContextMenu extends ContextMenu
             personalViewButton.addEventListener("click", async () =>
             {
                 this.remove();
-                await OrganizationViewSwitcher.switchToPersonalView();
+
+                // Two destinations, one button. Leaving an institute's library
+                // and leaving a simulation are different confirmations, so the
+                // switcher that owns each is asked rather than a merged third.
+                if (UserIdentityManager.isPlanViewContext())
+                {
+                    await PlanViewSwitcher.switchToPersonalView();
+                }
+                else
+                {
+                    await OrganizationViewSwitcher.switchToPersonalView();
+                }
             });
             this.insertBefore(personalViewButton, viewProfileButton);
         }
 
-        for (const context of contexts)
+        this.#appendOrganizationViewEntries(viewProfileButton);
+        this.#appendPlanViewEntries(viewProfileButton);
+    }
+
+    #appendOrganizationViewEntries(viewProfileButton)
+    {
+        const activeOrganizationId = UserIdentityManager.getOrganizationContextId();
+
+        for (const context of OrganizationContextRegistry.getContexts())
         {
             if (!context || context.organizationId === activeOrganizationId)
             {
@@ -107,6 +125,41 @@ class ProfileContextMenu extends ContextMenu
                 await OrganizationViewSwitcher.switchToOrganization(context.organizationId);
             });
             this.insertBefore(organizationViewButton, viewProfileButton);
+        }
+    }
+
+    /**
+     * Administrators only, and gated on the live session role rather than a
+     * cached flag so a demoted account stops being offered them at the next menu
+     * open. The gate is UX: ViewScopeResolver re-authorises the same role on
+     * every request.
+     */
+    #appendPlanViewEntries(viewProfileButton)
+    {
+        if (!PlanViewRegistry.isAvailableToCurrentUser())
+        {
+            return;
+        }
+
+        const activePlanTierName = UserIdentityManager.getPlanViewTierName();
+
+        for (const tier of PlanViewRegistry.listTiers())
+        {
+            if (tier.tierName === activePlanTierName)
+            {
+                continue;
+            }
+
+            const planViewButton = document.createElement("button");
+            planViewButton.className = "view-as-plan-button";
+            planViewButton.dataset.planTierName = tier.tierName;
+            planViewButton.textContent = `View as a ${tier.label} user`;
+            planViewButton.addEventListener("click", async () =>
+            {
+                this.remove();
+                await PlanViewSwitcher.switchToPlanView(tier.tierName);
+            });
+            this.insertBefore(planViewButton, viewProfileButton);
         }
     }
 

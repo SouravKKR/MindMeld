@@ -6,7 +6,24 @@ class GenerationFields extends HTMLElement
     static settingsKey = "INVALID";
     static taskType = taskTypes.UNKNOWN;
     static tagName = "generation-fields";
-    
+
+    /**
+     * Why the last validate() call returned false, phrased for the user, or
+     * null when it passed or the subclass has nothing specific to say.
+     *
+     * validate() is a bare boolean, so the page could only ever show one
+     * catch-all sentence — useless for a rule like "these sections cannot add
+     * up to that many marks", where every individual value looks fine and only
+     * the combination is wrong. Subclasses set this before returning false;
+     * the page prefers it over its generic message.
+     */
+    _validationMessage = null;
+
+    getValidationMessage()
+    {
+        return this._validationMessage;
+    }
+
     static create()
     {
         const generationFieldsElement = document.createElement(this.tagName);

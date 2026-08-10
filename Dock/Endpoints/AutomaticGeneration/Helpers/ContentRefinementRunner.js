@@ -15,6 +15,8 @@ const ContentRefinementApplier = require("../../../Globals/Classes/Generation/Co
 const InformationSourceQueryEngine = require("../../../Globals/Classes/Database/InformationSourceQueryEngine");
 const ErrorCodes = require("../../../Globals/Constants/ErrorCodes");
 const Logger = require("../../../Globals/Classes/Logger");
+const LogTitles = require("../../../Globals/Classes/Logging/LogTitles");
+const { logCategory } = require("../../../Globals/Enumerations/LogCategory");
 
 /**
  * ContentRefinementRunner — the metered, user-facing half of content refinement.
@@ -96,6 +98,7 @@ class ContentRefinementRunner
         }
         catch (workerError)
         {
+            ContentRefinementRunner.#recordWorkerFailure("RefineContent", userId, entityId, targetKind, workerError);
             response.statusCode = httpStatus.BAD_GATEWAY;
             response.sendJson({ error: ErrorCodes.REFINEMENT_FAILED, detail: workerError.message });
             return;
@@ -185,6 +188,7 @@ class ContentRefinementRunner
         }
         catch (workerError)
         {
+            ContentRefinementRunner.#recordWorkerFailure("RefineVisual", userId, entityId, targetKind, workerError);
             response.statusCode = httpStatus.BAD_GATEWAY;
             response.sendJson({ error: ErrorCodes.REFINEMENT_FAILED, detail: workerError.message });
             return;
@@ -389,6 +393,40 @@ class ContentRefinementRunner
             licenceNote: informationSource.getLicenceNote(),
             storagePath: `${informationSource.getDirectoryPath()}/${informationSource.getHash()}`,
         };
+    }
+
+    /**
+     * Records a worker failure, with the worker's own stderr attached.
+     *
+     * This did not exist, and its absence was the expensive part of a recurring
+     * production failure: the endpoint returned 502 with a sentence for the
+     * reviewer and wrote nothing anywhere, so the only way to find out why
+     * refinements were failing was to read the source and reason about it. An
+     * error a user can see and an operator cannot is a bug that lasts.
+     *
+     * The entity is identified but its CONTENT is not logged, and neither is the
+     * reviewer's instruction — the worker's stderr already reports both as
+     * lengths, and a log store is the wrong place for a second copy of either.
+     */
+    static #recordWorkerFailure(workerName, userId, entityId, targetKind, workerError)
+    {
+        Logger.error
+        (
+            logCategory.AI_REQUEST,
+            LogTitles.AI_GENERATION,
+            `[${workerName}] ${workerError.message}`,
+            {
+                accountId: userId,
+                errorCode: ErrorCodes.REFINEMENT_FAILED,
+                additionalData:
+                {
+                    worker: workerName,
+                    entityId: entityId,
+                    targetKind: targetKind,
+                    workerStandardError: workerError.workerStandardError || "",
+                },
+            },
+        );
     }
 
     static async #chargeForCompletedProposal(userId, taskType, sourceName)

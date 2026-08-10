@@ -43,6 +43,7 @@ const SmtpEmailProvider = require("./Globals/Classes/Email/SmtpEmailProvider");
 const EmailSender = require("./Globals/Classes/Email/EmailSender");
 const EmailSenderIdentities = require("./Globals/Classes/Email/EmailSenderIdentities");
 const { emailProviderTypes } = require("./Globals/Enumerations/EmailProviderTypes");
+const { otpPurposes } = require("./Globals/Enumerations/OtpPurposes");
 
 let passedCount = 0;
 let failedCount = 0;
@@ -373,7 +374,7 @@ async function runDatabaseTier()
 
     try
     {
-        const requestResult = await OtpManager.requestOtp(testEmail);
+        const requestResult = await OtpManager.requestOtp(testEmail, otpPurposes.LOGIN);
         assert(requestResult.ok === true, "requestOtp succeeds for a fresh email");
         assert(requestResult.isNewUser === true, "requestOtp reports a new user for an unseen email");
 
@@ -384,11 +385,17 @@ async function runDatabaseTier()
         assert(/^\d{6}$/.test(emittedCode), "A 6-digit code was emitted through the provider");
 
         // A wrong code is rejected but does not consume the record.
-        const wrongResult = await OtpManager.verifyOtp(testEmail, emittedCode === "000000" ? "111111" : "000000", "Test Learner");
+        const wrongResult = await OtpManager.verifyOtp(testEmail, emittedCode === "000000" ? "111111" : "000000", otpPurposes.LOGIN, "Test Learner");
         assert(wrongResult.ok === false, "verifyOtp rejects an incorrect code");
 
+        // A login code must not be redeemable as anything else. Same email, same
+        // digits, different purpose — and the lookup finds nothing, because the
+        // two purposes are separate rows.
+        const crossPurposeResult = await OtpManager.verifyOtp(testEmail, emittedCode, otpPurposes.INTELLECTUAL_PROPERTY_COMPLAINT_VERIFICATION, "Test Learner");
+        assert(crossPurposeResult.ok === false, "verifyOtp refuses a login code presented for a complaint confirmation");
+
         // The correct code creates the user and returns their id.
-        const verifyResult = await OtpManager.verifyOtp(testEmail, emittedCode, "Test Learner");
+        const verifyResult = await OtpManager.verifyOtp(testEmail, emittedCode, otpPurposes.LOGIN, "Test Learner");
         assert(verifyResult.ok === true, "verifyOtp accepts the correct code");
         assert(verifyResult.userId === testEmail, "verifyOtp returns the new user's id (their email)");
 

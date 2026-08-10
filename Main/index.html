@@ -45,6 +45,7 @@
     <link rel="stylesheet" href="./CommonStyles/HeaderComponent.css">
     <link rel="stylesheet" href="./CommonStyles/OptionsSidebar.css">
     <link rel="stylesheet" href="./CommonStyles/TermsAndConditionsDialog.css">
+    <link rel="stylesheet" href="./CommonStyles/AgeVerificationDialog.css">
     <link rel="stylesheet" href="./CommonStyles/DeviceManagementDialog.css">
     <link rel="stylesheet" href="./CommonStyles/CreateDeckChoiceModal.css">
     <link rel="stylesheet" href="./CommonStyles/CuratedStudy.css">
@@ -110,7 +111,9 @@
     <link rel="stylesheet" href="./Pages/AutomaticGeneration/Styles/InformationSourceSelector.css">
     <link rel="stylesheet" href="./Pages/AutomaticGeneration/Styles/InformationSourceCard.css">
     <link rel="stylesheet" href="./Pages/AutomaticGeneration/Styles/GeneralGenerationFields.css">
+    <link rel="stylesheet" href="./Pages/AutomaticGeneration/Styles/MockTestGenerationFields.css">
     <link rel="stylesheet" href="./Pages/AutomaticGeneration/Styles/MockTestSectionStructure.css">
+    <link rel="stylesheet" href="./Pages/AutomaticGeneration/Styles/SettingsInfoButton.css">
 
 
     <link rel="stylesheet" href="./Pages/About/Styles/CogniumLearnAboutComponent.css">
@@ -133,6 +136,7 @@
     <link rel="stylesheet" href="./Pages/Activity/Styles/ActivityPage.css">
     <link rel="stylesheet" href="./Pages/Organization/Styles/OrganizationPage.css">
     <link rel="stylesheet" href="./Pages/OrganizationShelf/Styles/OrganizationShelfPage.css">
+    <link rel="stylesheet" href="./Globals/Styles/ViewContextIndicator.css">
     <link rel="stylesheet" href="./ThirdParty/Latex/katex/katex.min.css">
 
 
@@ -143,11 +147,13 @@
     <script src="./ThirdParty/SheetJs/xlsx.full.min.js"></script>
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <!-- Installed before anything can call fetch: every same-origin request has
-         to carry the active organization context, or it reads the wrong library. -->
-    <script src="./Globals/Classes/Organization/OrganizationContextRequestDecorator.js" type="module"></script>
+         to carry the active view — an organization's, or an administrator's
+         simulated plan sandbox — or it reads and writes the wrong library. -->
+    <script src="./Globals/Classes/View/ViewContextRequestDecorator.js" type="module"></script>
     <script src="./Globals/Classes/Logging/LoggerBootstrap.js" type="module"></script>
     <script src="./CommonComponents/InitializationOverlay.js" type="module"></script>
     <script src="./CommonComponents/CopyrightNotice.js" type="module"></script>
+    <script src="./CommonComponents/ViewContextIndicator.js" type="module"></script>
     <script src="./Globals/Classes/PageNavigator.js" type="module"></script>
     <script src="./Globals/Events/KeyboardEvents.js" type="module"></script>
     <script src="./CommonComponents/SyncBlockingOverlay.js" type="module"></script>
@@ -175,6 +181,7 @@
     <script src="./Pages/Organization/Components/OrganizationCreditsSection.js" type="module"></script>
     <script src="./Globals/Classes/PaidDeckBootstrap.js" type="module"></script>
     <script src="./Globals/Classes/PaidDeckDeepLinkBootstrap.js" type="module"></script>
+    <script src="./Globals/Classes/CopyrightPageBootstrap.js" type="module"></script>
     <script src="./Globals/Classes/Analysis/AutoAnalysisDispatcher.js" type="module"></script>
     <script src="./Globals/Classes/Notifications/GenerationNotifier.js" type="module"></script>
     <script src="./Globals/Classes/BrowserLlm/BrowserLlmDownloadBootstrap.js" type="module"></script>
@@ -189,6 +196,10 @@
     <initialization-overlay></initialization-overlay>
     <sync-blocking-overlay></sync-blocking-overlay>
     <tutorial-overlay></tutorial-overlay>
+    <!-- Mounted here rather than inside any page: which library is on screen is
+         a property of the session, and this is also the only exit from a view
+         that is reachable from every page. -->
+    <view-context-indicator></view-context-indicator>
     <copyright-notice></copyright-notice>
 </body>
 </html>

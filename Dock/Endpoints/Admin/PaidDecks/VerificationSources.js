@@ -6,6 +6,7 @@ const PaidDeckVerificationSourceQueryEngine = require("../../../Globals/Classes/
 const SourceLicenceDeclarationQueryEngine = require("../../../Globals/Classes/Database/SourceLicenceDeclarationQueryEngine");
 const SourceVerificationRunner = require("../../../Globals/Classes/PaidDeck/SourceVerificationRunner");
 const VerificationSourceLicenceGate = require("../../../Globals/Classes/PaidDeck/VerificationSourceLicenceGate");
+const SourceUsageGate = require("../../../Globals/Classes/PaidDeck/SourceUsageGate");
 const ErrorCodes = require("../../../Globals/Constants/ErrorCodes");
 const { httpStatus } = require("../../../Globals/Enumerations/HttpStatus");
 
@@ -19,13 +20,26 @@ const { httpStatus } = require("../../../Globals/Enumerations/HttpStatus");
  * across four files would make it possible to add a fifth that writes the
  * working set without the log, which is the one thing that must not happen.
  *
- * WHAT THESE SOURCES ARE NOT. They never enter generation. Paid-deck generation
- * accepts a curriculum or syllabus and nothing else, and writes content from
- * model knowledge — that restriction is enforced by PaidDeckGenerationGate at
- * submission time and stated in every audit trail. These sources are read by the
- * source-grounded verification pass, which runs afterwards over content that
- * already exists and can only raise flags. Anything that would let one of them
- * reach a generation input is a bug of the most serious kind available here.
+ * WHAT A SOURCE IS USED FOR IS PER SOURCE, and is the usageMode on its row.
+ * VERIFICATION_ONLY (the default) means the document is read only by the
+ * source-grounded verification pass, which runs after content already exists and
+ * can only raise flags — nothing generated was written from it.
+ * CONTENT_AND_VERIFICATION means the deck's content may also be WRITTEN from it,
+ * which SourceUsageGate permits only under a licence recording a right to create
+ * new material.
+ *
+ * The two rest on different bases — independent creation for the first, an
+ * evidenced licence for the second — and the audit trail reports them separately,
+ * per topic. That is why the mode is a property of the source rather than of the
+ * run, and why changing it is logged rather than merely applied.
+ *
+ * The ordinary generation source list is untouched by any of this: it still
+ * accepts a curriculum or syllabus and nothing else, enforced by
+ * PaidDeckGenerationGate. A licensed document reaches generation through this
+ * channel, where a licence is declared and the file retained as proof, or not at
+ * all. And no document of either kind reaches a PAID_DECK_* model — content
+ * sources are read by a generator on its own ModelPool entry outside that
+ * namespace.
  */
 
 /**
@@ -81,6 +95,8 @@ async function attachVerificationSource(request, response)
     const licenceNote = typeof body?.licenceNote === "string" ? body.licenceNote.trim() : "";
     const licenceType = body?.licenceType;
     const providedName = typeof body?.name === "string" ? body.name.trim() : "";
+    const usageMode = SourceUsageGate.normaliseUsageMode(body?.usageMode);
+    const sourceNote = typeof body?.sourceNote === "string" ? body.sourceNote.trim() : "";
 
     if (deckId.length === 0 || (informationSourceId.length === 0 && sourceUrl.length === 0))
     {
@@ -112,6 +128,18 @@ async function attachVerificationSource(request, response)
     {
         response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({ error: licenceDecision.errorCode, detail: licenceDecision.detail });
+        return;
+    }
+
+    // The stricter question, asked only of a source the administrator wants to
+    // GENERATE from: does the declared licence record a right to create new
+    // material? A complete declaration is not the same as a derivative right.
+    const usageDecision = SourceUsageGate.evaluate({ licenceType: licenceType, usageMode: usageMode });
+
+    if (!usageDecision.allowed)
+    {
+        response.statusCode = httpStatus.BAD_REQUEST;
+        response.sendJson({ error: usageDecision.errorCode, detail: usageDecision.detail });
         return;
     }
 
@@ -209,6 +237,13 @@ async function attachVerificationSource(request, response)
         mimeType: resolvedSource.mimeType,
         licenceType: Number(licenceType),
         licenceNote: licenceNote,
+
+        // Written explicitly. This is a plain object literal going straight into
+        // Mongo — nothing constructs the codegen'd PaidDeckVerificationSource
+        // here — so a field omitted is a field absent from the stored document.
+        usageMode: usageMode,
+        sourceNote: sourceNote,
+
         declaredByUserId: actorUserId,
         attachedAt: attachedAt,
         detachedAt: 0,
@@ -231,6 +266,8 @@ async function attachVerificationSource(request, response)
         mimeType: verificationSource.mimeType,
         licenceType: verificationSource.licenceType,
         licenceNote: licenceNote,
+        usageMode: usageMode,
+        sourceNote: sourceNote,
         declaredByUserId: actorUserId,
         declaredByEmail: resolveActorEmail(request),
     });
@@ -294,6 +331,129 @@ async function detachVerificationSource(request, response)
 
     response.statusCode = httpStatus.OK;
     response.sendJson({ success: true, alreadyDetached: false });
+}
+
+/**
+ * POST /Admin/PaidDecks/VerificationSources/Update
+ *
+ * Revises the free-text note on an attached source, or what it is used for.
+ *
+ * Only these two fields. Everything identifying the document — its hash, storage
+ * path, licence, and who declared it when — is fixed at attach time, because
+ * those are the facts the record exists to hold; changing one of them is a
+ * different source and should be a detach and a re-attach that both show up in
+ * the log.
+ *
+ * The declaration event is written BEFORE the row is updated, the same order and
+ * for the same reason as attach: a crash between the two leaves a log saying a
+ * change was made that was not, which is a discrepancy a reader can see and
+ * investigate. The reverse leaves a silently changed row with nothing recording
+ * that anyone decided to change it.
+ *
+ * The usage change is re-gated against the STORED licence, never one from the
+ * request. Otherwise an administrator could attach under a licence that permits
+ * only verification and then quietly promote the source to a content source.
+ */
+async function updateVerificationSource(request, response)
+{
+    const body = await request.getBody();
+    const verificationSourceId = typeof body?.verificationSourceId === "string" ? body.verificationSourceId : "";
+    const bHasSourceNote = typeof body?.sourceNote === "string";
+    const bHasUsageMode = body?.usageMode !== undefined && body?.usageMode !== null;
+
+    if (verificationSourceId.length === 0 || (!bHasSourceNote && !bHasUsageMode))
+    {
+        response.statusCode = httpStatus.BAD_REQUEST;
+        response.sendJson({ error: ErrorCodes.MISSING_FIELDS });
+        return;
+    }
+
+    const verificationSource = await PaidDeckVerificationSourceQueryEngine.findById(verificationSourceId);
+
+    if (verificationSource === null)
+    {
+        response.statusCode = httpStatus.NOT_FOUND;
+        response.sendJson({ error: ErrorCodes.VERIFICATION_SOURCE_NOT_FOUND });
+        return;
+    }
+
+    if (verificationSource.active !== true)
+    {
+        response.statusCode = httpStatus.CONFLICT;
+        response.sendJson({
+            error: ErrorCodes.INVALID_REQUEST,
+            detail: "This source has been detached. What it was used for is now a historical fact and cannot be edited.",
+        });
+        return;
+    }
+
+    const previousUsageMode = SourceUsageGate.normaliseUsageMode(verificationSource.usageMode);
+    const requestedUsageMode = bHasUsageMode ? SourceUsageGate.normaliseUsageMode(body.usageMode) : previousUsageMode;
+    const revisedSourceNote = bHasSourceNote ? body.sourceNote.trim() : (verificationSource.sourceNote || "");
+
+    if (requestedUsageMode !== previousUsageMode)
+    {
+        const usageDecision = SourceUsageGate.evaluate({
+            licenceType: verificationSource.licenceType,
+            usageMode: requestedUsageMode,
+        });
+
+        if (!usageDecision.allowed)
+        {
+            response.statusCode = httpStatus.BAD_REQUEST;
+            response.sendJson({ error: usageDecision.errorCode, detail: usageDecision.detail });
+            return;
+        }
+    }
+
+    const bUsageChanged = requestedUsageMode !== previousUsageMode;
+    const bNoteChanged = bHasSourceNote && revisedSourceNote !== (verificationSource.sourceNote || "");
+
+    if (!bUsageChanged && !bNoteChanged)
+    {
+        // Nothing actually differs. Reported as success without writing an
+        // event: a log entry for a change that did not happen is a false act in
+        // a permanent record, which is the one thing this collection must not
+        // contain.
+        response.statusCode = httpStatus.OK;
+        response.sendJson({ success: true, changed: false });
+        return;
+    }
+
+    await SourceLicenceDeclarationQueryEngine.record({
+        // A usage change is the more consequential of the two, so it names the
+        // event when both moved at once — the note is carried on the row either
+        // way and is visible on the same entry.
+        event: bUsageChanged
+            ? SourceLicenceDeclarationQueryEngine.EVENT_USAGE_CHANGED
+            : SourceLicenceDeclarationQueryEngine.EVENT_NOTE_UPDATED,
+        deckId: verificationSource.deckId,
+        verificationSourceId: verificationSource.id,
+        informationSourceId: verificationSource.informationSourceId,
+        sourceName: verificationSource.name,
+        sourceUrl: verificationSource.sourceUrl,
+        sourceHash: verificationSource.contentHash,
+        mimeType: verificationSource.mimeType,
+        licenceType: verificationSource.licenceType,
+        licenceNote: verificationSource.licenceNote,
+        usageMode: requestedUsageMode,
+        sourceNote: revisedSourceNote,
+        declaredByUserId: request.user ? request.user.getId() : "",
+        declaredByEmail: resolveActorEmail(request),
+    });
+
+    await PaidDeckVerificationSourceQueryEngine.updateDeclaration(verificationSourceId, {
+        sourceNote: revisedSourceNote,
+        usageMode: requestedUsageMode,
+    });
+
+    response.statusCode = httpStatus.OK;
+    response.sendJson({
+        success: true,
+        changed: true,
+        usageMode: requestedUsageMode,
+        sourceNote: revisedSourceNote,
+    });
 }
 
 /**
@@ -439,6 +599,7 @@ module.exports =
 {
     listVerificationSources,
     attachVerificationSource,
+    updateVerificationSource,
     detachVerificationSource,
     runVerificationAgainstSources,
     getVerificationRunStatus,

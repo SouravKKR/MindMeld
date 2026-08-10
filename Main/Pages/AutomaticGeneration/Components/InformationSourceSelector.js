@@ -1,5 +1,5 @@
 import { informationSourceTypes } from "../../../Globals/Enumerations/InformationSourceTypes.js";
-import { enumerationToTitleCase } from "../../../Globals/UtilityFunctions/EnumerationToTitleCase.js";
+import { describeInformationSourceType } from "../../../Globals/UtilityFunctions/DescribeInformationSourceType.js";
 import InformationSource from "../../../Globals/Model/InformationSource.js";
 import ExtractableInformationSource from "../../../Globals/Classes/Decorators/ExtractableInformationSource.js";
 import PageRange from "../../../Globals/Classes/Decorators/PageRange.js";
@@ -52,7 +52,7 @@ class InformationSourceSelector extends HTMLElement
             }
             const option = document.createElement("option");
             option.value = key;
-            option.textContent = enumerationToTitleCase(key);
+            option.textContent = describeInformationSourceType(key);
             this.#addSelect.appendChild(option);
         }
 
@@ -336,7 +336,7 @@ class InformationSourceSelector extends HTMLElement
         informationSourceItemHeader.classList.add("information-source-item-header");
 
         const informationSourceItemLabel = document.createElement("label");
-        informationSourceItemLabel.textContent = enumerationToTitleCase(selectedKey);
+        informationSourceItemLabel.textContent = describeInformationSourceType(selectedKey);
 
         const informationSourceDeleteButton = document.createElement("button");
         informationSourceDeleteButton.type = "button";

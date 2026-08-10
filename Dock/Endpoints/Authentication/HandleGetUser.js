@@ -1,5 +1,6 @@
 const OrganizationScopeResolver = require("../../Globals/Classes/Organization/OrganizationScopeResolver");
 const OrganizationFeatureResolver = require("../../Globals/Classes/Organization/OrganizationFeatureResolver");
+const ViewScopeResolver = require("../../Globals/Classes/View/ViewScopeResolver");
 const { getUser } = require("../Helpers/GetUser");
 const {httpStatus} = require("../../Globals/Enumerations/HttpStatus");
 const PeriodicCreditReconciler = require("../../Globals/Classes/Credits/PeriodicCreditReconciler");
@@ -104,7 +105,12 @@ async function handleGetUser(request, response)
     const responseJson = user.toJson();
     try
     {
-        responseJson.storageUsage = await StorageQuotaEnforcer.getUsageBreakdown(user.getId());
+        // Reported for the library that is actually on screen. Inside a
+        // simulated plan sandbox that is the sandbox's own footprint against the
+        // simulated tier's cap, so the meter shows an administrator what a user
+        // on that plan would see rather than their own real usage.
+        const viewScope = await ViewScopeResolver.resolve(request, user.getId(), user);
+        responseJson.storageUsage = await StorageQuotaEnforcer.getUsageBreakdownForScope(user.getId(), viewScope.scopeKey);
     }
     catch (storageUsageError)
     {

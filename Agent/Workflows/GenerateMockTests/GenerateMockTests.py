@@ -8,6 +8,7 @@ from Globals.Classes.Automation.AutomationRequest import AutomationRequest
 from Globals.Classes.Automation.AutomationResponse import AutomationResponse
 from Globals.Classes.Automation.Pools.ModelPool import ModelPool
 from Globals.Classes.Automation.Pools.PromptPool import PromptPool
+from Globals.Classes.Generation.MockTestSectionGeometry import MockTestSectionGeometry
 from Globals.Classes.Generic.Persistence import Persistence
 from Globals.Classes.Task.AutoGeneration.MockTestGenerationSettings import MockTestGenerationSettings
 from Globals.Classes.Task.TaskDescriptor import TaskDescriptor
@@ -19,6 +20,7 @@ from Globals.Constants.PersistenceConstants import PersistenceConstants
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
 from Globals.Enumerations.AutomationLevels import AutomationLevels
 from Globals.Enumerations.InformationSourceTypes import InformationSourceTypes
+from Globals.Enumerations.QuestionTypes import QuestionTypes
 from Globals.Enumerations.ScrapeFilterTypes import ScrapeFilterTypes
 from Globals.Enumerations.TaskExecutionTargets import TaskExecutionTargets
 from Globals.Enumerations.TaskTypes import TaskTypes
@@ -77,6 +79,32 @@ class GenerateMockTests(Workflow):
 
         self.__exam_name    = payload.get("examName", "")
         self.__subject_name = payload.get("subjectName", "the subject")
+
+        # Resolved once in run(), then read by three call sites that must agree.
+        # Deriving it independently at each would let the blueprint search decide
+        # "no paper" while the seed extraction decides "paper" on the same run.
+        self.__b_has_reference_paper = False
+
+    def __collect_source_extractables(self) -> list:
+        """
+        Every source this run may read, as one list: the general information
+        sources plus the mock-test reference papers.
+
+        The two lists are separate on the settings object for a frontend reason —
+        the generation page mirrors the general list into every secondary
+        settings object wholesale, so a reference paper stored alongside it would
+        be overwritten on the user's next edit — but nothing downstream cares
+        about the distinction. Unioning here, once, keeps that frontend detail
+        from leaking into every consumer below.
+        """
+        general_sources = self.__settings.get_information_sources() or []
+        reference_sources = (
+            self.__settings.get_reference_sources() or []
+            if hasattr(self.__settings, "get_reference_sources")
+            else []
+        )
+
+        return list(general_sources) + list(reference_sources)
 
     async def __update_progress(self, completion: float):
         task = await TaskManager.get_current_task()
@@ -183,9 +211,8 @@ class GenerateMockTests(Workflow):
         relying on the agent's search heuristics.
         """
         specific_urls = []
-        sources = self.__settings.get_information_sources() or []
 
-        for extractable in sources:
+        for extractable in self.__collect_source_extractables():
             information_source = extractable.get_information_source() if hasattr(extractable, "get_information_source") else None
             if not information_source:
                 continue
@@ -193,7 +220,7 @@ class GenerateMockTests(Workflow):
                 continue
 
             url = (information_source.get_name() or "").strip()
-            if url:
+            if url and url not in specific_urls:
                 specific_urls.append(url)
 
         return specific_urls
@@ -335,8 +362,7 @@ class GenerateMockTests(Workflow):
             InformationSourceTypes.REPUTED_EXTERNAL_SOURCES,
         }
 
-        sources = self.__settings.get_information_sources() or []
-        for extractable in sources:
+        for extractable in self.__collect_source_extractables():
             information_source = extractable.get_information_source() if hasattr(extractable, "get_information_source") else None
             if not information_source:
                 continue
@@ -346,34 +372,55 @@ class GenerateMockTests(Workflow):
 
         return False
 
-    def __has_question_paper_source(self) -> bool:
-        """Returns True if the user added at least one QUESTION_PAPER source."""
-        sources = self.__settings.get_information_sources() or []
-        for extractable in sources:
+    def __has_reference_paper_source(self) -> bool:
+        """
+        Returns True if this run was given a paper to model its tests on — a
+        QUESTION_PAPER in either source list, or a licensed content source
+        admitted for a paid deck.
+
+        This is the switch that decides whether the web is consulted at all. A
+        user who supplied a paper has said what these tests should look like;
+        searching the open web for someone else's would dilute that with
+        material they did not choose and cannot vouch for.
+        """
+        for extractable in self.__collect_source_extractables():
             information_source = extractable.get_information_source() if hasattr(extractable, "get_information_source") else None
             if information_source and information_source.get_source_type() == InformationSourceTypes.QUESTION_PAPER:
                 return True
-        return False
+
+        return bool(self.__payload.get("contentSources") or [])
 
     async def __extract_question_paper_pdf_bytes(self) -> list[bytes]:
         """
-        Reads the uploaded bytes of every QUESTION_PAPER information source so
-        their questions can seed the PYQ pool directly — no exam name or web
-        source required (covers courses whose papers aren't online). The bytes
-        feed the same __extract_pyq_from_reference_material path the web
-        harvest uses, wrapped as DOCUMENT parts by the caller.
+        Reads the uploaded bytes of every QUESTION_PAPER source, from both the
+        general list and the mock-test reference list, so their questions can
+        seed the PYQ pool directly — no exam name or web source required (covers
+        courses whose papers aren't online). The bytes feed the same
+        __extract_pyq_from_reference_material path the web harvest uses, wrapped
+        as DOCUMENT parts by the caller.
+
+        Deduplicated on the content hash: the same paper legitimately appears in
+        both lists (the page mirrors the general sources into the mock-test
+        settings), and reading it twice would spend a second extraction call to
+        produce seeds that are duplicates by construction.
         """
         pdf_bytes_list = []
-        sources = self.__settings.get_information_sources() or []
+        seen_content_hashes = set()
 
-        for extractable in sources:
+        for extractable in self.__collect_source_extractables():
             information_source = extractable.get_information_source() if hasattr(extractable, "get_information_source") else None
             if not information_source:
                 continue
             if information_source.get_source_type() != InformationSourceTypes.QUESTION_PAPER:
                 continue
+
+            content_hash = information_source.get_hash()
+            if content_hash in seen_content_hashes:
+                continue
+            seen_content_hashes.add(content_hash)
+
             try:
-                pdf_path  = join_path("/", information_source.get_directory_path(), information_source.get_hash())
+                pdf_path  = join_path("/", information_source.get_directory_path(), content_hash)
                 pdf_bytes = await Persistence.read(pdf_path)
                 if pdf_bytes:
                     pdf_bytes_list.append(pdf_bytes)
@@ -496,6 +543,11 @@ class GenerateMockTests(Workflow):
 
     DEFAULT_TOTAL_QUESTIONS = 30
 
+    # Every question-type key the pipeline understands, read off the
+    # enumeration so a type added there is recognised here without a second
+    # place needing to be updated.
+    ALL_TYPE_KEYS = {question_type.name for question_type in QuestionTypes}
+
     @staticmethod
     def __filter_positive_weights(weights: dict) -> dict:
         return {key: float(value) for key, value in weights.items() if float(value) > 0}
@@ -522,6 +574,57 @@ class GenerateMockTests(Workflow):
             "VERY_HARD": float(self.__settings.get_very_hard_questions()),
         }
 
+    def __build_section_format_weights(self, section_structure: list) -> dict:
+        """
+        Turns the configured sections into a question-type weight map.
+
+        Each section contributes its own question count to every type it admits,
+        so a 20-question multiple-choice section outweighs a 5-question
+        numerical one in the same proportion the finished paper will. A section
+        with no type filter accepts anything and therefore cannot narrow the
+        mix — one of those makes the whole structure non-prescriptive, and the
+        paper-level setting is used instead.
+
+        Returns an empty dict when the sections say nothing useful, which the
+        caller reads as "fall back to the previous behaviour".
+        """
+        format_weights: dict = {}
+
+        for section_entry in section_structure:
+            if not isinstance(section_entry, dict):
+                continue
+
+            allowed_type_keys = section_entry.get("questionTypes")
+            if not isinstance(allowed_type_keys, list) or len(allowed_type_keys) == 0:
+                return {}
+
+            section_question_count = MockTestSectionGeometry.resolve_expected_question_count(section_entry)
+            if section_question_count <= 0:
+                continue
+
+            for type_key in allowed_type_keys:
+                if type_key not in self.ALL_TYPE_KEYS:
+                    continue
+                format_weights[type_key] = format_weights.get(type_key, 0.0) + float(section_question_count)
+
+        return self.__filter_positive_weights(format_weights)
+
+    @staticmethod
+    def __resolve_section_total_questions(section_structure: list) -> int:
+        """
+        How many questions the sections describe, as the most likely realisation
+        of their bands. Used as the paper total when the user left the count on
+        AUTOMATIC — the sections already answer that question.
+        """
+        total_questions = 0
+
+        for section_entry in section_structure:
+            if not isinstance(section_entry, dict):
+                continue
+            total_questions += MockTestSectionGeometry.resolve_expected_question_count(section_entry)
+
+        return total_questions
+
     async def __resolve_blueprint(self) -> dict:
         # ── Per-setting AUTOMATIC/MANUAL resolution that mirrors the
         #    independent-decision pattern used in FlashcardGenerationWorker.
@@ -533,9 +636,34 @@ class GenerateMockTests(Workflow):
         b_auto_difficulty = self.__settings.get_difficulty_method()    == AutomationLevels.AUTOMATIC
         b_has_exam_name   = bool(self.__exam_name and self.__exam_name.strip())
 
-        manual_format     = None if b_auto_types      else self.__filter_positive_weights(self.__settings.get_question_types_with_weights())
+        # ── A configured section structure OVERRIDES both the paper-level
+        #    question-type mix and, when the count is on AUTOMATIC, the paper's
+        #    size. The two used to coexist and could contradict each other with
+        #    no indication of which won, which is why the generation page now
+        #    hides the paper-level type weightage once a section exists. The
+        #    same precedence has to hold here, or the UI would be describing a
+        #    rule the pipeline does not follow.
+        section_structure = self.__settings.get_section_structure() or []
+        b_sections_configured = isinstance(section_structure, list) and len(section_structure) > 0
+
+        section_format = self.__build_section_format_weights(section_structure) if b_sections_configured else None
+        section_total  = self.__resolve_section_total_questions(section_structure) if b_sections_configured else 0
+
+        if section_format:
+            manual_format = section_format
+        else:
+            manual_format = None if b_auto_types else self.__filter_positive_weights(self.__settings.get_question_types_with_weights())
+
         manual_difficulty = None if b_auto_difficulty else self.__filter_positive_weights(self.__build_manual_difficulty())
-        manual_total      = None if b_auto_count      else int(self.__settings.get_num_questions_per_test())
+
+        if not b_auto_count:
+            manual_total = int(self.__settings.get_num_questions_per_test())
+        elif section_total > 0:
+            # On AUTOMATIC the sections are what decide the paper's size — the
+            # user described the paper by describing its parts.
+            manual_total = section_total
+        else:
+            manual_total = None
 
         b_need_llm = (b_auto_count or b_auto_types or b_auto_difficulty) and b_has_exam_name
         resolved_blueprint = None
@@ -543,11 +671,16 @@ class GenerateMockTests(Workflow):
         if b_need_llm:
             resolved_blueprint = await self.__call_blueprint_llm()
 
-        # ── Per-setting merge (manual wins; types blended 50/50 with the
-        #    LLM-derived weights when both manual + exam are present, matching
-        #    FlashcardGenerationWorker's exam-grounding rule).
+        # ── Per-setting merge (manual wins; a manual type mix is blended 50/50
+        #    with the LLM-derived weights when an exam is also named, matching
+        #    FlashcardGenerationWorker's exam-grounding rule — but a SECTION
+        #    structure is not blended. Section types are an explicit statement
+        #    of what each part of the paper contains, and diluting them would
+        #    put questions into sections that cannot hold them.
         if manual_format is not None:
-            if resolved_blueprint and resolved_blueprint.get("format"):
+            if section_format:
+                final_format = dict(section_format)
+            elif resolved_blueprint and resolved_blueprint.get("format"):
                 final_format = self.__blend_weights_halfway(manual_format, resolved_blueprint["format"])
             else:
                 final_format = dict(manual_format)
@@ -593,9 +726,35 @@ class GenerateMockTests(Workflow):
         print(f"[GenerateMockTests] Blueprint resolved: {json.dumps(blueprint, indent=2)}")
         return blueprint
 
+    def __build_search_metadata(self) -> dict:
+        """
+        The request metadata for the two calls that may use provider grounding —
+        the blueprint and the exam instructions.
+
+        The key is `enable_search`, which is what GoogleEnterpriseAiProvider
+        actually reads. It was the wrong key here for both call sites, which the
+        provider ignores, so neither call was ever grounded despite both prompts
+        telling the model to use its search-grounded knowledge. Fixing the key
+        turns grounding ON for the first time, which is why it is gated in the
+        same place rather than switched on unconditionally.
+
+        Returns an empty dict when the user supplied a reference paper: that
+        paper is the specification for these tests, and grounding would let the
+        model reconcile it against whatever the web says the exam looks like.
+        """
+        if self.__b_has_reference_paper:
+            return {}
+
+        return {"enable_search": True}
+
     async def __call_blueprint_llm(self):
+        # The web is a FALLBACK, not a supplement. When the user supplied a
+        # paper, neither leg of __procure_reference_material runs and the
+        # blueprint is drawn from that paper via the seed pool instead — a
+        # searched-up PDF from an unrelated year or board would otherwise get an
+        # equal say in the shape of a test the user already specified.
         reference_parts = []
-        if self.__exam_name and self.__exam_name.strip():
+        if not self.__b_has_reference_paper and self.__exam_name and self.__exam_name.strip():
             max_documents = min(15, 3 * self.__settings.get_number_of_tests())
             reference_parts = await self.__procure_reference_material(max_documents)
 
@@ -611,7 +770,7 @@ class GenerateMockTests(Workflow):
 
         request_contents = [
             AutomationContent(AutomationContentTypes.SYSTEM, PromptPool.MOCK_TEST_BLUEPRINT_SYSTEM),
-            AutomationContent(AutomationContentTypes.TEXT,   user_prompt, metadata={"google_search": True})
+            AutomationContent(AutomationContentTypes.TEXT,   user_prompt, metadata=self.__build_search_metadata())
         ]
 
         request_contents.extend(reference_parts)
@@ -663,7 +822,7 @@ class GenerateMockTests(Workflow):
             model_string,
             [
                 AutomationContent(AutomationContentTypes.SYSTEM, PromptPool.MOCK_TEST_INSTRUCTIONS_SYSTEM),
-                AutomationContent(AutomationContentTypes.TEXT,   user_prompt, metadata={"google_search": True})
+                AutomationContent(AutomationContentTypes.TEXT,   user_prompt, metadata=self.__build_search_metadata())
             ]
         )
 
@@ -714,9 +873,18 @@ class GenerateMockTests(Workflow):
         #       (a) User-uploaded QUESTION_PAPER sources — extracted directly, no
         #           examName/web needed (covers courses whose papers aren't
         #           online). Taken FIRST so they win the cap over web seeds.
-        #       (b) Web harvest — only when examName is set AND a web info source
-        #           is present (templates with additionalWebSources auto-satisfy).
+        #       (b) Web harvest — a FALLBACK for when nothing was uploaded. Runs
+        #           only when no reference paper was supplied AND examName is set
+        #           AND a web info source is present (templates with
+        #           additionalWebSources auto-satisfy the last).
         pyq_pool: list[dict] = []
+
+        # Resolved once, before anything reads it. Three call sites depend on
+        # this answer — the harvest gate below, the blueprint's reference
+        # procurement, and the grounding metadata — and they must agree.
+        self.__b_has_reference_paper = self.__has_reference_paper_source()
+
+        question_paper_pdfs: list[bytes] = []
 
         try:
             question_paper_pdfs = await self.__extract_question_paper_pdf_bytes()
@@ -731,7 +899,15 @@ class GenerateMockTests(Workflow):
         except Exception as paper_error:
             log(f"[GenerateMockTests] Question-paper extraction failed (continuing): {paper_error}")
 
-        if len(pyq_pool) < PYQ_POOL_MAX_QUESTIONS and (self.__exam_name and self.__exam_name.strip()) and self.__has_web_information_source():
+        # The pool is no longer topped up from the web when a paper was
+        # supplied but yielded fewer than PYQ_POOL_MAX_QUESTIONS seeds. That is
+        # a deliberate change: a short pool of the user's own questions is a
+        # better basis for a test they asked for than a long one padded with
+        # papers they never chose, and the worker already derives fresh
+        # questions to fill whatever the seeds do not cover.
+        if question_paper_pdfs:
+            log(f"[GenerateMockTests] Reference paper supplied — skipping the web PYQ harvest ({len(pyq_pool)} seed(s) from it).")
+        elif len(pyq_pool) < PYQ_POOL_MAX_QUESTIONS and (self.__exam_name and self.__exam_name.strip()) and self.__has_web_information_source():
             try:
                 pyq_pool.extend(await self.__harvest_pyq_questions())
                 log(f"[GenerateMockTests] PYQ pool size after web harvest: {len(pyq_pool)}")

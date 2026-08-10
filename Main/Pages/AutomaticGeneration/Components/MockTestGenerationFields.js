@@ -5,8 +5,10 @@ import { difficultyLevels } from "../../../Globals/Enumerations/DifficultyLevels
 import { taskTypes } from "../../../Globals/Enumerations/TaskTypes.js";
 import { convertElementToEnumSelect } from "../../../Globals/UtilityFunctions/ConvertElementToEnumSelect.js";
 import { enumerationToTitleCase } from "../../../Globals/UtilityFunctions/EnumerationToTitleCase.js";
+import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
 import GenerationFields from "./GenerationFields.js";
 import MockTestSectionStructureFields from "./MockTestSectionStructureFields.js";
+import SettingsInfoButton from "./SettingsInfoButton.js";
 
 class MockTestGenerationFields extends GenerationFields
 {
@@ -32,6 +34,8 @@ class MockTestGenerationFields extends GenerationFields
 
     validate()
     {
+        this._validationMessage = null;
+
         const settings = this.getSettings();
 
         if (settings instanceof MockTestGenerationSettings)
@@ -41,8 +45,25 @@ class MockTestGenerationFields extends GenerationFields
                 const numQuestionsPerTest = settings.getNumQuestionsPerTest();
                 if (numQuestionsPerTest <= 5 || numQuestionsPerTest > 250)
                 {
+                    this._validationMessage = "Mock tests: the number of questions per test must be between 6 and 250.";
                     return false;
                 }
+            }
+        }
+
+        // The section editor knows why a structure is unworkable — an
+        // unreachable marks budget, a count that contradicts the paper's own
+        // total — and says so in one sentence. Surfacing that beats the generic
+        // "make sure the values are valid", which gives the user nothing to act
+        // on when the numbers all look individually reasonable.
+        const sectionStructureFields = this.querySelector("mock-test-section-structure-fields");
+        if (sectionStructureFields !== null && typeof sectionStructureFields.getValidationFailure === "function")
+        {
+            const sectionFailure = sectionStructureFields.getValidationFailure();
+            if (sectionFailure !== null)
+            {
+                this._validationMessage = `Mock tests: ${sectionFailure}`;
+                return false;
             }
         }
 
@@ -116,8 +137,51 @@ class MockTestGenerationFields extends GenerationFields
         );
 
         this.#handleRecursiveVisibility();
+        this.#handleSectionStructureAuthority();
 
         this.#bindSettings();
+    }
+
+    /**
+     * Sections and the paper-level question-type weightage both answer "which
+     * kinds of question does this paper contain?", and having both on screen is
+     * the single biggest source of confusion in this panel — the two can be set
+     * to contradict each other, with no indication of which wins.
+     *
+     * So once a section exists, sections are the answer: the weightage block and
+     * its method select are hidden and replaced by a line saying where the
+     * setting moved to. The Agent honours the same precedence — GenerateMockTests
+     * builds its format mix from the sections and skips the halfway blend it
+     * would otherwise apply to a manual mix.
+     */
+    #handleSectionStructureAuthority()
+    {
+        const questionTypesMethodContainer = this.querySelector(".question-types-selection-method-container");
+        const questionTypesContainer = this.querySelector(".question-types-container.field-container");
+        const deferredNotice = this.querySelector(".mock-test-generation-question-types-deferred-notice");
+        const sectionStructureFields = this.querySelector("mock-test-section-structure-fields");
+
+        const applyVisibility = () =>
+        {
+            const sections = this.getSettings().getSectionStructure() || [];
+            const bSectionsOwnQuestionTypes = sections.length > 0;
+
+            questionTypesMethodContainer.hidden = bSectionsOwnQuestionTypes;
+            questionTypesContainer.hidden = bSectionsOwnQuestionTypes;
+            deferredNotice.hidden = !bSectionsOwnQuestionTypes;
+
+            // The section editor needs to know whether the paper's own question
+            // count is something the user pinned, because that is the only case
+            // where the two numbers have to be reconciled.
+            sectionStructureFields.setPaperQuestionCountManual(
+                this.getSettings().getNumQuestionsMethod() === automationLevels.MANUAL
+            );
+        };
+
+        applyVisibility();
+        this.addEventListener(AutomaticGenerationEvents.ON_SECTION_STRUCTURE_CHANGED, applyVisibility);
+        this.querySelector(".mock-test-generation-num-questions-method-select").addEventListener("change", applyVisibility);
+        this.#visibilityRefreshers.push(applyVisibility);
     }
 
     #handleRecursiveVisibility()
@@ -432,13 +496,18 @@ class MockTestGenerationFields extends GenerationFields
         `
             <h2>Customize Mock Test Generation</h2>
 
+            <div class="mock-test-generation-past-paper-notice">
+                Adding a past paper? Add it under <strong>Information Sources</strong> above and set its type to <strong>Question Paper / Mock Test</strong> — its questions become the pattern these tests are written from.
+                <settings-info-button topic="informationSourcesForMockTests"></settings-info-button>
+            </div>
+
             <div class="mock-test-generation-name-container field-container">
-                <label title="Title for the generated mock tests. Leave blank to inherit the subject name. With multiple tests, ' 1', ' 2', ... is appended automatically.">Mock Test Title: </label>
+                <label>Mock Test Title: </label>
                 <input type="text" class="mock-test-generation-name-input" placeholder="(inherits subject name)">
             </div>
 
             <div class="num-tests-method-container field-container">
-                <label>Number of Tests Method: </label>
+                <label>Number of Tests Method: <settings-info-button topic="numberOfTests"></settings-info-button></label>
                 <select class="mock-test-generation-num-tests-method-select"></select>
             </div>
 
@@ -448,17 +517,17 @@ class MockTestGenerationFields extends GenerationFields
             </div>
 
             <div class="mock-test-generation-recursive-container field-container">
-                <label title="When on, the configured number of mock tests is produced for the parent deck AND for every subdeck in the generated tree. Each subdeck's tests cover that subdeck and its descendants cumulatively.">Recursive (also generate for every subdeck): </label>
+                <label>Recursive (also generate for every subdeck): <settings-info-button topic="recursiveGeneration"></settings-info-button></label>
                 <input type="checkbox" class="mock-test-generation-recursive-checkbox">
             </div>
 
             <div class="mock-test-generation-skip-root-container field-container">
-                <label title="When recursive is on, skip generating an overall mock test for the parent deck itself — only the subdecks get mock tests.">Do not generate a mock test for the root deck: </label>
+                <label>Do not generate a mock test for the root deck: </label>
                 <input type="checkbox" class="mock-test-generation-skip-root-checkbox">
             </div>
 
             <div class="difficulty-method-container field-container">
-                <label>Test Difficulty Method: </label>
+                <label>Test Difficulty Method: <settings-info-button topic="difficultyWeightage"></settings-info-button></label>
                 <select class="mock-test-generation-difficulty-method-select"></select>
             </div>
 
@@ -468,7 +537,7 @@ class MockTestGenerationFields extends GenerationFields
             </div>
 
             <div class="question-types-selection-method-container field-container">
-                <label>Question Types Method: </label>
+                <label>Question Types Method: <settings-info-button topic="questionTypeWeightage"></settings-info-button></label>
                 <select class="mock-test-generation-question-types-method-select"></select>
             </div>
 
@@ -477,8 +546,13 @@ class MockTestGenerationFields extends GenerationFields
                 <div class="question-types-list"></div>
             </div>
 
+            <div class="mock-test-generation-question-types-deferred-notice field-container" hidden>
+                <label>Question Types: </label>
+                <span class="mock-test-generation-deferred-notice-text">Configured per section, under Section structure below.</span>
+            </div>
+
             <div class="num-questions-method-container field-container">
-                <label>Number of Questions Method: </label>
+                <label>Number of Questions Method: <settings-info-button topic="paperQuestionCount"></settings-info-button></label>
                 <select class="mock-test-generation-num-questions-method-select"></select>
             </div>
 
@@ -488,7 +562,7 @@ class MockTestGenerationFields extends GenerationFields
             </div>
 
             <div class="mock-test-generation-duration-container field-container">
-                <label title="How long the user has to attempt the mock test, in minutes. Leave 0 to let the LLM pick a duration that fits the question pool.">Duration (minutes): </label>
+                <label>Duration (minutes): <settings-info-button topic="testDuration"></settings-info-button></label>
                 <input type="number" class="mock-test-generation-duration-input" min="0" max="600" step="1" placeholder="0 = auto">
             </div>
 
@@ -498,7 +572,7 @@ class MockTestGenerationFields extends GenerationFields
             </div>
 
             <div class="show-solving-steps-container field-container">
-                <label title="When on, the LLM produces step-by-step working for solvable questions (math, physics, etc.) and leaves the field blank for purely subjective answers. You can hand-edit each step set in the mock-test editor later.">Show Solving Steps: </label>
+                <label>Show Solving Steps: <settings-info-button topic="showSolvingSteps"></settings-info-button></label>
                 <input type="checkbox" class="mock-test-generation-show-solving-steps-checkbox">
             </div>
 

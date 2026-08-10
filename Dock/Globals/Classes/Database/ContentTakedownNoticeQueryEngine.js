@@ -66,6 +66,16 @@ class ContentTakedownNoticeQueryEngine
             embeddingChunksRemoved: noticeDetails.embeddingChunksRemoved || 0,
             figuresRemoved: noticeDetails.figuresRemoved || 0,
             figureObjectsRemoved: noticeDetails.figureObjectsRemoved || 0,
+            // The embedded copies — figures that had been pasted into study
+            // material and card HTML as base64 and shipped to devices. Recorded
+            // separately from the figure cache above because they are the copies
+            // a reader could still see after every other line in this document
+            // said the content was gone, and evidencing their removal is the
+            // whole reason the sweep exists.
+            embeddedFiguresStripped: noticeDetails.embeddedFiguresStripped || 0,
+            studyMaterialsRewritten: noticeDetails.studyMaterialsRewritten || 0,
+            cardsRewritten: noticeDetails.cardsRewritten || 0,
+            entitiesLeftUnmodified: noticeDetails.unstrippableDocumentCount || 0,
             storageError: noticeDetails.storageError || null,
             actionedAt: Date.now()
         };
@@ -79,7 +89,9 @@ class ContentTakedownNoticeQueryEngine
             `${noticeDocument.rowsRemoved} row(s) across ${noticeDocument.affectedUserIds.length} tenant(s), ` +
             `${noticeDocument.storedCopiesRemoved}/${noticeDocument.storedCopiesFound} stored copy(ies), ` +
             `${noticeDocument.embeddingChunksRemoved} chunk(s), ${noticeDocument.figuresRemoved} figure row(s), ` +
-            `${noticeDocument.figureObjectsRemoved} figure object(s).`,
+            `${noticeDocument.figureObjectsRemoved} figure object(s), ` +
+            `${noticeDocument.embeddedFiguresStripped} embedded figure(s) across ` +
+            `${noticeDocument.studyMaterialsRewritten} study material(s) and ${noticeDocument.cardsRewritten} card(s).`,
         );
 
         return noticeDocument;
@@ -115,6 +127,23 @@ class ContentTakedownNoticeQueryEngine
     {
         const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.CONTENT_TAKEDOWN_NOTICES_COLLECTION);
         return await collection.find({ contentHash: contentHash }, { projection: { _id: 0 } }).sort({ actionedAt: -1 }).toArray();
+    }
+
+    /**
+     * Every distinct content hash ever actioned, as a flat array.
+     *
+     * Feeds TakenDownFigureGuard, which has to answer "must this content never
+     * be accepted again?" on the sync push path. `distinct` rather than a find:
+     * the register is append-only and a repeatedly repaired notice appears many
+     * times, but the guard only needs the set.
+     *
+     * @return {Promise<string[]>}
+     */
+    static async getAllContentHashes()
+    {
+        const collection = (await DatabaseConnector.getDatabase()).collection(DatabaseConstants.CONTENT_TAKEDOWN_NOTICES_COLLECTION);
+        const contentHashes = await collection.distinct("contentHash");
+        return contentHashes.filter(contentHash => typeof contentHash === "string" && contentHash.length > 0);
     }
 }
 

@@ -2012,6 +2012,374 @@ async function returnToHome(page)
             return `deep-linked to ${publishedDeck.title || publishedDeck.id}, QR rendered at ${qrWidth}px`;
         });
 
+        // ── The issue-report dialog, in both of its modes ────────────────────
+        //
+        // One component serves the signed-in Report Issue dialog and the public
+        // copyright / IP complaint form, so these two cases exist to catch the
+        // two halves diverging — which is the failure this feature is built to
+        // avoid and the one nothing else would notice.
+        await runCase("Report Issue offers a findable copyright option that reveals the complaint fields", async () =>
+        {
+            await returnToHome(page);
+
+            // Driven through the real UI rather than by importing the module.
+            // The aggressive build bundles and renames the sources, so a
+            // dynamic import of the authored path would 404 against exactly the
+            // artefact this suite is supposed to be testing.
+            //
+            // The sidebar element is created lazily the first time it is opened,
+            // so the header's menu button is the entry point — querying for
+            // <options-sidebar> before that finds nothing.
+            await clickVisible(page, "header-component .options-button");
+            await waitForVisible(page, "options-sidebar .report-issue-button", "the Report an Issue entry");
+            await clickVisible(page, "options-sidebar .report-issue-button");
+
+            await waitForVisible(page, ".report-issue-dialog", "the report issue dialog");
+
+            const optionState = await page.evaluate(() =>
+            {
+                const select = document.querySelector('.report-issue-dialog [data-role="issue-type"]');
+                const labels = Array.from(select?.options || []).map(option => option.textContent.trim());
+                return {
+                    labels: labels,
+                    // The label a person searching the page for "copyright"
+                    // would actually find. The enum name is "INTELLECTUAL_
+                    // PROPERTY", which is invisible to that search.
+                    bHasCopyrightLabel: labels.some(label => label.toLowerCase().includes("copyright"))
+                };
+            });
+
+            if (!optionState.bHasCopyrightLabel)
+            {
+                throw new Error(`The dialog offers no copyright option. Options were: ${optionState.labels.join(", ")}.`);
+            }
+
+            // Visibility is measured from the RENDERED BOX, not from the hidden
+            // attribute. The attribute was being set correctly all along and had
+            // no effect, because `display: flex` on the field wrapper beat the
+            // user agent's [hidden] rule — so a test that trusted the attribute
+            // would have passed while the copyright fields sat on screen under a
+            // bug report. offsetParent is what a person actually sees.
+            const bugReportState = await page.evaluate(() =>
+            {
+                const dialog = document.querySelector(".report-issue-dialog");
+                const isOnScreen = (selector) =>
+                {
+                    const element = dialog.querySelector(selector);
+                    return Boolean(element) && element.offsetParent !== null;
+                };
+
+                return {
+                    selectedType: dialog.querySelector('[data-role="issue-type"]').value,
+                    bComplaintFieldsOnScreen: isOnScreen('[data-role="work-description"]')
+                        || isOnScreen('[data-role="capacity-statement"]')
+                        || isOnScreen('[data-role="good-faith"]'),
+                    // We already know a signed-in reporter's address.
+                    bContactOnScreen: isOnScreen('[data-role="contact-email"]'),
+                    bDescriptionOnScreen: isOnScreen('[data-role="description"]'),
+                    bNotifyOnScreen: isOnScreen('[data-role="notify"]')
+                };
+            });
+
+            if (bugReportState.bComplaintFieldsOnScreen)
+            {
+                throw new Error(`The copyright complaint fields are on screen for a "${bugReportState.selectedType}" report.`);
+            }
+
+            if (bugReportState.bContactOnScreen)
+            {
+                throw new Error("A signed-in bug report asked for a contact address we already have.");
+            }
+
+            if (!bugReportState.bDescriptionOnScreen || !bugReportState.bNotifyOnScreen)
+            {
+                throw new Error(`A signed-in bug report is missing its own fields: ${JSON.stringify(bugReportState)}.`);
+            }
+
+            const complaintFieldState = await page.evaluate(() =>
+            {
+                const dialog = document.querySelector(".report-issue-dialog");
+                const select = dialog.querySelector('[data-role="issue-type"]');
+                select.value = "INTELLECTUAL_PROPERTY";
+                select.dispatchEvent(new Event("change"));
+
+                const isOnScreen = (selector) =>
+                {
+                    const element = dialog.querySelector(selector);
+                    return Boolean(element) && element.offsetParent !== null;
+                };
+
+                const contactInput = dialog.querySelector('[data-role="contact-email"]');
+                const nameInput = dialog.querySelector('[data-role="complainant-name"]');
+
+                return {
+                    bWorkDescriptionShown: isOnScreen('[data-role="work-description"]'),
+                    bLocationDescriptionShown: isOnScreen('[data-role="location-description"]'),
+                    bCapacityShown: isOnScreen('[data-role="capacity-statement"]'),
+                    bGoodFaithShown: isOnScreen('[data-role="good-faith"]'),
+                    bContactShown: isOnScreen('[data-role="contact-email"]'),
+                    // Prefilled from the session so the common case is a glance,
+                    // while staying editable for an agent writing on behalf of
+                    // someone else.
+                    bContactPrefilled: String(contactInput?.value ?? "").includes("@"),
+                    // The ordinary support fields must go away, or a complaint
+                    // would be submitted with a bug report's payload.
+                    bDescriptionHidden: !isOnScreen('[data-role="description"]'),
+                    bAttachmentsHidden: !isOnScreen('[data-role="drop-zone"]'),
+                    bNotifyHidden: !isOnScreen('[data-role="notify"]'),
+                    // Every visible single-line input must have real padding.
+                    // Unstyled inputs were what the form actually shipped with.
+                    namePaddingPixels: nameInput ? Math.round(parseFloat(getComputedStyle(nameInput).paddingLeft)) : 0
+                };
+            });
+
+            const wrongField = Object.entries(complaintFieldState)
+                .filter(([fieldName]) => fieldName.startsWith("b"))
+                .find(([, bPresent]) => bPresent !== true);
+
+            if (wrongField)
+            {
+                throw new Error(`Switching to the copyright type left ${wrongField[0]} wrong: ${JSON.stringify(complaintFieldState)}.`);
+            }
+
+            if (complaintFieldState.namePaddingPixels < 6)
+            {
+                throw new Error(`The complaint text inputs render unstyled (padding-left ${complaintFieldState.namePaddingPixels}px).`);
+            }
+
+            // A complaint with no statements ticked must be refused before it
+            // reaches the network — the statements are what Clause 19.4 rests on.
+            const validationMessage = await page.evaluate(async () =>
+            {
+                const dialog = document.querySelector(".report-issue-dialog");
+                dialog.querySelector('[data-role="submit"]').click();
+                await new Promise(resolve => setTimeout(resolve, 250));
+                const errorElement = dialog.querySelector('[data-role="error"]');
+                return errorElement && !errorElement.hidden ? errorElement.textContent.trim() : "";
+            });
+
+            if (validationMessage.length === 0)
+            {
+                throw new Error("An empty complaint was accepted by the dialog without a validation message.");
+            }
+
+            await page.evaluate(() =>
+            {
+                for (const dialogBox of document.querySelectorAll("dialog-box"))
+                {
+                    if (typeof dialogBox.close === "function")
+                    {
+                        dialogBox.close();
+                    }
+                }
+            });
+            await waitForNoVisibleDialog(page);
+
+            return `copyright option present; complaint fields revealed; empty complaint refused ("${validationMessage.slice(0, 60)}")`;
+        });
+
+        await runCase("The 'Your reports' tab actually swaps panels", async () =>
+        {
+            await returnToHome(page);
+
+            await clickVisible(page, "header-component .options-button");
+            await waitForVisible(page, "options-sidebar .report-issue-button", "the Report an Issue entry");
+            await clickVisible(page, "options-sidebar .report-issue-button");
+            await waitForVisible(page, ".report-issue-dialog", "the report issue dialog");
+
+            // Measured on screen rather than on the hidden attribute. Both
+            // panels used to render at once — the form with the reports list
+            // stacked underneath it — so clicking the tab changed nothing
+            // visible and the tab read as broken. An attribute-level assertion
+            // would have called that a pass.
+            const initialPanels = await page.evaluate(() =>
+            {
+                const dialog = document.querySelector(".report-issue-dialog");
+                return {
+                    bReportOnScreen: dialog.querySelector('[data-panel="report"]')?.offsetParent !== null,
+                    bMineOnScreen: dialog.querySelector('[data-panel="mine"]')?.offsetParent !== null
+                };
+            });
+
+            if (!initialPanels.bReportOnScreen || initialPanels.bMineOnScreen)
+            {
+                throw new Error(`The dialog opened with the wrong panels visible: ${JSON.stringify(initialPanels)}.`);
+            }
+
+            await clickVisible(page, '.report-issue-tab[data-tab="mine"]');
+
+            await waitUntil(page, () =>
+            {
+                const dialog = document.querySelector(".report-issue-dialog");
+                const reportPanel = dialog.querySelector('[data-panel="report"]');
+                const minePanel = dialog.querySelector('[data-panel="mine"]');
+                // Both halves matter: the form must go AND the list must come.
+                // Before the CSS fix the list was already on screen under the
+                // form, so "the list is visible" alone would have passed.
+                const bSwapped = reportPanel?.offsetParent === null && minePanel?.offsetParent !== null;
+                return bSwapped ? true : null;
+            }, null, "the Your reports panel to replace the form");
+
+            // It has to render something, not sit on "Loading your reports…"
+            // forever — an empty history is a legitimate answer, a stuck spinner
+            // is not. waitUntil resolves on the first TRUTHY value, so the
+            // settled text is what is returned; returning a boolean here would
+            // make the success case (false) look like "keep polling".
+            const settledListText = await waitUntil(page, () =>
+            {
+                const container = document.querySelector('[data-role="my-reports"]');
+                const text = (container?.textContent || "").trim();
+                return text.length > 0 && !text.startsWith("Loading") ? text : null;
+            }, null, "the reports list to finish loading");
+
+            await clickVisible(page, '.report-issue-tab[data-tab="report"]');
+            await waitUntil(page, () =>
+            {
+                const dialog = document.querySelector(".report-issue-dialog");
+                return dialog.querySelector('[data-panel="report"]')?.offsetParent !== null ? true : null;
+            }, null, "the form to come back");
+
+            await page.evaluate(() =>
+            {
+                for (const dialogBox of document.querySelectorAll("dialog-box"))
+                {
+                    if (typeof dialogBox.close === "function")
+                    {
+                        dialogBox.close();
+                    }
+                }
+            });
+            await waitForNoVisibleDialog(page);
+
+            return `tab swaps both ways; list settled on "${settledListText.slice(0, 60)}"`;
+        });
+
+        await runCase("/copyright opens the public complaint form with no session at all", async () =>
+        {
+            // A brand-new context with NO session cookie. This is the visitor
+            // the whole channel exists for: a rightsholder who has never had an
+            // account and is following the URL printed in the Terms of Service.
+            const anonymousContext = await browser.createBrowserContext();
+            const anonymousPage = await anonymousContext.newPage();
+
+            try
+            {
+                await anonymousPage.setViewport(VIEWPORT);
+                await anonymousPage.goto(`${BASE_URL}/copyright`, { waitUntil: "networkidle2", timeout: 30000 });
+
+                await anonymousPage.waitForSelector(".report-issue-dialog", { visible: true, timeout: 20000 });
+
+                const publicState = await anonymousPage.evaluate(() =>
+                {
+                    const dialog = document.querySelector(".report-issue-dialog");
+                    const select = dialog.querySelector('[data-role="issue-type"]');
+                    const labels = Array.from(select?.options || []).map(option => option.textContent.trim());
+
+                    const isVisible = (selector) =>
+                    {
+                        const element = dialog.querySelector(selector);
+                        return Boolean(element) && !element.closest("[hidden]");
+                    };
+
+                    return {
+                        labels: labels,
+                        selectedValue: select ? select.value : "",
+                        bContactShown: isVisible('[data-role="contact-email"]'),
+                        contactPlaceholder: dialog.querySelector('[data-role="contact-email"]')?.placeholder || "",
+                        // The public form must not offer a type the server will
+                        // refuse; a visible-but-rejected option is worse than an
+                        // absent one.
+                        bOffersOnlyPublicTypes: labels.length === 2,
+                        bHasMyReportsTab: Boolean(dialog.querySelector('.report-issue-tab[data-tab="mine"]'))
+                    };
+                });
+
+                if (publicState.selectedValue !== "INTELLECTUAL_PROPERTY")
+                {
+                    throw new Error(`/copyright opened on "${publicState.selectedValue}" rather than the copyright type.`);
+                }
+
+                if (!publicState.bOffersOnlyPublicTypes)
+                {
+                    throw new Error(`The public form offered ${publicState.labels.length} types: ${publicState.labels.join(", ")}.`);
+                }
+
+                if (!publicState.bContactShown)
+                {
+                    throw new Error("The public form did not ask for a contact address, which is the only way to reply.");
+                }
+
+                if (!/password/i.test(publicState.contactPlaceholder))
+                {
+                    throw new Error(`The contact placeholder carries no password warning: "${publicState.contactPlaceholder}".`);
+                }
+
+                if (publicState.bHasMyReportsTab)
+                {
+                    throw new Error("The public form showed a 'Your reports' tab, which needs a session to read.");
+                }
+
+                // The other public type. Somebody who cannot sign in is asked
+                // for an address to reply to and what went wrong — none of the
+                // copyright particulars, and no notify checkbox, because with no
+                // account the email is the only channel and is always sent.
+                const accountAccessState = await anonymousPage.evaluate(() =>
+                {
+                    const dialog = document.querySelector(".report-issue-dialog");
+                    const select = dialog.querySelector('[data-role="issue-type"]');
+                    select.value = "ACCOUNT_ACCESS";
+                    select.dispatchEvent(new Event("change"));
+
+                    const isOnScreen = (selector) =>
+                    {
+                        const element = dialog.querySelector(selector);
+                        return Boolean(element) && element.offsetParent !== null;
+                    };
+
+                    return {
+                        bContactOnScreen: isOnScreen('[data-role="contact-email"]'),
+                        bDescriptionOnScreen: isOnScreen('[data-role="description"]'),
+                        bComplaintFieldsOnScreen: isOnScreen('[data-role="complainant-name"]')
+                            || isOnScreen('[data-role="capacity-statement"]')
+                            || isOnScreen('[data-role="work-description"]')
+                            || isOnScreen('[data-role="location-description"]')
+                            || isOnScreen('[data-role="good-faith"]')
+                            || isOnScreen('[data-role="accuracy"]'),
+                        bNotifyOnScreen: isOnScreen('[data-role="notify"]'),
+                        // The warning has to be in the box a password would be
+                        // typed into, not only in a label above it.
+                        descriptionPlaceholder: dialog.querySelector('[data-role="description"]')?.placeholder || ""
+                    };
+                });
+
+                if (accountAccessState.bComplaintFieldsOnScreen)
+                {
+                    throw new Error("The can't-sign-in form showed the copyright complaint particulars.");
+                }
+
+                if (!accountAccessState.bContactOnScreen || !accountAccessState.bDescriptionOnScreen)
+                {
+                    throw new Error(`The can't-sign-in form is missing its own fields: ${JSON.stringify(accountAccessState)}.`);
+                }
+
+                if (accountAccessState.bNotifyOnScreen)
+                {
+                    throw new Error("The public form offered a notify checkbox it cannot honour a 'no' on.");
+                }
+
+                if (!/password/i.test(accountAccessState.descriptionPlaceholder))
+                {
+                    throw new Error("The can't-sign-in description box carries no 'never enter your password' warning.");
+                }
+
+                return `public form served at /copyright with ${publicState.labels.length} types; can't-sign-in asks only for an address`;
+            }
+            finally
+            {
+                await anonymousContext.close().catch(() => {});
+            }
+        });
+
         // ── Whole-run error gate ────────────────────────────────────────────
         cases.push({
             name: "No client-side script errors during the flows",

@@ -8,6 +8,8 @@ import { informationSourceTypes } from "../../../Globals/Enumerations/Informatio
 import { userRoles } from "../../../Globals/Enumerations/UserRoles.js";
 import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
 import TemplatePickerDialog from "../../../CommonComponents/TemplatePickerDialog.js";
+import SourceLicenceDeclarationForm from "../../../CommonComponents/SourceLicenceDeclarationForm.js";
+import { sourceUsageModes } from "../../../Globals/Enumerations/SourceUsageModes.js";
 
 
 class GeneralGenerationFields extends GenerationFields
@@ -29,6 +31,11 @@ class GeneralGenerationFields extends GenerationFields
     #templatePickerButton = null;
     #templatePickerLabel = null;
     #suppressImageUserEdits = false;
+
+    // Guards the one-time listener on the licensed-source picker. Paid-deck mode
+    // can be toggled repeatedly, and a listener added per toggle would rebuild
+    // the usage rows once per past toggle on every subsequent change.
+    #bVerificationUsageBound = false;
 
     validate()
     {
@@ -284,6 +291,24 @@ class GeneralGenerationFields extends GenerationFields
         {
             verificationSourcesContainer.hidden = !bPaidDeckMode;
 
+            if (bPaidDeckMode)
+            {
+                // Bound once. The selector is created with the component, so a
+                // second listener per mode toggle would accumulate and rebuild
+                // the rows N times per change.
+                const verificationSourceSelector = verificationSourcesContainer.querySelector("information-source-selector");
+
+                if (verificationSourceSelector && this.#bVerificationUsageBound !== true)
+                {
+                    this.#bVerificationUsageBound = true;
+                    verificationSourceSelector.addEventListener(
+                        AutomaticGenerationEvents.ON_SOURCES_CHANGED,
+                        () => this.#renderVerificationSourceUsageRows());
+                }
+
+                this.#renderVerificationSourceUsageRows();
+            }
+
             if (!bPaidDeckMode)
             {
                 // Cleared as well as hidden. A list left populated after the mode
@@ -295,20 +320,32 @@ class GeneralGenerationFields extends GenerationFields
                 {
                     verificationSourceSelector.setSources([]);
                 }
+
+                const usageListElement = this.querySelector(".verification-source-usage-list");
+                if (usageListElement)
+                {
+                    usageListElement.innerHTML = "";
+                }
             }
         }
     }
 
     /**
-     * The ids of the verification sources the administrator picked.
+     * The licensed sources the administrator picked, each with what it is to be
+     * used for and any note they added.
      *
-     * Returned as its own list rather than folded into the settings object,
-     * because these are NOT generation inputs and must not travel with the ones
-     * that are. GeneralGenerationSettings is what the source-type restriction is
-     * enforced against; a verification source inside it would be checked as
-     * though the pipeline were about to read it, and refused.
+     * Returned as its own list rather than folded into the settings object, and
+     * that separation is what lets one of these be a CONTENT source without
+     * weakening the gate. GeneralGenerationSettings is what the source-type
+     * restriction is enforced against, and a source there carries no licence
+     * declaration at all — so the gate rightly accepts only a syllabus in it.
+     * A source here carries a declaration and a usage mode, which is a different
+     * and evidenced basis, checked by SourceUsageGate on the server.
+     *
+     * The page ranges the decorator carries are dropped: both the verification
+     * pass and the retrieval corpus read the whole document.
      */
-    getVerificationSourceIds()
+    getVerificationSources()
     {
         const verificationSourcesContainer = this.querySelector(".verification-sources-container");
 
@@ -324,9 +361,6 @@ class GeneralGenerationFields extends GenerationFields
             return [];
         }
 
-        // The selector yields ExtractableInformationSource decorators; only the
-        // wrapped source's id travels. The page ranges the decorator carries are
-        // meaningless here — the verification pass reads the whole document.
         return (verificationSourceSelector.getSources() || [])
             .map(extractableSource =>
             {
@@ -334,9 +368,138 @@ class GeneralGenerationFields extends GenerationFields
                     ? extractableSource.getInformationSource()
                     : null;
 
-                return informationSource !== null ? informationSource.getId() : "";
+                if (informationSource === null)
+                {
+                    return null;
+                }
+
+                const informationSourceId = informationSource.getId();
+
+                if (typeof informationSourceId !== "string" || informationSourceId.length === 0)
+                {
+                    return null;
+                }
+
+                return {
+                    informationSourceId: informationSourceId,
+                    usageMode: this.#readUsageModeForSource(informationSourceId),
+                    sourceNote: this.#readSourceNoteForSource(informationSourceId),
+                };
             })
-            .filter(sourceId => typeof sourceId === "string" && sourceId.length > 0);
+            .filter(verificationSource => verificationSource !== null);
+    }
+
+    #readUsageModeForSource(informationSourceId)
+    {
+        const usageSelect = this.querySelector(
+            `.verification-source-usage-list [data-usage-for="${CSS.escape(informationSourceId)}"]`);
+
+        // Absent means the row has not rendered yet, which can only happen
+        // between the source being added and the list refreshing. Verification-
+        // only is both the default and the safe direction to guess in.
+        return usageSelect ? Number(usageSelect.value) : sourceUsageModes.VERIFICATION_ONLY;
+    }
+
+    #readSourceNoteForSource(informationSourceId)
+    {
+        const noteInput = this.querySelector(
+            `.verification-source-usage-list [data-note-for="${CSS.escape(informationSourceId)}"]`);
+
+        return noteInput ? noteInput.value.trim() : "";
+    }
+
+    /**
+     * Rebuilds the per-source usage rows under the picker.
+     *
+     * One row per picked source, because the decision is per source: an admin
+     * may hold a publishing licence for one textbook and only a reading copy of
+     * another, and a single run-level switch would force them to treat both the
+     * same way. Existing choices are carried across a rebuild so adding a fourth
+     * source does not silently reset the three above it.
+     *
+     * The content option is disabled for a licence that cannot support it. That
+     * mirrors SourceUsageGate rather than replacing it — the server refuses the
+     * same combination, so a client that re-enables the option gains nothing.
+     */
+    #renderVerificationSourceUsageRows()
+    {
+        const usageListElement = this.querySelector(".verification-source-usage-list");
+        const verificationSourcesContainer = this.querySelector(".verification-sources-container");
+
+        if (!usageListElement || !verificationSourcesContainer)
+        {
+            return;
+        }
+
+        const verificationSourceSelector = verificationSourcesContainer.querySelector("information-source-selector");
+        const pickedSources = verificationSourceSelector && typeof verificationSourceSelector.getSources === "function"
+            ? (verificationSourceSelector.getSources() || [])
+            : [];
+
+        const previousChoices = new Map();
+
+        for (const usageSelect of usageListElement.querySelectorAll("[data-usage-for]"))
+        {
+            previousChoices.set(usageSelect.dataset.usageFor, { usageMode: Number(usageSelect.value), sourceNote: "" });
+        }
+
+        for (const noteInput of usageListElement.querySelectorAll("[data-note-for]"))
+        {
+            const previousChoice = previousChoices.get(noteInput.dataset.noteFor);
+            if (previousChoice)
+            {
+                previousChoice.sourceNote = noteInput.value;
+            }
+        }
+
+        usageListElement.innerHTML = "";
+
+        for (const extractableSource of pickedSources)
+        {
+            const informationSource = typeof extractableSource.getInformationSource === "function"
+                ? extractableSource.getInformationSource()
+                : null;
+
+            if (informationSource === null)
+            {
+                continue;
+            }
+
+            const informationSourceId = informationSource.getId();
+
+            if (typeof informationSourceId !== "string" || informationSourceId.length === 0)
+            {
+                continue;
+            }
+
+            const licenceType = typeof informationSource.getLicenceType === "function" ? informationSource.getLicenceType() : 0;
+            const bPermitsContent = SourceLicenceDeclarationForm.permitsContentUsage(licenceType);
+            const previousChoice = previousChoices.get(informationSourceId);
+            const usageMode = previousChoice && bPermitsContent ? previousChoice.usageMode : sourceUsageModes.VERIFICATION_ONLY;
+
+            const usageRow = document.createElement("div");
+            usageRow.className = "verification-source-usage-row";
+            usageRow.innerHTML = `
+                <span class="verification-source-usage-name"></span>
+                <select data-usage-for="${informationSourceId}">
+                    <option value="${sourceUsageModes.VERIFICATION_ONLY}">Check against only</option>
+                    <option value="${sourceUsageModes.CONTENT_AND_VERIFICATION}"${bPermitsContent ? "" : " disabled"}>
+                        Write content from it${bPermitsContent ? "" : " — licence does not allow"}
+                    </option>
+                </select>
+                <input type="text" data-note-for="${informationSourceId}" maxlength="2048"
+                    placeholder="Note for the audit report (optional)">
+            `;
+
+            // textContent rather than interpolation: the name came from a user's
+            // filesystem and must not be able to inject markup here.
+            usageRow.querySelector(".verification-source-usage-name").textContent = informationSource.getName() || "(unnamed)";
+            usageRow.querySelector(`[data-usage-for="${CSS.escape(informationSourceId)}"]`).value = String(usageMode);
+            usageRow.querySelector(`[data-note-for="${CSS.escape(informationSourceId)}"]`).value =
+                previousChoice ? previousChoice.sourceNote : "";
+
+            usageListElement.appendChild(usageRow);
+        }
     }
 
     /**
@@ -796,9 +959,10 @@ class GeneralGenerationFields extends GenerationFields
                 <span class="credit-warning-note">⚠ Curriculum/syllabus source only</span>
             </div>
             <div class="verification-sources-container field-container verification-sources-selector-container" hidden>
-                <label title="Admin only, and optional. Documents the generated content is CHECKED AGAINST after it is written. They are never read while generating — the deck is still written from the curriculum alone — and a check can only raise flags for review. Each must already carry a licence declaration.">Verification Sources (optional): </label>
+                <label title="Admin only, and optional. Documents you hold a licence to. By default they are only CHECKED AGAINST the content after it is written. Set one to 'write content from it' and the topics it covers are written from that document instead of from model knowledge — allowed only under a licence that records a right to create new material. Each must already carry a licence declaration, and each is retained as proof of it.">Licensed Sources (optional): </label>
                 <information-source-selector></information-source-selector>
-                <span class="credit-warning-note">Checked against, never generated from</span>
+                <span class="credit-warning-note">Checked against by default — set a source to write from it below</span>
+                <div class="verification-source-usage-list"></div>
             </div>
             <div class="information-source-container field-container information-sources-selector-container">
                 <label>Information Sources: </label>

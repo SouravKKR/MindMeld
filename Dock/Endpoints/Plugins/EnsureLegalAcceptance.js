@@ -54,6 +54,22 @@ const ALLOWLISTED_PATHS = new Set
     "/getuser",
     "/legaldocuments",
     "/legal/accept",
+    // The infringement-complaint channel. These are unauthenticated routes, so
+    // the anonymous path below already lets them through — but a signed-in user
+    // who owes acceptance would otherwise be 403'd out of reporting that their
+    // own work is on the platform, which is exactly backwards: the version bump
+    // that put them in the pending state is the one that ADDED this channel.
+    // Nothing here reads or writes user data, so there is nothing to withhold.
+    "/legal/intellectualpropertycomplaint",
+    "/legal/intellectualpropertycomplaint/verify",
+    "/legal/intellectualpropertycomplaint/evidence",
+    // The unauthenticated account-access report, for the same reason and one
+    // more: the reporter may be blocked precisely because they cannot get far
+    // enough into the app to accept anything.
+    "/support/report/submitpublic",
+    // The public /copyright landing page is an SPA SHELL entry like "/" and
+    // carries no file extension, so isStaticResourcePath() does not cover it.
+    "/copyright",
     // The paid-deck QR deep link is an SPA SHELL entry, exactly like "/" — but it
     // carries no file extension, so isStaticResourcePath() does not cover it. A
     // user who owes acceptance and follows a scanned link is precisely the case

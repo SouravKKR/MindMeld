@@ -87,6 +87,8 @@ class DatabaseConstants
     static SUPPORT_TICKET_REPORTS_COLLECTION = 'supportTicketReports';
     static SUPPORT_TICKET_DEDUPLICATION_LOCKS_COLLECTION = 'supportTicketDeduplicationLocks';
     static SUPPORT_ATTACHMENT_STORAGE_PREFIX = 'SupportAttachments';
+    static INTELLECTUAL_PROPERTY_COMPLAINTS_COLLECTION = 'intellectualPropertyComplaints';
+    static INTELLECTUAL_PROPERTY_COMPLAINT_EVIDENCE_STORAGE_PREFIX = 'IntellectualPropertyComplaintEvidence';
     static EPHEMERAL_UPLOADS_COLLECTION = 'ephemeralUploads';
     static ANSWER_SHEET_RETENTION_DAYS = 60;
     static SUPPORT_ATTACHMENT_RETENTION_DAYS = 60;

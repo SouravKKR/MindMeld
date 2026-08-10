@@ -12,12 +12,14 @@ from Globals.Classes.Automation.Pools.ModelPool import ModelPool
 from Globals.Classes.Automation.Pools.PromptPool import PromptPool
 from Globals.Classes.MockTest.SolvingStepsDirective import SolvingStepsDirective
 from Globals.Classes.Automation.Providers.GoogleEnterpriseAiProvider import GoogleEnterpriseAiProvider
+from Globals.Classes.Generation.MockTestSectionGeometry import MockTestSectionGeometry
 from Globals.Classes.Generic.Persistence import Persistence
 from Globals.Classes.Generic.TokenSafeContent import TokenSafeContent
 from Globals.Classes.Task.AutoGeneration.MockTestGenerationSettings import MockTestGenerationSettings
 from Globals.Classes.Task.TaskManager import TaskManager
 from Globals.Constants.PersistenceConstants import PersistenceConstants
 from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
+from Globals.Enumerations.SectionMarksModes import SectionMarksModes
 from Globals.Enumerations.SectionQuestionCountModes import SectionQuestionCountModes
 from Globals.Utility.JoinPath import join_path
 from Globals.Utility.SanitizeFilename import sanitize_filename
@@ -179,9 +181,29 @@ class MockTestGenerationWorker(Workflow):
                 return difficulty_key
         return "MEDIUM"
 
+    def __resolve_marks_band_for_type(self, type_key: str):
+        """
+        The marks a question of this type is allowed to be worth, according to
+        the sections that admit it, or None when nothing constrains it.
+
+        `marks` has never been checked before — the cell validator only required
+        the key to be PRESENT, and ConvertQuestions stored whatever came back.
+        That was survivable while marks were advisory, but a section that says
+        "questions worth 4-10 marks totalling 20" is a promise the assembler has
+        to keep, and it can only keep it if the pool actually contains questions
+        in that band.
+        """
+        section_structure = self.__settings.get_section_structure() or []
+        return MockTestSectionGeometry.resolve_marks_band_for_question_type(
+            section_structure,
+            type_key,
+            self.__settings.get_correct_marks()
+        )
+
     def __build_validator(self, type_key: str, expected_count: int):
         b_strict           = bool(self.__exam_name and self.__exam_name.strip())
         all_difficulty_keys = set(self.DIFFICULTY_ORDER)
+        marks_band          = self.__resolve_marks_band_for_type(type_key)
 
         def validator(response) -> bool:
             try:
@@ -211,6 +233,21 @@ class MockTestGenerationWorker(Workflow):
                         options = question.get("options")
                         if not isinstance(options, list) or len(options) == 0:
                             self._wlog(f"[Validator:{type_key}] Missing or empty options")
+                            return False
+
+                    if marks_band is not None:
+                        minimum_marks, maximum_marks = marks_band
+                        raw_marks = question.get("marks")
+                        if isinstance(raw_marks, bool) or not isinstance(raw_marks, (int, float)):
+                            self._wlog(f"[Validator:{type_key}] Marks is not numeric: {raw_marks!r}")
+                            return False
+                        question_marks = float(raw_marks)
+                        tolerance = MockTestSectionGeometry.FLOATING_POINT_TOLERANCE
+                        if question_marks < minimum_marks - tolerance or question_marks > maximum_marks + tolerance:
+                            self._wlog(
+                                f"[Validator:{type_key}] Marks out of band: got {question_marks}, "
+                                f"section structure allows {minimum_marks}-{maximum_marks}"
+                            )
                             return False
 
                 actual = len(parsed)
@@ -301,10 +338,10 @@ class MockTestGenerationWorker(Workflow):
                 applicable_types = section_entry.get("questionTypes") or []
                 applicable_label = f" types=[{', '.join(applicable_types)}]" if applicable_types else " types=[any]"
                 count_summary = MockTestGenerationWorker.__format_section_question_count(section_entry)
-                total_marks = section_entry.get("totalMarks") or 0
+                marks_summary = MockTestGenerationWorker.__format_section_marks(section_entry, correct_marks)
                 rule_summary = MockTestGenerationWorker.__format_override_rule(section_entry)
                 lines.append(
-                    f"  * {section_name}: {count_summary}, {total_marks} marks,"
+                    f"  * {section_name}: {count_summary}, {marks_summary},"
                     f"{applicable_label}, {rule_summary}"
                 )
 
@@ -312,6 +349,17 @@ class MockTestGenerationWorker(Workflow):
 
     @staticmethod
     def __format_section_question_count(section_entry: dict) -> str:
+        # A marks-driven section has no configured count at all — how many
+        # questions it holds is whatever adds up to its budget, and stating a
+        # single number here would contradict the constraint stated beside it.
+        if MockTestSectionGeometry.resolve_marks_mode(section_entry) == SectionMarksModes.RANGE_PER_QUESTION:
+            minimum_count, maximum_count = MockTestSectionGeometry.resolve_question_count_band(section_entry)
+            if minimum_count <= 0:
+                return "however many questions fit the section's marks budget"
+            if minimum_count == maximum_count:
+                return f"exactly {minimum_count} questions"
+            return f"between {minimum_count} and {maximum_count} questions"
+
         if section_entry.get("questionCountMode") == SectionQuestionCountModes.RANGE.value:
             minimum_count = int(section_entry.get("questionCountMin") or 0)
             maximum_count = int(section_entry.get("questionCountMax") or minimum_count)
@@ -333,6 +381,41 @@ class MockTestGenerationWorker(Workflow):
 
         question_count = int(section_entry.get("questionCount") or 0)
         return f"{question_count} questions"
+
+    @staticmethod
+    def __format_section_marks(section_entry: dict, fallback_marks_per_question: float) -> str:
+        """
+        States the section's marks as an instruction the model can follow, not
+        as a figure it can ignore.
+
+        The previous summary said only "<n> marks", which the model was free to
+        read as a target it had already met however it distributed the marks. A
+        per-question band is the part that actually constrains what it writes,
+        so that is what is spelled out, and it is what the cell validator checks
+        the returned questions against.
+        """
+        if MockTestSectionGeometry.resolve_marks_mode(section_entry) == SectionMarksModes.RANGE_PER_QUESTION:
+            minimum_marks, maximum_marks = MockTestSectionGeometry.resolve_marks_per_question_band(section_entry)
+            total_marks_budget = MockTestSectionGeometry.resolve_total_marks_budget(section_entry)
+            return (
+                f"every question worth between {MockTestSectionGeometry.format_marks(minimum_marks)} and "
+                f"{MockTestSectionGeometry.format_marks(maximum_marks)} marks, "
+                f"totalling {MockTestSectionGeometry.format_marks(total_marks_budget)} marks"
+            )
+
+        marks_per_question = MockTestSectionGeometry.resolve_marks_per_question(section_entry, fallback_marks_per_question)
+        minimum_total, maximum_total = MockTestSectionGeometry.resolve_total_marks_band(section_entry, fallback_marks_per_question)
+
+        if minimum_total == maximum_total:
+            return (
+                f"every question worth exactly {MockTestSectionGeometry.format_marks(marks_per_question)} marks "
+                f"({MockTestSectionGeometry.format_marks(maximum_total)} marks in total)"
+            )
+
+        return (
+            f"every question worth exactly {MockTestSectionGeometry.format_marks(marks_per_question)} marks "
+            f"({MockTestSectionGeometry.format_marks(minimum_total)}-{MockTestSectionGeometry.format_marks(maximum_total)} marks in total)"
+        )
 
     @staticmethod
     def __format_marks(value) -> str:

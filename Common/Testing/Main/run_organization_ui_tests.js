@@ -154,6 +154,7 @@ async function main()
 
     const uniqueSuffix = Date.now();
     const organizationId = `${FIXTURE_PREFIX}${uniqueSuffix}`;
+    const organizationName = `UI Test Institute ${uniqueSuffix}`;
     const memberEmail = `${FIXTURE_PREFIX}member-${uniqueSuffix}@example.test`;
 
     try
@@ -194,7 +195,7 @@ async function main()
             await database.collection("organizations").insertOne
             ({
                 id: organizationId,
-                name: `UI Test Institute ${uniqueSuffix}`,
+                name: organizationName,
                 adminUserId: testAccountUserId,
                 status: 1,
                 maxPublishedDecks: 10,
@@ -1071,6 +1072,121 @@ async function main()
             }
 
             return `${dialogFit.dialogHeight}px in ${dialogFit.viewportHeight}px, body scrolls, save reachable`;
+        });
+
+        // ── The profile pill survives a change of view ────────────────────
+        const clearOverlays = async () =>
+        {
+            await page.evaluate(() =>
+            {
+                document.querySelectorAll("tutorial-overlay, initialization-overlay, sync-blocking-overlay")
+                    .forEach(overlay => overlay.remove());
+            });
+        };
+
+        const readProfileLabel = async () =>
+        {
+            await page.waitForSelector("profile-component .profile-display-name", { timeout: 10000 });
+            return page.evaluate(() => document.querySelector("profile-component .profile-display-name").textContent.trim());
+        };
+
+        // Always the newest dialog: a view switch confirmation can open while an
+        // earlier dialog is still stacked behind it.
+        const confirmTopDialog = async () =>
+        {
+            await page.waitForSelector("dialog-box .ok-button", { timeout: 10000 });
+            await page.evaluate(() =>
+            {
+                const dialogs = document.querySelectorAll("dialog-box");
+                dialogs[dialogs.length - 1].querySelector(".ok-button").click();
+            });
+        };
+
+        // Switching view remounts the whole Home page, so the profile pill is
+        // rebuilt from scratch with no authentication event behind it. It used
+        // to paint its logged-out state on mount and wait for a refresh that a
+        // view switch never sends, so a signed-in member's own name was replaced
+        // by "Login". Driven through the real menu, because the defect lives in
+        // the remount only the real menu causes.
+        //
+        // Runs LAST on purpose: this is the only case that changes which library
+        // the browser is looking at, and a failure part-way through must not
+        // leave every case after it pointed at the organization's view.
+        await runCase("The profile pill keeps the member's own name across a view switch", async () =>
+        {
+            await page.setViewport({ width: 1440, height: 900 });
+
+            // The organization was seeded after the first load, so this session
+            // has never been told it may be entered. One reload is what puts it
+            // into /GetUser's organizationContexts, and so into the switcher.
+            await page.goto(`${BASE_URL}/index.html`, { waitUntil: "networkidle2", timeout: 60000 });
+            await sleep(3000);
+            await clearOverlays();
+
+            const expectedDisplayName = await page.evaluate(() => window["user"].getDisplayName());
+
+            if (!expectedDisplayName)
+            {
+                throw new Error("The signed-in account has no display name, so there is nothing to assert against.");
+            }
+
+            const labelInPersonalView = await readProfileLabel();
+
+            if (labelInPersonalView !== expectedDisplayName)
+            {
+                throw new Error(`The pill reads "${labelInPersonalView}" before any switch, so the personal view is already broken.`);
+            }
+
+            await page.click("profile-component");
+            await page.waitForSelector("profile-context-menu .view-as-organization-button", { timeout: 10000 });
+
+            await page.evaluate((targetOrganizationName) =>
+            {
+                const entries = Array.from(document.querySelectorAll("profile-context-menu .view-as-organization-button"));
+                const entry = entries.find(button => button.textContent === `View as ${targetOrganizationName}`);
+
+                if (!entry)
+                {
+                    throw new Error(`No switcher entry for ${targetOrganizationName} — /GetUser never offered the view.`);
+                }
+
+                entry.click();
+            }, organizationName);
+
+            await confirmTopDialog();
+            await sleep(3000);
+            await clearOverlays();
+
+            const labelInOrganizationView = await readProfileLabel();
+
+            if (labelInOrganizationView === "Login")
+            {
+                throw new Error("The pill fell back to \"Login\" inside the organization view, though the account never changed.");
+            }
+
+            if (labelInOrganizationView !== expectedDisplayName)
+            {
+                throw new Error(`The pill reads "${labelInOrganizationView}" inside the organization view, expected "${expectedDisplayName}".`);
+            }
+
+            // Back to the member's own library: the same remount in the other
+            // direction, and what leaves the browser where the suite found it.
+            await page.click("profile-component");
+            await page.waitForSelector("profile-context-menu .view-as-personal-button", { timeout: 10000 });
+            await page.evaluate(() => document.querySelector("profile-context-menu .view-as-personal-button").click());
+
+            await confirmTopDialog();
+            await sleep(3000);
+            await clearOverlays();
+
+            const labelBackInPersonalView = await readProfileLabel();
+
+            if (labelBackInPersonalView !== expectedDisplayName)
+            {
+                throw new Error(`The pill reads "${labelBackInPersonalView}" after returning to the personal view, expected "${expectedDisplayName}".`);
+            }
+
+            return `"${expectedDisplayName}" in both views`;
         });
     }
     finally

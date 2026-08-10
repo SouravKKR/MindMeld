@@ -153,8 +153,11 @@ async function runAlwaysOnTier()
     // silently orphans: the client writes under one prefix and the server reads
     // another. Read from the client source rather than restated here, so the
     // check fails when either side drifts.
-    const clientIdentitySource = fs.readFileSync(path.join(currentDirectory, "..", "Main", "Globals", "Classes", "Organization", "OrganizationContextIdentity.js"), "utf8");
-    const clientSeparatorMatch = clientIdentitySource.match(/static SEPARATOR = "(.*?)";/);
+    // Read from ViewIdentity, which owns the grammar for every kind of view.
+    // OrganizationContextIdentity became a delegating facade when the plan
+    // sandbox arrived, so its SEPARATOR is no longer a literal to match against.
+    const clientIdentitySource = fs.readFileSync(path.join(currentDirectory, "..", "Main", "Globals", "Classes", "View", "ViewIdentity.js"), "utf8");
+    const clientSeparatorMatch = clientIdentitySource.match(/static ORGANIZATION_SEPARATOR = "(.*?)";/);
     assert(clientSeparatorMatch !== null, "The client declares a scope separator");
     assert(clientSeparatorMatch !== null && organizationKey === `user-1${clientSeparatorMatch[1]}org-9`, "The client and server compose the identical scope key");
 
@@ -274,13 +277,13 @@ async function runAlwaysOnTier()
 
     // ── Sync scoping ──────────────────────────────────────────────────────
     const syncSource = fs.readFileSync(path.join(currentDirectory, "Endpoints/Sync/Sync.js"), "utf8");
-    assert(syncSource.includes("OrganizationScopeResolver.resolve"), "The sync push/pull resolves the scope it operates in");
+    assert(syncSource.includes("ViewScopeResolver.resolve"), "The sync push/pull resolves the scope it operates in");
     assert(syncSource.includes("TaskManager.getSyncLockState(personalUserId)"), "The sync lock stays keyed by the account — one engine per device, whichever view it shows");
-    assert(syncSource.includes("StorageQuotaEnforcer.isWithinQuota(personalUserId)"), "The storage cap is measured against the account, not the view");
+    assert(syncSource.includes("StorageQuotaEnforcer.isWithinQuotaForScope(personalUserId, scope.scopeKey)"), "The storage cap is measured against the account for a personal or organization view, and against the library for a simulated one");
     assert(syncSource.includes("getPaidDeckContentKeyBufferForUser(personalUserId"), "Paid content keys are looked up against the licence holder, not the library");
 
     const bulkSnapshotSource = fs.readFileSync(path.join(currentDirectory, "Endpoints/Sync/BulkSnapshot.js"), "utf8");
-    assert(bulkSnapshotSource.includes("OrganizationScopeResolver.resolve"), "A full-resync snapshot streams the scope the request is in");
+    assert(bulkSnapshotSource.includes("ViewScopeResolver.resolve"), "A full-resync snapshot streams the scope the request is in");
 
     const reaperSource = fs.readFileSync(path.join(currentDirectory, "Globals/Classes/PaidDeck/LapsedPaidDeckReaper.js"), "utf8");
     assert(reaperSource.includes("PaidDeckScopeResolver.resolveForLicense"), "The lapsed-licence reaper tombstones in the library the content actually sits in");

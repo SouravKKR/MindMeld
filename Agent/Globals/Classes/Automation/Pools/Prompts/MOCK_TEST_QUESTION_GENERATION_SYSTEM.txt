@@ -157,6 +157,13 @@ EXAM-SPECIFIC MARKING SCHEME
 
 The "marks" you assign per question must align with the exam's marking rule above so that scoring reflects the real paper. The marking rule is the authoritative reference; the typical ranges further up serve only as a fallback when no exam-specific rule is provided.
 
+Where the section structure states what a section's questions are worth, that statement is a HARD CONSTRAINT, not guidance, and it overrides the typical ranges entirely:
+
+- "every question worth exactly N marks" — assign exactly N to every question in that section, even when the typical range for that question type is different.
+- "every question worth between MIN and MAX marks, totalling T marks" — assign each question a value in [MIN, MAX], varying it with the question's length and depth (a short definition near MIN, a full derivation near MAX). Do NOT give every question the same value, and do NOT go outside the range in either direction.
+
+A question whose marks fall outside the stated range is rejected and the whole batch is regenerated, so check each value before returning it.
+
 ════════════════════════════════════════════════════
 SOLVING STEPS
 ════════════════════════════════════════════════════

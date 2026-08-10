@@ -4,13 +4,14 @@ const SyncQueryEngine = require("../../Globals/Classes/Database/SyncQueryEngine"
 const DatabaseConnector = require("../../Globals/Classes/Database/DatabaseConnector");
 const DatabaseConstants = require("../../Globals/Constants/DatabaseConstants");
 const TaskManager = require("../../Globals/Classes/Task/TaskManager");
+const TakenDownFigureGuard = require("../../Globals/Classes/Content/TakenDownFigureGuard");
 const KeyManagementService = require("../../Globals/Classes/Security/KeyManagementService");
 const PaidDeckSyncCrypto = require("../../Globals/Classes/Security/PaidDeckSyncCrypto");
 const StorageCreditAssessor = require("../../Globals/Classes/Credits/StorageCreditAssessor");
 const StorageQuotaEnforcer = require("../../Globals/Classes/Storage/StorageQuotaEnforcer");
 const SyncPayloadValidator = require("../../Globals/Classes/Sync/SyncPayloadValidator");
 const LapsedPaidDeckReaper = require("../../Globals/Classes/PaidDeck/LapsedPaidDeckReaper");
-const OrganizationScopeResolver = require("../../Globals/Classes/Organization/OrganizationScopeResolver");
+const ViewScopeResolver = require("../../Globals/Classes/View/ViewScopeResolver");
 const AutoAnalysisDeckFields = require("../../Globals/Classes/Analysis/AutoAnalysisDeckFields");
 const CuratedStudyMaterialFields = require("../../Globals/Classes/Analysis/CuratedStudyMaterialFields");
 const AiGeneratedDeckFields = require("../../Globals/Classes/Security/AiGeneratedDeckFields");
@@ -94,16 +95,31 @@ async function handleSync(request, response)
     const body = await request.getBody();
 
     // The scope this request reads and writes in. In the personal view it IS
-    // the user id; inside an organization view it is a distinct namespace, so
-    // the two libraries are separate sets of rows rather than one set filtered
-    // two ways — which is what makes it impossible for a surface that forgot to
-    // filter to leak one into the other.
+    // the user id; inside an organization view or an administrator's simulated
+    // plan sandbox it is a distinct namespace, so the libraries are separate
+    // sets of rows rather than one set filtered several ways — which is what
+    // makes it impossible for a surface that forgot to filter to leak one into
+    // another.
     //
     // Every per-user collection treats this value as an opaque owner key, so
-    // nothing downstream needed to change. The claim is re-authorised against
-    // stored membership inside the resolver; an unauthorised one silently falls
-    // back to the personal scope.
-    const scope = await OrganizationScopeResolver.resolve(request, user.getId());
+    // nothing downstream needed to change. The claim is re-authorised inside the
+    // resolver; an unauthorised one silently falls back to the personal scope.
+    const scope = await ViewScopeResolver.resolve(request, user.getId(), user);
+
+    // ...except here, where a silent fallback would DESTROY data rather than
+    // merely surprise. If an administrator's role was revoked while a plan
+    // sandbox was still open, their client is still pushing that sandbox's
+    // decks — and resolving to the personal scope would merge a simulation into
+    // their real library, irreversibly. Refusing leaves the changes pending on
+    // the client, and the next /GetUser collapses the view.
+    if (ViewScopeResolver.hasRejectedPlanViewClaim(request, scope))
+    {
+        console.warn(`[Sync] Refusing a push from user ${user.getId()} for a plan view they may no longer use.`);
+        response.statusCode = httpStatus.CONFLICT;
+        response.sendJson({ error: ErrorCodes.VIEW_NO_LONGER_AVAILABLE });
+        return;
+    }
+
     const userId = scope.scopeKey;
 
     // Three things are properties of the PERSON rather than of the view, and
@@ -216,11 +232,17 @@ async function handleSync(request, response)
         || byType[entityTypes.ASK_AI_POPUP_LINK].length > 0
         || byType[entityTypes.CONTENT_OVERLAY].length > 0;
 
-    if (hasUpserts && !(await StorageQuotaEnforcer.isWithinQuota(personalUserId)))
+    // Measured against the LIBRARY being written to, not just the account. For
+    // a personal or organization view that is the same account-wide number as
+    // before; inside a simulated plan sandbox it is that tier's allowance
+    // measured over the sandbox alone, which is the whole point of the
+    // simulation — an administrator testing the Free experience has to be able
+    // to actually hit a 20 MB ceiling.
+    if (hasUpserts && !(await StorageQuotaEnforcer.isWithinQuotaForScope(personalUserId, scope.scopeKey)))
     {
         console.warn(`[Sync] Rejecting push from user ${userId} — storage quota exceeded.`);
         response.statusCode = httpStatus.PAYLOAD_TOO_LARGE;
-        response.sendJson({ error: ErrorCodes.STORAGE_QUOTA_EXCEEDED, limitBytes: await StorageQuotaEnforcer.getLimitBytes(personalUserId) });
+        response.sendJson({ error: ErrorCodes.STORAGE_QUOTA_EXCEEDED, limitBytes: await StorageQuotaEnforcer.getLimitBytesForScope(personalUserId, scope.scopeKey) });
         return;
     }
 
@@ -268,6 +290,27 @@ async function handleSync(request, response)
     // the old parent's deletion. Sequencing upserts → deletions makes
     // the cascade observe the post-move state and leave the re-parented
     // entity alone.
+    // Enforce actioned takedowns on the way IN, not only when the notice was
+    // actioned. A device that was offline at the time still holds the stripped
+    // figure and pushes it back with a newer lifecycle.lastModified, which
+    // last-write-wins would accept — silently restoring content the register
+    // records as removed and re-seeding it to every other device. Costs one
+    // empty-set check per push on a deployment with no notices.
+    try
+    {
+        await Promise.all(
+        [
+            TakenDownFigureGuard.sanitizeStudyMaterials(byType[entityTypes.STUDY_MATERIAL]),
+            TakenDownFigureGuard.sanitizeCards(byType[entityTypes.CARD])
+        ]);
+    }
+    catch (takedownGuardError)
+    {
+        // The guard fails open internally; this only catches an unexpected
+        // throw. A sync push must not fail because the register was unreadable.
+        console.warn(`[Sync] Takedown guard skipped for ${userId}: ${takedownGuardError?.message || takedownGuardError}`);
+    }
+
     await Promise.all(
     [
         SyncQueryEngine.bulkUpsert(userId, db.collection(DatabaseConstants.DECKS_COLLECTION),             byType[entityTypes.DECK],              pushWriteTimestamp),

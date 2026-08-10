@@ -6,7 +6,31 @@ const AuthenticationQueryEngine = require("../Database/AuthenticationQueryEngine
 const EmailSender = require("../Email/EmailSender");
 const User = require("../../Model/User");
 const { authenticationProviders } = require("../../Enumerations/AuthenticationProviders");
+const { otpPurposes } = require("../../Enumerations/OtpPurposes");
 
+/**
+ * OtpManager — issues and checks the six-digit codes emailed to an address.
+ *
+ * Codes are SCOPED BY PURPOSE. A code is issued for exactly one thing — signing
+ * in, or confirming the contact address on an intellectual-property complaint —
+ * and it is only ever accepted back for that same thing. The document is keyed
+ * on (email, purpose), so the two live side by side.
+ *
+ * That scoping is not tidiness. Before it, the collection held one row per
+ * email: a rightsholder confirming a copyright complaint would silently
+ * invalidate the sign-in code the same person had just asked for, and — far
+ * worse — a code issued for the complaint form would have been accepted by the
+ * login endpoint, turning "prove you can read this inbox" into "here is a
+ * session". Purpose is therefore compared on the way in AND on the way out.
+ *
+ * A complaint code never provisions an account. Only the LOGIN purpose runs the
+ * signup path below; every other purpose returns a bare confirmation of the
+ * address, because a complainant is a correspondent and not a user.
+ *
+ * Backward compatibility: a stored document written before purposes existed has
+ * no `purpose` field and reads as LOGIN, so codes in flight across a deploy
+ * still verify.
+ */
 class OtpManager
 {
     static OTP_EXPIRY_MINUTES = 10;
@@ -20,6 +44,26 @@ class OtpManager
             return "";
         }
         return rawEmail.trim().toLowerCase();
+    }
+
+    /**
+     * Coerces a caller-supplied purpose to a known enum value, defaulting to
+     * LOGIN. The default is what makes an un-migrated stored document — and any
+     * caller that predates this parameter — behave exactly as it used to.
+     *
+     * @param {number} rawPurpose
+     * @returns {number}
+     */
+    static #normalisePurpose(rawPurpose)
+    {
+        const parsedPurpose = Number(rawPurpose);
+
+        if (!Number.isInteger(parsedPurpose))
+        {
+            return otpPurposes.LOGIN;
+        }
+
+        return Object.values(otpPurposes).includes(parsedPurpose) ? parsedPurpose : otpPurposes.LOGIN;
     }
 
     static #hashCode(plaintextCode)
@@ -39,7 +83,40 @@ class OtpManager
         return database.collection(DatabaseConstants.OTP_REQUESTS_COLLECTION);
     }
 
-    static async requestOtp(rawEmail)
+    /**
+     * The filter that selects one email's code for one purpose.
+     *
+     * LOGIN also matches documents with no purpose at all — those are rows
+     * written before this field existed, and they were all login codes. Every
+     * other purpose matches its own value exactly, so a legacy row can never be
+     * mistaken for a complaint confirmation.
+     *
+     * @param {string} email
+     * @param {number} purpose
+     * @returns {object}
+     */
+    static #buildOtpFilter(email, purpose)
+    {
+        if (purpose === otpPurposes.LOGIN)
+        {
+            return { email: email, purpose: { $in: [otpPurposes.LOGIN, null] } };
+        }
+
+        return { email: email, purpose: purpose };
+    }
+
+    /**
+     * Issues a code for one email and one purpose, and emails it.
+     *
+     * The cooldown is per (email, purpose): asking to confirm a copyright
+     * complaint must not tell a user their sign-in code is rate limited, and
+     * vice versa.
+     *
+     * @param {string} rawEmail
+     * @param {number} purpose an otpPurposes value; defaults to LOGIN
+     * @returns {Promise<{ok: boolean, reason?: string, isNewUser?: boolean, retryAfterSeconds?: number}>}
+     */
+    static async requestOtp(rawEmail, purpose = otpPurposes.LOGIN)
     {
         const email = OtpManager.#normaliseEmail(rawEmail);
         if (!email)
@@ -47,10 +124,12 @@ class OtpManager
             return { ok: false, reason: ErrorCodes.INVALID_EMAIL };
         }
 
+        const effectivePurpose = OtpManager.#normalisePurpose(purpose);
         const collection = await OtpManager.#getOtpCollection();
         const now = new Date();
+        const otpFilter = OtpManager.#buildOtpFilter(email, effectivePurpose);
 
-        const existingRequest = await collection.findOne({ email: email });
+        const existingRequest = await collection.findOne(otpFilter);
         if (existingRequest)
         {
             const secondsSinceLastIssue = (now.getTime() - new Date(existingRequest.createdAt).getTime()) / 1000;
@@ -65,13 +144,18 @@ class OtpManager
         const codeHash = OtpManager.#hashCode(sixDigitCode);
         const expirationDate = new Date(now.getTime() + OtpManager.OTP_EXPIRY_MINUTES * 60 * 1000);
 
+        // The upsert is keyed on the exact (email, purpose) pair rather than on
+        // the read filter above: the legacy-null branch of that filter must not
+        // become the $setOnInsert shape, or a fresh login row would be written
+        // with purpose null forever.
         await collection.updateOne
         (
-            { email: email },
+            { email: email, purpose: effectivePurpose },
             {
                 $set:
                 {
                     email: email,
+                    purpose: effectivePurpose,
                     codeHash: codeHash,
                     attempts: 0,
                     createdAt: now,
@@ -81,7 +165,23 @@ class OtpManager
             { upsert: true }
         );
 
-        await EmailSender.sendOtpEmail(email, sixDigitCode);
+        // A legacy row for this email (purpose absent) would otherwise sit
+        // alongside the new one and be found first by the LOGIN filter, pinning
+        // the user to a code that has just been superseded.
+        if (effectivePurpose === otpPurposes.LOGIN)
+        {
+            await collection.deleteMany({ email: email, purpose: { $exists: false } });
+        }
+
+        await OtpManager.#deliverCode(email, sixDigitCode, effectivePurpose);
+
+        // Only meaningful for a login: it drives the "tell us your name" step of
+        // the sign-in dialog. A complaint confirmation deliberately does not
+        // disclose whether the address belongs to an account.
+        if (effectivePurpose !== otpPurposes.LOGIN)
+        {
+            return { ok: true, retryAfterSeconds: OtpManager.RESEND_COOLDOWN_SECONDS };
+        }
 
         const existingUser = await AuthenticationQueryEngine.getUserByEmail(email);
 
@@ -92,7 +192,43 @@ class OtpManager
         };
     }
 
-    static async verifyOtp(rawEmail, submittedCode, rawDisplayName)
+    /**
+     * Sends the code with the wording that matches what it is for. Kept here
+     * rather than at the call sites so a new purpose cannot ship without
+     * deciding what the recipient is told they are confirming.
+     *
+     * @param {string} email
+     * @param {string} sixDigitCode
+     * @param {number} purpose
+     * @returns {Promise<void>}
+     */
+    static async #deliverCode(email, sixDigitCode, purpose)
+    {
+        if (purpose === otpPurposes.INTELLECTUAL_PROPERTY_COMPLAINT_VERIFICATION)
+        {
+            await EmailSender.sendIntellectualPropertyComplaintCodeEmail(email, sixDigitCode);
+            return;
+        }
+
+        await EmailSender.sendOtpEmail(email, sixDigitCode);
+    }
+
+    /**
+     * Checks a submitted code against the one issued for the same email AND the
+     * same purpose.
+     *
+     * For LOGIN this also provisions the account on first sign-in. For every
+     * other purpose it does not: it answers only "yes, whoever submitted this
+     * can read that inbox", which is the entire question a complaint form is
+     * asking.
+     *
+     * @param {string} rawEmail
+     * @param {string} submittedCode
+     * @param {number} purpose an otpPurposes value; defaults to LOGIN
+     * @param {string} rawDisplayName only read on the LOGIN signup path
+     * @returns {Promise<{ok: boolean, reason?: string, userId?: string, attemptsRemaining?: number}>}
+     */
+    static async verifyOtp(rawEmail, submittedCode, purpose = otpPurposes.LOGIN, rawDisplayName = "")
     {
         const email = OtpManager.#normaliseEmail(rawEmail);
         if (!email)
@@ -105,10 +241,12 @@ class OtpManager
             return { ok: false, reason: ErrorCodes.INVALID_CODE };
         }
 
+        const effectivePurpose = OtpManager.#normalisePurpose(purpose);
         const collection = await OtpManager.#getOtpCollection();
         const now = new Date();
+        const otpFilter = OtpManager.#buildOtpFilter(email, effectivePurpose);
 
-        const otpDocument = await collection.findOne({ email: email });
+        const otpDocument = await collection.findOne(otpFilter);
         if (!otpDocument)
         {
             return { ok: false, reason: ErrorCodes.EXPIRED };
@@ -116,13 +254,13 @@ class OtpManager
 
         if (new Date(otpDocument.expirationDate) <= now)
         {
-            await collection.deleteOne({ email: email });
+            await collection.deleteOne(otpFilter);
             return { ok: false, reason: ErrorCodes.EXPIRED };
         }
 
         const incrementResult = await collection.findOneAndUpdate
         (
-            { email: email },
+            otpFilter,
             { $inc: { attempts: 1 } },
             { returnDocument: "after" }
         );
@@ -131,7 +269,7 @@ class OtpManager
 
         if (currentAttempts > OtpManager.MAX_ATTEMPTS)
         {
-            await collection.deleteOne({ email: email });
+            await collection.deleteOne(otpFilter);
             return { ok: false, reason: ErrorCodes.TOO_MANY_ATTEMPTS };
         }
 
@@ -146,6 +284,15 @@ class OtpManager
         if (!hashesMatch)
         {
             return { ok: false, reason: ErrorCodes.INVALID_CODE, attemptsRemaining: Math.max(0, OtpManager.MAX_ATTEMPTS - currentAttempts) };
+        }
+
+        // Everything below is the sign-in path. A non-login purpose stops here
+        // deliberately: confirming a copyright complaint must never create an
+        // account for the complainant, who did not ask for one and is not a user.
+        if (effectivePurpose !== otpPurposes.LOGIN)
+        {
+            await collection.deleteOne(otpFilter);
+            return { ok: true, email: email };
         }
 
         let user = await AuthenticationQueryEngine.getUserByEmail(email);
@@ -211,7 +358,7 @@ class OtpManager
             }
         }
 
-        await collection.deleteOne({ email: email });
+        await collection.deleteOne(otpFilter);
 
         return { ok: true, userId: user.getId() };
     }

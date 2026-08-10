@@ -49,6 +49,15 @@ class PaidDeckProvenanceAssembler
                 PersistenceConstants.COVERAGE_RECONCILIATION_FILE_NAME,
             );
 
+            // Which basis produced each topic, and which passages of which
+            // licensed document backed the source-grounded ones. Null for a run
+            // that admitted no content source, which is the ordinary case and
+            // reads correctly as "every topic was written from model knowledge".
+            const sourceGroundedContent = await PaidDeckProvenanceAssembler.#readJsonFile(
+                assemblyDetails.mainTaskId,
+                PersistenceConstants.SOURCE_GROUNDED_CONTENT_FILE_NAME,
+            );
+
             const sources = PaidDeckProvenanceAssembler.#extractSourceDeclarations(actions, assemblyDetails.generalGenerationSettings);
 
             return await GenerationProvenanceQueryEngine.record(
@@ -57,6 +66,7 @@ class PaidDeckProvenanceAssembler
                 deckId: assemblyDetails.deckId,
                 deckName: assemblyDetails.deckName,
                 generatedByUserId: assemblyDetails.userId,
+                organizationId: assemblyDetails.organizationId || "",
                 producedDeckIds: assemblyDetails.producedDeckIds || [],
                 sources: sources,
                 declaredSourceTypeNames: sources.map(source => source.declaredSourceType).filter(Boolean),
@@ -64,6 +74,7 @@ class PaidDeckProvenanceAssembler
                 actions: actions,
                 verification: verification,
                 coverageReconciliation: coverageReconciliation,
+                sourceGroundedContent: sourceGroundedContent,
             });
         }
         catch (assemblyError)

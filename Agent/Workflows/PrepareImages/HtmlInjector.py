@@ -28,6 +28,14 @@ class HtmlInjector:
 
     _MIN_SENTENCE_CHARACTER_LENGTH = 10
 
+    # Stand-in "source hash" carried by web-sourced figures, which have a URL
+    # rather than an uploaded document behind them. It is not a content hash and
+    # no takedown can ever match it, so build_source_hash_attribute refuses to
+    # stamp it — a marker that looks like provenance but resolves to nothing is
+    # worse than no marker, because it reads as covered when it is not. Web
+    # figures carry their attribution link in the figcaption instead.
+    WEB_SOURCE_HASH_MARKER = "__web__"
+
     @staticmethod
     def extract_block_elements(html_content: str) -> list[dict]:
         """
@@ -127,6 +135,39 @@ class HtmlInjector:
             return ""
 
         return f' data-visual-id="{html_escape(cleaned_visual_id, quote = True)}"'
+
+    @staticmethod
+    def build_source_hash_attribute(source_hash: str) -> str:
+        """
+        Renders the provenance attribute naming the uploaded document a figure
+        was cropped out of, or nothing when there is no such document.
+
+        This is what makes an embedded figure reachable by a takedown. The
+        figure travels as a base64 data URL inside the study material and card
+        HTML, so removing the information-source row, its stored blob and the
+        `figures` cache leaves the picture itself untouched on the server copy
+        AND on every device that already synced it. Without a source marker in
+        the markup there is no way to find those copies again: the base64 payload
+        is re-encoded per embedding, so it cannot be matched back to the document
+        by bytes, and position and caption both move as soon as the material is
+        edited.
+
+        Stamped ONLY for figures lifted out of a third-party document. A figure
+        the pipeline drew itself is new expression and is deliberately left
+        unmarked — a notice against the source work is not a notice against our
+        own diagram of the same concept, and marking it would delete content a
+        rightsholder has no claim over.
+
+        Emitted as a data-* attribute for the same reason as the visual id:
+        HtmlSanitizer passes data-* through, and a marker the client strips is a
+        marker that does not exist by the time it matters.
+        """
+        cleaned_source_hash = (source_hash or "").strip()
+
+        if not cleaned_source_hash or cleaned_source_hash == HtmlInjector.WEB_SOURCE_HASH_MARKER:
+            return ""
+
+        return f' data-source-hash="{html_escape(cleaned_source_hash, quote = True)}"'
 
     @staticmethod
     def build_markup_figure_html(markup_html: str, caption_text: str, figure_number: int, visual_id: str = "") -> str:
@@ -231,6 +272,7 @@ class HtmlInjector:
         source_page_url: str = None,
         bounding_box:   list = None,
         visual_id:      str = "",
+        source_hash:    str = "",
     ) -> str:
         """
         Builds the self-contained HTML snippet for an extracted figure.
@@ -239,6 +281,10 @@ class HtmlInjector:
         or falls back to a plain "Fig. N" label.
         When source_url and/or source_page_url is provided (web-sourced images),
         an attribution line is appended to the figcaption for fair use.
+
+        source_hash, when the figure came out of an uploaded document, is the
+        content hash of that document, stamped into the markup so a takedown can
+        find this embedded copy again. See build_source_hash_attribute.
 
         bounding_box, when provided, is the [x0, y0, x1, y1] rectangle in the
         rendered-PDF pixel space the image was cropped from; it lets the
@@ -284,6 +330,7 @@ class HtmlInjector:
         return (
             f'<figure class="extracted-figure"'
             f'{HtmlInjector.build_visual_id_attribute(visual_id)}'
+            f'{HtmlInjector.build_source_hash_attribute(source_hash)}'
             f' style="margin: 1em 0;">'
             f'<img src="data:image/jpeg;base64,{base64_encoded_image}"'
             f' style="{image_style}" alt="Figure {figure_number}">'

@@ -24,9 +24,34 @@ const { aiGeneratedStampResults } = require("../../Globals/Enumerations/AiGenera
  * The heavy lifting lives in the cohesive single-responsibility classes
  * under Globals/Classes/Generation/ — this function is the orchestrator
  * that sequences them.
+ *
+ * THREE IDENTIFIERS, and conflating any two of them breaks something:
+ *
+ *   persistenceScopeKey — the LIBRARY. Every per-user collection is keyed by
+ *       it, and it is an opaque owner string to all of them: `<userId>` for a
+ *       personal run, `<userId>::org:<organizationId>` for an organization one.
+ *       This is what decides where the decks show up.
+ *   personalUserId — the ACCOUNT that ran the generation. Provenance records it
+ *       as generatedByUserId, and that value is later used as a task owner by
+ *       SourceVerificationRunner, so it has to resolve to a real account. A
+ *       scope key there would own tasks nobody can see.
+ *   organizationId — attribution, "" when personal. Stamped on the deck so a
+ *       reader does not have to parse a scope key to learn who a deck was made
+ *       for, and recorded on provenance because the organization is the party
+ *       answerable for its intellectual-property clearance.
+ *
+ * @param {string} persistenceScopeKey
+ * @param {string} personalUserId
+ * @param {string} organizationId
  */
-async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashcardGenerationSettings, studyMaterialGenerationSettings, mockTestGenerationSettings, failureContext = null, bAllowRootMerge = false, generalGenerationSettings = null)
+async function moveToDatabase(persistenceScopeKey, mainTaskId, deckId, taskDescriptor, flashcardGenerationSettings, studyMaterialGenerationSettings, mockTestGenerationSettings, failureContext = null, bAllowRootMerge = false, generalGenerationSettings = null, personalUserId = null, organizationId = "")
 {
+    // Defaulted rather than required so the two call sites that pass a plain
+    // personal id (and every test harness that does) keep working unchanged.
+    const resolvedPersonalUserId = typeof personalUserId === "string" && personalUserId.length > 0
+        ? personalUserId
+        : persistenceScopeKey;
+    const resolvedOrganizationId = typeof organizationId === "string" ? organizationId : "";
     // Provenance for complaint response: which uploaded documents fed this run.
     // Stamped onto every entity the run produces so "what did we generate from
     // this document" becomes an answerable question. See GenerationProvenance
@@ -93,7 +118,7 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
 
     const beautifiedShortNamesByDeckKey = await GeneratedFileLoader.loadBeautifiedShortNames(mainTaskId);
 
-    const existingDeckIdByChainKey = await SyllabusFingerprintMatcher.findMergeTargetMap(userId, deckId, allTopicChains, bAllowRootMerge);
+    const existingDeckIdByChainKey = await SyllabusFingerprintMatcher.findMergeTargetMap(persistenceScopeKey, deckId, allTopicChains, bAllowRootMerge);
     if (existingDeckIdByChainKey)
     {
         console.log(`[MoveToDatabase] Merging into existing deck subtree under ${deckId}: ${existingDeckIdByChainKey.size} reusable deck path(s).`);
@@ -110,20 +135,20 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
 
     if (reusedDeckIds.size > 0)
     {
-        await DeckHierarchyBuilder.mergeExistingDeckMetadata(userId, deckKeyToDataMap, reusedDeckIds);
+        await DeckHierarchyBuilder.mergeExistingDeckMetadata(persistenceScopeKey, deckKeyToDataMap, reusedDeckIds);
     }
 
     // ── 4. Upsert cards ────────────────────────────────────────────────────────
     if (orderedFlashcardFiles.length > 0)
     {
-        await GeneratedEntityUpserter.upsertCards(userId, orderedFlashcardFiles, resolveLeafDeckId, syllabusPositionIndex, now, reusedDeckIds, sourceContentHashes);
+        await GeneratedEntityUpserter.upsertCards(persistenceScopeKey, orderedFlashcardFiles, resolveLeafDeckId, syllabusPositionIndex, now, reusedDeckIds, sourceContentHashes);
         console.log(`[MoveToDatabase] Upserted cards for task ${mainTaskId}.`);
     }
 
     // ── 5. Upsert study materials using the shared hierarchy ───────────────────
     if (orderedStudyMaterialFiles.length > 0)
     {
-        await GeneratedEntityUpserter.upsertStudyMaterials(userId, orderedStudyMaterialFiles, resolveLeafDeckId, syllabusPositionIndex, now, sourceContentHashes);
+        await GeneratedEntityUpserter.upsertStudyMaterials(persistenceScopeKey, orderedStudyMaterialFiles, resolveLeafDeckId, syllabusPositionIndex, now, sourceContentHashes);
         console.log(`[MoveToDatabase] Upserted study materials for task ${mainTaskId}.`);
     }
 
@@ -136,7 +161,7 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
     let upsertedMockTestCount = 0;
     if (mockTestGenerationSettings !== null)
     {
-        upsertedMockTestCount = await MockTestAssembler.upsertMockTests(userId, deckId, mainTaskId, now, mockTestGenerationSettings, resolveLeafDeckId, deckKeyToDataMap) || 0;
+        upsertedMockTestCount = await MockTestAssembler.upsertMockTests(persistenceScopeKey, deckId, mainTaskId, now, mockTestGenerationSettings, resolveLeafDeckId, deckKeyToDataMap) || 0;
 
         // Only claim an upsert when one happened. This used to print
         // unconditionally, so a run that had just logged "Blueprint.json not
@@ -215,6 +240,21 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
             };
         }
 
+        // Attribution, written alongside the scope rather than instead of it.
+        // The scope key already says which library the deck lives in, but it
+        // says so in a format every reader would have to parse; and a deck can
+        // be moved. This records which organization the run was made FOR at the
+        // moment it was made, which is the fact the terms of service make that
+        // organization answerable for.
+        if (resolvedOrganizationId.length > 0)
+        {
+            deckData.additionalData =
+            {
+                ...(deckData.additionalData || {}),
+                organizationId: resolvedOrganizationId,
+            };
+        }
+
         if (deckData.parent === deckId)
         {
             if (partialCompletion !== null)
@@ -229,7 +269,7 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
             }
         }
 
-        await SyncQueryEngine.upsertDeck(userId, deckData);
+        await SyncQueryEngine.upsertDeck(persistenceScopeKey, deckData);
         decksUpserted++;
     }
 
@@ -252,7 +292,7 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
     // precisely the case this is here to cover.
     if (decksUpserted > 0 || upsertedMockTestCount > 0)
     {
-        const stampResult = await AiGeneratedTargetDeckStamper.markGenerationTargetDeck(userId, deckId);
+        const stampResult = await AiGeneratedTargetDeckStamper.markGenerationTargetDeck(persistenceScopeKey, deckId);
 
         if (stampResult === aiGeneratedStampResults.DECK_NOT_FOUND)
         {
@@ -303,7 +343,7 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
         const bLaunchedFromRoot = deckId === AiGeneratedTargetDeckStamper.ROOT_DECK_ID;
         const provenanceSubjectDeckId = bLaunchedFromRoot ? topLevelDeckIds[0] : deckId;
 
-        const launchDeckData = bLaunchedFromRoot ? null : await SyncQueryEngine.getDeck(userId, deckId);
+        const launchDeckData = bLaunchedFromRoot ? null : await SyncQueryEngine.getDeck(persistenceScopeKey, deckId);
         const producedDeckData = Array.from(deckKeyToDataMap.values()).find(deckData => deckData.id === provenanceSubjectDeckId);
 
         await PaidDeckProvenanceAssembler.assembleAndRecord(
@@ -311,7 +351,15 @@ async function moveToDatabase(userId, mainTaskId, deckId, taskDescriptor, flashc
             mainTaskId: mainTaskId,
             deckId: provenanceSubjectDeckId,
             deckName: (launchDeckData ? launchDeckData.name : null) || (producedDeckData ? producedDeckData.name : null),
-            userId: userId,
+
+            // The ACCOUNT, deliberately not the scope key. This lands in the
+            // record as generatedByUserId, and SourceVerificationRunner later
+            // passes that value straight into a TaskDescriptor as its owner — a
+            // scope key there would create tasks owned by a namespace instead of
+            // a person, which nothing tracking a user's tasks would ever find.
+            userId: resolvedPersonalUserId,
+
+            organizationId: resolvedOrganizationId,
             producedDeckIds: topLevelDeckIds,
             generalGenerationSettings: generalGenerationSettings,
         });

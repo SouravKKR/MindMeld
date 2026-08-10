@@ -6,6 +6,12 @@ information-source-selector
     min-width: 0;
 }
 
+/* min-width: 0 on every level of the source list, not just the outermost.
+   The generation page's scroll wrapper is overflow-x: hidden, so anything that
+   overflows is CLIPPED and unreachable rather than scrollable — a filename or a
+   page-range row that pushes past the edge simply cannot be got at. A flex item
+   defaults to min-width: auto, which is its content's intrinsic width, so
+   without this an over-wide descendant propagates all the way out. */
 .information-sources-content
 {
     display: flex;
@@ -15,6 +21,8 @@ information-source-selector
     border-radius: 12px;
     padding: 12px;
     box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .information-sources-list
@@ -22,6 +30,8 @@ information-source-selector
     display: flex;
     flex-direction: column;
     gap: 8px;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .information-source-add-select
@@ -58,6 +68,9 @@ information-source-selector
     padding: 10px 14px;
     border-left: 3px solid var(--gradient-start-color);
     background-color: var(--primary-background-color);
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .information-source-item-header
@@ -66,6 +79,7 @@ information-source-selector
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+    min-width: 0;
 }
 
 .information-source-item-header > label
@@ -73,6 +87,10 @@ information-source-selector
     font-size: 0.82rem;
     opacity: 0.9;
     font-weight: 500;
+    min-width: 0;
+    /* Source labels carry user-supplied names; a long unbroken token would
+       otherwise set the row's minimum width and push it off the screen. */
+    overflow-wrap: anywhere;
 }
 
 .information-source-delete-button
@@ -258,12 +276,46 @@ information-source-selector
     font-family: inherit;
 }
 
+/* ── Tablets, landscape phones and split screen ──────────────────────────────
+   The page-range row is the tightest thing in the list: two fixed 60px number
+   boxes with flex-shrink: 0, a separator and a delete button, all on one line —
+   inside a field row whose label still claims a fixed 200px above 600px wide.
+   The wrapping treatment used to start only at 600px, which left 601-780px (a
+   landscape phone, a small tablet, a split-screen window) as a dead band where
+   the row could not shrink and ran off the right edge into the page's
+   overflow-x: hidden. It starts here instead. */
+@media (max-width: 820px)
+{
+    .information-source-page-range-container,
+    .page-range-row
+    {
+        flex-wrap: wrap;
+    }
+
+    .information-source-start-page-input,
+    .information-source-end-page-input,
+    .page-range-start-input,
+    .page-range-end-input
+    {
+        flex: 1 1 0;
+        width: auto;
+        min-width: 0;
+    }
+
+    /* `all: unset` strips the native select's shrink behaviour, so this sizes
+       to its longest option text ("Question Paper / Mock Test") and sticks out
+       of a narrow column. Stretching it makes the width the container's. */
+    .information-source-add-select
+    {
+        align-self: stretch;
+        text-align: center;
+    }
+}
+
 /* ── Phones ─────────────────────────────────────────────────────────────────
    The source rows are nested three containers deep (page container → generation
    fields → sources panel → source item), so their padding compounds; trimming
-   each level is what keeps the controls inside them from being squeezed. The
-   page-range row is the tightest of them: two number boxes, a separator and a
-   delete button on one line. */
+   each level is what keeps the controls inside them from being squeezed. */
 @media (max-width: 600px)
 {
     .information-sources-content
@@ -279,15 +331,7 @@ information-source-selector
 
     .information-source-add-select
     {
-        align-self: stretch;
         padding: 11px 14px;
-        text-align: center;
-    }
-
-    .information-source-page-range-container,
-    .page-range-row
-    {
-        flex-wrap: wrap;
     }
 
     .information-source-start-page-input,
@@ -295,9 +339,6 @@ information-source-selector
     .page-range-start-input,
     .page-range-end-input
     {
-        flex: 1 1 0;
-        width: auto;
-        min-width: 0;
         padding: 8px;
     }
 

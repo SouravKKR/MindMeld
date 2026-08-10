@@ -205,7 +205,78 @@ async function verifyEveryKindIsDistinct()
     assert(new Set(kindValues).size === kindValues.length, "no two upload kinds share a value");
     assert(typeof ephemeralUploadKinds.GENERATION_TASK_STAGING === "number", "GENERATION_TASK_STAGING exists");
     assert(typeof ephemeralUploadKinds.MOCK_TEST_EVALUATION === "number", "MOCK_TEST_EVALUATION exists");
+    assert(typeof ephemeralUploadKinds.MOCK_TEST_ANSWER_SHEET === "number", "MOCK_TEST_ANSWER_SHEET exists");
     assert(typeof ephemeralUploadKinds.DEAL_INVOICE === "number", "DEAL_INVOICE exists");
+}
+
+// ── The published answer-sheet promise ────────────────────────────────────
+/**
+ * The scanned answer sheet is the one retention window the Privacy Policy makes
+ * a PROMISE about rather than a limit: the scan is kept so a candidate can
+ * dispute the transcription or the marks against the original. Deleting it early
+ * is therefore a broken guarantee, not a privacy bonus — and it broke exactly
+ * that way once, when the Agent worker deleted each scan the moment it had read
+ * it into memory, so the file the dispute needs was gone before the candidate
+ * had even seen their marks.
+ *
+ * Both halves are checked: the window the code enforces has to equal the number
+ * the policy publishes, and no participant other than the reaper (and account
+ * deletion) may delete the staged scans.
+ */
+async function verifyAnswerSheetDisputeWindowIsKept()
+{
+    heading("The scanned answer sheet survives its published dispute window");
+
+    const fileSystem = require("fs");
+
+    const legalDocuments = require("./SeedData/LegalDocuments.json");
+    const privacyPolicy = legalDocuments.find(legalDocument => legalDocument.key === "PRIVACY_POLICY");
+    assert(privacyPolicy !== undefined, "the seeded privacy policy is readable");
+
+    // Pull the retention figure straight out of the clause the user is shown, so
+    // changing one side without the other fails here rather than in a complaint.
+    const answerSheetClause = (privacyPolicy?.contentHtml || "")
+        .split("<p>")
+        .find(paragraph => paragraph.includes("Scanned answer sheets"));
+    assert(answerSheetClause !== undefined, "the policy carries a scanned-answer-sheet clause");
+
+    const publishedDaysMatch = /retain the scan for (\d+)\s*\(/.exec(answerSheetClause || "");
+    assert(publishedDaysMatch !== null, "the clause states the retention period in days");
+    assert(
+        Number(publishedDaysMatch?.[1]) === DatabaseConstants.ANSWER_SHEET_RETENTION_DAYS,
+        `the enforced window (${DatabaseConstants.ANSWER_SHEET_RETENTION_DAYS}d) equals the published one (${publishedDaysMatch?.[1]}d)`,
+    );
+
+    const transcribeSource = fileSystem.readFileSync(path.join(currentDirectory, "Endpoints", "MockTest", "TranscribeOfflineAttempt.js"), "utf8");
+    assert(transcribeSource.includes("ephemeralUploadKinds.MOCK_TEST_ANSWER_SHEET"), "TranscribeOfflineAttempt.js registers the scan prefix");
+    assert(
+        transcribeSource.includes("DatabaseConstants.ANSWER_SHEET_RETENTION_DAYS"),
+        "it registers with the published window rather than a hand-typed number",
+    );
+    assert(
+        transcribeSource.indexOf("EphemeralUploadRegistry.register") < transcribeSource.indexOf("Persistence.write(joinPersistencePath(transcriptionsDirectory, scanFileName)"),
+        "the registration precedes the first staged scan, so no scan can exist unregistered",
+    );
+    assert(
+        transcribeSource.includes("if (!bRegisteredForDeletion)"),
+        "a failed registration refuses the upload rather than storing handwriting nothing will reclaim",
+    );
+
+    // The worker runs long before the dispute window opens. It may read the
+    // staged scans; it may not be what removes them.
+    const workerSourcePath = path.join(currentDirectory, "..", "Agent", "Workflows", "TranscribeMockTestAttempt", "TranscribeMockTestAttempt.py");
+    if (!fileSystem.existsSync(workerSourcePath))
+    {
+        skip("the Agent transcription workflow is not present in this checkout");
+        return;
+    }
+
+    const workerSource = fileSystem.readFileSync(workerSourcePath, "utf8");
+    assert(workerSource.includes("Persistence.read"), "the worker still reads the staged scans");
+    assert(
+        !workerSource.includes("Persistence.delete"),
+        "the worker deletes nothing from the staged prefix, so the dispute window is the Dock's to close",
+    );
 }
 
 async function verifyRegistrationRecordsTheWindow()
@@ -530,6 +601,7 @@ async function run()
 
     await verifyRetentionWindowsAreOrdered();
     await verifyEveryKindIsDistinct();
+    await verifyAnswerSheetDisputeWindowIsKept();
     await verifyRegistrationRecordsTheWindow();
     await verifyResumeRefreshesRatherThanDuplicates();
     await verifyEagerPurgeClearsTheRecord();

@@ -2,7 +2,7 @@
 {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 16px;
     background-color: var(--secondary-background-color);
     border-radius: 10px;
     padding: 16px;
@@ -34,7 +34,7 @@
 .mock-test-marking-section .mock-test-marking-section-override-row,
 .mock-test-marking-section .mock-test-marking-override-row,
 .mock-test-marking-section .mock-test-marking-row,
-.mock-test-marking-section .mock-test-section-row-counts,
+.mock-test-marking-section .mock-test-section-field-grid,
 .mock-test-marking-section .mock-test-marking-section-row-rule
 {
     min-width: 0;
@@ -60,21 +60,25 @@
 {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
 }
 
 .mock-test-marking-subgroup-title
 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     font-size: 0.85rem;
     font-weight: 600;
     opacity: 0.8;
-    margin-bottom: 4px;
 }
+
+/* ── Paper default rule ──────────────────────────────────────────────────── */
 
 .mock-test-marking-row
 {
     display: grid;
-    grid-template-columns: 1fr 110px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 110px);
     align-items: center;
     gap: 12px;
 }
@@ -93,53 +97,49 @@
     margin-left: 4px;
 }
 
-.mock-test-marking-row input,
-.mock-test-marking-override-row input
+/* ── Shared control skin ─────────────────────────────────────────────────────
+   One rule for every input and select inside the panel. The previous sheet
+   styled them in three near-identical blocks that had drifted apart on padding
+   and border, which is what made the card read as unevenly spaced. */
+.mock-test-marking-section input[type="number"],
+.mock-test-marking-section input[type="text"],
+.mock-test-marking-section select
 {
-    padding: 6px 8px;
+    width: 100%;
+    padding: 7px 9px;
     border-radius: 6px;
-    background-color: var(--tertiary-background-color);
+    background-color: var(--primary-background-color);
     color: var(--primary-text-color);
-    border: 1px solid transparent;
-    font-size: 0.9rem;
+    border: 1px solid var(--quaternary-background-color);
+    font-size: 0.85rem;
+    font-family: inherit;
+}
+
+.mock-test-marking-section input[type="number"]
+{
     text-align: right;
 }
 
-/*
- * Inputs that live INSIDE the section-override row sit on top of a
- * --tertiary background. Sharing the same colour would make empty inputs
- * vanish into the row (only the placeholder text would float). Drop them
- * to --secondary so the input boundary is always visible, with a faint
- * border for extra definition.
- */
-.mock-test-marking-section-row-rule input,
-.mock-test-section-row-counts input
-{
-    padding: 6px 8px;
-    border-radius: 6px;
-    background-color: var(--secondary-background-color);
-    color: var(--primary-text-color);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    font-size: 0.9rem;
-    text-align: right;
-}
-
-.mock-test-marking-row input:focus,
-.mock-test-marking-override-row input:focus,
-.mock-test-marking-section-row-rule input:focus,
-.mock-test-section-row-counts input:focus,
-.mock-test-marking-section-name-input:focus
+.mock-test-marking-section input:focus,
+.mock-test-marking-section select:focus
 {
     outline: none;
     border-color: var(--gradient-start-color);
 }
+
+.mock-test-marking-section input:disabled
+{
+    opacity: 0.5;
+}
+
+/* ── Per-question-type overrides ─────────────────────────────────────────── */
 
 .mock-test-marking-type-override-list,
 .mock-test-marking-section-override-list
 {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
 }
 
 .mock-test-marking-override-row
@@ -149,30 +149,42 @@
        intrinsic min-width on tight viewports — without this, a select
        with a long QuestionType name was forcing the row past the panel
        width. The first column still gets the bulk of available space. */
-    grid-template-columns: minmax(0, 1.5fr) minmax(0, 80px) minmax(0, 80px) minmax(0, 80px) minmax(0, 80px) 32px;
-    gap: 6px;
-    align-items: center;
+    grid-template-columns: minmax(0, 1.6fr) repeat(4, minmax(0, 1fr)) 32px;
+    gap: 8px;
+    align-items: end;
     background-color: var(--tertiary-background-color);
-    padding: 8px;
+    padding: 10px;
     border-radius: 8px;
     min-width: 0;
 }
 
-.mock-test-marking-override-row select
+.mock-test-marking-override-row > .mock-test-marking-override-type-select
 {
-    padding: 6px 8px;
-    border-radius: 6px;
-    background-color: var(--secondary-background-color);
-    color: var(--primary-text-color);
-    border: 1px solid transparent;
-    font-size: 0.85rem;
+    align-self: end;
+}
+
+.mock-test-marking-override-field
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.mock-test-marking-override-field > span
+{
+    font-size: 0.7rem;
+    opacity: 0.6;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .mock-test-marking-add-type-override-button,
 .mock-test-marking-add-section-override-button
 {
     align-self: flex-start;
-    padding: 6px 12px;
+    padding: 7px 14px;
     border-radius: 6px;
     background-color: var(--tertiary-background-color);
     color: var(--primary-text-color);
@@ -191,8 +203,8 @@
 .mock-test-marking-override-remove-button,
 .mock-test-marking-section-remove-button
 {
-    width: 26px;
-    height: 26px;
+    width: 28px;
+    height: 28px;
     border-radius: 5px;
     background-color: transparent;
     color: var(--primary-text-color);
@@ -200,6 +212,7 @@
     cursor: pointer;
     font-size: 1rem;
     line-height: 1;
+    flex-shrink: 0;
 }
 
 .mock-test-marking-override-remove-button:hover,
@@ -209,226 +222,176 @@
     border-color: #c43030;
 }
 
+/* ── Section structure ───────────────────────────────────────────────────── */
+
 .mock-test-section-structure-subgroup
 {
     border-top: 1px solid #2c2c2c;
-    padding-top: 12px;
+    padding-top: 14px;
 }
 
 .mock-test-marking-section-hint
 {
     font-size: 0.78rem;
     opacity: 0.6;
-    margin-bottom: 4px;
+    line-height: 1.5;
 }
 
+/* A section is a stack of labelled groups on one rhythm, rather than the
+   previous flat run of rows where a name, a checkbox strip, two grids and four
+   unlabelled boxes all sat at the same level with nothing marking where one
+   idea ended and the next began. */
 .mock-test-marking-section-override-row
 {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 14px;
     background-color: var(--tertiary-background-color);
-    padding: 10px;
+    padding: 14px;
     border-radius: 8px;
+    min-width: 0;
 }
 
 .mock-test-marking-section-row-head
 {
     display: grid;
-    grid-template-columns: 1fr 32px;
+    grid-template-columns: minmax(0, 1fr) 28px;
     gap: 8px;
     align-items: center;
 }
 
-.mock-test-marking-section-name-input
+.mock-test-section-group
 {
-    padding: 6px 8px;
-    border-radius: 6px;
-    background-color: var(--secondary-background-color);
-    color: var(--primary-text-color);
-    border: 1px solid transparent;
-    font-size: 0.9rem;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.mock-test-section-group[hidden]
+{
+    display: none;
+}
+
+.mock-test-section-group-title
+{
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    opacity: 0.85;
+}
+
+.mock-test-section-group-note
+{
+    font-size: 0.72rem;
+    font-weight: 400;
+    opacity: 0.5;
 }
 
 .mock-test-marking-section-row-types
 {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 14px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px 12px;
+    min-width: 0;
 }
 
 .mock-test-marking-section-type-checkbox
 {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 7px;
     font-size: 0.8rem;
     opacity: 0.9;
     cursor: pointer;
+    min-width: 0;
+}
+
+.mock-test-marking-section-type-checkbox > span
+{
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .mock-test-marking-section-type-checkbox input[type="checkbox"]
 {
     accent-color: var(--gradient-start-color);
     cursor: pointer;
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
 }
 
-.mock-test-section-row-counts
+/* Every numeric control in a section sits in this grid, so the "Questions",
+   "Marks" and "Scoring override" groups line up with each other instead of
+   each inventing its own column widths. */
+.mock-test-section-field-grid,
+.mock-test-marking-section-row-rule
 {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 8px;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
     min-width: 0;
 }
 
-.mock-test-section-row-count-label
+.mock-test-section-field
 {
-    display: grid;
-    /* Use minmax(0, ...) on the input column so it can shrink below
-       110px on narrow viewports instead of pushing the row past the
-       container. The label column uses 1fr minmax(0,...) for the same
-       reason. */
-    grid-template-columns: minmax(0, 1fr) minmax(80px, 110px);
-    align-items: center;
-    gap: 8px;
-    font-size: 0.82rem;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 0.78rem;
     opacity: 0.9;
     min-width: 0;
 }
 
-.mock-test-section-row-count-label > span
+.mock-test-section-field[hidden]
+{
+    display: none;
+}
+
+.mock-test-section-field > span
 {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.75;
 }
 
-.mock-test-marking-section-row-rule
+.mock-test-section-field-wide
 {
-    display: grid;
-    /* Same minmax-0 trick — the row holds 4 number inputs that should
-       split available width evenly. Without minmax(0, ...) the inputs
-       refuse to shrink below their intrinsic width on narrow viewports
-       and the rightmost two get clipped past the panel edge. */
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 6px;
-    min-width: 0;
+    grid-column: span 2;
 }
 
-.mock-test-section-row-fixed-count
+/* The "here is what that adds up to" line: the quantity the user did not type.
+   Deliberately quiet — it is a readout, not a control. */
+.mock-test-section-derived-line
 {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-    min-width: 0;
-}
-
-.mock-test-section-row-fixed-count[hidden]
-{
-    display: none;
-}
-
-.mock-test-section-row-range
-{
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 0;
-}
-
-.mock-test-section-row-range[hidden]
-{
-    display: none;
-}
-
-.mock-test-section-row-range-bounds
-{
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 8px;
-    min-width: 0;
-}
-
-.mock-test-section-row-weights-panel
-{
-    font-size: 0.78rem;
-    opacity: 0.85;
-}
-
-.mock-test-section-row-weights-panel > summary
-{
-    cursor: pointer;
-    padding: 4px 2px;
-    user-select: none;
-}
-
-.mock-test-section-row-weights-grid
-{
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
-    gap: 6px;
-    margin-top: 6px;
-    min-width: 0;
-}
-
-.mock-test-section-row-weight-cell
-{
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 2px;
-    align-items: center;
-    font-size: 0.75rem;
-    text-align: center;
-    min-width: 0;
-}
-
-.mock-test-section-row-weight-cell > span
-{
+    font-size: 0.76rem;
+    line-height: 1.5;
     opacity: 0.7;
-}
-
-.mock-test-section-row-weight-input
-{
-    width: 100%;
-    padding: 4px 6px;
-    border-radius: 5px;
-    background-color: var(--secondary-background-color);
-    color: var(--primary-text-color);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    font-size: 0.8rem;
-    text-align: center;
-    box-sizing: border-box;
-}
-
-.mock-test-section-row-weight-input:focus
-{
-    outline: none;
-    border-color: var(--gradient-start-color);
-}
-
-.mock-test-section-mode-select
-{
-    padding: 6px 8px;
+    padding: 6px 9px;
     border-radius: 6px;
-    background-color: var(--secondary-background-color);
-    color: var(--primary-text-color);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    font-size: 0.85rem;
-    width: 100%;
-    box-sizing: border-box;
+    background-color: rgba(255, 255, 255, 0.03);
+    border-left: 2px solid var(--gradient-start-color);
 }
 
-.mock-test-section-mode-select:focus
+.mock-test-section-derived-line:empty
 {
-    outline: none;
-    border-color: var(--gradient-start-color);
+    display: none;
 }
 
 .mock-test-section-structure-summary
 {
     font-size: 0.82rem;
+    line-height: 1.5;
     opacity: 0.85;
-    padding: 6px 8px;
+    padding: 8px 10px;
     border-radius: 6px;
     background-color: rgba(0, 152, 196, 0.08);
     border: 1px solid rgba(0, 152, 196, 0.25);
@@ -447,36 +410,104 @@
     font-weight: 500;
 }
 
+/* ── Tablets, split screen and landscape phones ──────────────────────────────
+   The type-override row is the widest thing in the panel: a select plus four
+   number fields plus a remove button. Below this width it stacks rather than
+   compressing every column past legibility. */
+@media (max-width: 820px)
+{
+    .mock-test-marking-override-row
+    {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) 32px;
+    }
+
+    .mock-test-marking-override-row > .mock-test-marking-override-type-select
+    {
+        grid-column: 1 / span 2;
+    }
+
+    .mock-test-marking-section-row-types
+    {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    }
+}
+
 @media (max-width: 600px)
 {
     .mock-test-marking-section
     {
         padding: 12px;
+        gap: 14px;
+    }
+
+    .mock-test-marking-section-override-row
+    {
+        padding: 12px;
+    }
+
+    .mock-test-marking-row
+    {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 90px);
+        gap: 8px;
+    }
+
+    .mock-test-marking-section-row-types
+    {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    }
+
+    .mock-test-section-field-grid,
+    .mock-test-marking-section-row-rule
+    {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .mock-test-section-field-wide
+    {
+        grid-column: 1 / -1;
+    }
+
+    /* Touch targets: 7px padding on a 0.85rem input is comfortable with a
+       mouse and cramped with a thumb. */
+    .mock-test-marking-section input[type="number"],
+    .mock-test-marking-section input[type="text"],
+    .mock-test-marking-section select
+    {
+        padding: 9px;
+        min-height: 38px;
+    }
+
+    .mock-test-marking-override-remove-button,
+    .mock-test-marking-section-remove-button
+    {
+        width: 32px;
+        height: 32px;
+    }
+}
+
+/* Portrait phones have the least horizontal room of anything the app runs on,
+   and the four scoring-override boxes are the first thing to become unusable
+   at two per row. */
+@media (orientation: portrait) and (max-width: 430px)
+{
+    .mock-test-section-field-grid,
+    .mock-test-marking-section-row-rule
+    {
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .mock-test-marking-override-row
     {
-        grid-template-columns: 1fr 1fr 32px;
-        grid-template-areas:
-            "type type remove"
-            "correct wrong wrong"
-            "unattempted partial partial";
+        grid-template-columns: minmax(0, 1fr) 32px;
     }
 
-    .mock-test-marking-override-row .mock-test-marking-override-type-select { grid-area: type; }
-    .mock-test-marking-override-row .mock-test-marking-override-remove-button { grid-area: remove; }
-    .mock-test-marking-override-row .mock-test-marking-override-correct-input { grid-area: correct; }
-    .mock-test-marking-override-row .mock-test-marking-override-wrong-input { grid-area: wrong; }
-    .mock-test-marking-override-row .mock-test-marking-override-unattempted-input { grid-area: unattempted; }
-    .mock-test-marking-override-row .mock-test-marking-override-partial-input { grid-area: partial; }
-
-    .mock-test-marking-section-row-rule
+    .mock-test-marking-override-row > .mock-test-marking-override-type-select
     {
-        grid-template-columns: 1fr 1fr;
+        grid-column: 1 / span 1;
     }
 
-    .mock-test-section-row-counts
+    .mock-test-marking-override-field
     {
-        grid-template-columns: 1fr;
+        grid-column: 1 / span 2;
     }
 }

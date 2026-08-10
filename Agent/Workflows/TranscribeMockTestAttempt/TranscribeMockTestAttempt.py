@@ -39,6 +39,11 @@ class TranscribeMockTestAttempt(Workflow):
         Tasks/{taskId}/MockTestTranscriptions/TranscriptionRequest.json
         Tasks/{taskId}/MockTestTranscriptions/scan_0.<ext>, scan_1.<ext>, ...
     and reads TranscribedAnswers.json back from the same directory.
+
+    That directory's lifetime belongs to the Dock: the endpoint registers it with
+    EphemeralUploadRegistry for the published answer-sheet dispute window before
+    the first byte is staged, and the reaper reclaims it when the window ends.
+    This workflow reads from it and never deletes from it.
     """
 
     # A phone photo of an A4 sheet at ~1600px on the long edge is comfortably
@@ -125,20 +130,20 @@ class TranscribeMockTestAttempt(Workflow):
         page_images = await self.__load_scan_images(transcriptions_directory, scan_file_names, write_log)
         write_log(f"[TranscribeMockTestAttempt] Prepared {len(page_images)} page image(s) for transcription.")
 
-        # The scans are now normalized PNG bytes held in memory, and nothing
-        # reads the stored copies again — not this workflow, not evaluation, and
-        # not the client (GetTranscriptionResult returns the transcription JSON
-        # alone, and the review page renders the File objects the browser still
-        # holds). A retry re-uploads from the browser as a brand-new task rather
-        # than re-reading these, so keeping them for retry would be pointless.
+        # The stored scans are deliberately left in place. This workflow does not
+        # need them again — the normalized PNG bytes are in memory and a retry
+        # re-uploads from the browser as a brand-new task — but the transcription
+        # is what gets graded, so the Privacy Policy commits to keeping the
+        # original readable for the dispute window (ANSWER_SHEET_RETENTION_DAYS)
+        # in case the candidate challenges the transcription or their marks.
         #
-        # Deleting at the earliest safe point rather than at the end means every
-        # later failure path — LLM error, write failure, a killed worker — also
-        # leaves nothing behind, so no separate sweeper is needed. These are
-        # photographs of a named student's handwriting that frequently capture
-        # the printed question paper too; retaining them past use has no
-        # product justification.
-        await self.__delete_scan_files(transcriptions_directory, scan_file_names, write_log)
+        # Deletion is therefore the Dock's job, not this worker's:
+        # TranscribeOfflineAttempt registers this prefix with
+        # EphemeralUploadRegistry before staging anything, and
+        # ExpiredInformationSourceReaper purges it once the window elapses.
+        # Account deletion purges it immediately. Deleting here would beat both
+        # to it and break the guarantee — a worker that runs before the window
+        # opens must not be the thing that closes it.
         await TaskManager.increment_completion(parent_task_id, 0.2)
         await flush_log()
 
@@ -247,26 +252,6 @@ class TranscribeMockTestAttempt(Workflow):
             f"unmatched={len(unmatched_blocks)} failed={transcription_failed}"
         )
         await flush_log()
-
-    @staticmethod
-    async def __delete_scan_files(transcriptions_directory, scan_file_names, write_log):
-        """
-        Removes the uploaded answer-sheet images from storage once they have been
-        loaded into memory.
-
-        A deletion failure never fails the task — the images are already in hand
-        and the transcription can still be produced. The failure is logged so a
-        storage problem is visible rather than silently leaving scans behind.
-        """
-        deleted_count = 0
-        for scan_file_name in scan_file_names or []:
-            try:
-                await Persistence.delete(join_path(transcriptions_directory, scan_file_name))
-                deleted_count += 1
-            except Exception as delete_error:
-                write_log(f"[TranscribeMockTestAttempt] Could not delete scan '{scan_file_name}': {delete_error}")
-
-        write_log(f"[TranscribeMockTestAttempt] Deleted {deleted_count}/{len(scan_file_names or [])} scan file(s) after transcription.")
 
     # ── Scan loading / image normalization ──────────────────────────────────────
 

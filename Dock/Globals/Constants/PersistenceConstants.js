@@ -5,6 +5,7 @@ class PersistenceConstants
     static SYLLABUS_FILE_NAME = 'Syllabus.json';
     static COVERAGE_SUMMARIES_FILE_NAME = 'CoverageSummaries.json';
     static COVERAGE_RECONCILIATION_FILE_NAME = 'CoverageReconciliation.json';
+    static SOURCE_GROUNDED_CONTENT_FILE_NAME = 'SourceGroundedContent.json';
     static GENERATED_VISUALS_DIRECTORY = 'GeneratedVisuals';
     static PAID_DECK_VERIFICATION_FILE_NAME = 'PaidDeckVerification.json';
     static PAID_DECK_SOURCE_VERIFICATION_DIRECTORY = 'PaidDeckSourceVerification';

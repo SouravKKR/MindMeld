@@ -58,6 +58,20 @@ class AiFeatureGate
      */
     static getCurrentPlanTier()
     {
+        // Inside an administrator's simulated plan view the tier IS the
+        // simulation. This is the single branch that makes the whole client
+        // behave as that tier — hasFeature below reads it, and so does the
+        // storage meter's fallback denominator — and the server agrees, because
+        // PlanEntitlementGate evaluates the same simulated tier for the same
+        // request. A client-only simulation would have been worse than none: the
+        // administrator would be testing this gate's wording against a server
+        // that would have answered the opposite.
+        const planViewTierName = UserIdentityManager.getPlanViewTierName();
+        if (planViewTierName.length > 0 && planTiers[planViewTierName] !== undefined)
+        {
+            return planTiers[planViewTierName];
+        }
+
         // Read the plan from additionalData directly — the User model is
         // codegen-derived and carries no plan getter. Applies read-time expiry
         // so a lapsed plan shows as FREE. UX only; the server re-authorizes.
@@ -74,6 +88,27 @@ class AiFeatureGate
             return planTiers.FREE;
         }
         return storedTier;
+    }
+
+    /**
+     * The sentence appended to an upgrade refusal while a plan is being
+     * simulated. Without it an administrator on Pro Plus is told to "upgrade
+     * your plan" by an app they are deliberately running as a Free user, which
+     * reads as a bug rather than as the faithful reproduction it is.
+     */
+    static #buildSimulationNote()
+    {
+        const planViewTierName = UserIdentityManager.getPlanViewTierName();
+
+        if (planViewTierName.length === 0)
+        {
+            return "";
+        }
+
+        const metadata = PlanMetadataConstants[planViewTierName];
+        const tierLabel = metadata ? metadata.label : planViewTierName;
+
+        return ` This is what a ${tierLabel} user sees — you are viewing the app as that plan, and your own account is unchanged.`;
     }
 
     static #tierName(tier)
@@ -186,7 +221,7 @@ class AiFeatureGate
         const upgradeTarget = metadata ? `${metadata.label} plan` : "a higher plan";
         await DialogBox.alert(
             AiFeatureGate.UPGRADE_TITLE,
-            `${featureLabel} is available on the ${upgradeTarget}. Upgrade your plan to unlock it.`
+            `${featureLabel} is available on the ${upgradeTarget}. Upgrade your plan to unlock it.${AiFeatureGate.#buildSimulationNote()}`
         );
     }
 
@@ -245,7 +280,7 @@ class AiFeatureGate
         const upgradeTarget = minimumTier ? `${minimumTier.label} plan` : "a higher plan";
         await DialogBox.alert(
             AiFeatureGate.UPGRADE_TITLE,
-            `${featureLabel} is available on the ${upgradeTarget}. Upgrade your plan to unlock it.`
+            `${featureLabel} is available on the ${upgradeTarget}. Upgrade your plan to unlock it.${AiFeatureGate.#buildSimulationNote()}`
         );
         return false;
     }

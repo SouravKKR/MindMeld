@@ -1,19 +1,33 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import SourceLicenceDeclarationForm from "../../../CommonComponents/SourceLicenceDeclarationForm.js";
+import { sourceUsageModes } from "../../../Globals/Enumerations/SourceUsageModes.js";
 
 /**
  * PaidDeckVerificationSourcesDialog
  *
  * Manages the documents and pages a paid deck's generated content is checked
- * AGAINST, and shows the permanent record of every licence declared for them.
+ * against — or written from — and shows the permanent record of every licence
+ * declared for them.
  *
- * WHAT THESE SOURCES ARE. Paid-deck generation accepts a curriculum or syllabus
- * and writes content from model knowledge — it never reads a third-party
- * document, and the audit trail says so. A source attached here is read only by
- * the verification pass, which runs afterwards over content that already exists
- * and can only raise flags for a person to review. The dialog says this in as
- * many words, because an administrator who believed these were generation
- * inputs would attach the wrong things for the wrong reasons.
+ * WHAT A SOURCE IS USED FOR IS PER SOURCE, and the dialog shows it on every
+ * card because the two mean very different things:
+ *
+ *   Checking only — the default. The document is read by the verification pass,
+ *       which runs after content already exists and can only raise flags for a
+ *       person to review. Nothing in the deck was written from it.
+ *   Writing content, and checking — the deck's content may also be written from
+ *       this document. Offered only under a licence that records a right to
+ *       create new material from it, and refused by the server otherwise.
+ *
+ * They rest on different bases — independent creation for the first, the
+ * declared licence for the second — and the audit report keeps them apart, per
+ * topic. An administrator who could not see which a source was would not be able
+ * to tell which claim their deck actually supports.
+ *
+ * The ordinary generation source list is unaffected: it still accepts a
+ * curriculum or syllabus and nothing else. A licensed document reaches
+ * generation through this dialog, where its licence is declared and the file is
+ * retained as proof, or not at all.
  *
  * TWO VIEWS, NOT ONE LIST. "Attached" is the working set a check would use right
  * now; "Declarations" is every attachment and removal ever recorded, including
@@ -30,7 +44,9 @@ class PaidDeckVerificationSourcesDialog
 {
     static #LIST_ENDPOINT = "/Admin/PaidDecks/VerificationSources/List";
     static #ATTACH_ENDPOINT = "/Admin/PaidDecks/VerificationSources/Attach";
+    static #UPDATE_ENDPOINT = "/Admin/PaidDecks/VerificationSources/Update";
     static #DETACH_ENDPOINT = "/Admin/PaidDecks/VerificationSources/Detach";
+    static #DOWNLOAD_ENDPOINT = "/Admin/PaidDecks/VerificationSource";
     static #RUN_ENDPOINT = "/Admin/PaidDecks/VerificationSources/Run";
     static #STATUS_ENDPOINT = "/Admin/PaidDecks/VerificationSources/Status";
     static #UPLOAD_ENDPOINT = "/InformationSource/Upload";
@@ -215,6 +231,8 @@ class PaidDeckVerificationSourcesDialog
             ? this.#buildDeclarationsMarkup()
             : this.#buildAttachedMarkup();
 
+        this.#wireEditButtons(bodyElement);
+        this.#wireDownloadButtons(bodyElement);
         this.#wireDetachButtons(bodyElement);
         this.#renderRunStatus();
         this.#renderActionAvailability();
@@ -254,10 +272,26 @@ class PaidDeckVerificationSourcesDialog
                     <span>${PaidDeckVerificationSourcesDialog.#escape(source.declaredByUserId || "")}</span>
                 </div>
                 <div class="verification-source-row">
+                    <span class="verification-source-label">Used for</span>
+                    <span class="verification-source-usage verification-source-usage-${Number(source.usageMode) === sourceUsageModes.CONTENT_AND_VERIFICATION ? "content" : "verification"}">
+                        ${Number(source.usageMode) === sourceUsageModes.CONTENT_AND_VERIFICATION
+                            ? "Writing content, and checking"
+                            : "Checking only"}
+                    </span>
+                </div>
+                ${source.sourceNote ? `
+                    <div class="verification-source-row">
+                        <span class="verification-source-label">Note</span>
+                        <span class="verification-source-value-wrap">${PaidDeckVerificationSourcesDialog.#escape(source.sourceNote)}</span>
+                    </div>` : ""}
+                <div class="verification-source-row">
                     <span class="verification-source-label">Attached</span>
                     <span>${source.attachedAt ? PaidDeckVerificationSourcesDialog.#escape(new Date(source.attachedAt).toLocaleString()) : ""}</span>
                 </div>
                 <div class="verification-source-card-actions">
+                    <button type="button" class="verification-source-edit" data-source-id="${PaidDeckVerificationSourcesDialog.#escape(source.id)}">Edit note / usage</button>
+                    ${source.contentHash ? `
+                        <button type="button" class="verification-source-download" data-source-id="${PaidDeckVerificationSourcesDialog.#escape(source.id)}">Download source</button>` : ""}
                     <button type="button" class="verification-source-detach" data-source-id="${PaidDeckVerificationSourcesDialog.#escape(source.id)}">Detach</button>
                 </div>
             </div>
@@ -337,6 +371,178 @@ class PaidDeckVerificationSourcesDialog
         }
     }
 
+    /**
+     * "Edit note / usage" — the two fields on an attached source that may
+     * legitimately be revised after the fact.
+     *
+     * Everything else about a source is fixed at attach time: its document, its
+     * hash, its licence, who declared it and when. Changing one of those is a
+     * different source, and should be a detach and a re-attach that both appear
+     * in the history rather than an edit that quietly rewrites it.
+     *
+     * The edit itself appends to the declaration log — the server writes the
+     * event before touching the row — so the previous note and the previous
+     * usage stay visible in the Declarations tab.
+     */
+    #wireEditButtons(bodyElement)
+    {
+        for (const editButton of bodyElement.querySelectorAll(".verification-source-edit"))
+        {
+            editButton.addEventListener("click", async () =>
+            {
+                const source = this.#sources.find(candidate => candidate.id === editButton.dataset.sourceId);
+
+                if (!source)
+                {
+                    return;
+                }
+
+                const revision = await PaidDeckVerificationSourcesDialog.#promptSourceRevision(source);
+
+                if (revision === null)
+                {
+                    return;
+                }
+
+                editButton.disabled = true;
+                this.#showError(null);
+
+                try
+                {
+                    await PaidDeckVerificationSourcesDialog.#post(
+                        PaidDeckVerificationSourcesDialog.#UPDATE_ENDPOINT,
+                        {
+                            verificationSourceId: source.id,
+                            usageMode: revision.usageMode,
+                            sourceNote: revision.sourceNote,
+                        });
+
+                    await this.#refresh();
+                }
+                catch (updateError)
+                {
+                    editButton.disabled = false;
+                    this.#showError(updateError.message);
+                }
+            });
+        }
+    }
+
+    /**
+     * "Download source" — retrieves the declared document itself.
+     *
+     * Navigated to rather than fetched, so the browser's own download handling
+     * takes it: the response is a file with a Content-Disposition, and reading
+     * it into memory here to re-offer it would gain nothing and would break for
+     * a large textbook. Shown only for a source that has stored bytes; a
+     * URL-only source has none of ours to serve.
+     */
+    #wireDownloadButtons(bodyElement)
+    {
+        for (const downloadButton of bodyElement.querySelectorAll(".verification-source-download"))
+        {
+            downloadButton.addEventListener("click", () =>
+            {
+                const downloadUrl = `${PaidDeckVerificationSourcesDialog.#DOWNLOAD_ENDPOINT}`
+                    + `?verificationSourceId=${encodeURIComponent(downloadButton.dataset.sourceId)}`;
+
+                window.open(downloadUrl, "_blank");
+            });
+        }
+    }
+
+    /**
+     * Asks for the revised usage and note, seeded with what is stored now.
+     *
+     * Reuses SourceLicenceDeclarationForm's rule about which licences permit
+     * content usage rather than restating it, so the disabled option and the
+     * reason behind it stay in one place. The licence itself is shown but not
+     * editable here — it is what the rule is applied TO.
+     */
+    static #promptSourceRevision(source)
+    {
+        const storedUsageMode = Number(source.usageMode) === sourceUsageModes.CONTENT_AND_VERIFICATION
+            ? sourceUsageModes.CONTENT_AND_VERIFICATION
+            : sourceUsageModes.VERIFICATION_ONLY;
+
+        const bPermitsContent = SourceLicenceDeclarationForm.permitsContentUsage(source.licenceType);
+
+        return new Promise((resolve) =>
+        {
+            const dialog = DialogBox.modal(`
+                <div class="source-licence-dialog">
+                    <div class="title-section">Edit this source</div>
+                    <div class="message-section">
+                        Declared licence:
+                        ${PaidDeckVerificationSourcesDialog.#escape(
+                            SourceLicenceDeclarationForm.describeLicence(source.licenceType, source.licenceNote))}.
+                        The licence itself cannot be changed here — detach the source and re-attach it if it was
+                        declared wrongly, so both acts appear in the history.
+                    </div>
+                    <div class="source-licence-fields">
+                        <label class="source-licence-field">
+                            <span>How this source is used</span>
+                            <select data-role="source-usage-mode">
+                                <option value="${sourceUsageModes.VERIFICATION_ONLY}">Check the deck against it only</option>
+                                <option value="${sourceUsageModes.CONTENT_AND_VERIFICATION}"${bPermitsContent ? "" : " disabled"}>
+                                    Also write the deck's content from it${bPermitsContent ? "" : " — not available under this licence"}
+                                </option>
+                            </select>
+                        </label>
+                        <label class="source-licence-field">
+                            <span>Note (anything worth recording about this source — kept in the audit report)</span>
+                            <textarea data-role="source-note" maxlength="2048" rows="3"></textarea>
+                        </label>
+                        <div class="source-licence-error" data-role="licence-error" hidden></div>
+                    </div>
+                    <div class="button-section">
+                        <button type="button" class="cancel-button">Cancel</button>
+                        <button type="button" class="ok-button">Save</button>
+                    </div>
+                </div>
+            `);
+
+            dialog.querySelector('[data-role="source-usage-mode"]').value = String(storedUsageMode);
+            dialog.querySelector('[data-role="source-note"]').value = source.sourceNote || "";
+
+            let bResolved = false;
+            const finalize = (value) =>
+            {
+                if (bResolved)
+                {
+                    return;
+                }
+                bResolved = true;
+                dialog.close();
+                resolve(value);
+            };
+
+            dialog.querySelector(".ok-button").addEventListener("click", () =>
+            {
+                const usageMode = Number(dialog.querySelector('[data-role="source-usage-mode"]').value);
+                const sourceNote = dialog.querySelector('[data-role="source-note"]').value.trim();
+
+                if (usageMode === sourceUsageModes.CONTENT_AND_VERIFICATION && !bPermitsContent)
+                {
+                    const errorElement = dialog.querySelector('[data-role="licence-error"]');
+                    errorElement.textContent = "This licence does not record a right to create new material from the source.";
+                    errorElement.hidden = false;
+                    return;
+                }
+
+                finalize({ usageMode: usageMode, sourceNote: sourceNote });
+            });
+
+            dialog.querySelector(".cancel-button").addEventListener("click", () => finalize(null));
+
+            const closeButton = dialog.querySelector(".close-button");
+            if (closeButton)
+            {
+                closeButton.addEventListener("click", () => finalize(null));
+            }
+        });
+    }
+
     #wireDetachButtons(bodyElement)
     {
         for (const detachButton of bodyElement.querySelectorAll(".verification-source-detach"))
@@ -381,10 +587,11 @@ class PaidDeckVerificationSourcesDialog
         // before anyone has said whether it may be.
         const declaration = await SourceLicenceDeclarationForm.prompt({
             title: "On what basis may this source be used?",
-            message: "This document will be used to check content that is sold. Declare the basis on which it may be "
-                + "used — you are stating this, and the document is retained alongside your declaration so it can "
-                + "be produced later.",
+            message: "This document will be used against content that is sold — to check it, and, if you say so "
+                + "below, to write it. Declare the basis on which it may be used: you are stating this, and the "
+                + "document is retained alongside your declaration so it can be produced later.",
             bShowUrlField: true,
+            bShowUsageFields: true,
             urlLabel: "Source URL (where this document came from)",
         });
 
@@ -413,6 +620,8 @@ class PaidDeckVerificationSourcesDialog
                 sourceUrl: declaration.sourceUrl,
                 licenceType: declaration.licenceType,
                 licenceNote: declaration.licenceNote,
+                usageMode: declaration.usageMode,
+                sourceNote: declaration.sourceNote,
             });
 
             await this.#refresh();
@@ -427,9 +636,10 @@ class PaidDeckVerificationSourcesDialog
     {
         const declaration = await SourceLicenceDeclarationForm.prompt({
             title: "On what basis may this page be used?",
-            message: "This page will be consulted to check content that is sold. Give its address and declare the "
+            message: "This page will be consulted against content that is sold. Give its address and declare the "
                 + "basis on which it may be used.",
             bShowUrlField: true,
+            bShowUsageFields: true,
             urlLabel: "Page URL",
         });
 
@@ -454,6 +664,8 @@ class PaidDeckVerificationSourcesDialog
                 name: declaration.sourceUrl,
                 licenceType: declaration.licenceType,
                 licenceNote: declaration.licenceNote,
+                usageMode: declaration.usageMode,
+                sourceNote: declaration.sourceNote,
             });
 
             await this.#refresh();

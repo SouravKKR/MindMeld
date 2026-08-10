@@ -1,0 +1,12 @@
+Subject: {subject_name}
+{exam_context}
+
+Topic (syllabus position): {topic_chain}
+
+COVERAGE SPECIFICATION FOR THIS TOPIC:
+{coverage_specification}
+
+PASSAGES FROM THE LICENSED REFERENCE DOCUMENT:
+{reference_block}
+
+Write the content chunks for this topic from these passages, filling gaps from your own knowledge where the passages are silent and marking those chunks as instructed.

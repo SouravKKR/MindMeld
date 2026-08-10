@@ -60,6 +60,17 @@
             "defaultValue": "",
             "maxLength": 1024
         },
+        "usageMode":
+        {
+            "datatype": "enum:SourceUsageModes",
+            "defaultValue": 0
+        },
+        "sourceNote":
+        {
+            "datatype": "string",
+            "defaultValue": "",
+            "maxLength": 2048
+        },
         "declaredByUserId":
         {
             "datatype": "string",

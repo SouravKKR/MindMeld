@@ -97,7 +97,17 @@ const CLASS_OWNERSHIP =
             "content-refinement-preview", "content-refinement-section", "content-refinement-instruction",
             "content-refinement-submit", "content-refinement-empty", "content-refinement-figure",
             "content-refinement-figure-heading", "content-refinement-figure-method",
-            "content-refinement-figure-caption", "content-refinement-figure-actions", "content-refinement-figure-note"],
+            "content-refinement-figure-caption", "content-refinement-figure-actions", "content-refinement-figure-note",
+            // Search and multi-selection. "is-preview-anchor" is the one state
+            // that must not share a look with "is-selected" — see the stylesheet.
+            "content-refinement-list-column", "content-refinement-search", "content-refinement-search-input",
+            "content-refinement-search-clear", "is-preview-anchor", "is-selected",
+            "content-refinement-selection-summary", "content-refinement-selection-count",
+            "content-refinement-selection-clear", "refinement-rendered-passage"],
+    },
+    {
+        sourceFile: "Main/Pages/ContentRefinement/Classes/BatchRefinementRunner.js",
+        classNames: ["content-refinement-run-failures"],
     },
     {
         sourceFile: "Main/CommonComponents/RefinementProposalDialog.js",
@@ -106,7 +116,10 @@ const CLASS_OWNERSHIP =
             "refinement-proposal-apply", "refinement-proposal-summary", "refinement-proposal-concerns",
             "refinement-proposal-sources", "refinement-proposal-model", "refinement-proposal-notice",
             "refinement-comparison", "refinement-pane", "refinement-pane-heading", "refinement-pane-body",
-            "refinement-vision-verdict", "refinement-vision-heading", "refinement-muted"],
+            "refinement-vision-verdict", "refinement-vision-heading", "refinement-muted",
+            // Present only while reviewing a run.
+            "refinement-proposal-progress", "refinement-proposal-stop", "refinement-proposal-apply-remaining",
+            "refinement-rendered-passage"],
     },
     {
         sourceFile: "Main/Pages/ContentRefinement/Components/RefinementSourceAttachment.js",
@@ -317,17 +330,37 @@ function buildRefinementPageMarkup()
         </div>`;
 }
 
+/**
+ * A text pane the way one now actually arrives: real block markup with the
+ * changed words marked INSIDE it.
+ *
+ * The stand-in used to be a bare text run with a <mark> in it, which was an
+ * accurate model of a diff that flattened everything to text — and stopped being
+ * one the moment the diff started preserving markup. A stand-in that no longer
+ * resembles what ships is the exact drift this file's header claims to guard
+ * against, so it carries every element the new typography styles: a heading, a
+ * paragraph, a list, a table, a figure, and the unbreakable token that is here
+ * to try to widen the container.
+ */
+function buildTextPaneBody(markClassName, changedValue)
+{
+    return `<h2>Refraction</h2>`
+        + `<p>The refractive index of water is <mark class="${markClassName}">${changedValue}</mark> and light travels at 3.0 x 10^8 m/s in vacuum.</p>`
+        + `<ul><li>Denser medium, slower light</li><li>supercalifragilisticexpialidociousunbrokentokenthatmustnotwidenthecontainer</li></ul>`
+        + `<table><tr><th>Medium</th><th>Index</th></tr><tr><td>Water</td><td>${changedValue}</td></tr></table>`
+        + `<pre>a very wide preformatted block ................................................................ end</pre>`
+        + WIDE_SVG_FIGURE;
+}
+
 function buildProposalDialogMarkup(bVisualComparison)
 {
     const beforeBody = bVisualComparison
         ? WIDE_SVG_FIGURE
-        : `<mark class="refinement-diff-removed">1.10</mark> and light travels at 3.0 x 10^8 m/s in vacuum. `
-            + "supercalifragilisticexpialidociousunbrokentokenthatmustnotwidenthecontainer";
+        : buildTextPaneBody("refinement-diff-removed", "1.10");
 
     const afterBody = bVisualComparison
         ? WIDE_SVG_FIGURE
-        : `<mark class="refinement-diff-added">1.33</mark> and light travels at 3.0 x 10^8 m/s in vacuum. `
-            + "supercalifragilisticexpialidociousunbrokentokenthatmustnotwidenthecontainer";
+        : buildTextPaneBody("refinement-diff-added", "1.33");
 
     const visionVerdict = bVisualComparison
         ? `<div class="refinement-vision-verdict">
@@ -352,11 +385,11 @@ function buildProposalDialogMarkup(bVisualComparison)
                 <div class="refinement-comparison">
                     <div class="refinement-pane">
                         <div class="refinement-pane-heading">Now</div>
-                        <div class="refinement-pane-body">${beforeBody}</div>
+                        <div class="refinement-pane-body refinement-rendered-passage">${beforeBody}</div>
                     </div>
                     <div class="refinement-pane">
                         <div class="refinement-pane-heading">Proposed</div>
-                        <div class="refinement-pane-body">${afterBody}</div>
+                        <div class="refinement-pane-body refinement-rendered-passage">${afterBody}</div>
                     </div>
                 </div>
             </div>
@@ -730,6 +763,43 @@ async function main()
                 sourceLinkColor: window.getComputedStyle(document.querySelector(".refinement-proposal-sources a")).color,
             };
         });
+
+        // THE defect this pane was reported for: it used to render as one
+        // continuous text run, because the diff flattened both sides to
+        // textContent before the dialog ever saw them. Measured as geometry
+        // rather than as markup — a heading, a paragraph and a list that all
+        // start at the same vertical position are a wall of text whatever tags
+        // are nominally present.
+        const passageLayout = await page.evaluate(() =>
+        {
+            const pane = document.querySelector(".refinement-pane-body");
+            const blocks = Array.from(pane.querySelectorAll("h2, p, ul, table, pre"));
+
+            return {
+                blockCount: blocks.length,
+                distinctTops: new Set(blocks.map(block => Math.round(block.getBoundingClientRect().top))).size,
+                headingWeight: window.getComputedStyle(pane.querySelector("h2")).fontWeight,
+                headingSize: parseFloat(window.getComputedStyle(pane.querySelector("h2")).fontSize),
+                paragraphSize: parseFloat(window.getComputedStyle(pane.querySelector("p")).fontSize),
+                listIndent: parseFloat(window.getComputedStyle(pane.querySelector("ul")).marginLeft),
+                bFigureRendered: pane.querySelector("figure svg") !== null,
+                markCount: pane.querySelectorAll("mark").length,
+            };
+        });
+
+        assert(passageLayout.blockCount >= 5, `The pane holds real block markup (${passageLayout.blockCount} blocks)`);
+        assert(
+            passageLayout.distinctTops === passageLayout.blockCount,
+            `...laid out as separate blocks rather than one text run (${passageLayout.distinctTops} distinct tops for ${passageLayout.blockCount} blocks)`,
+        );
+        assert(Number(passageLayout.headingWeight) >= 700, `...with headings actually bold (${passageLayout.headingWeight})`);
+        assert(
+            passageLayout.headingSize > passageLayout.paragraphSize,
+            `...and larger than body text (${passageLayout.headingSize}px vs ${passageLayout.paragraphSize}px)`,
+        );
+        assert(passageLayout.listIndent > 0, `...lists indented (${passageLayout.listIndent}px)`);
+        assert(passageLayout.bFigureRendered, "...and the figure survives into the pane instead of being deleted");
+        assert(passageLayout.markCount > 0, "The changed words are still marked inside that markup");
 
         assert(dialogLayout.dialogWidth <= VIEWPORT_WIDTH, `Dialog fits the viewport (${dialogLayout.dialogWidth}px)`);
         assert(

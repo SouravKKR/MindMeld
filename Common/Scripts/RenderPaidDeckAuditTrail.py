@@ -463,14 +463,34 @@ def build_source_declaration(provenance):
     """
     sources = provenance.get("sources") or []
     accepted_type = provenance.get("acceptedSourceTypeName") or "CURRICULUM_OR_SYLLABUS"
+    source_grounded_topic_count = count_source_grounded_topics(provenance)
 
-    blocks = [make_callout(
-        "This deck was produced in the admin-only paid-deck generation mode. In that mode the "
-        f"pipeline accepts information sources of type <b>{html_escape(accepted_type)}</b> and no other "
-        "type. Uploaded documents (<b>PROVIDED_DOCUMENTS</b>), image sources and open web sources are "
-        "rejected at the point of submission, so no such source formed part of this generation. "
-        "Content was written from the model's own knowledge of the subject against the syllabus below."
-    )]
+    # The claim this callout makes depends on whether a licensed document was
+    # admitted as a CONTENT source for this run. Both wordings are true of the
+    # information-source list — which still accepts a syllabus and nothing else —
+    # but only the first is true of the deck as a whole. Printing the first
+    # unconditionally would have the report deny, in its most prominent
+    # paragraph, something section 1c goes on to describe in detail.
+    if source_grounded_topic_count > 0:
+        blocks = [make_callout(
+            "This deck was produced in the admin-only paid-deck generation mode. In that mode the "
+            f"pipeline accepts information sources of type <b>{html_escape(accepted_type)}</b> and no "
+            "other type. Uploaded documents (<b>PROVIDED_DOCUMENTS</b>), image sources and open web "
+            "sources are rejected at the point of submission, so no such source entered this run "
+            "through the generation source list. "
+            f"<b>Part of this deck was written from licensed source documents</b> admitted separately, "
+            "each under a declared licence and retained as proof of it — see section 1c, which names "
+            "every topic concerned and the passages it was written from. The remaining topics were "
+            "written from the model's own knowledge of the subject against the syllabus below."
+        )]
+    else:
+        blocks = [make_callout(
+            "This deck was produced in the admin-only paid-deck generation mode. In that mode the "
+            f"pipeline accepts information sources of type <b>{html_escape(accepted_type)}</b> and no other "
+            "type. Uploaded documents (<b>PROVIDED_DOCUMENTS</b>), image sources and open web sources are "
+            "rejected at the point of submission, so no such source formed part of this generation. "
+            "Content was written from the model's own knowledge of the subject against the syllabus below."
+        )]
 
     if sources:
         blocks.append(Spacer(1, 8))
@@ -500,6 +520,237 @@ def build_source_declaration(provenance):
     ))
 
     return section("1. Source declaration", blocks)
+
+
+# Topics rendered in the per-topic table of section 1c before it is cut. A large
+# syllabus can carry several hundred, and printing every one with its passages
+# would bury the rest of the report. The cut ANNOUNCES ITSELF and says how many
+# it removed, per this report's standing rule that no ceiling is silent.
+MAXIMUM_RENDERED_SOURCE_GROUNDED_TOPICS = 60
+
+
+def count_source_grounded_topics(provenance):
+    """
+    How many topics of this run were written from a licensed document.
+
+    Zero for every run recorded before licensed content sources existed, and for
+    every run that admitted none — both of which read correctly as "the whole
+    deck was written from model knowledge".
+    """
+    source_grounded_content = provenance.get("sourceGroundedContent") or {}
+    topics = source_grounded_content.get("topics") or []
+    return len([topic for topic in topics if topic.get("path") == "SOURCE_GROUNDED"])
+
+
+def build_source_grounded_content(provenance):
+    """
+    Section 1c: which topics were written FROM a licensed document, which
+    document, which pages, and the passages themselves.
+
+    Omitted entirely when no content source was admitted — the overwhelmingly
+    common case — so an ordinary paid deck's report is unchanged.
+
+    THE TWO BASES ARE REPORTED SEPARATELY AND NEVER MERGED. A topic written from
+    model knowledge is defensible because the pipeline had no document to work
+    from; a topic written from a licensed source is defensible because the
+    licence was declared and the document retained. Both are legitimate; a deck
+    that blurred them could support neither cleanly, which is why this section
+    exists rather than a sentence in section 1.
+    """
+    source_grounded_content = provenance.get("sourceGroundedContent") or {}
+    topics = source_grounded_content.get("topics") or []
+    declared_sources = source_grounded_content.get("sources") or []
+    problems = source_grounded_content.get("problems") or []
+
+    if not declared_sources and not topics:
+        return []
+
+    source_grounded_topics = [topic for topic in topics if topic.get("path") == "SOURCE_GROUNDED"]
+    model_knowledge_topics = [topic for topic in topics if topic.get("path") == "MODEL_KNOWLEDGE"]
+
+    blocks = [make_callout(
+        "Some of this deck's content was written FROM the documents listed below, rather than from the "
+        "model's own knowledge. Those documents were admitted separately from the generation source "
+        "list, each under a licence declared by the administrator who attached it, and each is retained "
+        "in full so it can be produced on request. "
+        "<b>These topics rest on that declared licence, not on independent creation.</b> The two bases "
+        "are recorded per topic and are not interchangeable: "
+        f"{len(source_grounded_topics)} topic(s) were written from a licensed source, and "
+        f"{len(model_knowledge_topics)} were written from model knowledge."
+    )]
+
+    if declared_sources:
+        blocks.append(Spacer(1, 8))
+        blocks.append(make_table(
+            ["Document", "Declared licence", "Topics written from it", "Administrator's note"],
+            [
+                [
+                    safe(declared_source.get("sourceName")),
+                    safe(describe_licence_type(declared_source.get("licenceType"), declared_source.get("licenceNote"))),
+                    safe(declared_source.get("topicCount"), "0"),
+                    safe_clamped(declared_source.get("sourceNote"), fallback="—"),
+                ]
+                for declared_source in declared_sources
+            ],
+            [1.5, 1.5, 0.8, 1.7],
+        ))
+
+    if problems:
+        blocks.append(Spacer(1, 8))
+        blocks.append(Paragraph(
+            "<b>Sources that could not be fully read.</b> A source listed here contributed less than it "
+            "appears to, or nothing at all. It is stated because \"written from a licensed source\" is a "
+            "false description of a topic whose source failed to open.",
+            styles["body"],
+        ))
+        for problem in problems:
+            blocks.append(Paragraph(f"• {safe_clamped(problem)}", styles["body"]))
+
+    if not source_grounded_topics:
+        blocks.append(Spacer(1, 8))
+        blocks.append(Paragraph(
+            "<b>No topic in this deck was written from these documents.</b> They were admitted, but "
+            "either no topic matched their content or they could not be read — see above. Every topic "
+            "in this deck was written from model knowledge.",
+            styles["body"],
+        ))
+        return section("1c. Licensed source content", blocks)
+
+    rendered_topics = source_grounded_topics[:MAXIMUM_RENDERED_SOURCE_GROUNDED_TOPICS]
+
+    blocks.append(Spacer(1, 8))
+    blocks.append(make_table(
+        ["Topic", "Model", "Documents", "Pages", "Passages"],
+        [
+            [
+                safe_clamped(" > ".join(topic.get("topicChain") or [])),
+                safe(topic.get("modelIdentifier")),
+                safe_clamped(describe_topic_sources(topic)),
+                safe(describe_topic_pages(topic), "—"),
+                safe(len(topic.get("passages") or []), "0"),
+            ]
+            for topic in rendered_topics
+        ],
+        [1.8, 1.2, 1.4, 0.7, 0.5],
+    ))
+
+    if len(source_grounded_topics) > len(rendered_topics):
+        blocks.append(Paragraph(
+            f"<b>{len(source_grounded_topics) - len(rendered_topics)} further source-grounded topic(s) "
+            "are not listed above.</b> The table is capped so this report stays readable; the complete "
+            "per-topic record, including every passage, is held with the run and can be produced in "
+            "full.",
+            styles["body"],
+        ))
+
+    blocks.append(Spacer(1, 8))
+    blocks.append(Paragraph(
+        "<b>Passages relied upon.</b> For each topic above, the excerpts below are the passages that "
+        "were retrieved and supplied to the model as the material to write from. Each names the "
+        "document and the page it came from, so the claim that a topic rests on a licensed document "
+        "can be checked against the document itself.",
+        styles["body"],
+    ))
+
+    for topic in rendered_topics:
+        passages = topic.get("passages") or []
+
+        if not passages:
+            continue
+
+        blocks.append(Spacer(1, 6))
+        blocks.append(Paragraph(
+            f"<b>{safe_clamped(' > '.join(topic.get('topicChain') or []))}</b>",
+            styles["body"],
+        ))
+        blocks.append(make_table(
+            ["Document", "Page", "Characters", "Excerpt"],
+            [
+                [
+                    safe(passage.get("sourceName")),
+                    safe(describe_page_number(passage.get("pageNumber")), "—"),
+                    safe(describe_character_range(passage), "—"),
+                    safe_clamped(passage.get("excerpt")),
+                ]
+                for passage in passages
+            ],
+            [1.2, 0.4, 0.8, 3.2],
+        ))
+
+    blocks.append(Spacer(1, 8))
+    blocks.append(Paragraph(
+        "A document detached from this deck after the run is still what the content above was written "
+        "from, and is still retained and listed here. Detaching changes what the deck is checked "
+        "against from that point on; it does not retract what already happened.",
+        styles["body"],
+    ))
+
+    return section("1c. Licensed source content", blocks)
+
+
+def describe_topic_sources(topic):
+    """The distinct documents that contributed passages to one topic."""
+    source_names = []
+
+    for passage in (topic.get("passages") or []):
+        source_name = passage.get("sourceName")
+        if source_name and source_name not in source_names:
+            source_names.append(source_name)
+
+    return ", ".join(source_names)
+
+
+def describe_topic_pages(topic):
+    """The distinct pages one topic drew on, in order."""
+    page_numbers = sorted({
+        passage.get("pageNumber")
+        for passage in (topic.get("passages") or [])
+        if isinstance(passage.get("pageNumber"), int)
+    })
+
+    return ", ".join(str(page_number + 1) for page_number in page_numbers)
+
+
+def describe_page_number(page_number):
+    """
+    Pages are held 0-indexed internally, to match the figure extractor. They are
+    printed 1-indexed, because that is the number printed on the page a reader
+    will turn to.
+    """
+    if not isinstance(page_number, int):
+        return ""
+    return str(page_number + 1)
+
+
+def describe_character_range(passage):
+    character_start = passage.get("characterStart")
+    character_end = passage.get("characterEnd")
+
+    if not isinstance(character_start, int) or not isinstance(character_end, int):
+        return ""
+
+    return f"{character_start}–{character_end}"
+
+
+def describe_licence_type(licence_type, licence_note):
+    """
+    The human label for a stored licence value, matching the wording the
+    administrator chose it by in SourceLicenceDeclarationForm.
+    """
+    labels_by_value = {
+        0: "Not specified",
+        1: "CC0 / no rights reserved",
+        2: "Public domain",
+        3: "Creative Commons BY",
+        4: "My own work",
+        5: "Licensed, or written permission held",
+        6: "Other — described in the note",
+    }
+
+    label = labels_by_value.get(licence_type, "Not specified")
+    note = str(licence_note or "").strip()
+
+    return f"{label} — {note}" if note else label
 
 
 def build_verification_sources(provenance):
@@ -894,15 +1145,40 @@ def build_summary(provenance):
         else "no recorded source declaration"
     )
 
+    # The content-basis sentence is split by path. Stating that nothing was
+    # retrieved from a held document, on a run where topics were deliberately
+    # written from one, would be the single most misleading sentence the report
+    # could contain — and it sits in the summary, which is the part a reader
+    # least expects to have to check against the sections above.
+    source_grounded_topic_count = count_source_grounded_topics(provenance)
+    source_grounded_content = provenance.get("sourceGroundedContent") or {}
+    model_knowledge_topic_count = len([
+        topic for topic in (source_grounded_content.get("topics") or [])
+        if topic.get("path") == "MODEL_KNOWLEDGE"
+    ])
+
+    if source_grounded_topic_count > 0:
+        content_basis_sentence = (
+            f"{model_knowledge_topic_count} topic(s) were written from the generating model's own "
+            "knowledge, worked against a per-topic coverage specification derived from the syllabus "
+            f"— not retrieved, quoted or paraphrased from any document. The remaining "
+            f"{source_grounded_topic_count} topic(s) were written from licensed source documents "
+            "under the licences declared for them, which are listed with the passages relied upon in "
+            "section 1c."
+        )
+    else:
+        content_basis_sentence = (
+            "The subject content was written from the generating model's own knowledge, worked "
+            "against a per-topic coverage specification derived from the syllabus — not retrieved, "
+            "quoted or paraphrased from any document held by the platform."
+        )
+
     paragraphs = [
         Paragraph(
             "This record shows how the deck named above was produced. It was generated in the "
             "admin-only paid-deck mode, which accepts curriculum and syllabus sources and refuses "
             "uploaded documents, image sources and open web sources at submission time. The run "
-            f"began from {source_sentence}. The subject content was written from the generating "
-            "model's own knowledge, worked against a per-topic coverage specification derived from "
-            "the syllabus — not retrieved, quoted or paraphrased from any document held by the "
-            "platform.",
+            f"began from {source_sentence}. {content_basis_sentence}",
             styles["body"],
         ),
         Paragraph(
@@ -1083,6 +1359,7 @@ def build_story(provenance, generated_at, run_number=1, run_count=1):
     story.extend(build_header(provenance, generated_at, run_number, run_count))
     story.extend(build_source_declaration(provenance))
     story.extend(build_verification_sources(provenance))
+    story.extend(build_source_grounded_content(provenance))
     story.extend(build_action_trail(provenance))
     story.extend(build_sources_consulted(provenance))
     story.extend(build_visual_inventory(provenance))
@@ -1093,6 +1370,31 @@ def build_story(provenance, generated_at, run_number=1, run_count=1):
     story.append(Spacer(1, 10))
     story.append(HorizontalRule(CONTENT_WIDTH, 1.5, GOLD_ACCENT, top_padding=2))
     return story
+
+
+def describe_content_basis(record):
+    """
+    One run's content basis, for the run index.
+
+    A run is mixed far more often than it is purely source-grounded — a licensed
+    document rarely covers a whole syllabus — so the mixed case names both counts
+    rather than picking whichever is larger.
+    """
+    source_grounded_topic_count = count_source_grounded_topics(record)
+
+    if source_grounded_topic_count == 0:
+        return "Model knowledge"
+
+    source_grounded_content = record.get("sourceGroundedContent") or {}
+    model_knowledge_topic_count = len([
+        topic for topic in (source_grounded_content.get("topics") or [])
+        if topic.get("path") == "MODEL_KNOWLEDGE"
+    ])
+
+    if model_knowledge_topic_count == 0:
+        return f"Licensed sources ({source_grounded_topic_count} topics)"
+
+    return f"Mixed: {source_grounded_topic_count} licensed, {model_knowledge_topic_count} model"
 
 
 def build_run_index(deck_name, records, generated_at):
@@ -1124,17 +1426,22 @@ def build_run_index(deck_name, records, generated_at):
         ),
         Spacer(1, 6),
         make_table(
-            ["#", "Generation run ID", "Recorded at (UTC)", "Verification"],
+            # "Content basis" is here because runs into one deck need not share
+            # one. A reader who saw a licensed-source note on run two could
+            # otherwise assume it covered the whole deck, or miss it entirely and
+            # assume none of the deck rested on a document.
+            ["#", "Generation run ID", "Recorded at (UTC)", "Content basis", "Verification"],
             [
                 [
                     str(run_number),
                     safe(record.get("mainTaskId")),
                     format_utc(record.get("recordedAt")),
+                    describe_content_basis(record),
                     describe_verification_outcome(record),
                 ]
                 for run_number, record in enumerate(records, start=1)
             ],
-            [0.35, 2.2, 1.4, 1.5],
+            [0.3, 1.8, 1.2, 1.3, 1.3],
             label_first_column=False,
         ),
     ]))

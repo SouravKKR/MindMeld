@@ -151,6 +151,93 @@ automatic-generation-page[page]
     flex-shrink: 0;
 }
 
+/* One row per picked licensed source: its name, what it is used for, and a note
+   that reaches the audit report. Laid out as a grid so the selects line up
+   regardless of how long the document names are. */
+.verification-source-usage-list
+{
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    margin-top: 8px;
+}
+
+.verification-source-usage-row
+{
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.2fr);
+    align-items: center;
+    gap: 8px;
+}
+
+.verification-source-usage-name
+{
+    /* The name comes from a filesystem and can be arbitrarily long; it must
+       truncate rather than push the controls beside it off the row. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.85rem;
+}
+
+.verification-source-usage-row select,
+.verification-source-usage-row input
+{
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--tertiary-background-color);
+    background-color: var(--primary-background-color);
+    color: var(--primary-text-color);
+    min-width: 0;
+}
+
+@media (max-width: 700px)
+{
+    .verification-source-usage-row
+    {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.generation-target-scope-container
+{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.generation-target-scope-container label
+{
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.75);
+    white-space: nowrap;
+}
+
+.generation-target-scope-select
+{
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--tertiary-background-color);
+    background-color: var(--primary-background-color);
+    color: var(--primary-text-color);
+    max-width: 220px;
+}
+
+.generation-target-scope-hint
+{
+    /* Muted the same way as the deck-library hint below, and for the same
+       reason: alpha on the colour rather than opacity on the element, so a
+       nested link would not be faded past readable contrast. */
+    text-align: center;
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.55);
+    padding: 0 28px 4px 28px;
+    background-color: var(--secondary-background-color);
+    flex-shrink: 0;
+}
+
 .automatic-generation-deck-library-hint
 {
     /* The hint text is intentionally muted via rgba alpha on the color only,
@@ -291,6 +378,30 @@ automatic-generation-page[page]
     .automatic-generation-action-bar
     {
         padding: 12px 14px 6px 14px;
+        /* The scope picker and the Start button stop fitting side by side on a
+           phone, and shrinking the button to make room is the wrong trade — it
+           is the thing being reached for. */
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    .generation-target-scope-container
+    {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .generation-target-scope-select
+    {
+        flex: 1 1 auto;
+        max-width: 240px;
+        min-height: 44px;
+    }
+
+    .generation-target-scope-hint
+    {
+        padding: 0 14px 4px 14px;
+        font-size: 0.75rem;
     }
 
     .automatic-generation-start-button

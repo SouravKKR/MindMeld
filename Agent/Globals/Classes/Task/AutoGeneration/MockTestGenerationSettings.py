@@ -6,7 +6,7 @@ from Globals.Classes.Decorators.ExtractableInformationSource import ExtractableI
 
 
 class MockTestGenerationSettings(AutoGenerationSettings):
-    def __init__(self, type: TaskTypes = None, additional_instructions: str = '', description: str = '', information_sources: List[ExtractableInformationSource] = [], enhance_images: bool = False, image_sources: List[ExtractableInformationSource] = [], subject_name: str = '', exam_name: str = '', num_tests_method: AutomationLevels = AutomationLevels(0), number_of_tests: int = 2, difficulty_method: AutomationLevels = AutomationLevels(0), very_easy_questions: float = 1, easy_questions: float = 1, medium_questions: float = 1, hard_questions: float = 1, very_hard_questions: float = 1, question_types_method: AutomationLevels = AutomationLevels(0), question_types_with_weights: dict = {}, num_questions_method: AutomationLevels = AutomationLevels(0), num_questions_per_test: int = 30, correct_marks: float = 4, wrong_marks: float = -1, unattempted_marks: float = 0, partial_marks: float = 0, per_type_marking_overrides: dict = {}, section_structure: list = [], show_solving_steps: bool = True, duration_minutes: int = 0, mock_test_name: str = '', recursive: bool = False, skip_root_deck: bool = False) -> None:
+    def __init__(self, type: TaskTypes = None, additional_instructions: str = '', description: str = '', information_sources: List[ExtractableInformationSource] = [], enhance_images: bool = False, image_sources: List[ExtractableInformationSource] = [], subject_name: str = '', exam_name: str = '', num_tests_method: AutomationLevels = AutomationLevels(0), number_of_tests: int = 2, difficulty_method: AutomationLevels = AutomationLevels(0), very_easy_questions: float = 1, easy_questions: float = 1, medium_questions: float = 1, hard_questions: float = 1, very_hard_questions: float = 1, question_types_method: AutomationLevels = AutomationLevels(0), question_types_with_weights: dict = {}, num_questions_method: AutomationLevels = AutomationLevels(0), num_questions_per_test: int = 30, correct_marks: float = 4, wrong_marks: float = -1, unattempted_marks: float = 0, partial_marks: float = 0, per_type_marking_overrides: dict = {}, section_structure: list = [], show_solving_steps: bool = True, duration_minutes: int = 0, mock_test_name: str = '', recursive: bool = False, skip_root_deck: bool = False, reference_sources: List[ExtractableInformationSource] = []) -> None:
         super().__init__(type=type, additional_instructions=additional_instructions, description=description, information_sources=information_sources, enhance_images=enhance_images, image_sources=image_sources, subject_name=subject_name, exam_name=exam_name)
         self.set_num_tests_method(num_tests_method)
         self.set_number_of_tests(number_of_tests)
@@ -31,6 +31,7 @@ class MockTestGenerationSettings(AutoGenerationSettings):
         self.set_mock_test_name(mock_test_name)
         self.set_recursive(recursive)
         self.set_skip_root_deck(skip_root_deck)
+        self.set_reference_sources(reference_sources)
 
     def get_num_tests_method(self) -> AutomationLevels:
         return self.__num_tests_method
@@ -257,6 +258,15 @@ class MockTestGenerationSettings(AutoGenerationSettings):
             value = bool(value)
         self.__skip_root_deck = value
 
+    def get_reference_sources(self) -> List[ExtractableInformationSource]:
+        return self.__reference_sources
+
+    def set_reference_sources(self, value: List[ExtractableInformationSource]) -> None:
+        if value is not None:
+            if not isinstance(value, list):
+                value = None
+        self.__reference_sources = value
+
     def to_json(self) -> dict:
         return {
             **super().to_json(),
@@ -283,6 +293,7 @@ class MockTestGenerationSettings(AutoGenerationSettings):
             'mockTestName': self.get_mock_test_name(),
             'recursive': self.get_recursive(),
             'skipRootDeck': self.get_skip_root_deck(),
+            'referenceSources': [item.to_json() for item in self.get_reference_sources()] if self.get_reference_sources() is not None else None,
         }
 
     @classmethod
@@ -318,7 +329,8 @@ class MockTestGenerationSettings(AutoGenerationSettings):
             duration_minutes=data.get('durationMinutes'),
             mock_test_name=data.get('mockTestName'),
             recursive=data.get('recursive'),
-            skip_root_deck=data.get('skipRootDeck')
+            skip_root_deck=data.get('skipRootDeck'),
+            reference_sources=[ExtractableInformationSource.from_json(v) for v in data.get('referenceSources')] if data.get('referenceSources') is not None else None
         )
         if data.get('id') is not None:
             instance._restore_id_id(data.get('id'))

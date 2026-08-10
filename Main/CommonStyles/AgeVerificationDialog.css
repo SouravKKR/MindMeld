@@ -1,0 +1,125 @@
+/* Layout overrides applied only when the dialog-box carries the .age-verification-dialog class.
+   Mirrors TermsAndConditionsDialog.css — the two are the same kind of blocking,
+   non-dismissable post-login gate and should not look like different features. */
+
+dialog-box.age-verification-dialog
+{
+    max-width: 560px;
+    width: 90%;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+
+dialog-box.age-verification-dialog .age-verification-content
+{
+    max-height: min(50vh, calc(100vh - 240px));
+    overflow-y: auto;
+    padding: 18px 22px;
+    line-height: 1.45;
+    font-size: 0.95rem;
+    text-align: left;
+    background-color: var(--background-color, #1a1a1f);
+    border-radius: 6px;
+    margin: 0 15px;
+}
+
+dialog-box.age-verification-dialog .age-verification-content p
+{
+    margin: 8px 0;
+}
+
+dialog-box.age-verification-dialog .age-verification-field
+{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 14px 0;
+}
+
+dialog-box.age-verification-dialog .age-verification-field span
+{
+    font-size: 0.88rem;
+}
+
+dialog-box.age-verification-dialog .age-verification-field input
+{
+    padding: 9px 11px;
+    border-radius: 5px;
+    font-size: 0.95rem;
+    background-color: var(--tertiary-background-color, #2a2a32);
+    border: 1px solid var(--border-color, #3a3a44);
+    color: inherit;
+}
+
+dialog-box.age-verification-dialog .age-verification-field input:focus
+{
+    outline: none;
+    border-color: var(--accent-color, #5a9cff);
+}
+
+dialog-box.age-verification-dialog .age-verification-note
+{
+    font-size: 0.82rem;
+    opacity: 0.75;
+    line-height: 1.35;
+}
+
+dialog-box.age-verification-dialog .age-verification-error
+{
+    color: #ff6b6b;
+    font-size: 0.88rem;
+    margin: 8px 22px 0 22px;
+    padding: 8px 12px;
+    background-color: rgba(255, 107, 107, 0.1);
+    border: 1px solid rgba(255, 107, 107, 0.3);
+    border-radius: 6px;
+    line-height: 1.35;
+}
+
+dialog-box.age-verification-dialog .age-verification-error[hidden]
+{
+    display: none;
+}
+
+dialog-box.age-verification-dialog .age-verification-buttons
+{
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 14px;
+}
+
+dialog-box.age-verification-dialog .continue-button[disabled],
+dialog-box.age-verification-dialog .decline-button[disabled]
+{
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+@media (max-width: 600px), (max-height: 500px)
+{
+    dialog-box.age-verification-dialog
+    {
+        max-width: 96%;
+        max-height: 92vh;
+    }
+
+    dialog-box.age-verification-dialog .age-verification-content
+    {
+        margin: 0 10px;
+        padding: 12px 14px;
+        font-size: 0.9rem;
+    }
+
+    dialog-box.age-verification-dialog .age-verification-buttons
+    {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+
+    dialog-box.age-verification-dialog .age-verification-buttons button
+    {
+        width: 100%;
+    }
+}

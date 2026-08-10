@@ -158,11 +158,31 @@ class GenerationEstimateDialog
         }
     }
 
+    /**
+     * Fields that change where a run's output is stored but not what it costs.
+     * Excluded from the cache key so switching between them does not discard a
+     * still-valid estimate and spend another rate-limited /Generate/EstimateCost
+     * call to be told the same number.
+     *
+     * Credits are always the individual's, including for a run generated for an
+     * organization — organization pools fund members by topping up their
+     * personal balances — so the target library genuinely has no bearing on the
+     * price. Should that ever stop being true, this list is what has to shrink.
+     */
+    static COST_NEUTRAL_SETTINGS_KEYS = ["organizationId"];
+
     static #describeSettingsFingerprint(generationSettingsMap)
     {
         try
         {
-            return JSON.stringify(generationSettingsMap);
+            const costRelevantSettings = { ...generationSettingsMap };
+
+            for (const costNeutralKey of GenerationEstimateDialog.COST_NEUTRAL_SETTINGS_KEYS)
+            {
+                delete costRelevantSettings[costNeutralKey];
+            }
+
+            return JSON.stringify(costRelevantSettings);
         }
         catch (serialisationError)
         {

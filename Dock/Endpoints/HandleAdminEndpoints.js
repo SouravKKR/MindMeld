@@ -14,9 +14,11 @@ const { resolveVerificationFlag } = require("./Admin/PaidDecks/ResolveVerificati
 const { autoFixFlagProposal } = require("./Admin/PaidDecks/AutoFixFlagProposal");
 const { autoFixFlagApply } = require("./Admin/PaidDecks/AutoFixFlagApply");
 const { downloadRefinementProofSource } = require("./Admin/PaidDecks/DownloadRefinementProofSource");
+const { downloadVerificationSource } = require("./Admin/PaidDecks/DownloadVerificationSource");
 const {
     listVerificationSources,
     attachVerificationSource,
+    updateVerificationSource,
     detachVerificationSource,
     runVerificationAgainstSources,
     getVerificationRunStatus,
@@ -65,6 +67,9 @@ const { listRateLimitEvents } = require("./Admin/RateLimits/ListRateLimitEvents"
 const { listAdminAuditEvents } = require("./Admin/Audit/ListAdminAuditEvents");
 const { takedownContent } = require("./Admin/Content/TakedownContent");
 const { listContentTakedownNotices } = require("./Admin/Content/ListContentTakedownNotices");
+const { listIntellectualPropertyComplaints } = require("./Admin/Legal/ListIntellectualPropertyComplaints");
+const { resolveIntellectualPropertyComplaintTargets } = require("./Admin/Legal/ResolveIntellectualPropertyComplaintTargets");
+const { updateIntellectualPropertyComplaintStatus } = require("./Admin/Legal/UpdateIntellectualPropertyComplaintStatus");
 const { getCreditConfig } = require("./Admin/GetCreditConfig");
 const { setCreditConfig } = require("./Admin/SetCreditConfig");
 const { previewCreditGrant } = require("./Admin/PreviewCreditGrant");
@@ -143,6 +148,40 @@ function handleAdminEndpoints(server)
         routePath: `/Admin/Content/TakedownNotices`,
         handler: listContentTakedownNotices,
         method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Intellectual-property complaints ──────────────────────────────────
+    //
+    // The Grievance Officer's queue and the bridge from a complaint to the
+    // takedown machinery above. Registered here rather than beside the public
+    // complaint routes in HandleLegalEndpoints so they inherit ensureAdmin AND
+    // the AdminActionAuditor coverage that plugin attaches — reading a
+    // complainant's details is exactly the kind of access that should leave a
+    // trace.
+    server.handle
+    ({
+        routePath: `/Admin/Legal/ListIntellectualPropertyComplaints`,
+        handler: listIntellectualPropertyComplaints,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Legal/ResolveIntellectualPropertyComplaintTargets`,
+        handler: resolveIntellectualPropertyComplaintTargets,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    server.handle
+    ({
+        routePath: `/Admin/Legal/UpdateIntellectualPropertyComplaintStatus`,
+        handler: updateIntellectualPropertyComplaintStatus,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
         plugins: [ensureAdmin]
     });
 
@@ -244,17 +283,35 @@ function handleAdminEndpoints(server)
         plugins: [ensureAdmin]
     });
 
-    // ── Verification sources (admin-declared grounding for the fact check) ────
+    // The document a paid deck was checked against, or written from, as recorded
+    // on its verification-source row. Same rule as above: the storage path is
+    // rebuilt from the stored information-source row and never taken from the
+    // request. Detached sources are still served — a source removed after a deck
+    // was written from it is still what that deck was written from.
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/VerificationSource`,
+        handler: downloadVerificationSource,
+        method: PacketronRequestMethod.GET,
+        plugins: [ensureAdmin]
+    });
+
+    // ── Declared sources (admin-declared documents and URLs for a paid deck) ──
     //
-    // The documents and URLs a deck's generated content is checked AGAINST.
-    // They are never generation inputs — paid-deck generation still accepts a
-    // curriculum or syllabus and nothing else — and the pass they feed runs
-    // after content exists and can only raise flags.
+    // What each is used for is per source, and is its usageMode:
+    // VERIFICATION_ONLY means the deck's content is only CHECKED against it,
+    // by a pass that runs after content exists and can only raise flags;
+    // CONTENT_AND_VERIFICATION means the content may also be WRITTEN from it,
+    // which SourceUsageGate permits only under a licence recording a right to
+    // create new material.
     //
-    // Attach and Detach each write a permanent licence-declaration event as well
-    // as updating the working set, so what a deck was checked against, on whose
-    // word and under what claimed licence stays answerable after the source is
-    // removed.
+    // The ordinary generation source list is unaffected — it still accepts a
+    // curriculum or syllabus and nothing else.
+    //
+    // Attach, Update and Detach each write a permanent licence-declaration event
+    // as well as touching the working set, so what a deck was checked against or
+    // written from, on whose word and under what claimed licence, stays
+    // answerable after the source is changed or removed.
     server.handle
     ({
         routePath: `/Admin/PaidDecks/VerificationSources/List`,
@@ -268,6 +325,18 @@ function handleAdminEndpoints(server)
     ({
         routePath: `/Admin/PaidDecks/VerificationSources/Attach`,
         handler: attachVerificationSource,
+        flags: PacketronHandlerFlags.JSON_BODY,
+        method: PacketronRequestMethod.POST,
+        plugins: [ensureAdmin]
+    });
+
+    // Revises the free-text note or the usage mode on an attached source. Both
+    // are re-gated server-side against the STORED licence, so a source attached
+    // for verification cannot be quietly promoted to a content source.
+    server.handle
+    ({
+        routePath: `/Admin/PaidDecks/VerificationSources/Update`,
+        handler: updateVerificationSource,
         flags: PacketronHandlerFlags.JSON_BODY,
         method: PacketronRequestMethod.POST,
         plugins: [ensureAdmin]

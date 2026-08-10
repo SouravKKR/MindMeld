@@ -86,6 +86,26 @@ class ContentRefiner:
 
     MAXIMUM_INSTRUCTION_LENGTH = 4000
 
+    # The passage, UNLIKE the reference document above, is refused rather than
+    # truncated — see the comment at the check itself. About 12 000 tokens is
+    # ~48 000 characters, a long lesson, and still leaves room for the system
+    # prompt, the reference block and a full revision inside any sane budget.
+    MAXIMUM_PASSAGE_TOKEN_ESTIMATE = 12000
+
+    # The reply must carry the whole passage back, plus a summary and concerns,
+    # plus whatever the model thinks with. Budgeting for the passage alone
+    # guarantees a truncation on anything near the limit.
+    OUTPUT_BUDGET_PASSAGE_MULTIPLIER = 2
+    OUTPUT_BUDGET_HEADROOM_TOKENS = 2048
+    MINIMUM_OUTPUT_TOKEN_BUDGET = 8192
+
+    # How much of an unusable reply is written to the log. Bounded because these
+    # lines are persisted: the JSON keys come first, so a prefix this size is
+    # enough to tell `{"revisedHtml": "<p>The refr…` from ```` ```json ```` from
+    # `I'm sorry, I can't…` — which is the entire diagnosis — while never
+    # amounting to a second copy of the user's passage in the log store.
+    LOGGED_REPLY_PREFIX_LENGTH = 400
+
     @staticmethod
     async def read_reference_source_text(storage_path: str, mime_type: str) -> str:
         """
@@ -156,6 +176,65 @@ class ContentRefiner:
 
         return "\n" + "\n\n".join(sections) + "\n"
 
+    @staticmethod
+    def __read_revision_payload(raw_reply):
+        """
+        The one place a raw reply becomes a revision payload, or nothing.
+
+        Both the validator and the code after the call go through here, so the
+        two can never disagree about what counts as usable — which they would,
+        eventually, if the parse were written out twice: the validator would
+        accept something the caller then rejected, and the retry budget would be
+        spent proving it.
+        """
+        from Globals.Utility.JsonReplyReader import JsonReplyReader
+
+        parsed = JsonReplyReader.read_object(raw_reply)
+
+        if parsed is None or not isinstance(parsed.get("revisedHtml"), str):
+            return None
+
+        return parsed
+
+    @classmethod
+    def __is_usable_reply(cls, response) -> bool:
+        """
+        The retry gate. Returning False here costs one more model call; letting
+        a bad reply through costs the reviewer a 502 and an unexplained failure.
+        """
+        outputs = response.get_outputs() if response is not None else None
+
+        if not outputs:
+            _log("Reply rejected: the response carried no outputs. Retrying.")
+            return False
+
+        if cls.__read_revision_payload(outputs[0].get_data()) is None:
+            cls.__log_unusable_reply(outputs[0].get_data())
+            return False
+
+        return True
+
+    @classmethod
+    def __log_unusable_reply(cls, raw_reply) -> None:
+        """
+        The only evidence that survives a failed refinement.
+
+        Logged to stderr, which Dock now attaches to its own error record — so
+        what lands here is bounded on purpose. The passage, the reviewer's typed
+        instruction and any attached reference document are reported as LENGTHS
+        elsewhere and never as content: the passage is already one lookup away in
+        the database, the instruction is free text a person typed, and a
+        reference document is third-party material under a declared licence
+        whose whole retention and legal-hold machinery would be defeated by a
+        second copy sitting in a log store it does not govern.
+        """
+        reply_text = raw_reply if isinstance(raw_reply, str) else repr(raw_reply)
+
+        _log(
+            f"Reply unusable: {len(reply_text)} characters, "
+            f"first {cls.LOGGED_REPLY_PREFIX_LENGTH}: {reply_text[:cls.LOGGED_REPLY_PREFIX_LENGTH]!r}"
+        )
+
     @classmethod
     async def refine(
         cls,
@@ -173,11 +252,24 @@ class ContentRefiner:
         from Globals.Classes.Automation.Pools.ModelPool import ModelPool
         from Globals.Classes.Automation.Pools.PromptPool import PromptPool
         from Globals.Classes.Generation.FigurePlaceholderCodec import FigurePlaceholderCodec
+        from Globals.Classes.Generic.TokenSafeContent import TokenSafeContent
         from Globals.Enumerations.AutomationContentTypes import AutomationContentTypes
-        from Globals.Utility.StripJsonMarkdown import strip_json_markdown
 
         stripped_html, original_figures = FigurePlaceholderCodec.extract(before_html)
         _log(f"Held back {len(original_figures)} figure(s) from the model; {len(stripped_html)} characters of prose sent.")
+
+        # REFUSED, never truncated. The system prompt orders the model to return
+        # the FULL revised HTML, so capping the input the way the generation
+        # workflows do would produce a revision with the back half of the lesson
+        # silently deleted — presented for approval through the very gate that
+        # exists to stop content being lost. Better to say no.
+        estimated_passage_tokens = TokenSafeContent.estimate_token_count(stripped_html)
+
+        if estimated_passage_tokens > cls.MAXIMUM_PASSAGE_TOKEN_ESTIMATE:
+            raise RuntimeError(
+                f"This passage is too long to refine in one pass (roughly {estimated_passage_tokens * 4 // 5:,} words). "
+                "Refine a smaller passage, or split the lesson first."
+            )
 
         model_string, provider_class = ModelPool.REFINE_CONTENT_MODEL
 
@@ -196,7 +288,21 @@ class ContentRefiner:
         # grounding metadata the provider returns is what lets the audit record
         # state which pages were actually consulted rather than which ones the
         # model said it consulted.
-        request_metadata = {"enable_search": True}
+        #
+        # The output budget is set EXPLICITLY. Nothing in this chain used to set
+        # one, so the call ran on the model default — and because the reply has
+        # to carry the whole passage back plus a summary and concerns, and
+        # because thinking tokens draw from the same budget, a long lesson would
+        # intermittently run out mid-object. That arrived as unparsable JSON and
+        # was reported as "the model returned an unusable response shape", which
+        # sent every reader after the prompt instead of the budget.
+        request_metadata = {
+            "enable_search": True,
+            "max_output_tokens": max(
+                cls.MINIMUM_OUTPUT_TOKEN_BUDGET,
+                estimated_passage_tokens * cls.OUTPUT_BUDGET_PASSAGE_MULTIPLIER + cls.OUTPUT_BUDGET_HEADROOM_TOKENS,
+            ),
+        }
 
         cleaned_url = (reference_source_url or "").strip()
         if cleaned_url:
@@ -210,19 +316,33 @@ class ContentRefiner:
             ],
         )
 
+        # The validator is what makes `retries` mean anything. AutomationCaller
+        # only consults its retry count when one is supplied — passing None, as
+        # this did, made `retries = 2` dead code and turned a single malformed
+        # reply into a user-visible 502. It also has a second effect worth
+        # knowing: ResponseCache.store sits on the caller's VALID branch, so a
+        # malformed reply can no longer be written into the 90-day cache and
+        # re-served for every identical request until it expires.
         caller = AutomationCaller(provider_class())
-        response = await caller.call(request, None, retries = 2)
+        response = await caller.call(request, cls.__is_usable_reply, retries = 3)
 
         if response is None:
-            raise RuntimeError("The model returned no response.")
+            raise RuntimeError(
+                "The model did not return a usable revision after several attempts. Try again, "
+                "or rephrase what you asked for."
+            )
 
         outputs = response.get_outputs()
         if not outputs:
             raise RuntimeError("The model returned no usable content.")
 
-        parsed = strip_json_markdown(outputs[0].get_data())
+        parsed = cls.__read_revision_payload(outputs[0].get_data())
 
-        if not isinstance(parsed, dict) or not isinstance(parsed.get("revisedHtml"), str):
+        if parsed is None:
+            # Unreachable via the validator, which already rejected this shape —
+            # but the validator is skipped for a cache hit written before it
+            # existed, so the check stays.
+            cls.__log_unusable_reply(outputs[0].get_data())
             raise RuntimeError("The model returned an unusable response shape.")
 
         revised_html, dropped_figure_count = FigurePlaceholderCodec.restore(
