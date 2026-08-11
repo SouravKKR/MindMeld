@@ -1,4 +1,5 @@
 {
     "WEBGPU": 0,
-    "WASM": 1
+    "WASM": 1,
+    "NATIVE_RUNTIME": 2
 }

@@ -53,7 +53,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { createRequire } from "module";
 import { spawnSync } from "child_process";
 
@@ -629,6 +629,89 @@ function runSelfHostingTier()
 }
 
 
+// ── Tier 1e1: every driver really implements the driver contract ───────────
+
+/**
+ * LocalLlmDriver is the contract each execution path implements, and its
+ * methods throw. A driver that forgets one inherits the throwing version, so
+ * the gap is invisible until a learner triggers exactly that call — a model
+ * that loads and then cannot answer, or an interrupt that leaves a phone
+ * generating into a closed dialog.
+ *
+ * Checked structurally rather than by exercising a driver, because exercising
+ * one needs a GPU or a native shell and neither exists in a verification run.
+ * Comparing against the base class catches the whole class of omission without
+ * either.
+ */
+function runDriverContractTier()
+{
+    section("Every registered driver implements the whole driver contract");
+
+    const driversDirectory = path.join(repositoryRoot, "Main", "Globals", "Classes", "LocalLlm", "Drivers");
+    const moduleUrlFor = (fileName) => pathToFileURL(path.join(driversDirectory, fileName)).href;
+
+    const childSource = `
+        const LocalLlmDriver = (await import(${JSON.stringify(moduleUrlFor("LocalLlmDriver.js"))})).default;
+        const drivers = {
+            BrowserWebGpuDriver: (await import(${JSON.stringify(moduleUrlFor("BrowserWebGpuDriver.js"))})).default,
+            NativeRuntimeDriver: (await import(${JSON.stringify(moduleUrlFor("NativeRuntimeDriver.js"))})).default,
+        };
+
+        const contractMethodNames = Object.getOwnPropertyNames(LocalLlmDriver.prototype)
+            .filter((memberName) => memberName !== "constructor");
+
+        const report = { contractMethodNames: contractMethodNames, drivers: {} };
+        for (const [driverName, DriverClass] of Object.entries(drivers))
+        {
+            report.drivers[driverName] = {
+                bExtendsContract: DriverClass.prototype instanceof LocalLlmDriver || Object.getPrototypeOf(DriverClass.prototype) === LocalLlmDriver.prototype,
+                unimplemented: contractMethodNames.filter((methodName) =>
+                    typeof DriverClass.prototype[methodName] !== "function"
+                    || DriverClass.prototype[methodName] === LocalLlmDriver.prototype[methodName]),
+            };
+        }
+        process.stdout.write(JSON.stringify(report));
+    `;
+
+    const childResult = spawnSync(process.execPath, ["--input-type=module", "-e", childSource],
+    {
+        encoding: "utf8",
+        cwd: repositoryRoot,
+    });
+
+    if (childResult.status !== 0)
+    {
+        assert(false, `the driver classes import cleanly (${(childResult.stderr || "").trim().split("\n").slice(-3).join(" | ")})`);
+        return;
+    }
+
+    let report;
+    try
+    {
+        report = JSON.parse(childResult.stdout);
+    }
+    catch (parseError)
+    {
+        assert(false, `the driver contract probe returned JSON (${parseError.message})`);
+        return;
+    }
+
+    assert(
+        report.contractMethodNames.length > 0,
+        `the contract declares methods to implement (${report.contractMethodNames.join(", ")})`,
+    );
+
+    for (const [driverName, driverReport] of Object.entries(report.drivers))
+    {
+        assert(driverReport.bExtendsContract, `${driverName} extends LocalLlmDriver`);
+        assert(
+            driverReport.unimplemented.length === 0,
+            `${driverName} implements every contract method${driverReport.unimplemented.length === 0 ? "" : ` (missing: ${driverReport.unimplemented.join(", ")})`}`,
+        );
+    }
+}
+
+
 // ── Tier 1e2: the hand-mirrored device-lost error name ─────────────────────
 
 /**
@@ -934,6 +1017,7 @@ async function main()
     runCatalogueIntegrityTier();
     runWorkerProtocolTier();
     runSelfHostingTier();
+    runDriverContractTier();
     runDeviceLostMirrorTier();
     runManifestWalkTier();
     runEnabledModelsTier();

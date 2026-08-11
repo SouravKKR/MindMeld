@@ -1,5 +1,5 @@
 import LocalLlmDeviceProbe from "./LocalLlmDeviceProbe.js";
-import LocalLlmEngineClient from "./LocalLlmEngineClient.js";
+import LocalLlmDriverFactory from "./Drivers/LocalLlmDriverFactory.js";
 import LocalLlmManifestClient from "./LocalLlmManifestClient.js";
 import LocalLlmModelSelector from "./LocalLlmModelSelector.js";
 
@@ -9,7 +9,7 @@ import LocalLlmModelSelector from "./LocalLlmModelSelector.js";
  *
  * The single front door to the on-device model. Everything else — the
  * download manager, the Ask AI runner, deck chat — goes through
- * `ensureReady()` and never touches the probe, the manifest or the engine
+ * `ensureReady()` and never touches the probe, the manifest or a driver
  * directly.
  *
  * The reason it exists is concurrency. Two paths can both want the model
@@ -21,6 +21,13 @@ import LocalLlmModelSelector from "./LocalLlmModelSelector.js";
  * It also owns the resolution result, so "which model is this device on" has
  * one answer that the picker label, the progress bar and the prompt budget
  * all read.
+ *
+ * WHICH ENGINE ACTUALLY RUNS IS NOT DECIDED HERE. The selected model declares
+ * its own execution backend and LocalLlmDriverFactory returns the driver for
+ * it, so this class never branches on graphics-versus-native. That is what
+ * keeps the surface below it — Ask AI, deck chat, the picker — unable to tell
+ * the difference, and what lets a third execution path arrive without this
+ * file changing at all.
  */
 class LocalLlmSessionController
 {
@@ -44,6 +51,7 @@ class LocalLlmSessionController
     static #readyPromise = null;
     static #selectionOutcome = null;
     static #activeDescriptor = null;
+    static #activeDriver = null;
 
     /**
      * Probes the device, reads the manifest, selects a model and loads it.
@@ -64,8 +72,9 @@ class LocalLlmSessionController
             const loadOnce = async () =>
             {
                 const descriptor = await LocalLlmSessionController.resolveDescriptor();
+                const driver = LocalLlmSessionController.#resolveDriver(descriptor);
 
-                await LocalLlmEngineClient.load(descriptor, (progressReport) =>
+                await driver.load(descriptor, (progressReport) =>
                 {
                     if (typeof onProgress === "function")
                     {
@@ -74,6 +83,7 @@ class LocalLlmSessionController
                 });
 
                 LocalLlmSessionController.#activeDescriptor = descriptor;
+                LocalLlmSessionController.#activeDriver = driver;
                 return descriptor;
             };
 
@@ -91,13 +101,15 @@ class LocalLlmSessionController
                 // A GPU that hangs commonly does it here, uploading weights,
                 // rather than later during generation. Same response as the
                 // generate path: retire graphics for this machine, re-select,
-                // and come back on the processor backend. Without this the
-                // learner is simply told the download failed, on a device that
-                // can run the model perfectly well on its processor.
-                console.warn(`[LocalLlmSessionController] GPU device lost while loading — retiring the graphics backend on this device and reloading on the processor backend. (${loadError.message})`);
+                // and come back on whatever the selector offers next — a
+                // smaller graphics model, or the native runtime where the app
+                // provides one. Without this the learner is simply told the
+                // download failed, on a device that can run a model perfectly
+                // well by another route.
+                console.warn(`[LocalLlmSessionController] GPU device lost while loading — retiring the graphics backend on this device and re-selecting. (${loadError.message})`);
                 await LocalLlmDeviceProbe.recordGraphicsUnusable(loadError.message);
 
-                LocalLlmEngineClient.terminate();
+                LocalLlmSessionController.#releaseActiveDriver();
                 LocalLlmSessionController.#activeDescriptor = null;
                 LocalLlmSessionController.#selectionOutcome = null;
 
@@ -176,7 +188,39 @@ class LocalLlmSessionController
 
     static isReady()
     {
-        return LocalLlmSessionController.#activeDescriptor !== null && LocalLlmEngineClient.isEngineReady();
+        return LocalLlmSessionController.#activeDescriptor !== null
+            && LocalLlmSessionController.#activeDriver !== null
+            && LocalLlmSessionController.#activeDriver.isReady();
+    }
+
+    /**
+     * The driver the selected model requires, or a thrown explanation.
+     *
+     * Throwing rather than silently falling back to another driver is
+     * deliberate. A descriptor arriving with a backend nothing implements means
+     * the server is offering a model this build cannot run — a provisioning or
+     * version mismatch — and running it on the wrong engine would fail much
+     * later, inside a worker or across a command boundary, with a message that
+     * says nothing about the real cause.
+     */
+    static #resolveDriver(descriptor)
+    {
+        const driver = LocalLlmDriverFactory.resolveForDescriptor(descriptor);
+
+        if (driver === null)
+        {
+            throw new Error(`No on-device engine in this build can run "${descriptor.modelKey}" (${descriptor.executionBackend}).`);
+        }
+        return driver;
+    }
+
+    static #releaseActiveDriver()
+    {
+        if (LocalLlmSessionController.#activeDriver !== null)
+        {
+            LocalLlmSessionController.#activeDriver.unload();
+            LocalLlmSessionController.#activeDriver = null;
+        }
     }
 
     /**
@@ -195,7 +239,7 @@ class LocalLlmSessionController
         try
         {
             await LocalLlmSessionController.ensureReady(onLoadProgress);
-            return await LocalLlmEngineClient.generate(request, onToken);
+            return await LocalLlmSessionController.#activeDriver.generate(request, onToken);
         }
         catch (generationError)
         {
@@ -209,47 +253,51 @@ class LocalLlmSessionController
             // is driven — an integrated GPU past its watchdog timeout is the
             // common case, and no probe can see it coming. Retrying on the same
             // backend would reproduce it, so graphics is retired for this
-            // machine and the selection redone: the processor models are slower
-            // but they run, which is the whole point of the tier.
+            // machine and the selection redone: whatever the selector offers
+            // next runs, which is the whole point of the tier.
             //
             // Recorded before re-resolving, because the flag is exactly what
             // makes the probe report the hardware as graphics-incapable and the
-            // selector therefore pick a processor model.
-            console.warn(`[LocalLlmSessionController] GPU device lost — retiring the graphics backend on this device and retrying on the processor backend. (${generationError.message})`);
+            // selector therefore pick something else.
+            console.warn(`[LocalLlmSessionController] GPU device lost — retiring the graphics backend on this device and retrying. (${generationError.message})`);
             await LocalLlmDeviceProbe.recordGraphicsUnusable(generationError.message);
 
             LocalLlmSessionController.release();
             LocalLlmSessionController.#selectionOutcome = null;
 
-            // The retry is where the processor model gets downloaded, so the
+            // The retry is where the replacement model gets downloaded, so the
             // progress callback matters most here.
             await LocalLlmSessionController.ensureReady(onLoadProgress);
-            return await LocalLlmEngineClient.generate(request, onToken);
+            return await LocalLlmSessionController.#activeDriver.generate(request, onToken);
         }
     }
 
     static interrupt()
     {
-        LocalLlmEngineClient.interrupt();
+        if (LocalLlmSessionController.#activeDriver !== null)
+        {
+            LocalLlmSessionController.#activeDriver.interrupt();
+        }
     }
 
     /**
      * Drops the engine and forgets the load. The next ensureReady() starts
-     * over — already-fetched weights come back from the browser cache, so
-     * this is cheap after a first successful download.
+     * over — already-fetched weights come back from wherever the driver put
+     * them (the browser's own store, or the app's data directory), so this is
+     * cheap after a first successful download.
      */
     static release()
     {
-        LocalLlmEngineClient.terminate();
+        LocalLlmSessionController.#releaseActiveDriver();
         LocalLlmSessionController.#readyPromise = null;
         LocalLlmSessionController.#activeDescriptor = null;
     }
 
     /**
-     * Turns an engine's progress report into the byte-denominated shape the
+     * Turns a driver's progress report into the byte-denominated shape the
      * download UI expects. The graphics backend reports only a fraction, so
-     * the manifest's real total is used to derive bytes; the processor
-     * backend reports genuine bytes and is passed through.
+     * the manifest's real total is used to derive bytes; drivers that report
+     * genuine bytes are passed through.
      */
     static #normaliseProgress(progressReport, descriptor)
     {

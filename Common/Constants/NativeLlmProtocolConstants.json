@@ -1,0 +1,13 @@
+{
+    "COMMAND_PROBE_CAPABILITY": "probe_native_llm_capability",
+    "COMMAND_ENSURE_MODEL_PRESENT": "ensure_native_model_present",
+    "COMMAND_LOAD_MODEL": "load_native_model",
+    "COMMAND_GENERATE_COMPLETION": "generate_native_completion",
+    "COMMAND_INTERRUPT_GENERATION": "interrupt_native_generation",
+    "COMMAND_UNLOAD_MODEL": "unload_native_model",
+    "EVENT_DOWNLOAD_PROGRESS": "native-llm-download-progress",
+    "EVENT_LOAD_PROGRESS": "native-llm-load-progress",
+    "EVENT_TOKEN": "native-llm-token",
+    "EVENT_FAILED": "native-llm-failed",
+    "DEVICE_LOST_ERROR_NAME": "LocalLlmDeviceLostError"
+}
