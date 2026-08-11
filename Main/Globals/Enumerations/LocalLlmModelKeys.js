@@ -4,6 +4,9 @@ const localLlmModelKeys =
   QWEN2_5_1_5B_WEBGPU_Q4F32: 1,
   QWEN2_5_0_5B_WEBGPU_Q4F16: 2,
   QWEN2_5_0_5B_WEBGPU_Q4F32: 3,
+  QWEN2_5_3B_NATIVE_Q4KM: 4,
+  QWEN2_5_1_5B_NATIVE_Q4KM: 5,
+  QWEN2_5_0_5B_NATIVE_Q4KM: 6,
 }
 
 module.exports = { localLlmModelKeys };

@@ -11,6 +11,8 @@
 //! app be built by anyone who has not installed CMake and libclang.
 
 pub mod inference_engine;
+#[cfg(feature = "native-inference")]
+pub mod llama_inference_engine;
 pub mod llm_commands;
 pub mod model_download_manager;
 pub mod system_capability_probe;

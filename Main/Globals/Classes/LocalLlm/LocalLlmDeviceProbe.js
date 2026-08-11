@@ -1,5 +1,6 @@
 import LocalLlmDeviceProfile from "./LocalLlmDeviceProfile.js";
 import LocalLlmDownloadConstants from "../../Constants/LocalLlmDownloadConstants.js";
+import LocalLlmDriverFactory from "./Drivers/LocalLlmDriverFactory.js";
 import Persistence from "../Persistence.js";
 import { dataFormats } from "../../Enumerations/DataFormats.js";
 
@@ -184,6 +185,19 @@ class LocalLlmDeviceProbe
             : 1;
         const bHandheldDevice = LocalLlmDeviceProbe.#detectHandheldDevice();
 
+        // Asked before any graphics question, because it can change the answer
+        // to all of them: a handheld with a native runtime is a supported
+        // device, and the same handheld in a browser is not.
+        const nativeCapability = await LocalLlmDriverFactory.probeNativeCapability();
+        const nativeProfileFields =
+        {
+            bNativeDriverAvailable: nativeCapability !== null
+                && nativeCapability.bAvailable === true
+                && nativeCapability.bInferenceCompiledIn !== false,
+            systemMemoryMegabytes: nativeCapability ? nativeCapability.systemMemoryMegabytes : null,
+            logicalCoreCount: nativeCapability ? nativeCapability.logicalCoreCount : null,
+        };
+
         // A GPU that has already lost its device on this machine is treated as
         // absent, not as merely under-specified: the limits it advertises were
         // never the problem.
@@ -202,6 +216,7 @@ class LocalLlmDeviceProbe
                 deviceMemoryGigabytes: deviceMemoryGigabytes,
                 hardwareConcurrency: hardwareConcurrency,
                 bHandheldDevice: bHandheldDevice,
+                ...nativeProfileFields,
             });
         }
 
@@ -217,6 +232,7 @@ class LocalLlmDeviceProbe
                     deviceMemoryGigabytes: deviceMemoryGigabytes,
                     hardwareConcurrency: hardwareConcurrency,
                     bHandheldDevice: bHandheldDevice,
+                    ...nativeProfileFields,
                 });
             }
 
@@ -239,6 +255,7 @@ class LocalLlmDeviceProbe
                     deviceMemoryGigabytes: deviceMemoryGigabytes,
                     hardwareConcurrency: hardwareConcurrency,
                     bHandheldDevice: bHandheldDevice,
+                    ...nativeProfileFields,
                 });
             }
 
@@ -258,6 +275,7 @@ class LocalLlmDeviceProbe
                 bWebAssemblyAvailable: bWebAssemblyAvailable,
                 hardwareConcurrency: hardwareConcurrency,
                 bHandheldDevice: bHandheldDevice,
+                ...nativeProfileFields,
                 adapterDescription: typeof adapter.info === "object" && adapter.info
                     ? `${adapter.info.vendor || ""} ${adapter.info.architecture || ""}`.trim()
                     : "",
@@ -275,6 +293,7 @@ class LocalLlmDeviceProbe
                 deviceMemoryGigabytes: deviceMemoryGigabytes,
                 hardwareConcurrency: hardwareConcurrency,
                 bHandheldDevice: bHandheldDevice,
+                ...nativeProfileFields,
             });
         }
     }

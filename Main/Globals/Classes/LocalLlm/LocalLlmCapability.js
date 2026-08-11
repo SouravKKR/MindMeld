@@ -417,11 +417,17 @@ class LocalLlmCapability
 
         switch (unavailableReason)
         {
+            // Phrased as a route rather than a refusal, because it now is one.
+            // The same phone that cannot run this in a browser runs it in the
+            // app: compiled code with the app in the foreground is a different
+            // proposition from a background tab driving the graphics stack.
+            // Telling a learner "your device can't" when the honest answer is
+            // "not in a browser" sends them to a paid tier they did not need.
             case localLlmUnavailableReasons.HANDHELD_DEVICE:
-                return "Free runs its AI model on the device, which needs a desktop or laptop with graphics acceleration. On a phone or tablet, pick Basic, Pro or Pro Plus.";
+                return "Free runs its AI model on your device. In a phone or tablet browser that isn't reliable, but it works in the CogniumLearn app — install the app to use Free here, or pick Basic, Pro or Pro Plus.";
 
             case localLlmUnavailableReasons.NO_SUPPORTED_BACKEND:
-                return "This device can't run an AI model locally — it has no graphics acceleration (WebGPU). Try a recent Chrome or Edge on a machine with a working graphics card, or pick Basic, Pro or Pro Plus.";
+                return "This browser can't run an AI model locally — it has no graphics acceleration (WebGPU). The CogniumLearn app runs the model without needing it, or you can pick Basic, Pro or Pro Plus.";
 
             case localLlmUnavailableReasons.GPU_LIMITS_TOO_LOW:
                 return "This device's graphics hardware is below what the smallest available model needs. Pick Basic, Pro or Pro Plus instead.";

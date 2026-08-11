@@ -22,10 +22,15 @@ class DesktopRunner
 
     run()
     {
-        new TauriProjectPreparer().prepare();
+        const preparer = new TauriProjectPreparer();
+        preparer.prepare();
 
         console.log('Building the desktop app (tauri build) ...');
-        CommandRunner.runCommand('npm', ['run', 'tauri', '--', 'build'], this.nativeProjectDirectory);
+        CommandRunner.runCommand(
+            'npm',
+            ['run', 'tauri', '--', 'build', ...preparer.resolveFeatureArguments()],
+            this.nativeProjectDirectory
+        );
 
         this.installAndLaunch();
     }

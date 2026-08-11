@@ -41,18 +41,6 @@ class LocalLlmModelSelector
      */
     static select(deviceProfile, availableModelKeys, forcedModelKey = null)
     {
-        // Phones and tablets are out, ahead of every capability check, because
-        // the question they fail is not a capability one. A handheld can hold
-        // the weights and satisfy the limits and still be the wrong place to
-        // run this: sustained inference is thermally throttled within a minute,
-        // it drains the battery visibly, and a browser tab that idles gets its
-        // GPU resources reclaimed mid-answer. The tier is offered where it can
-        // be relied on rather than merely started.
-        if (deviceProfile.isHandheldDevice())
-        {
-            return new LocalLlmSelectionOutcome({ unavailableReason: localLlmUnavailableReasons.HANDHELD_DEVICE });
-        }
-
         const orderedKeys = Array.isArray(LocalLlmModelCatalogue.ORDER) ? LocalLlmModelCatalogue.ORDER : [];
         const availableKeySet = new Set(Array.isArray(availableModelKeys) ? availableModelKeys : []);
 
@@ -74,6 +62,7 @@ class LocalLlmModelSelector
         let bAnyBackendSupported = false;
         let bAnyBlockedByGpuLimits = false;
         let bAnyBlockedByDeviceMemory = false;
+        let bAnyBlockedByHandheld = false;
 
         for (const modelKey of orderedKeys)
         {
@@ -94,6 +83,12 @@ class LocalLlmModelSelector
             }
             bAnyBackendSupported = true;
 
+            if (!LocalLlmModelSelector.#isHandheldAllowedToRun(descriptor, deviceProfile))
+            {
+                bAnyBlockedByHandheld = true;
+                continue;
+            }
+
             if (!LocalLlmModelSelector.#areGpuRequirementsMet(descriptor, deviceProfile))
             {
                 bAnyBlockedByGpuLimits = true;
@@ -101,6 +96,11 @@ class LocalLlmModelSelector
             }
 
             if (!LocalLlmModelSelector.#isDeviceMemorySufficient(descriptor, deviceProfile))
+            {
+                bAnyBlockedByDeviceMemory = true;
+                continue;
+            }
+            if (!LocalLlmModelSelector.#isSystemMemorySufficient(descriptor, deviceProfile))
             {
                 bAnyBlockedByDeviceMemory = true;
                 continue;
@@ -116,7 +116,8 @@ class LocalLlmModelSelector
                 unavailableReason: LocalLlmModelSelector.#resolveUnavailableReason(
                     bAnyBackendSupported,
                     bAnyBlockedByGpuLimits,
-                    bAnyBlockedByDeviceMemory
+                    bAnyBlockedByDeviceMemory,
+                    bAnyBlockedByHandheld
                 )
             });
         }
@@ -125,7 +126,7 @@ class LocalLlmModelSelector
             LocalLlmModelSelector.#rankOf(firstKey) - LocalLlmModelSelector.#rankOf(secondKey));
 
         const chosenModelKey = candidateKeys[0];
-        const preferredModelKey = LocalLlmModelSelector.#findPreferredModelKey(orderedKeys, availableKeySet);
+        const preferredModelKey = LocalLlmModelSelector.#findPreferredModelKey(orderedKeys, availableKeySet, deviceProfile);
 
         return new LocalLlmSelectionOutcome(
         {
@@ -136,18 +137,30 @@ class LocalLlmModelSelector
     }
 
     /**
-     * The best model the catalogue offers on this deployment regardless of
-     * device. Comparing the chosen model against it is what tells a learner
-     * they are running a compromise.
+     * The best model this DEVICE could have been given, had nothing but its
+     * capability limits stood in the way. Comparing the chosen model against it
+     * is what tells a learner they are running a compromise.
+     *
+     * Restricted to backends this device can actually execute, which matters
+     * now that the catalogue carries models only the installed app can run. A
+     * browser can never run a native entry, so counting one as "preferred"
+     * would mark every browser visitor as degraded and attach an apology to
+     * the best model they can possibly have — precisely the noise this flag
+     * exists to avoid.
      */
-    static #findPreferredModelKey(orderedKeys, availableKeySet)
+    static #findPreferredModelKey(orderedKeys, availableKeySet, deviceProfile)
     {
         let preferredModelKey = null;
         let preferredRank = Number.POSITIVE_INFINITY;
 
         for (const modelKey of orderedKeys)
         {
-            if (!availableKeySet.has(modelKey) || !LocalLlmModelCatalogue[modelKey])
+            const descriptor = LocalLlmModelCatalogue[modelKey];
+            if (!availableKeySet.has(modelKey) || !descriptor)
+            {
+                continue;
+            }
+            if (!LocalLlmModelSelector.#isBackendSupported(descriptor, deviceProfile))
             {
                 continue;
             }
@@ -170,11 +183,60 @@ class LocalLlmModelSelector
         {
             return deviceProfile.isWebGpuAvailable();
         }
+        if (backendValue === localLlmExecutionBackends.NATIVE_RUNTIME)
+        {
+            return deviceProfile.isNativeDriverAvailable();
+        }
         if (backendValue === localLlmExecutionBackends.WASM)
         {
             return deviceProfile.isWebAssemblyAvailable();
         }
         return false;
+    }
+
+    /**
+     * Whether a handheld may run this particular model.
+     *
+     * The refusal is per backend rather than per device, which is the whole
+     * point. A phone running a model through the browser's graphics stack is a
+     * bad bet — thermally throttled within a minute, visibly draining, and a
+     * tab that idles has its GPU resources reclaimed mid-answer. A phone
+     * running compiled code with the app in the foreground is the ordinary
+     * case for every on-device assistant that works, so the same hardware is
+     * allowed here and refused above purely on how the model would be
+     * executed.
+     */
+    static #isHandheldAllowedToRun(descriptor, deviceProfile)
+    {
+        if (!deviceProfile.isHandheldDevice())
+        {
+            return true;
+        }
+        return localLlmExecutionBackends[descriptor.executionBackend] === localLlmExecutionBackends.NATIVE_RUNTIME;
+    }
+
+    /**
+     * System memory, for models that run in the app's own process.
+     *
+     * Distinct from the browser's `deviceMemory` hint: that one is coarse,
+     * capped at 8 by Chromium and absent entirely in Firefox and Safari, while
+     * the native runtime reports the real figure. As everywhere else here, a
+     * figure that was not reported never disqualifies a model.
+     */
+    static #isSystemMemorySufficient(descriptor, deviceProfile)
+    {
+        const requiredMegabytes = descriptor.minimumSystemMemoryMegabytes || 0;
+        if (requiredMegabytes <= 0)
+        {
+            return true;
+        }
+
+        const reportedMegabytes = deviceProfile.getSystemMemoryMegabytes();
+        if (reportedMegabytes === null)
+        {
+            return true;
+        }
+        return reportedMegabytes >= requiredMegabytes;
     }
 
     static #areGpuRequirementsMet(descriptor, deviceProfile)
@@ -219,11 +281,19 @@ class LocalLlmModelSelector
      * memory shortfall because the limits are a hard fact the adapter
      * reported, whereas the memory figure is a coarse browser hint.
      */
-    static #resolveUnavailableReason(bAnyBackendSupported, bAnyBlockedByGpuLimits, bAnyBlockedByDeviceMemory)
+    static #resolveUnavailableReason(bAnyBackendSupported, bAnyBlockedByGpuLimits, bAnyBlockedByDeviceMemory, bAnyBlockedByHandheld)
     {
         if (!bAnyBackendSupported)
         {
             return localLlmUnavailableReasons.NO_SUPPORTED_BACKEND;
+        }
+        // Ahead of the limit reasons because it is the actionable one. A phone
+        // whose browser cannot run this is not short of memory or graphics
+        // headroom — it needs the app, and saying "your GPU limits are too low"
+        // sends the learner to look for a setting that would not help.
+        if (bAnyBlockedByHandheld)
+        {
+            return localLlmUnavailableReasons.HANDHELD_DEVICE;
         }
         if (bAnyBlockedByGpuLimits)
         {

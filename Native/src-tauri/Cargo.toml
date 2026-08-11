@@ -47,9 +47,16 @@ tauri-plugin-updater = "2"
 version = "0.1"
 optional = true
 
+# The tokeniser hands back bytes, not text. A UTF-8 decoder is needed to
+# reassemble them, and it has to persist across tokens — see the note in
+# llama_inference_engine.rs.
+[dependencies.encoding_rs]
+version = "0.8"
+optional = true
+
 [features]
 default = []
-native-inference = ["dep:llama-cpp-2"]
+native-inference = ["dep:llama-cpp-2", "dep:encoding_rs"]
 
 # A debug build of the inference kernels is unusably slow — slow enough to look
 # like a hang rather than a slow model. The dependencies are optimised even in

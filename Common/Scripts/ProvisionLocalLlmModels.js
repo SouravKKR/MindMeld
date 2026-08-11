@@ -233,6 +233,27 @@ class LocalLlmModelProvisioner
         const repositoryEntries = await this.fetchRepositoryTree(descriptor.sourceRepository);
         const plannedFiles = [];
 
+        if (descriptor.executionBackend === 'NATIVE_RUNTIME')
+        {
+            // Exactly one file, named by the catalogue. A GGUF is
+            // self-contained — weights, tokeniser and metadata in one
+            // container — so nothing else in the repository is needed, and the
+            // fallback below would be actively harmful here: these repositories
+            // publish every quantisation side by side, so taking "all files"
+            // would pull eight variants of the same model and tens of
+            // gigabytes to use one of them.
+            const weightsEntry = repositoryEntries.find(
+                (repositoryEntry) => repositoryEntry.path === descriptor.weightsFileName);
+
+            if (!weightsEntry)
+            {
+                throw new Error(`${descriptor.sourceRepository} has no ${descriptor.weightsFileName} — check weightsFileName in the catalogue`);
+            }
+
+            plannedFiles.push(LocalLlmModelProvisioner.toPlannedFile(descriptor, weightsEntry));
+            return plannedFiles;
+        }
+
         if (descriptor.executionBackend === 'WASM')
         {
             const onnxFileName = `onnx/model_${descriptor.onnxDataType}.onnx`;

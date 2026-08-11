@@ -54,8 +54,17 @@ class NativeRuntimeDriver extends LocalLlmDriver
             const capability = await NativeBridge.invoke(NativeLlmProtocolConstants.COMMAND_PROBE_CAPABILITY);
 
             return {
+                // The shell answering is not the same as the shell being able
+                // to run a model: the inference library is an optional part of
+                // the build, so a shell can exist, respond, and have no engine
+                // behind it. Reported separately, because treating that build
+                // as capable would have the selector choose a native model
+                // that can never load — and the failure would surface much
+                // later, after a gigabyte had been downloaded.
                 bAvailable: true,
+                bInferenceCompiledIn: capability?.bInferenceCompiledIn === true,
                 systemMemoryMegabytes: Number.isFinite(capability?.totalMemoryMegabytes) ? capability.totalMemoryMegabytes : null,
+                availableMemoryMegabytes: Number.isFinite(capability?.availableMemoryMegabytes) ? capability.availableMemoryMegabytes : null,
                 logicalCoreCount: Number.isFinite(capability?.logicalCoreCount) ? capability.logicalCoreCount : null,
                 bMobileDevice: capability?.bMobileDevice === true,
                 accelerationLabel: typeof capability?.accelerationLabel === "string" ? capability.accelerationLabel : "",

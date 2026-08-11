@@ -269,6 +269,16 @@ class LocalLlmModelRegistry
                 files: servableFiles,
                 totalBytes: totalByteCount,
                 bComplete: LocalLlmModelRegistry.isModelComplete(descriptor, collectedFiles, modelDirectory),
+
+                // Native-runtime fields. Null for every browser model, and
+                // reported for all backends rather than only the native ones
+                // so the response shape stays one shape — a client that
+                // branches on which keys are present is a client that breaks
+                // the first time a model type is added.
+                weightsFileName: descriptor.weightsFileName || null,
+                weightsUrl: descriptor.weightsFileName ? `${baseUrl}${descriptor.weightsFileName}` : null,
+                quantisationLabel: descriptor.quantisationLabel || null,
+                recommendedThreadCount: Number.isFinite(descriptor.recommendedThreadCount) ? descriptor.recommendedThreadCount : 0,
             });
         }
 

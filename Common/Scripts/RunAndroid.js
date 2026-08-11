@@ -19,7 +19,8 @@ class AndroidRunner
 
     run()
     {
-        new TauriProjectPreparer().prepare();
+        const preparer = new TauriProjectPreparer();
+        preparer.prepare();
 
         if (fileSystem.existsSync(this.androidGeneratedDirectory) === false)
         {
@@ -28,7 +29,11 @@ class AndroidRunner
         }
 
         console.log('Building and deploying to the connected Android device ...');
-        CommandRunner.runCommand('npm', ['run', 'tauri', '--', 'android', 'dev'], this.nativeProjectDirectory);
+        CommandRunner.runCommand(
+            'npm',
+            ['run', 'tauri', '--', 'android', 'dev', ...preparer.resolveFeatureArguments()],
+            this.nativeProjectDirectory
+        );
     }
 }
 

@@ -174,6 +174,31 @@ const SMALL_MEMORY_CAPABLE_GRAPHICS = Object.assign({}, DESKTOP_GPU_WITH_F16,
 const UNKNOWN_MEMORY_CAPABLE_GRAPHICS = Object.assign({}, DESKTOP_GPU_WITH_F16, { deviceMemoryGigabytes: null });
 const CAPABLE_GRAPHICS_HANDHELD = Object.assign({}, DESKTOP_GPU_WITH_F16, { bHandheldDevice: true });
 
+// Devices running the installed app rather than a browser. `systemMemoryMegabytes`
+// is the operating system's real figure, which is why it is used to judge the
+// native models instead of the browser's coarse, capped deviceMemory hint.
+//
+// A phone with no WebGPU at all is deliberately the shape used here: it is the
+// ordinary Android case, and it proves the native path does not lean on the
+// graphics stack it exists to avoid.
+const NATIVE_CAPABLE_HANDHELD =
+{
+    bWebGpuAvailable: false,
+    bHandheldDevice: true,
+    bNativeDriverAvailable: true,
+    systemMemoryMegabytes: 8192,
+    logicalCoreCount: 8,
+};
+
+const NATIVE_CAPABLE_SMALL_HANDHELD = Object.assign({}, NATIVE_CAPABLE_HANDHELD, { systemMemoryMegabytes: 2600 });
+
+const NATIVE_CAPABLE_LARGE_DESKTOP = Object.assign({}, DESKTOP_GPU_WITH_F16,
+{
+    bNativeDriverAvailable: true,
+    systemMemoryMegabytes: 32768,
+    logicalCoreCount: 16,
+});
+
 
 // ── Tier 1a: the selection ladder against the shipped catalogue ────────────
 
@@ -256,6 +281,56 @@ async function runSelectionTier()
         !handheldOutcome.isAvailable()
             && handheldOutcome.getUnavailableReason() === localLlmUnavailableReasons.HANDHELD_DEVICE,
         "a phone is refused even when its graphics would satisfy a model",
+    );
+
+    // ── The native runtime, which is what the app adds ────────────────────
+    //
+    // The whole point of the native execution path is that the SAME hardware
+    // gets a different answer depending on how the model would be run. These
+    // cases are the ones that prove it, and the pair immediately below is the
+    // one that matters most: a phone refused in a browser and served in the
+    // app.
+    const handheldWithNativeOutcome = selectFor(NATIVE_CAPABLE_HANDHELD);
+    assert(
+        handheldWithNativeOutcome.isAvailable()
+            && LocalLlmModelCatalogue[handheldWithNativeOutcome.getModelKey()].executionBackend === "NATIVE_RUNTIME",
+        "a phone WITH the native runtime is offered a model rather than refused",
+    );
+    assert(
+        !selectFor(CAPABLE_GRAPHICS_HANDHELD).isAvailable(),
+        "and the same phone without it is still refused, so the gate is about the backend and not the device",
+    );
+
+    // A browser must never be handed a model it has no engine for. This is the
+    // failure that would download a gigabyte and then fail to load it.
+    const browserKeys = allModelKeys.filter((modelKey) =>
+        LocalLlmModelCatalogue[modelKey].executionBackend !== "NATIVE_RUNTIME");
+    assert(
+        LocalLlmModelCatalogue[selectFor(DESKTOP_GPU_WITH_F16).getModelKey()].executionBackend !== "NATIVE_RUNTIME",
+        "a browser is never offered a native model, however highly ranked it is",
+    );
+    assert(
+        selectFor(DESKTOP_GPU_WITH_F16, browserKeys).isDegraded() === false,
+        "and is not told it is running a compromise merely because the app could do better",
+    );
+
+    // Ranked highest, so a machine that can run it must get it — otherwise the
+    // app installs and quietly serves the same model the browser already did.
+    const largeNativeDesktopOutcome = selectFor(NATIVE_CAPABLE_LARGE_DESKTOP);
+    assert(
+        LocalLlmModelCatalogue[largeNativeDesktopOutcome.getModelKey()].executionBackend === "NATIVE_RUNTIME"
+            && LocalLlmModelCatalogue[largeNativeDesktopOutcome.getModelKey()].parameterLabel === "3B",
+        "a roomy desktop running the app gets the largest native model",
+    );
+
+    // System memory is judged from the operating system's real figure here,
+    // not the browser's coarse hint, so a small phone must fall to a smaller
+    // model rather than be handed one it cannot hold.
+    const smallNativeOutcome = selectFor(NATIVE_CAPABLE_SMALL_HANDHELD);
+    assert(
+        smallNativeOutcome.isAvailable()
+            && LocalLlmModelCatalogue[smallNativeOutcome.getModelKey()].minimumSystemMemoryMegabytes <= 2048,
+        "a low-memory phone falls to a native model small enough to fit rather than being refused",
     );
 
     const nothingOutcome = selectFor(NOTHING_AT_ALL);
@@ -513,6 +588,30 @@ function runCatalogueIntegrityTier()
                 `${modelKey} is laid out as a HuggingFace mirror, which its engine requires (folderName ends in /resolve/<ref>)`,
             );
         }
+        else if (descriptor.executionBackend === "NATIVE_RUNTIME")
+        {
+            assert(
+                typeof descriptor.weightsFileName === "string" && descriptor.weightsFileName.length > 0,
+                `${modelKey} names the single weights file its native runtime loads`,
+            );
+            assert(
+                descriptor.requiredFileNames.length === 1
+                    && descriptor.requiredFileNames[0] === descriptor.weightsFileName,
+                `${modelKey} is complete when exactly that one file is present`,
+            );
+            assert(
+                !descriptor.folderName.includes("/resolve/"),
+                `${modelKey} does not carry the graphics engine's mirror path, which its backend does not use`,
+            );
+            // The published repositories carry every quantisation side by
+            // side. Without a named file the provisioner's fallback would take
+            // all of them — tens of gigabytes to use one — so this is the
+            // assertion that keeps a new entry from quietly doing that.
+            assert(
+                Number.isFinite(descriptor.minimumSystemMemoryMegabytes) && descriptor.minimumSystemMemoryMegabytes > 0,
+                `${modelKey} declares the system memory it needs, which is what keeps it off a device too small for it`,
+            );
+        }
         else
         {
             assert(
@@ -708,6 +807,64 @@ function runDriverContractTier()
             driverReport.unimplemented.length === 0,
             `${driverName} implements every contract method${driverReport.unimplemented.length === 0 ? "" : ` (missing: ${driverReport.unimplemented.join(", ")})`}`,
         );
+    }
+}
+
+
+// ── Tier 1e3: the native command/event names, mirrored into Rust ───────────
+
+/**
+ * Common/Constants/NativeLlmProtocolConstants.json is the source of truth for
+ * the names the frontend invokes and subscribes to. Rust is not a codegen
+ * target, so llm_commands.rs duplicates them by hand.
+ *
+ * Asserted because the failure is completely silent. A renamed command rejects
+ * with "command not found" only at the moment a learner asks a question; a
+ * renamed EVENT does not even do that — the frontend subscribes to a name
+ * nothing emits, the answer streams into the void, and the dialog sits on
+ * "Thinking…" forever with no error anywhere.
+ */
+function runNativeProtocolMirrorTier()
+{
+    section("The native command and event names match their Rust mirror");
+
+    const NativeLlmProtocolConstants = require("./Globals/Constants/NativeLlmProtocolConstants");
+    const commandsPath = path.join(repositoryRoot, "Native", "src-tauri", "src", "llm_commands.rs");
+
+    if (!fs.existsSync(commandsPath))
+    {
+        assert(false, "llm_commands.rs exists");
+        return;
+    }
+
+    const rustSource = fs.readFileSync(commandsPath, "utf8");
+
+    // Commands are the #[tauri::command] function names; events are the
+    // string constants. Both are read from the Rust rather than assumed.
+    const declaredCommands = new Set(
+        Array.from(rustSource.matchAll(/#\[tauri::command\]\s*pub async fn\s+([a-z_]+)/g))
+            .map((commandMatch) => commandMatch[1]));
+
+    const declaredEventValues = new Set(
+        Array.from(rustSource.matchAll(/const\s+EVENT_[A-Z_]+:\s*&str\s*=\s*"([^"]+)"/g))
+            .map((eventMatch) => eventMatch[1]));
+
+    for (const [constantName, constantValue] of Object.entries(NativeLlmProtocolConstants))
+    {
+        if (constantName.startsWith("COMMAND_"))
+        {
+            assert(
+                declaredCommands.has(constantValue),
+                `${constantName} ("${constantValue}") is a command the native side actually registers`,
+            );
+        }
+        else if (constantName.startsWith("EVENT_"))
+        {
+            assert(
+                declaredEventValues.has(constantValue),
+                `${constantName} ("${constantValue}") is an event the native side actually emits`,
+            );
+        }
     }
 }
 
@@ -1018,6 +1175,7 @@ async function main()
     runWorkerProtocolTier();
     runSelfHostingTier();
     runDriverContractTier();
+    runNativeProtocolMirrorTier();
     runDeviceLostMirrorTier();
     runManifestWalkTier();
     runEnabledModelsTier();
