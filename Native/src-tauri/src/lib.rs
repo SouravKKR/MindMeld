@@ -22,17 +22,40 @@ use llm_commands::NativeLlmState;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run()
 {
+    // The context is built first so the configuration can be inspected before
+    // any plugin is registered. See the updater note below — that check is the
+    // only reason this is not the usual one-liner.
+    let context = tauri::generate_context!();
+
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init());
 
+    // THE UPDATER IS REGISTERED ONLY WHEN IT IS CONFIGURED, and that condition
+    // is load-bearing rather than tidy.
+    //
+    // ConfigureTauriApp.js deletes `plugins.updater` whenever no signing public
+    // key is supplied, which is the normal state for a development build and
+    // for anyone building without the release key. The plugin then initialises
+    // against a missing section, deserialises it as null, and panics before the
+    // window is ever created:
+    //
+    //     PluginInitialization("updater", "Error deserializing 'plugins.updater'
+    //     ... invalid type: null, expected struct Config")
+    //
+    // The app does not start at all — no window, no error dialog, just an exit.
+    //
     // Registered against the real target operating systems rather than the
-    // `desktop` cfg alias, which is not defined during a mobile build — the
-    // plugin would be compiled in and then fail to initialise on a phone.
+    // `desktop` cfg alias, which is not defined while the mobile targets are
+    // resolved, so the plugin would otherwise be compiled into an Android build
+    // and fail there instead.
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
-        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        if context.config().plugins.0.contains_key("updater")
+        {
+            builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        }
     }
 
     builder
@@ -45,6 +68,6 @@ pub fn run()
             llm_commands::interrupt_native_generation,
             llm_commands::unload_native_model,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("CogniumLearn failed to start");
 }
