@@ -325,4 +325,129 @@ mod tests
         let engine = LlamaInferenceEngine::new();
         assert!(!engine.is_loaded());
     }
+
+    /// Loads a real model and generates from it.
+    ///
+    /// Ignored by default because it needs a multi-hundred-megabyte file that
+    /// is deliberately not in version control. Run it against a provisioned
+    /// model with:
+    ///
+    ///     set COGNIUMLEARN_TEST_MODEL_PATH=<...>\qwen2.5-0.5b-instruct-q4_k_m.gguf
+    ///     cargo test --features native-inference -- --ignored --nocapture
+    ///
+    /// Worth having despite the setup: every other test here exercises the
+    /// framing and the error paths, and none of them would notice if the
+    /// tokenise / decode / sample loop were wrong. This is the only check that
+    /// the engine produces text at all.
+    #[test]
+    #[ignore]
+    fn loads_a_real_model_and_generates_text()
+    {
+        let model_path = match std::env::var("COGNIUMLEARN_TEST_MODEL_PATH")
+        {
+            Ok(path) => std::path::PathBuf::from(path),
+            Err(_) => panic!("set COGNIUMLEARN_TEST_MODEL_PATH to a provisioned .gguf"),
+        };
+
+        let mut engine = LlamaInferenceEngine::new();
+        engine
+            .load(&ModelLoadRequest
+            {
+                model_file_path: model_path,
+                context_window_tokens: 2048,
+                thread_count: 4,
+            })
+            .expect("the model should load");
+        assert!(engine.is_loaded());
+
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let mut streamed_fragments = 0_usize;
+        let started_at = std::time::Instant::now();
+
+        let answer = engine
+            .generate(
+                &GenerationRequest
+                {
+                    system_prompt: "You answer clearly and completely.".to_string(),
+                    user_prompt: "Name the capital city of France, then explain in a few sentences why spaced repetition helps memory.".to_string(),
+                    maximum_new_tokens: 160,
+                    temperature: 0.2,
+                },
+                &cancellation,
+                &mut |_fragment| { streamed_fragments += 1; },
+            )
+            .expect("generation should succeed");
+
+        // Printed rather than asserted. Throughput is the whole reason this
+        // execution path exists — the browser's processor fallback measured
+        // 0.1 tokens/second, which is why it was withdrawn — but it varies by
+        // an order of magnitude across the machines this has to run on, so a
+        // threshold here would fail on hardware that is working correctly.
+        let elapsed_seconds = started_at.elapsed().as_secs_f64();
+        println!(
+            "answer: {answer}\n[throughput] {streamed_fragments} tokens in {elapsed_seconds:.2}s = {:.1} tokens/second",
+            streamed_fragments as f64 / elapsed_seconds.max(0.000_001)
+        );
+
+        assert!(!answer.trim().is_empty(), "the model should produce text");
+        assert!(streamed_fragments > 0, "tokens should stream as they are produced");
+        // The framing tokens must never reach the reader.
+        assert!(!answer.contains("<|im_"), "control tokens must not appear in the answer");
+        // Not a quality assertion — a check that the loop is wired to the
+        // prompt at all. A tokenise/decode mistake yields fluent text about
+        // nothing in particular, which every other assertion here would pass.
+        assert!(answer.to_lowercase().contains("paris"), "the answer should address the question, got: {answer}");
+    }
+
+    /// The stop signal must actually stop the work, not merely stop the output.
+    #[test]
+    #[ignore]
+    fn cancellation_stops_generation_early()
+    {
+        let model_path = match std::env::var("COGNIUMLEARN_TEST_MODEL_PATH")
+        {
+            Ok(path) => std::path::PathBuf::from(path),
+            Err(_) => panic!("set COGNIUMLEARN_TEST_MODEL_PATH to a provisioned .gguf"),
+        };
+
+        let mut engine = LlamaInferenceEngine::new();
+        engine
+            .load(&ModelLoadRequest
+            {
+                model_file_path: model_path,
+                context_window_tokens: 2048,
+                thread_count: 4,
+            })
+            .expect("the model should load");
+
+        // Raised after a few tokens, which is how a learner closing a dialog
+        // mid-answer actually looks.
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let cancellation_for_handler = Arc::clone(&cancellation);
+        let mut emitted_tokens = 0_usize;
+
+        let answer = engine
+            .generate(
+                &GenerationRequest
+                {
+                    system_prompt: "You are verbose.".to_string(),
+                    user_prompt: "Write a long essay about memory.".to_string(),
+                    maximum_new_tokens: 400,
+                    temperature: 0.7,
+                },
+                &cancellation,
+                &mut |_fragment|
+                {
+                    emitted_tokens += 1;
+                    if emitted_tokens == 5
+                    {
+                        cancellation_for_handler.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                },
+            )
+            .expect("a cancelled generation still returns what it produced");
+
+        assert!(emitted_tokens < 400, "generation should have stopped well before the limit");
+        assert!(!answer.is_empty(), "the partial answer is kept rather than discarded");
+    }
 }
