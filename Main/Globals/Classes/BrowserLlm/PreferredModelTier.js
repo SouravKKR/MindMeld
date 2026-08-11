@@ -1,6 +1,7 @@
 import { modelTiers } from "../../Enumerations/ModelTiers.js";
 import { dataFormats } from "../../Enumerations/DataFormats.js";
 import BrowserLlmDownloadEvents from "../../Events/BrowserLlmDownloadEvents.js";
+import BrowserLlmDownloadConstants from "../../Constants/BrowserLlmDownloadConstants.js";
 import Persistence from "../Persistence.js";
 
 
@@ -19,7 +20,6 @@ import Persistence from "../Persistence.js";
  */
 class PreferredModelTier
 {
-    static #PERSISTENCE_KEY = "BrowserLlm/PreferredTier.mmsd";
     static #cachedTier = null;
     static #hydratePromise = null;
 
@@ -43,13 +43,13 @@ class PreferredModelTier
         {
             try
             {
-                const bExists = await Persistence.exists(PreferredModelTier.#PERSISTENCE_KEY);
+                const bExists = await Persistence.exists(BrowserLlmDownloadConstants.LOCAL_PREFERRED_TIER_PERSISTENCE_KEY);
                 if (!bExists)
                 {
                     PreferredModelTier.#cachedTier = PreferredModelTier.getDefaultTier();
                     return;
                 }
-                const record = await Persistence.read(PreferredModelTier.#PERSISTENCE_KEY, dataFormats.JSON);
+                const record = await Persistence.read(BrowserLlmDownloadConstants.LOCAL_PREFERRED_TIER_PERSISTENCE_KEY, dataFormats.JSON);
                 if (record && typeof record.tier === "number" && PreferredModelTier.#isValidTier(record.tier))
                 {
                     PreferredModelTier.#cachedTier = record.tier;
@@ -93,7 +93,7 @@ class PreferredModelTier
         PreferredModelTier.#cachedTier = tier;
         try
         {
-            await Persistence.write(PreferredModelTier.#PERSISTENCE_KEY, { tier, at: Date.now() }, dataFormats.JSON);
+            await Persistence.write(BrowserLlmDownloadConstants.LOCAL_PREFERRED_TIER_PERSISTENCE_KEY, { tier, at: Date.now() }, dataFormats.JSON);
         }
         catch (writeError)
         {

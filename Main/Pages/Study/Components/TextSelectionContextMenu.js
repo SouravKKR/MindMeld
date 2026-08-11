@@ -4,7 +4,7 @@ import LlmTierSelect from "../../../CommonComponents/LlmTierSelect.js";
 import LanguageSelect from "../../../CommonComponents/LanguageSelect.js";
 import { modelTiers } from "../../../Globals/Enumerations/ModelTiers.js";
 import { askAiPromptModes } from "../../../Globals/Enumerations/AskAiPromptModes.js";
-import ModelTierMetadata from "../../../Globals/Constants/ModelTierMetadata.js";
+import ModelTierKeyLookup from "../../../Globals/Classes/ModelTierKeyLookup.js";
 import InformationSourceSelector from "../../AutomaticGeneration/Components/InformationSourceSelector.js";
 import ExtractableInformationSource from "../../../Globals/Classes/Decorators/ExtractableInformationSource.js";
 import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
@@ -65,9 +65,6 @@ class TextSelectionContextMenu extends ContextMenu
 {
     static tagName = "text-selection-context-menu";
 
-    static AI_FREE_TIER_TITLE   = "Free tier unavailable";
-    static AI_FREE_TIER_MESSAGE = "The Free tier is offline-only and not wired for streaming yet. Pick Basic, Pro, or Pro Plus.";
-
     static #ANCHOR_GAP_PX = 8;
     static #VIEWPORT_MARGIN_PX = 8;
 
@@ -78,8 +75,8 @@ class TextSelectionContextMenu extends ContextMenu
     static #ADDITIONAL_DATA_KEY = BrowserLlmDownloadConstants.DECK_PREFERENCES_FIELD_KEY;
 
     // Surfaces the document-grounding controls only on tiers that
-    // actually call the cloud — the in-browser Free model is offline
-    // and doesn't ground against the user's sources this round.
+    // actually call the cloud. The on-device Free model has no access to
+    // the server-indexed source chunks, so grounding cannot apply to it.
     static #TIERS_THAT_SUPPORT_GROUNDING = new Set([
         modelTiers.BASIC,
         modelTiers.PRO,
@@ -667,10 +664,10 @@ class TextSelectionContextMenu extends ContextMenu
 
     /**
      * Show or hide the grounding controls block based on the current
-     * tier. Free is a local model and doesn't ground against the
-     * user's documents in this round, so the block is hidden for it.
-     * Also flips the image-attach UI per the tier's
-     * supportsImageInput flag (Free can't take images either).
+     * tier. Free runs on the device with no access to the server-indexed
+     * source chunks, so the block is hidden for it. Also flips the
+     * image-attach UI per the tier's supportsImageInput flag (Free has no
+     * vision input either).
      */
     #applyTierAwareVisibility()
     {
@@ -686,23 +683,10 @@ class TextSelectionContextMenu extends ContextMenu
 
         if (this.#imageAttachmentManager)
         {
-            const tierKeyName = TextSelectionContextMenu.#tierKeyFor(currentTier);
-            const tierMeta = tierKeyName ? ModelTierMetadata[tierKeyName] : null;
+            const tierMeta = ModelTierKeyLookup.metadataFor(currentTier);
             const bSupportsImageInput = Boolean(tierMeta?.supportsImageInput);
             this.#imageAttachmentManager.setVisible(bSupportsImageInput);
         }
-    }
-
-    static #tierKeyFor(tierValue)
-    {
-        for (const [tierKeyName, candidateValue] of Object.entries(modelTiers))
-        {
-            if (candidateValue === tierValue)
-            {
-                return tierKeyName;
-            }
-        }
-        return null;
     }
 
     /**
@@ -804,18 +788,6 @@ class TextSelectionContextMenu extends ContextMenu
             await DialogBox.alert(
                 "No content in view",
                 "Open a deck and start a study session before using the AI selection actions."
-            );
-            return;
-        }
-
-        // The Free tier is not wired this pass — surface the same
-        // dialog the session itself would, but skip the dialog churn
-        // by failing fast at the menu layer.
-        if (chosenTier === modelTiers.FREE)
-        {
-            await DialogBox.alert(
-                TextSelectionContextMenu.AI_FREE_TIER_TITLE,
-                TextSelectionContextMenu.AI_FREE_TIER_MESSAGE
             );
             return;
         }

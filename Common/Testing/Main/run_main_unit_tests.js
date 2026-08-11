@@ -20,6 +20,7 @@ const { Harness, writeSkipped, assert, assertEqual } = require("../Dock/_harness
 const REPOSITORY_ROOT = path.resolve(__dirname, "..", "..", "..");
 const UTILITY_DIRECTORY = path.join(REPOSITORY_ROOT, "Main", "Globals", "UtilityFunctions");
 const CLASSES_DIRECTORY = path.join(REPOSITORY_ROOT, "Main", "Globals", "Classes");
+const ENUMERATIONS_DIRECTORY = path.join(REPOSITORY_ROOT, "Main", "Globals", "Enumerations");
 const RESULT_FILE = process.env.RESULT_FILE
     || path.join(REPOSITORY_ROOT, "Common", "Reports", ".results", "main-unit.json");
 
@@ -29,6 +30,7 @@ const CATALOGUED = [
     "pascalCaseToTitleCase", "rgbToHex", "sanitizeForJsPdf", "sha256",
     "smoothCurve", "createPromiseMutex", "buildContentOverlayId",
     "PaidDeckMoveGuard.canMove",
+    "ModelTierKeyLookup", "BrowserLlmPromptBuilder.build",
 ];
 
 function moduleUrl(fileName)
@@ -41,6 +43,11 @@ function moduleUrl(fileName)
 function classModuleUrl(relativePath)
 {
     return pathToFileURL(path.join(CLASSES_DIRECTORY, relativePath)).href;
+}
+
+function enumerationModuleUrl(fileName)
+{
+    return pathToFileURL(path.join(ENUMERATIONS_DIRECTORY, fileName)).href;
 }
 
 function approximately(actual, expected, tolerance, message)
@@ -57,6 +64,8 @@ async function main()
     let rgbToHex, sanitizeForJsPdf, sha256, smoothCurve, createPromiseMutex;
     let buildContentOverlayId;
     let PaidDeckMoveGuard;
+    let ModelTierKeyLookup, BrowserLlmPromptBuilder;
+    let askAiPromptModes, askAiContextKinds, modelTiers;
     let mutexOrder;
     try
     {
@@ -70,6 +79,16 @@ async function main()
         ({ createPromiseMutex } = await import(moduleUrl("CreatePromiseMutex.js")));
         ({ buildContentOverlayId } = await import(moduleUrl("BuildContentOverlayId.js")));
         PaidDeckMoveGuard = (await import(classModuleUrl("PaidDeckMoveGuard.js"))).default;
+
+        // The Free tier's prompt assembly and the tier key/value bridge. Both
+        // are deliberately free of DOM, persistence and network imports so they
+        // can be exercised here — a stray DialogBox import in either would take
+        // this whole suite down with "HTMLElement is not defined".
+        ModelTierKeyLookup = (await import(classModuleUrl("ModelTierKeyLookup.js"))).default;
+        BrowserLlmPromptBuilder = (await import(classModuleUrl("BrowserLlm/BrowserLlmPromptBuilder.js"))).default;
+        ({ askAiPromptModes } = await import(enumerationModuleUrl("AskAiPromptModes.js")));
+        ({ askAiContextKinds } = await import(enumerationModuleUrl("AskAiContextKinds.js")));
+        ({ modelTiers } = await import(enumerationModuleUrl("ModelTiers.js")));
 
         // The mutex is async, but the harness test bodies are synchronous, so we
         // run the mutual-exclusion scenario up front and assert the captured order.
@@ -324,6 +343,188 @@ async function main()
         // load. Failing open here is what keeps the tree building.
         assertEqual(PaidDeckMoveGuard.canMove(null, buildDeck("paid-deck-1")), true);
         assertEqual(PaidDeckMoveGuard.canMove(undefined, buildDeck(null)), true);
+    });
+
+    // -- ModelTierKeyLookup: one bridge between the numeric and named tier ----
+
+    harness.test("ModelTierKeyLookup: every tier round-trips between value and key name", "ModelTierKeyLookup", () =>
+    {
+        // The mapping used to be copied into four surfaces, one of which spoke
+        // key names where the others spoke numbers — which is how the Free tier
+        // came to be missing from the chat picker entirely.
+        for (const [tierKeyName, tierValue] of Object.entries(modelTiers))
+        {
+            assertEqual(ModelTierKeyLookup.keyFor(tierValue), tierKeyName);
+            assertEqual(ModelTierKeyLookup.valueFor(tierKeyName), tierValue);
+        }
+    });
+
+    harness.test("ModelTierKeyLookup: an unknown tier resolves to null rather than a wrong tier", "ModelTierKeyLookup", () =>
+    {
+        assertEqual(ModelTierKeyLookup.keyFor(9999), null);
+        assertEqual(ModelTierKeyLookup.valueFor("NOT_A_TIER"), null);
+        assertEqual(ModelTierKeyLookup.metadataFor(9999), null);
+    });
+
+    harness.test("ModelTierKeyLookup: the Free tier has no API path, and the paid tiers all do", "ModelTierKeyLookup", () =>
+    {
+        // This is what routes a request locally instead of to the server, so it
+        // is worth pinning: a Free tier that acquired an apiPath would start
+        // charging credits for an answer it produces on the device.
+        assertEqual(ModelTierKeyLookup.metadataFor(modelTiers.FREE).apiPath, null);
+        assert(typeof ModelTierKeyLookup.metadataFor(modelTiers.BASIC).apiPath === "string");
+        assert(typeof ModelTierKeyLookup.metadataFor(modelTiers.PRO).apiPath === "string");
+        assert(typeof ModelTierKeyLookup.metadataFor(modelTiers.PRO_PLUS).apiPath === "string");
+    });
+
+    // -- BrowserLlmPromptBuilder: the on-device prompt fits, and keeps the ask -
+
+    const HUGE_CONTENT = "Mitochondria are the powerhouse of the cell. ".repeat(6000);
+    const LEARNER_QUESTION = "Why does this matter for ATP yield?";
+    const PROMPT_MODE_NAMES = ["EXPLAIN", "ASK", "SUMMARIZE", "MAKE_MNEMONIC", "GIVE_EXAMPLES", "GLOSSARY"];
+    const CONTEXT_KIND_NAMES = ["CARD", "STUDY_MATERIAL", "DECK"];
+
+    function buildContextPayload(contextKindName)
+    {
+        if (contextKindName === "STUDY_MATERIAL")
+        {
+            return { content: HUGE_CONTENT };
+        }
+        if (contextKindName === "DECK")
+        {
+            return {
+                snippets: [
+                    { kind: "CARD", question: HUGE_CONTENT, answer: HUGE_CONTENT },
+                    { kind: "STUDY_MATERIAL", content: HUGE_CONTENT },
+                ],
+                conversation: [{ role: "user", text: HUGE_CONTENT }],
+            };
+        }
+        return { question: HUGE_CONTENT, answer: HUGE_CONTENT };
+    }
+
+    harness.test("BrowserLlmPromptBuilder.build: every mode and context fits the model's window", "BrowserLlmPromptBuilder.build", () =>
+    {
+        // Overrunning the window truncates inside the engine, silently and from
+        // the wrong end — the learner gets a confident answer to a prompt that
+        // lost its instructions.
+        for (const modelKey of ["QWEN2_5_1_5B_WEBGPU_Q4F16", "QWEN2_5_0_5B_WEBGPU_Q4F16"])
+        {
+            const budgetCharacters = BrowserLlmPromptBuilder.getPromptBudgetCharacters(modelKey);
+
+            for (const promptModeName of PROMPT_MODE_NAMES)
+            {
+                for (const contextKindName of CONTEXT_KIND_NAMES)
+                {
+                    const built = BrowserLlmPromptBuilder.build({
+                        modelKey:       modelKey,
+                        promptMode:     askAiPromptModes[promptModeName],
+                        contextKind:    askAiContextKinds[contextKindName],
+                        contextPayload: buildContextPayload(contextKindName),
+                        selectedText:   "oxidative phosphorylation",
+                        userQuery:      LEARNER_QUESTION,
+                    });
+
+                    const totalCharacters = built.systemPrompt.length + built.userPrompt.length;
+                    assert(
+                        totalCharacters <= budgetCharacters,
+                        `${modelKey} / ${promptModeName} / ${contextKindName}: ${totalCharacters} characters exceeds the ${budgetCharacters} budget`
+                    );
+                }
+            }
+        }
+    });
+
+    harness.test("BrowserLlmPromptBuilder.build: context is shed before the learner's question", "BrowserLlmPromptBuilder.build", () =>
+    {
+        // The fixed truncation order. A question dropped to make room produces
+        // an answer to something nobody asked, which is worse than thin context.
+        for (const contextKindName of CONTEXT_KIND_NAMES)
+        {
+            const built = BrowserLlmPromptBuilder.build({
+                modelKey:       "QWEN2_5_0_5B_WEBGPU_Q4F16",
+                promptMode:     askAiPromptModes.ASK,
+                contextKind:    askAiContextKinds[contextKindName],
+                contextPayload: buildContextPayload(contextKindName),
+                selectedText:   "",
+                userQuery:      LEARNER_QUESTION,
+            });
+
+            assert(
+                built.userPrompt.includes(LEARNER_QUESTION),
+                `${contextKindName}: the question survived a context far larger than the window`
+            );
+        }
+    });
+
+    harness.test("BrowserLlmPromptBuilder.build: budgets scale with the model's context window", "BrowserLlmPromptBuilder.build", () =>
+    {
+        // Derived from the selected model rather than hardcoded, so provisioning
+        // a model with a bigger window widens the context with no code change.
+        const largeWindowBudget = BrowserLlmPromptBuilder.getPromptBudgetCharacters("QWEN2_5_1_5B_WEBGPU_Q4F16");
+        const smallWindowBudget = BrowserLlmPromptBuilder.getPromptBudgetCharacters("QWEN2_5_0_5B_WEBGPU_Q4F16");
+        assert(largeWindowBudget > smallWindowBudget, "a 4096-token model must be given more prompt room than a 2048-token one");
+
+        const largeDeckBudget = BrowserLlmPromptBuilder.getDeckContextBudget("QWEN2_5_1_5B_WEBGPU_Q4F16");
+        const smallDeckBudget = BrowserLlmPromptBuilder.getDeckContextBudget("QWEN2_5_0_5B_WEBGPU_Q4F16");
+        assert(
+            largeDeckBudget.maximumContextPayloadCharacters > smallDeckBudget.maximumContextPayloadCharacters,
+            "and correspondingly more deck grounding in chat"
+        );
+    });
+
+    harness.test("BrowserLlmPromptBuilder.build: SUMMARIZE ignores a selection, other modes honour it", "BrowserLlmPromptBuilder.build", () =>
+    {
+        const summarized = BrowserLlmPromptBuilder.build({
+            modelKey: "QWEN2_5_1_5B_WEBGPU_Q4F16",
+            promptMode: askAiPromptModes.SUMMARIZE,
+            contextKind: askAiContextKinds.CARD,
+            contextPayload: { question: "Q", answer: "A" },
+            selectedText: "UNIQUE-SELECTION-MARKER",
+            userQuery: "",
+        });
+        assert(!summarized.userPrompt.includes("UNIQUE-SELECTION-MARKER"), "summarising one highlighted phrase is not a meaningful request");
+
+        const explained = BrowserLlmPromptBuilder.build({
+            modelKey: "QWEN2_5_1_5B_WEBGPU_Q4F16",
+            promptMode: askAiPromptModes.EXPLAIN,
+            contextKind: askAiContextKinds.CARD,
+            contextPayload: { question: "Q", answer: "A" },
+            selectedText: "UNIQUE-SELECTION-MARKER",
+            userQuery: "",
+        });
+        assert(explained.userPrompt.includes("UNIQUE-SELECTION-MARKER"), "explaining a highlighted phrase must actually carry it");
+    });
+
+    harness.test("BrowserLlmPromptBuilder.build: inline images are stripped from the context", "BrowserLlmPromptBuilder.build", () =>
+    {
+        // A single base64 image in a card would consume the entire window.
+        const built = BrowserLlmPromptBuilder.build({
+            modelKey: "QWEN2_5_1_5B_WEBGPU_Q4F16",
+            promptMode: askAiPromptModes.EXPLAIN,
+            contextKind: askAiContextKinds.CARD,
+            contextPayload: { question: "Q", answer: '<p>Before <img src="data:image/png;base64,AAAABBBBCCCC"> after</p>' },
+            selectedText: "",
+            userQuery: "",
+        });
+        assert(!built.userPrompt.includes("base64"), "no base64 payload reaches the prompt");
+        assert(built.userPrompt.includes("after"), "the surrounding text is kept");
+    });
+
+    harness.test("BrowserLlmPromptBuilder: FORMAT is not offered on the on-device model", "BrowserLlmPromptBuilder.build", () =>
+    {
+        // It needs table and figure discipline a small model does not hold, and
+        // half-restructured content written back over a learner's own card is
+        // worse than an honest refusal.
+        assertEqual(BrowserLlmPromptBuilder.isPromptModeSupported(askAiPromptModes.FORMAT), false);
+        for (const promptModeName of PROMPT_MODE_NAMES)
+        {
+            assertEqual(
+                BrowserLlmPromptBuilder.isPromptModeSupported(askAiPromptModes[promptModeName]),
+                true,
+                `${promptModeName} is supported`
+            );
+        }
     });
 
     harness.runAndWrite(RESULT_FILE);

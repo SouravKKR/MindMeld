@@ -1,6 +1,7 @@
 import { askAiLanguages } from "../../Enumerations/AskAiLanguages.js";
 import { dataFormats } from "../../Enumerations/DataFormats.js";
 import BrowserLlmDownloadEvents from "../../Events/BrowserLlmDownloadEvents.js";
+import BrowserLlmDownloadConstants from "../../Constants/BrowserLlmDownloadConstants.js";
 import Persistence from "../Persistence.js";
 
 
@@ -24,7 +25,6 @@ import Persistence from "../Persistence.js";
  */
 class PreferredAskAiLanguage
 {
-    static #PERSISTENCE_KEY = "AskAi/LanguagePreference.mmsd";
     static #DEFAULT_LANGUAGE = "ENGLISH";
 
     static #cachedLanguage = null;
@@ -52,13 +52,13 @@ class PreferredAskAiLanguage
         {
             try
             {
-                const bExists = await Persistence.exists(PreferredAskAiLanguage.#PERSISTENCE_KEY);
+                const bExists = await Persistence.exists(BrowserLlmDownloadConstants.LOCAL_ASK_AI_LANGUAGE_PERSISTENCE_KEY);
                 if (!bExists)
                 {
                     PreferredAskAiLanguage.#applyDefault();
                     return;
                 }
-                const record = await Persistence.read(PreferredAskAiLanguage.#PERSISTENCE_KEY, dataFormats.JSON);
+                const record = await Persistence.read(BrowserLlmDownloadConstants.LOCAL_ASK_AI_LANGUAGE_PERSISTENCE_KEY, dataFormats.JSON);
                 if (record && PreferredAskAiLanguage.#isValidLanguage(record.selectedLanguage))
                 {
                     PreferredAskAiLanguage.#cachedLanguage = record.selectedLanguage;
@@ -121,7 +121,7 @@ class PreferredAskAiLanguage
         try
         {
             await Persistence.write(
-                PreferredAskAiLanguage.#PERSISTENCE_KEY,
+                BrowserLlmDownloadConstants.LOCAL_ASK_AI_LANGUAGE_PERSISTENCE_KEY,
                 {
                     selectedLanguage: PreferredAskAiLanguage.#cachedLanguage,
                     combineWithEnglish: PreferredAskAiLanguage.#cachedCombineWithEnglish,

@@ -38,6 +38,39 @@ class StaticCachePolicy
     // Matched against the lower-cased request path.
     static THIRD_PARTY_PATH_PREFIX = "/thirdparty/";
 
+    // Offline-AI model weights and the ONNX Runtime binary, served from
+    // Dock/Assets rather than Dock/Static. Immutable by construction: the URL
+    // embeds the model's own folder name, so an upgrade is a different folder
+    // and therefore a different URL — the same opt-in reasoning the versioned
+    // ThirdParty filenames use. Worth a year because the alternative is a user
+    // who cleared their Cache API re-pulling most of a gigabyte.
+    static IMMUTABLE_ASSET_PATH_PREFIXES = ["/assets/models/", "/assets/runtime/"];
+
+    // Not everything under ThirdParty/ is third-party. Dock/Static/ThirdParty/
+    // BrowserLlm/ also holds OUR OWN code — the inference worker, its
+    // hand-mirrored protocol enums and the engine runner — which sits there for
+    // one reason only: it must escape bundling and obfuscation, because it
+    // imports the 6.8 MB vendor bundle that would otherwise be inlined into the
+    // SPA bundle. Being in that directory says nothing about how often it
+    // changes, and these three change on ordinary deploys.
+    //
+    // That breaks the assumption the exemption below rests on ("they change
+    // only when somebody deliberately upgrades them, which is never part of a
+    // routine deploy"). At one day of public caching, a fix to the engine
+    // runner stayed invisible for 24 hours to browsers AND to the CDN edge,
+    // which cached it and went on serving the old file to everyone — a deploy
+    // that verifiably shipped and verifiably did nothing. Worse,
+    // BrowserLlmWorkerProtocol.js mirrors two codegen'd enums by hand, so a
+    // stale copy can silently disagree with the bundle that talks to it.
+    //
+    // The vendored BrowserLlm.js beside them is genuinely third-party and keeps
+    // its cache — it is 6.8 MB and really does change only on an upgrade.
+    static FIRST_PARTY_THIRD_PARTY_FILE_NAMES = new Set([
+        "browserllmenginerunner.js",
+        "browserllmworker.js",
+        "browserllmworkerprotocol.js",
+    ]);
+
     // A version embedded in the filename: "-11.4.1." or "-2.1.7-" and so on.
     // Anchored to a preceding hyphen so an ordinary dotted name like
     // "jspdf.umd.min.js" is not mistaken for a versioned one.
@@ -56,12 +89,27 @@ class StaticCachePolicy
     {
         const requestPath = String(requestUrl || "").split("?")[0].toLowerCase();
 
+        for (const immutablePrefix of StaticCachePolicy.IMMUTABLE_ASSET_PATH_PREFIXES)
+        {
+            if (requestPath.startsWith(immutablePrefix))
+            {
+                return `public, max-age=${StaticCachePolicy.IMMUTABLE_MAX_AGE_SECONDS}, immutable`;
+            }
+        }
+
         if (!requestPath.startsWith(StaticCachePolicy.THIRD_PARTY_PATH_PREFIX))
         {
             return null;
         }
 
         const fileName = requestPath.substring(requestPath.lastIndexOf("/") + 1);
+
+        // First-party code that merely lives under ThirdParty/ — no-store, same
+        // as the rest of the app it ships with.
+        if (StaticCachePolicy.FIRST_PARTY_THIRD_PARTY_FILE_NAMES.has(fileName))
+        {
+            return null;
+        }
 
         if (StaticCachePolicy.VERSIONED_FILE_NAME_PATTERN.test(fileName))
         {

@@ -1,6 +1,10 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import AiFeatureGate from "../../../Globals/Classes/AiFeatureGate.js";
-import ModelTierMetadata from "../../../Globals/Constants/ModelTierMetadata.js";
+import ModelTierKeyLookup from "../../../Globals/Classes/ModelTierKeyLookup.js";
+import BrowserLlmCapability from "../../../Globals/Classes/BrowserLlm/BrowserLlmCapability.js";
+import BrowserLlmDownloadManager from "../../../Globals/Classes/BrowserLlm/BrowserLlmDownloadManager.js";
+import LocalAskAiRunner from "../../../Globals/Classes/BrowserLlm/LocalAskAiRunner.js";
+import { browserLlmDownloadStates } from "../../../Globals/Enumerations/BrowserLlmDownloadStates.js";
 import { modelTiers } from "../../../Globals/Enumerations/ModelTiers.js";
 import { askAiPromptModes } from "../../../Globals/Enumerations/AskAiPromptModes.js";
 import { askAiContextKinds } from "../../../Globals/Enumerations/AskAiContextKinds.js";
@@ -94,12 +98,21 @@ class AskAiSession
             return;
         }
 
+        // The Free tier answers on the device: no endpoint, no request, no
+        // credits. Everything after the stream is opened is shared with the
+        // cloud tiers, because the local runner emits the same NDJSON events.
+        if (this.#chosenTier === modelTiers.FREE)
+        {
+            await this.#runLocal();
+            return;
+        }
+
         const apiPath = AskAiSession.#resolveApiPath(this.#chosenTier);
         if (!apiPath)
         {
             await DialogBox.alert(
                 "Tier not available",
-                "The Free tier is offline-only and not wired for streaming yet. Pick Basic, Pro, or Pro Plus."
+                "That model tier isn't available. Pick Basic, Pro, or Pro Plus."
             );
             return;
         }
@@ -179,6 +192,100 @@ class AskAiSession
     }
 
     /**
+     * The Free tier's run(). Loads the on-device model if the learner has not
+     * already, then streams an answer from it through the same dialog and the
+     * same NDJSON consumer the cloud tiers use.
+     *
+     * Two refusals are handled before anything opens, because both are worth
+     * explaining rather than failing silently: the model may not be present
+     * on this device yet, and a few actions are beyond what a small on-device
+     * model can do reliably.
+     */
+    async #runLocal()
+    {
+        await BrowserLlmCapability.initialize();
+
+        if (BrowserLlmCapability.getState() !== browserLlmDownloadStates.READY)
+        {
+            await this.#offerModelDownload();
+            return;
+        }
+
+        if (!LocalAskAiRunner.isPromptModeSupported(this.#promptMode))
+        {
+            await DialogBox.alert(
+                "Not available on Free",
+                "This action needs a cloud model — the on-device model can't do it reliably. Pick Basic, Pro, or Pro Plus for this one."
+            );
+            return;
+        }
+
+        const requestPayload = this.#buildRequestPayload();
+        if (requestPayload === null)
+        {
+            await DialogBox.alert(
+                "Cannot proceed",
+                "No flashcard or study material is currently in view. Open a deck and start a study session."
+            );
+            return;
+        }
+
+        this.#openStreamingDialog();
+        this.#abortController = new AbortController();
+
+        try
+        {
+            const localStream = await LocalAskAiRunner.openStream(requestPayload, this.#abortController.signal);
+            await this.#consumeNdjsonStream(localStream);
+        }
+        catch (localError)
+        {
+            if (localError?.name === "AbortError" || this.#bUserClosedDialog)
+            {
+                return;
+            }
+            this.#resultView?.renderError(`The on-device model failed: ${localError?.message || localError}`);
+        }
+    }
+
+    /**
+     * Explains why Free is not usable yet and, when the learner can fix it
+     * themselves, starts the download from here. The model is hundreds of
+     * megabytes, so it is never fetched without an explicit yes.
+     */
+    async #offerModelDownload()
+    {
+        const reasonText = BrowserLlmCapability.getDisabledReasonText()
+            || "The on-device model isn't ready yet.";
+
+        if (!BrowserLlmCapability.isRecoverableByUser())
+        {
+            await DialogBox.alert("Free tier unavailable", reasonText);
+            return;
+        }
+
+        const bAcceptedDownload = await DialogBox.confirm("Download the on-device model?", reasonText);
+        if (!bAcceptedDownload)
+        {
+            return;
+        }
+
+        // Deliberately not awaited into the answer: the download runs for
+        // minutes and reports into the activity feed and the tier picker, so
+        // holding a modal open over it would be worse than letting the
+        // learner carry on studying.
+        BrowserLlmDownloadManager.start().catch((downloadError) =>
+        {
+            console.error("[AskAiSession] On-device model download failed:", downloadError);
+        });
+
+        await DialogBox.alert(
+            "Downloading",
+            "The model is downloading in the background — you can keep studying. Free becomes available the moment it's ready; progress is on the Activity page."
+        );
+    }
+
+    /**
      * Tutorial demo path for run(). Opens the same streaming dialog the
      * real flow uses and feeds it a hardcoded NDJSON response (chosen by
      * prompt mode) through the existing #handleNdjsonLine pipeline, with a
@@ -245,7 +352,13 @@ class AskAiSession
             return null;
         }
 
-        const informationSourcesPayload = this.#informationSources.map((extractableInformationSource) =>
+        // The on-device model has no vision input and no access to the
+        // server-indexed source chunks, so neither is assembled for Free —
+        // sending them would only bloat a prompt that has to fit a very
+        // small window.
+        const bIsLocalTier = this.#chosenTier === modelTiers.FREE;
+
+        const informationSourcesPayload = bIsLocalTier ? [] : this.#informationSources.map((extractableInformationSource) =>
         {
             // The selector hands us ExtractableInformationSource instances; the
             // worker only needs the hash + name to look up indexed chunks.
@@ -259,9 +372,9 @@ class AskAiSession
             contextPayload:         contextPayload,
             selectedText:           this.#selectedText,
             userQuery:              this.#userQuery,
-            attachedImages:         this.#attachedImages,
+            attachedImages:         bIsLocalTier ? [] : this.#attachedImages,
             informationSources:     informationSourcesPayload,
-            useInformationSources:  this.#bUseInformationSources,
+            useInformationSources:  bIsLocalTier ? false : this.#bUseInformationSources,
             selectedLanguage:       this.#selectedLanguage,
             combineWithEnglish:     this.#combineWithEnglish,
         };
@@ -353,6 +466,14 @@ class AskAiSession
         {
             this.#resultView?.appendStreamingText(event.value);
         }
+        else if (event?.type === "status" && typeof event.value === "string")
+        {
+            // Only the on-device tier sends these, and only while it is
+            // fetching the model before it can answer at all. It replaces the
+            // "Thinking…" placeholder rather than entering the answer, so
+            // nothing of it survives into the text the learner keeps.
+            this.#resultView?.setPendingStatus(event.value);
+        }
         else if (event?.type === "citations")
         {
             this.#resultView?.renderCitations(Array.isArray(event.sources) ? event.sources : []);
@@ -440,14 +561,7 @@ class AskAiSession
 
     static #resolveApiPath(chosenTier)
     {
-        for (const [tierKeyName, candidateValue] of Object.entries(modelTiers))
-        {
-            if (candidateValue === chosenTier)
-            {
-                return ModelTierMetadata[tierKeyName]?.apiPath ?? null;
-            }
-        }
-        return null;
+        return ModelTierKeyLookup.metadataFor(chosenTier)?.apiPath ?? null;
     }
 }
 

@@ -11,6 +11,10 @@ import Lifecycle from "../../../Globals/Model/Lifecycle.js";
 import ChatStudyMaterialFields from "../../../Globals/Classes/Analysis/ChatStudyMaterialFields.js";
 import DeckEvents from "../../../Globals/Events/DeckEvents.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
+import BrowserLlmCapability from "../../../Globals/Classes/BrowserLlm/BrowserLlmCapability.js";
+import BrowserLlmPromptBuilder from "../../../Globals/Classes/BrowserLlm/BrowserLlmPromptBuilder.js";
+import LocalAskAiRunner from "../../../Globals/Classes/BrowserLlm/LocalAskAiRunner.js";
+import { browserLlmDownloadStates } from "../../../Globals/Enumerations/BrowserLlmDownloadStates.js";
 import { studyMaterialDetailLevels } from "../../../Globals/Enumerations/StudyMaterialDetailLevels.js";
 
 /**
@@ -25,16 +29,29 @@ class ChatSession extends StudySession
 {
     static #MAX_CONVERSATION_TURNS = 6;   // prior turns sent for context
 
-    // Per-snippet caps on the grounding TEXT sent to the model. Inline base64
-    // images are stripped BEFORE these apply (they travel to the model as
-    // dedicated vision input via DeckImageHarvester), so these bound real text.
-    static #MAX_STUDY_MATERIAL_SNIPPET_CHARS = 8000;
-    static #MAX_CARD_SNIPPET_CHARS = 2000;
-    // Ceiling for the serialized DECK contextPayload. Kept safely below the
-    // server's own DECK_CONTEXT_MAX_CHARS (200000) so a content-rich deck can
-    // never trip the 400 body validator; least-relevant snippets are dropped
-    // from the tail until the payload fits.
-    static #MAX_CONTEXT_PAYLOAD_CHARS = 150000;
+    // Used when the strategy call is unavailable or fails. The Free tier
+    // always uses it: the strategy call is a cheap cloud LLM hop, and a tier
+    // whose whole premise is "nothing leaves the device" cannot make it.
+    static #DEFAULT_STRATEGY = { nearestCards: 4, nearestMaterials: 3, expandedQueries: [] };
+
+    // Per-snippet caps on the grounding TEXT sent to a CLOUD model. Inline
+    // base64 images are stripped BEFORE these apply (they travel to the model
+    // as dedicated vision input via DeckImageHarvester), so these bound real
+    // text. The payload ceiling is kept safely below the server's own
+    // DECK_CONTEXT_MAX_CHARS (200000) so a content-rich deck can never trip
+    // the 400 body validator; least-relevant snippets are dropped from the
+    // tail until the payload fits.
+    //
+    // The Free tier does NOT use these — it asks BrowserLlmPromptBuilder for
+    // caps sized to whichever on-device model this device resolved to, which
+    // is smaller by two orders of magnitude and varies per device.
+    static #CLOUD_CONTEXT_BUDGET =
+    {
+        maximumContextPayloadCharacters:       150000,
+        maximumCardSnippetCharacters:          2000,
+        maximumStudyMaterialSnippetCharacters: 8000,
+        maximumConversationTurns:              ChatSession.#MAX_CONVERSATION_TURNS,
+    };
 
     #chatView = null;
     #transcript = [];          // [{ role, text, htmlForSave }]
@@ -100,10 +117,27 @@ class ChatSession extends StudySession
 
         const tierKey = this.#chatView.getSelectedTier();
         const apiPath = ModelTierMetadata[tierKey] ? ModelTierMetadata[tierKey].apiPath : null;
-        if (!apiPath)
+
+        // Free has no apiPath because it answers on the device. Retrieval is
+        // already client-side for every tier, so the local path reuses it
+        // wholesale and only swaps where the answer comes from.
+        const bIsLocalTier = tierKey === "FREE";
+
+        if (!apiPath && !bIsLocalTier)
         {
             this.#chatView.showError("This tier can't be used for chat — pick Basic, Pro, or Pro Plus.");
             return;
+        }
+
+        if (bIsLocalTier)
+        {
+            await BrowserLlmCapability.initialize();
+            if (BrowserLlmCapability.getState() !== browserLlmDownloadStates.READY)
+            {
+                this.#chatView.showError(BrowserLlmCapability.getDisabledReasonText()
+                    || "The on-device model isn't ready yet.");
+                return;
+            }
         }
 
         // Capture prior turns BEFORE pushing the current question (the current
@@ -131,9 +165,15 @@ class ChatSession extends StudySession
         try
         {
             // 1. Strategy — one cheap LLM call decides how much deck content to pull
-            //    and proposes alternate phrasings. Safe defaults on any failure.
-            bubble.setStatus("Strategizing the best way to answer…");
-            const strategy = await this.#fetchStrategy(trimmed, conversation, abortController.signal);
+            //    and proposes alternate phrasings. Safe defaults on any failure,
+            //    and skipped entirely on Free: it is a server call, and this
+            //    tier makes none.
+            let strategy = ChatSession.#DEFAULT_STRATEGY;
+            if (!bIsLocalTier)
+            {
+                bubble.setStatus("Strategizing the best way to answer…");
+                strategy = await this.#fetchStrategy(trimmed, conversation, abortController.signal);
+            }
 
             // 2. Client-side retrieval over the original question + the phrasings.
             bubble.setStatus("Searching your deck…");
@@ -151,7 +191,12 @@ class ChatSession extends StudySession
                 console.warn(`[ChatSession] Retrieval failed: ${retrievalError.message}`);
             }
 
-            const { attachedImages, idToDataUrl } = DeckImageHarvester.harvest(retrieval.cards, retrieval.materials, {});
+            // The on-device model has no vision input, so harvesting deck
+            // images would only produce attachments nothing can read. An
+            // empty id map keeps #renderFinalHtml's image-swap a no-op.
+            const { attachedImages, idToDataUrl } = bIsLocalTier
+                ? { attachedImages: [], idToDataUrl: new Map() }
+                : DeckImageHarvester.harvest(retrieval.cards, retrieval.materials, {});
 
             // Study-material / card HTML routinely embeds inline base64 images
             // (<img src="data:image/…;base64,…">) that are megabytes each. Sending
@@ -161,10 +206,22 @@ class ChatSession extends StudySession
             // rejects the whole turn with a 400 the user sees as "Couldn't reach
             // the assistant". #buildBoundedDeckContext strips those inline images
             // and size-bounds the payload so a content-rich deck always fits.
+            // The on-device model's context window is a fraction of the
+            // cloud's, so Free gets caps derived from the selected model
+            // rather than the cloud budget — 150 000 characters is roughly
+            // forty thousand tokens into a window that holds a couple of
+            // thousand, which would fail every turn.
+            const contextBudget = bIsLocalTier
+                ? BrowserLlmPromptBuilder.getDeckContextBudget(BrowserLlmCapability.getSelectedModelKey())
+                : ChatSession.#CLOUD_CONTEXT_BUDGET;
+
+            const boundedConversation = conversation.slice(-contextBudget.maximumConversationTurns * 2);
+
             const contextPayload = ChatSession.#buildBoundedDeckContext(
                 retrieval,
-                conversation,
-                attachedImages.map((image) => image.id)
+                boundedConversation,
+                attachedImages.map((image) => image.id),
+                contextBudget
             );
 
             const payload = {
@@ -179,6 +236,14 @@ class ChatSession extends StudySession
             // 3. Stream the answer — rotating "Thinking / Phrasing…" status until the
             //    first token arrives (the bubble switches to streamed text then).
             bubble.beginThinking();
+
+            if (bIsLocalTier)
+            {
+                // Same NDJSON events, same reader — only the source differs.
+                const localStream = await LocalAskAiRunner.openStream(payload, abortController.signal);
+                await this.#consumeStream(localStream, bubble, retrieval, idToDataUrl);
+                return;
+            }
 
             const response = await fetch(apiPath,
             {
@@ -231,7 +296,7 @@ class ChatSession extends StudySession
      */
     async #fetchStrategy(userQuery, conversation, signal)
     {
-        const fallback = { nearestCards: 4, nearestMaterials: 3, expandedQueries: [] };
+        const fallback = ChatSession.#DEFAULT_STRATEGY;
         try
         {
             const response = await fetch("/AskAi/Chat/Strategy",
@@ -286,6 +351,14 @@ class ChatSession extends StudySession
             {
                 accumulatedText += event.value;
                 bubble.appendText(event.value);
+            }
+            else if (event && event.type === "status" && typeof event.value === "string")
+            {
+                // On-device tier only, and only while it is still fetching the
+                // model. Uses the same status line the deck-search phases use,
+                // so a first question that has to download ~1.8 GB says so
+                // instead of rotating "Thinking…" for minutes.
+                bubble.setStatus(event.value);
             }
             else if (event && event.type === "error")
             {
@@ -424,7 +497,7 @@ class ChatSession extends StudySession
      * payload is still over budget, whole snippets are dropped from the
      * least-relevant tail (retrieval is relevance-ordered) until it fits.
      */
-    static #buildBoundedDeckContext(retrieval, conversation, deckImageIds)
+    static #buildBoundedDeckContext(retrieval, conversation, deckImageIds, contextBudget)
     {
         const snippets = [];
 
@@ -432,8 +505,8 @@ class ChatSession extends StudySession
         {
             snippets.push({
                 kind: "CARD",
-                question: ChatSession.#sanitizeSnippetContent(card.getQuestion(), ChatSession.#MAX_CARD_SNIPPET_CHARS),
-                answer: ChatSession.#sanitizeSnippetContent(card.getAnswer(), ChatSession.#MAX_CARD_SNIPPET_CHARS)
+                question: ChatSession.#sanitizeSnippetContent(card.getQuestion(), contextBudget.maximumCardSnippetCharacters),
+                answer: ChatSession.#sanitizeSnippetContent(card.getAnswer(), contextBudget.maximumCardSnippetCharacters)
             });
         }
 
@@ -441,12 +514,12 @@ class ChatSession extends StudySession
         {
             snippets.push({
                 kind: "STUDY_MATERIAL",
-                content: ChatSession.#sanitizeSnippetContent(material.getContent(), ChatSession.#MAX_STUDY_MATERIAL_SNIPPET_CHARS)
+                content: ChatSession.#sanitizeSnippetContent(material.getContent(), contextBudget.maximumStudyMaterialSnippetCharacters)
             });
         }
 
         let contextPayload = { snippets, conversation, deckImageIds };
-        while (snippets.length > 0 && JSON.stringify(contextPayload).length > ChatSession.#MAX_CONTEXT_PAYLOAD_CHARS)
+        while (snippets.length > 0 && JSON.stringify(contextPayload).length > contextBudget.maximumContextPayloadCharacters)
         {
             snippets.pop();
             contextPayload = { snippets, conversation, deckImageIds };

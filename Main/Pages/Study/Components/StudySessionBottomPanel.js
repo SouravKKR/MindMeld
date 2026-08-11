@@ -4,7 +4,7 @@ import LlmTierSelect from "../../../CommonComponents/LlmTierSelect.js";
 import LanguageSelect from "../../../CommonComponents/LanguageSelect.js";
 import { modelTiers } from "../../../Globals/Enumerations/ModelTiers.js";
 import { askAiPromptModes } from "../../../Globals/Enumerations/AskAiPromptModes.js";
-import ModelTierMetadata from "../../../Globals/Constants/ModelTierMetadata.js";
+import ModelTierKeyLookup from "../../../Globals/Classes/ModelTierKeyLookup.js";
 import BrowserLlmDownloadConstants from "../../../Globals/Constants/BrowserLlmDownloadConstants.js";
 import InformationSourceSelector from "../../AutomaticGeneration/Components/InformationSourceSelector.js";
 import ExtractableInformationSource from "../../../Globals/Classes/Decorators/ExtractableInformationSource.js";
@@ -53,10 +53,7 @@ class StudySessionBottomPanel extends HTMLElement
     static MODE_CARD            = "card";
     static MODE_STUDY_MATERIAL  = "study-material";
 
-    static AI_FREE_TIER_TITLE   = "Free tier unavailable";
-    static AI_FREE_TIER_MESSAGE = "The Free tier is offline-only and not wired for streaming yet. Pick Basic, Pro, or Pro Plus.";
-
-    // Tiers that support the cloud Ask-AI flow (Free is in-browser only).
+    // Tiers that support the cloud Ask-AI flow (Free runs on the device).
     // Mirrors TextSelectionContextMenu so the grounding/image-attach UI
     // shows under the same conditions on both surfaces.
     static #TIERS_THAT_SUPPORT_GROUNDING = new Set([
@@ -376,23 +373,10 @@ class StudySessionBottomPanel extends HTMLElement
 
         if (this.#imageAttachmentManager)
         {
-            const tierKeyName        = StudySessionBottomPanel.#tierKeyFor(currentTier);
-            const tierMeta           = tierKeyName ? ModelTierMetadata[tierKeyName] : null;
+            const tierMeta           = ModelTierKeyLookup.metadataFor(currentTier);
             const bSupportsImageInput = Boolean(tierMeta?.supportsImageInput);
             this.#imageAttachmentManager.setVisible(bSupportsImageInput);
         }
-    }
-
-    static #tierKeyFor(tierValue)
-    {
-        for (const [tierKeyName, candidateValue] of Object.entries(modelTiers))
-        {
-            if (candidateValue === tierValue)
-            {
-                return tierKeyName;
-            }
-        }
-        return null;
     }
 
     async #handleSendQuestion()
@@ -421,15 +405,6 @@ class StudySessionBottomPanel extends HTMLElement
     {
         const tierSelect    = this.querySelector("llm-tier-select");
         const chosenTier    = tierSelect?.getCurrentTier() ?? modelTiers.BASIC;
-
-        if (chosenTier === modelTiers.FREE)
-        {
-            await DialogBox.alert(
-                StudySessionBottomPanel.AI_FREE_TIER_TITLE,
-                StudySessionBottomPanel.AI_FREE_TIER_MESSAGE
-            );
-            return;
-        }
 
         if (!await this.#validateGroundingBeforeProceeding(chosenTier))
         {

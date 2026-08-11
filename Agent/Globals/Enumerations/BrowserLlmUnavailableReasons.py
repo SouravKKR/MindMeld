@@ -1,0 +1,10 @@
+from enum import IntEnum
+
+class BrowserLlmUnavailableReasons(IntEnum):
+    NONE = 0
+    NO_SUPPORTED_BACKEND = 1
+    GPU_LIMITS_TOO_LOW = 2
+    DEVICE_MEMORY_TOO_LOW = 3
+    NO_MODEL_PROVISIONED = 4
+    MANIFEST_UNREACHABLE = 5
+    HANDHELD_DEVICE = 6

@@ -1,7 +1,6 @@
 import { activityEntryTypes } from "../../../Globals/Enumerations/ActivityEntryTypes.js";
 import { browserLlmDownloadStates } from "../../../Globals/Enumerations/BrowserLlmDownloadStates.js";
 import { taskStatus } from "../../../Globals/Enumerations/TaskStatus.js";
-import BrowserLlmDownloadConstants from "../../../Globals/Constants/BrowserLlmDownloadConstants.js";
 import BrowserLlmCapability from "../../../Globals/Classes/BrowserLlm/BrowserLlmCapability.js";
 import BrowserLlmDownloadManager from "../../../Globals/Classes/BrowserLlm/BrowserLlmDownloadManager.js";
 
@@ -62,7 +61,9 @@ class LocalDownloadActivitySource
             {
                 completion: completionFraction,
                 isLive: currentState === browserLlmDownloadStates.DOWNLOADING,
-                modelId: BrowserLlmDownloadConstants.MODEL_ID,
+                // Which model this is depends on the device, so it is read
+                // from the resolved selection rather than a fixed constant.
+                modelId: BrowserLlmCapability.getSelectedModelKey(),
                 downloadState: currentState
             }
         };

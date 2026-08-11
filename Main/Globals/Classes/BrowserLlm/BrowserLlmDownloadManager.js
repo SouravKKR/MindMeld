@@ -1,13 +1,13 @@
 import { browserLlmDownloadStates } from "../../Enumerations/BrowserLlmDownloadStates.js";
-import BrowserLlmDownloadConstants from "../../Constants/BrowserLlmDownloadConstants.js";
 import BrowserLlmDownloadEvents from "../../Events/BrowserLlmDownloadEvents.js";
 import BrowserLlmCapability from "./BrowserLlmCapability.js";
+import BrowserLlmSessionController from "./BrowserLlmSessionController.js";
 
 
 /**
  * BrowserLlmDownloadManager
  *
- * Owns the lifecycle of the Free-tier in-browser LLM weights download.
+ * Owns the lifecycle of the Free-tier on-device model download.
  * State machine:
  *
  *     NOT_STARTED ──start()──▶ DOWNLOADING ──success──▶ READY
@@ -18,13 +18,15 @@ import BrowserLlmCapability from "./BrowserLlmCapability.js";
  *           │
  *     DECLINED ─decline()/retry()─▶ NOT_STARTED (via retry)
  *
- * The actual `WebLLM.CreateMLCEngine` invocation that drives the fetch
- * + Cache-API population is intentionally STUBBED in `#runDownload()`.
- * Everything else — capability + persistence + events + activity
- * surface integration — is wired and ready. When the user is ready to
- * connect the real WebLLM engine, replace the TODO block in
- * `#runDownload()` with the CreateMLCEngine call from the reference
- * implementation at [F:/Testing/CogniumLearn/webllm.html].
+ * "Download" is really "load the engine": both engines fetch their own weights
+ * into the browser's Cache API as part of initialisation and report progress
+ * while they do it, so there is no separate fetch to drive. Reaching READY
+ * therefore proves rather more than that the bytes arrived — it proves the
+ * model actually initialised on this hardware, which is the thing that
+ * matters and the thing a plain download could never establish.
+ *
+ * The download is always started by the learner. It is hundreds of megabytes,
+ * frequently over a mobile connection, so nothing here runs on its own.
  */
 class BrowserLlmDownloadManager
 {
@@ -34,8 +36,8 @@ class BrowserLlmDownloadManager
 
     /**
      * Begin (or restart) the model download. No-op if already running.
-     * Transitions DECLINED/FAILED/NOT_STARTED → DOWNLOADING and runs
-     * the (currently stubbed) fetch loop.
+     * Transitions DECLINED/FAILED/NOT_STARTED → DOWNLOADING and drives the
+     * engine load.
      */
     static async start()
     {
@@ -65,16 +67,13 @@ class BrowserLlmDownloadManager
 
         window.dispatchEvent(new CustomEvent(BrowserLlmDownloadEvents.STARTED,
         {
-            detail: { totalBytes: BrowserLlmDownloadConstants.ESTIMATED_TOTAL_BYTES }
+            detail: { totalBytes: BrowserLlmCapability.getEstimatedTotalBytes() }
         }));
 
         try
         {
             await BrowserLlmDownloadManager.#runDownload(BrowserLlmDownloadManager.#abortController.signal);
 
-            // STUB only: until the real fetch is wired up, completion
-            // means "the stub flow has returned cleanly". The real
-            // CreateMLCEngine call will yield this naturally.
             await BrowserLlmCapability.setState(browserLlmDownloadStates.READY, { fraction: 1, error: null });
             window.dispatchEvent(new CustomEvent(BrowserLlmDownloadEvents.COMPLETED));
         }
@@ -104,6 +103,11 @@ class BrowserLlmDownloadManager
     /**
      * Cancel an in-flight download. The state machine falls back to
      * NOT_STARTED so the user can retry on demand.
+     *
+     * Neither engine offers a cancel, so this destroys the worker outright.
+     * Shard fetches already issued still complete into the browser cache,
+     * which is harmless — the next attempt reuses them and starts further
+     * along than it otherwise would.
      */
     static cancel()
     {
@@ -112,6 +116,7 @@ class BrowserLlmDownloadManager
             return;
         }
         BrowserLlmDownloadManager.#abortController?.abort();
+        BrowserLlmSessionController.release();
     }
 
     /**
@@ -179,31 +184,18 @@ class BrowserLlmDownloadManager
     }
 
     /**
-     * STUB. Replace this body when wiring the real WebLLM engine.
+     * Drives the engine load, forwarding its progress to the activity feed
+     * and the tier picker. Resolving means the model is initialised and ready
+     * to answer, not merely that its bytes arrived.
      *
-     * Expected behaviour once wired:
-     *   1. GET BrowserLlmDownloadConstants.MANIFEST_ENDPOINT_PATH to
-     *      discover the model's shard list + total byte count.
-     *   2. Instantiate the WebLLM engine via CreateMLCEngine with an
-     *      appConfig whose `model_list[0].model` points at
-     *      `${ASSETS_BASE_PATH}/${MODEL_ID}/` and whose `model_lib`
-     *      points at the .wasm file under the same prefix.
-     *   3. Wire WebLLM's initProgressCallback to call #fireProgress so
-     *      the UI gets per-shard progress updates.
-     *   4. On completion the engine instance can be cached for reuse
-     *      by the Free-tier query path (out of scope this round).
-     *
-     * Until then, this function just sleeps a short while so the UI
-     * lifecycle (started → progress → completed) is exercisable end-to-
-     * end. Aborts mid-sleep when cancel() fires.
+     * The abort signal is checked between progress reports rather than passed
+     * down: no engine accepts one, so the cancellation path is
+     * BrowserLlmSessionController.release() in cancel(), and this only needs
+     * to stop reporting progress for a load nobody is waiting on any more.
      */
     static async #runDownload(abortSignal)
     {
-        const totalBytes = BrowserLlmDownloadConstants.ESTIMATED_TOTAL_BYTES;
-        const fakeStepCount = 20;
-        const fakeStepDelayMs = 250;
-
-        for (let stepIndex = 1; stepIndex <= fakeStepCount; stepIndex++)
+        const throwIfAborted = () =>
         {
             if (abortSignal.aborted)
             {
@@ -211,26 +203,24 @@ class BrowserLlmDownloadManager
                 abortError.name = "AbortError";
                 throw abortError;
             }
+        };
 
-            await new Promise((resolve, reject) =>
+        throwIfAborted();
+
+        await BrowserLlmSessionController.ensureReady((progressReport) =>
+        {
+            if (abortSignal.aborted)
             {
-                const timeoutId = setTimeout(resolve, fakeStepDelayMs);
-                abortSignal.addEventListener("abort", () =>
-                {
-                    clearTimeout(timeoutId);
-                    const abortError = new Error("Aborted");
-                    abortError.name = "AbortError";
-                    reject(abortError);
-                }, { once: true });
-            });
+                return;
+            }
+            BrowserLlmDownloadManager.#fireProgress(
+                progressReport.loadedBytes,
+                progressReport.totalBytes,
+                progressReport.statusText
+            );
+        });
 
-            const processedBytes = Math.floor((stepIndex / fakeStepCount) * totalBytes);
-            BrowserLlmDownloadManager.#fireProgress(processedBytes, totalBytes, `Shard ${stepIndex}/${fakeStepCount}`);
-        }
-
-        // TODO: replace the loop above with the real WebLLM
-        // CreateMLCEngine call. See the reference at
-        // F:/Testing/CogniumLearn/webllm.html for the exact appConfig shape.
+        throwIfAborted();
     }
 }
 

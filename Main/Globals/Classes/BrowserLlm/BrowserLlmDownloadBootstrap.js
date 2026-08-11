@@ -1,6 +1,5 @@
 import AuthenticationEvents from "../../Events/AuthenticationEvents.js";
 import { browserLlmDownloadStates } from "../../Enumerations/BrowserLlmDownloadStates.js";
-import BrowserLlmDownloadConstants from "../../Constants/BrowserLlmDownloadConstants.js";
 import BrowserLlmCapability from "./BrowserLlmCapability.js";
 import BrowserLlmDownloadManager from "./BrowserLlmDownloadManager.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
@@ -97,7 +96,7 @@ class BrowserLlmDownloadBootstrap
             [
                 `CogniumLearn can run a small AI model locally on this device for the Free tier — no internet needed once it's installed.`,
                 ``,
-                `The download is ${BrowserLlmDownloadConstants.ESTIMATED_TOTAL_LABEL} and happens in the background. You can keep studying — the model becomes available the moment it's ready.`,
+                `The download is ${BrowserLlmCapability.getEstimatedTotalLabel() || "several hundred megabytes"} and happens in the background. You can keep studying — the model becomes available the moment it's ready.`,
                 ``,
                 `Choose Cancel to skip for now; you can start the download anytime from the Free row of the model picker.`
             ].join("<br>")

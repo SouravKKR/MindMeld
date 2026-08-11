@@ -83,6 +83,7 @@ const { handleAutomaticGenerationEndpoints } = require("./Endpoints/HandleAutoma
 const TaskManager = require("./Globals/Classes/Task/TaskManager");
 const { noCache } = require("./Endpoints/Plugins/NoCache");
 const { staticCachePolicy } = require("./Endpoints/Plugins/StaticCachePolicy");
+const { staticAssetContentLength } = require("./Endpoints/Plugins/StaticAssetContentLength");
 const { handleSyncEndpoints } = require("./Endpoints/HandleSyncEndpoints");
 const { handleAdminEndpoints } = require("./Endpoints/HandleAdminEndpoints");
 const { handleLegalEndpoints } = require("./Endpoints/HandleLegalEndpoints");
@@ -388,11 +389,17 @@ server.serve({ directory: path.join(__dirname, "Static"), plugins: [staticCacheP
 
 // Offline-AI model files live OUTSIDE Dock/Static/ so they're not wiped
 // by CopyStaticFiles. Served at /Assets/<...> — frontend constants
-// (BrowserLlmDownloadConstants.ASSETS_BASE_PATH) assume "/Assets/Models".
-// noCache is intentionally NOT applied here: model shards are large +
-// immutable; aggressive HTTP caching cuts re-download cost for a user
-// who clears IDB / Cache API and re-pulls.
-server.serve({ directory: path.join(__dirname, "Assets"), pathPrefix: "/Assets" });
+// (BrowserLlmDownloadConstants.ASSETS_BASE_PATH) assume "/Assets/Models",
+// and the ONNX Runtime binary sits under "/Assets/Runtime". The same cache
+// plugin the Static tree uses grants both prefixes a year of immutable
+// caching: the URL embeds the model's own folder name, so it can never come
+// to mean anything else, and re-pulling most of a gigabyte because a user
+// cleared their Cache API is the failure mode worth avoiding.
+// staticAssetContentLength declares a length on these responses. Without it
+// the route streams them chunked, which costs the model download its progress
+// bar, makes ONNX Runtime grow its buffer blind, and stops Cloudflare caching
+// a file explicitly marked immutable — see the plugin for the detail.
+server.serve({ directory: path.join(__dirname, "Assets"), pathPrefix: "/Assets", plugins: [staticCachePolicy, staticAssetContentLength] });
 
 // Auth gate at the SPA entry point. An unauthenticated visitor receives
 // the standalone login shell (login.html — a few KB of HTML + LoginPage

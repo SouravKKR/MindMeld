@@ -4,17 +4,18 @@ const { ensureLogin } = require("../Plugins/EnsureLogin");
 
 
 /**
- * Registers the offline-AI model serving endpoints. The actual model
- * files live under Dock/Assets/Models/<MODEL_ID>/ and are served as
- * static content from the `/Assets/*` route registered in Dock/index.js.
+ * Registers the offline-AI model serving endpoints. The model files live
+ * under Dock/Assets/Models/<folderName>/ — one folder per entry in
+ * Common/Constants/BrowserLlmModelCatalogue.json — and are served as static
+ * content from the `/Assets/*` route registered in Dock/index.js.
  *
- *   GET /BrowserLlm/Manifest — Lists the shards / wasm / tokenizer
- *       files the frontend should fetch (+ sizes) so it can drive a
- *       progress bar and pre-warm the Cache API.
+ *   GET /BrowserLlm/Manifest — Lists every catalogue model that is present
+ *       and complete on this node, with its file list and sizes, so the
+ *       client can pick one that suits the device and drive a progress bar.
  *
- * Tier-query endpoints (Basic / Pro / Pro Plus → server-side Gemini
- * dispatch) will land here in a follow-up. They're out of scope for
- * this UI-only round.
+ * There is deliberately no query endpoint here: the Free tier runs entirely
+ * in the browser and never sends a prompt to the server. The paid tiers are
+ * served by /AskAi/Query/* instead.
  */
 function handleBrowserLlmEndpoints(server)
 {

@@ -1,4 +1,5 @@
-import ModelTierMetadata from "../../../Globals/Constants/ModelTierMetadata.js";
+import LlmTierSelect from "../../../CommonComponents/LlmTierSelect.js";
+import ModelTierKeyLookup from "../../../Globals/Classes/ModelTierKeyLookup.js";
 
 // The ChatGPT-style surface for the deck Chat study mode. Owns the message list,
 // the input bar (tier picker + textarea + send), and the "Save as study material"
@@ -170,16 +171,30 @@ class ChatView extends HTMLElement
                     gap: 8px;
                 }
 
-                .chat-tier-row { display: flex; align-items: center; gap: 8px; }
-                .chat-tier-select
+                .chat-tier-row { display: flex; align-items: flex-start; gap: 8px; }
+                .chat-tier-select { flex: 0 1 auto; min-width: 0; }
+                .chat-tier-select .llm-tier-select-element
                 {
-                    flex: 0 0 auto;
+                    max-width: 100%;
                     background-color: #1d1d27;
                     color: #e6e6ee;
                     border: 1px solid #3a3a47;
                     border-radius: 8px;
                     padding: 6px 8px;
                     font-size: 13px;
+                }
+                .chat-tier-select .llm-tier-select-status
+                {
+                    display: block;
+                    margin-top: 4px;
+                    color: #9a9aa8;
+                    font-size: 11px;
+                    line-height: 1.35;
+                }
+                .chat-tier-select .llm-tier-select-status[data-clickable]
+                {
+                    cursor: pointer;
+                    text-decoration: underline;
                 }
                 .chat-save-button
                 {
@@ -248,7 +263,7 @@ class ChatView extends HTMLElement
                 <div class="chat-input-bar">
                     <div class="chat-input-inner">
                         <div class="chat-tier-row">
-                            <select class="chat-tier-select" aria-label="Model tier"></select>
+                            <llm-tier-select class="chat-tier-select"></llm-tier-select>
                             <button class="chat-save-button" type="button" disabled>Save as study material</button>
                         </div>
                         <div class="chat-input-row">
@@ -267,30 +282,7 @@ class ChatView extends HTMLElement
         this.#tierSelect = this.querySelector(".chat-tier-select");
         this.#saveButton = this.querySelector(".chat-save-button");
 
-        this.#populateTierOptions();
         this.#wireEvents();
-    }
-
-    #populateTierOptions()
-    {
-        const order = Array.isArray(ModelTierMetadata.ORDER) ? ModelTierMetadata.ORDER : ["BASIC", "PRO", "PRO_PLUS"];
-        for (const tierKey of order)
-        {
-            // FREE is on-device only — it can't run the server-grounded deck chat.
-            if (tierKey === "FREE")
-            {
-                continue;
-            }
-            const metadata = ModelTierMetadata[tierKey];
-            if (!metadata || !metadata.apiPath)
-            {
-                continue;
-            }
-            const option = document.createElement("option");
-            option.value = tierKey;
-            option.textContent = metadata.label || tierKey;
-            this.#tierSelect.appendChild(option);
-        }
     }
 
     #wireEvents()
@@ -342,9 +334,17 @@ class ChatView extends HTMLElement
     onSend(callback) { this.#sendCallback = callback; }
     onSave(callback) { this.#saveCallback = callback; }
 
+    /**
+     * The chosen tier as a ModelTierMetadata key name, which is what
+     * ChatSession indexes with. The shared <llm-tier-select> speaks the
+     * numeric enum, so the bridge lives here rather than duplicating a tier
+     * list — which is what the bespoke <select> this replaced was doing, and
+     * why Free never appeared in chat at all.
+     */
     getSelectedTier()
     {
-        return this.#tierSelect.value || "BASIC";
+        const selectedTierValue = this.#tierSelect?.getCurrentTier?.();
+        return ModelTierKeyLookup.keyFor(selectedTierValue) || "BASIC";
     }
 
     clearInput()

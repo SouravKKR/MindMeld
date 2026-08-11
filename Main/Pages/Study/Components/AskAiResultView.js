@@ -204,6 +204,29 @@ class AskAiResultView extends HTMLElement
         }
     }
 
+    /**
+     * Replaces the "Thinking…" placeholder text while the on-device tier is
+     * still fetching its model. A no-op once any answer text has arrived, so a
+     * late progress event can never overwrite the answer being streamed.
+     *
+     * The distinction matters because that download can run for minutes on a
+     * first question, and an unchanging "Thinking…" is indistinguishable from
+     * a hung feature — which is how it was read.
+     */
+    setPendingStatus(statusText)
+    {
+        if (this.#bDoneReceived || !this.#bodyElement)
+        {
+            return;
+        }
+
+        const pendingIndicator = this.#bodyElement.querySelector(".ask-ai-pending-indicator");
+        if (pendingIndicator)
+        {
+            pendingIndicator.textContent = statusText;
+        }
+    }
+
     markStreamComplete()
     {
         this.#bDoneReceived = true;
