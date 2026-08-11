@@ -13,14 +13,14 @@ class TauriProjectPreparer
     constructor()
     {
         this.repositoryRootDirectory = path.join(__dirname, '..', '..');
-        this.buildTemplateDirectory = path.join(this.repositoryRootDirectory, 'Build', 'Template');
+        this.nativeProjectDirectory = path.join(this.repositoryRootDirectory, 'Native');
     }
 
     prepare()
     {
         new BuildPipeline().runIfStale();
         new ConfigureTauriApp().run();
-        CommandRunner.ensureDependencies(this.buildTemplateDirectory);
+        CommandRunner.ensureDependencies(this.nativeProjectDirectory);
     }
 }
 

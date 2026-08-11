@@ -10,13 +10,13 @@ const TauriProjectPreparer = require('./TauriProjectPreparer');
 // changes, then run"). The app itself loads the production site and caches pages for offline use.
 class DesktopRunner
 {
-    static PRODUCT_BINARY_BASENAME = 'mind-meld';
+    static PRODUCT_BINARY_BASENAME = 'cognium-learn';
 
     constructor()
     {
         this.repositoryRootDirectory = path.join(__dirname, '..', '..');
-        this.buildTemplateDirectory = path.join(this.repositoryRootDirectory, 'Build', 'Template');
-        this.releaseDirectory = path.join(this.buildTemplateDirectory, 'src-tauri', 'target', 'release');
+        this.nativeProjectDirectory = path.join(this.repositoryRootDirectory, 'Native');
+        this.releaseDirectory = path.join(this.nativeProjectDirectory, 'src-tauri', 'target', 'release');
         this.bundleDirectory = path.join(this.releaseDirectory, 'bundle');
     }
 
@@ -25,7 +25,7 @@ class DesktopRunner
         new TauriProjectPreparer().prepare();
 
         console.log('Building the desktop app (tauri build) ...');
-        CommandRunner.runCommand('npm', ['run', 'tauri', '--', 'build'], this.buildTemplateDirectory);
+        CommandRunner.runCommand('npm', ['run', 'tauri', '--', 'build'], this.nativeProjectDirectory);
 
         this.installAndLaunch();
     }

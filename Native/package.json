@@ -1,0 +1,12 @@
+{
+  "name": "cogniumlearn-native",
+  "version": "1.0.0",
+  "description": "CogniumLearn native shell (desktop + mobile). Loads the deployed site and adds the capabilities a web page cannot have — offline caching, binary auto-update, and on-device model inference.",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

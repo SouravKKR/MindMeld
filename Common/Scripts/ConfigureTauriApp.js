@@ -9,7 +9,7 @@ const path = require('path');
 //   2. Configures the binary updater from COGNIUMLEARN_UPDATE_ENDPOINT + COGNIUMLEARN_UPDATER_PUBKEY.
 //      When no public key is provided the updater is left disabled so a plain build still
 //      succeeds (an installer without auto-update), matching a dev machine with no signing key.
-//   3. Ensures the minimal offline fallback shell exists at Build/Template/src (frontendDist) —
+//   3. Ensures the minimal offline fallback shell exists at Native/src (frontendDist) —
 //      the window loads the remote site, so this is only the tauri://localhost first-launch
 //      fallback; the service worker handles offline once the site has been loaded online once.
 class ConfigureTauriApp
@@ -19,10 +19,10 @@ class ConfigureTauriApp
     constructor()
     {
         this.repositoryRootDirectory = path.join(__dirname, '..', '..');
-        this.buildTemplateDirectory = path.join(this.repositoryRootDirectory, 'Build', 'Template');
-        this.tauriConfigurationPath = path.join(this.buildTemplateDirectory, 'src-tauri', 'tauri.conf.json');
-        this.remoteCapabilityPath = path.join(this.buildTemplateDirectory, 'src-tauri', 'capabilities', 'remote.json');
-        this.frontendShellDirectory = path.join(this.buildTemplateDirectory, 'src');
+        this.nativeProjectDirectory = path.join(this.repositoryRootDirectory, 'Native');
+        this.tauriConfigurationPath = path.join(this.nativeProjectDirectory, 'src-tauri', 'tauri.conf.json');
+        this.remoteCapabilityPath = path.join(this.nativeProjectDirectory, 'src-tauri', 'capabilities', 'remote.json');
+        this.frontendShellDirectory = path.join(this.nativeProjectDirectory, 'src');
     }
 
     resolveApplicationUrl()

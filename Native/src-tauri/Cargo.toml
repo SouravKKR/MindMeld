@@ -1,0 +1,66 @@
+[package]
+name = "cognium-learn"
+version = "1.0.0"
+description = "CogniumLearn native shell"
+edition = "2021"
+rust-version = "1.77"
+
+# staticlib + cdylib are what the mobile targets link against; rlib keeps the
+# desktop binary and the unit tests able to use the same crate.
+[lib]
+name = "cognium_learn_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-fs = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = "0.33"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
+futures-util = "0.3"
+sha2 = "0.10"
+thiserror = "2"
+
+# The updater only exists on desktop. Gated on the real target operating
+# systems rather than on `cfg(desktop)`: that alias is not defined while the
+# mobile targets are being resolved, so a `cfg(desktop)` dependency still gets
+# pulled into an Android build and fails to compile.
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+tauri-plugin-updater = "2"
+
+# The inference library is optional ON PURPOSE.
+#
+# It vendors and compiles llama.cpp, which needs CMake and libclang on the
+# build machine and adds minutes to a cold build. Making it a feature means the
+# shell — the window, offline caching, the updater — still builds for anyone
+# without that toolchain, and the app degrades to the browser execution path
+# rather than failing to compile. It is also the seam that keeps the library
+# swappable: nothing outside inference_engine.rs names it.
+[dependencies.llama-cpp-2]
+version = "0.1"
+optional = true
+
+[features]
+default = []
+native-inference = ["dep:llama-cpp-2"]
+
+# A debug build of the inference kernels is unusably slow — slow enough to look
+# like a hang rather than a slow model. The dependencies are optimised even in
+# a development build; the app's own code is left unoptimised so it stays
+# debuggable.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

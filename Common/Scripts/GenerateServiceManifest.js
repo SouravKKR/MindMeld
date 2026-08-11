@@ -8,7 +8,20 @@ const enumOutputPath = path.join(__dirname, '..', 'Enumerations', 'Services.json
 const manifest = {}
 const servicesEnum = {}
 
-const IGNORE_DIRS = new Set(['Build', '.git', 'Common', ".github", ".vscode", ".claude", ".gemini"])
+// Every top-level directory is treated as a service and has the whole of
+// Common/ mirrored into it, so anything here that is NOT a service has to be
+// named.
+//
+// 'Native' is the Tauri shell. It is a Rust + Cargo project that consumes none
+// of the shared model — the JavaScript it runs is the deployed site, fetched
+// over the network, not a copy compiled into the app — so mirroring Common/
+// into it produces a few hundred files nothing imports. That is also why the
+// shell used to live under 'Build': being ignored was a side effect of being
+// inside a build directory rather than a decision, and it cost the project its
+// only copy of the Rust source, which was never in version control as a
+// result. Named explicitly now, so the shell can be tracked like everything
+// else.
+const IGNORE_DIRS = new Set(['Build', 'Native', '.git', 'Common', ".github", ".vscode", ".claude", ".gemini"])
 
 const entries = fs.readdirSync(rootDirectory, { withFileTypes: true })
 

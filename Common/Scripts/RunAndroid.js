@@ -13,8 +13,8 @@ class AndroidRunner
     constructor()
     {
         this.repositoryRootDirectory = path.join(__dirname, '..', '..');
-        this.buildTemplateDirectory = path.join(this.repositoryRootDirectory, 'Build', 'Template');
-        this.androidGeneratedDirectory = path.join(this.buildTemplateDirectory, 'src-tauri', 'gen', 'android');
+        this.nativeProjectDirectory = path.join(this.repositoryRootDirectory, 'Native');
+        this.androidGeneratedDirectory = path.join(this.nativeProjectDirectory, 'src-tauri', 'gen', 'android');
     }
 
     run()
@@ -24,11 +24,11 @@ class AndroidRunner
         if (fileSystem.existsSync(this.androidGeneratedDirectory) === false)
         {
             console.log('Initializing the Android project (first run) ...');
-            CommandRunner.runCommand('npm', ['run', 'tauri', '--', 'android', 'init'], this.buildTemplateDirectory);
+            CommandRunner.runCommand('npm', ['run', 'tauri', '--', 'android', 'init'], this.nativeProjectDirectory);
         }
 
         console.log('Building and deploying to the connected Android device ...');
-        CommandRunner.runCommand('npm', ['run', 'tauri', '--', 'android', 'dev'], this.buildTemplateDirectory);
+        CommandRunner.runCommand('npm', ['run', 'tauri', '--', 'android', 'dev'], this.nativeProjectDirectory);
     }
 }
 

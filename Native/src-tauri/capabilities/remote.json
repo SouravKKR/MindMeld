@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "remote-application",
+  "description": "What the deployed CogniumLearn site may do when it is loaded inside this shell. The window points at the live site rather than at bundled files, so without this capability the page is an ordinary web page with no native access at all.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["https://learn.cogniumlabs.io"]
+  },
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "fs:allow-appdata-read-recursive",
+    "fs:allow-appdata-write-recursive",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-mkdir",
+    "fs:allow-remove",
+    "fs:allow-exists",
+    "dialog:allow-open",
+    "notification:default"
+  ]
+}

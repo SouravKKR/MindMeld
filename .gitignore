@@ -464,3 +464,9 @@ Dock/Assets/Models/*
 !Dock/Assets/Models/.gitkeep
 !Dock/Assets/Models/README.txt
 Dock/Assets/Runtime/
+
+# Tauri native shell build artefacts. `target` and `node_modules` are already
+# covered above; `gen/` holds the ACL schemas and the generated Android/iOS
+# projects, all reproducible from tauri.conf.json + capabilities/ (RunAndroid.js
+# re-runs `tauri android init` whenever it is missing).
+Native/src-tauri/gen/

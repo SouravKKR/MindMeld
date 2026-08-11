@@ -15,8 +15,8 @@ class IosRunner
     constructor()
     {
         this.repositoryRootDirectory = path.join(__dirname, '..', '..');
-        this.buildTemplateDirectory = path.join(this.repositoryRootDirectory, 'Build', 'Template');
-        this.appleGeneratedDirectory = path.join(this.buildTemplateDirectory, 'src-tauri', 'gen', 'apple');
+        this.nativeProjectDirectory = path.join(this.repositoryRootDirectory, 'Native');
+        this.appleGeneratedDirectory = path.join(this.nativeProjectDirectory, 'src-tauri', 'gen', 'apple');
     }
 
     run()
@@ -32,11 +32,11 @@ class IosRunner
         if (fileSystem.existsSync(this.appleGeneratedDirectory) === false)
         {
             console.log('Initializing the iOS project (first run) ...');
-            CommandRunner.runCommand('npm', ['run', 'tauri', '--', 'ios', 'init'], this.buildTemplateDirectory);
+            CommandRunner.runCommand('npm', ['run', 'tauri', '--', 'ios', 'init'], this.nativeProjectDirectory);
         }
 
         console.log('Building and deploying to the iOS target ...');
-        CommandRunner.runCommand('npm', ['run', 'tauri', '--', 'ios', 'dev'], this.buildTemplateDirectory);
+        CommandRunner.runCommand('npm', ['run', 'tauri', '--', 'ios', 'dev'], this.nativeProjectDirectory);
     }
 }
 
