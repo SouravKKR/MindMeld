@@ -24,9 +24,9 @@ const { handleChatStrategy } = require("./ChatStrategy");
  * (AskAiStreamRunner) that spawns the Python worker — Dock holds no
  * Gemini SDK or prompt logic.
  *
- * The BrowserLlm namespace stays reserved for the in-browser/local
+ * The LocalLlm namespace stays reserved for the in-browser/local
  * Free model; these cloud endpoints are deliberately separated so
- * BrowserLlm/Manifest doesn't conflate with cloud tier dispatch.
+ * LocalLlm/Manifest doesn't conflate with cloud tier dispatch.
  */
 function handleAskAiEndpoints(server)
 {

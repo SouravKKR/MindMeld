@@ -8,7 +8,7 @@ import ModelTierKeyLookup from "../../../Globals/Classes/ModelTierKeyLookup.js";
 import InformationSourceSelector from "../../AutomaticGeneration/Components/InformationSourceSelector.js";
 import ExtractableInformationSource from "../../../Globals/Classes/Decorators/ExtractableInformationSource.js";
 import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
-import BrowserLlmDownloadConstants from "../../../Globals/Constants/BrowserLlmDownloadConstants.js";
+import LocalLlmDownloadConstants from "../../../Globals/Constants/LocalLlmDownloadConstants.js";
 import { copyTextToClipboard } from "../../../Globals/UtilityFunctions/CopyTextToClipboard.js";
 import Deck from "../../../Globals/Model/Deck.js";
 import StudySessionEvents from "../Events/StudySessionEvents.js";
@@ -71,8 +71,8 @@ class TextSelectionContextMenu extends ContextMenu
     // Persisted under deck.additionalData[this key]. Single sub-object
     // so all ask-AI prefs sync as one unit. Shared with
     // Deck.getExportData (which strips this key on export) — the
-    // canonical name lives in BrowserLlmDownloadConstants.
-    static #ADDITIONAL_DATA_KEY = BrowserLlmDownloadConstants.DECK_PREFERENCES_FIELD_KEY;
+    // canonical name lives in LocalLlmDownloadConstants.
+    static #ADDITIONAL_DATA_KEY = LocalLlmDownloadConstants.DECK_PREFERENCES_FIELD_KEY;
 
     // Surfaces the document-grounding controls only on tiers that
     // actually call the cloud. The on-device Free model has no access to

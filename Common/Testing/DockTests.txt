@@ -183,7 +183,7 @@ Folder "Protected (must reject anonymous = 401/403, never 200/5xx)":
     /Streak/ReportStudyActivity, /Metrics/Sync, /Metrics/AcknowledgeBadges,
     GET /Leaderboard/Me
   - AI / mock test / task state: /AskAi/Query/{Basic,Pro,ProPlus},
-    /BrowserLlm/Manifest, /MockTest/EvaluateAttempt, GET /TaskState,
+    /LocalLlm/Manifest, /MockTest/EvaluateAttempt, GET /TaskState,
     /TaskState/Discard
   - Credits / maintenance / release notes: /Credits/Purchase/*,
     GET /Maintenance/Status, GET /ReleaseNotes/List

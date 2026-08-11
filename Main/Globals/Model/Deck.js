@@ -28,7 +28,7 @@ import CuratedStudyMaterialFields from "../Classes/Analysis/CuratedStudyMaterial
 import ChatStudyMaterialFields from "../Classes/Analysis/ChatStudyMaterialFields.js";
 import CuratedStudyMaterialMigration from "../Classes/Analysis/CuratedStudyMaterialMigration.js";
 import AiGeneratedDeckFields from "../Classes/Security/AiGeneratedDeckFields.js";
-import BrowserLlmDownloadConstants from "../Constants/BrowserLlmDownloadConstants.js";
+import LocalLlmDownloadConstants from "../Constants/LocalLlmDownloadConstants.js";
 import SearchableDropdown from "../../CommonComponents/SearchableDropdown.js";
 import InitializationEvents from "../Events/InitializationEvents.js";
 
@@ -1297,7 +1297,7 @@ class Deck
         // reference files only the original user has access to.
         if (deckJson.additionalData && typeof deckJson.additionalData === "object")
         {
-            delete deckJson.additionalData[BrowserLlmDownloadConstants.DECK_PREFERENCES_FIELD_KEY];
+            delete deckJson.additionalData[LocalLlmDownloadConstants.DECK_PREFERENCES_FIELD_KEY];
         }
 
         decks.push(deckJson);

@@ -64,6 +64,30 @@ then
     rm -f "$COMMON_CONTEXT_ARCHIVE"
 fi
 
+# The Free tier's on-device AI models. They are excluded from the Dock tar (see
+# build_dock_context) because they are gigabytes and change only when the
+# catalogue does, so a node fetches them itself — once, in the background.
+#
+# Backgrounded deliberately: a first-time pull is hundreds of megabytes and a
+# routine deploy must not sit behind it. Until it finishes, /LocalLlm/Manifest
+# answers 503 and the client renders "not available on this server yet", which
+# is a correct and understandable state rather than a broken one.
+if [ -f "$REPO_DIR/Common/Scripts/ProvisionLocalLlmModels.js" ]
+then
+    if [ "${PROVISION_BROWSER_LLM:-0}" = "1" ] || [ ! -d "$DOCK_DIRECTORY/Assets/Models" ] || [ -z "$(ls -A "$DOCK_DIRECTORY/Assets/Models" 2>/dev/null | grep -v '^\.gitkeep$\|^README.txt$')" ]
+    then
+        echo "==> Provisioning the on-device AI models in the background (log: /tmp/provision-browser-llm.log)..."
+        nohup node "$REPO_DIR/Common/Scripts/ProvisionLocalLlmModels.js" \
+            --destination="$DOCK_DIRECTORY/Assets" \
+            > /tmp/provision-browser-llm.log 2>&1 &
+    else
+        echo "==> Verifying the on-device AI models already on this node..."
+        node "$REPO_DIR/Common/Scripts/ProvisionLocalLlmModels.js" \
+            --destination="$DOCK_DIRECTORY/Assets" --verify-only || \
+            echo "    WARNING: on-device AI models failed verification — the Free tier will report itself unavailable until they are re-provisioned."
+    fi
+fi
+
 echo "==> Ensuring the Agent venv + dependencies..."
 cd "$AGENT_DIRECTORY"
 if ! command -v uv >/dev/null 2>&1

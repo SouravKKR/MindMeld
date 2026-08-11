@@ -1,7 +1,7 @@
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import { activityEntryTypes } from "../../../Globals/Enumerations/ActivityEntryTypes.js";
 import { taskStatus } from "../../../Globals/Enumerations/TaskStatus.js";
-import BrowserLlmDownloadEvents from "../../../Globals/Events/BrowserLlmDownloadEvents.js";
+import LocalLlmDownloadEvents from "../../../Globals/Events/LocalLlmDownloadEvents.js";
 import PaidDeckUploadEvents from "../../../Globals/Events/PaidDeckUploadEvents.js";
 import LocalDownloadActivitySource from "../../Activity/Sources/LocalDownloadActivitySource.js";
 import PaidDeckUploadActivitySource from "../../Activity/Sources/PaidDeckUploadActivitySource.js";
@@ -62,8 +62,8 @@ class ActivityPreviewComponent extends HTMLElement
         // transitions and live progress on their own.
         this.#boundDownloadCapabilityHandler = () => this.#renderBadge();
         this.#boundDownloadProgressHandler   = () => this.#renderBadge();
-        window.addEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundDownloadCapabilityHandler);
-        window.addEventListener(BrowserLlmDownloadEvents.PROGRESS, this.#boundDownloadProgressHandler);
+        window.addEventListener(LocalLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundDownloadCapabilityHandler);
+        window.addEventListener(LocalLlmDownloadEvents.PROGRESS, this.#boundDownloadProgressHandler);
 
         // Local paid-deck upload drives the badge the same way downloads do.
         this.#boundUploadProgressHandler = () => this.#renderBadge();
@@ -86,12 +86,12 @@ class ActivityPreviewComponent extends HTMLElement
         }
         if (this.#boundDownloadCapabilityHandler !== null)
         {
-            window.removeEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundDownloadCapabilityHandler);
+            window.removeEventListener(LocalLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundDownloadCapabilityHandler);
             this.#boundDownloadCapabilityHandler = null;
         }
         if (this.#boundDownloadProgressHandler !== null)
         {
-            window.removeEventListener(BrowserLlmDownloadEvents.PROGRESS, this.#boundDownloadProgressHandler);
+            window.removeEventListener(LocalLlmDownloadEvents.PROGRESS, this.#boundDownloadProgressHandler);
             this.#boundDownloadProgressHandler = null;
         }
         if (this.#boundUploadProgressHandler !== null)

@@ -454,3 +454,13 @@ Common/EmergencyRecovery/
 # stays ignored even if the directory above is un-ignored.
 emergency.env
 
+
+# Free-tier on-device LLM weights (several GB across the catalogue) and the
+# ONNX Runtime WebAssembly binary. Fetched on demand by
+# Common/Scripts/ProvisionLocalLlmModels.js on a workstation or a deployed
+# node — never committed, and deliberately excluded from the deploy tar so a
+# routine deploy stays small (see Common/Deployment/deploy-environment.sh).
+Dock/Assets/Models/*
+!Dock/Assets/Models/.gitkeep
+!Dock/Assets/Models/README.txt
+Dock/Assets/Runtime/

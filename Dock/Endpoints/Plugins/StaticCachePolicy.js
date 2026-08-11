@@ -47,7 +47,7 @@ class StaticCachePolicy
     static IMMUTABLE_ASSET_PATH_PREFIXES = ["/assets/models/", "/assets/runtime/"];
 
     // Not everything under ThirdParty/ is third-party. Dock/Static/ThirdParty/
-    // BrowserLlm/ also holds OUR OWN code — the inference worker, its
+    // LocalLlm/ also holds OUR OWN code — the inference worker, its
     // hand-mirrored protocol enums and the engine runner — which sits there for
     // one reason only: it must escape bundling and obfuscation, because it
     // imports the 6.8 MB vendor bundle that would otherwise be inlined into the
@@ -60,10 +60,10 @@ class StaticCachePolicy
     // runner stayed invisible for 24 hours to browsers AND to the CDN edge,
     // which cached it and went on serving the old file to everyone — a deploy
     // that verifiably shipped and verifiably did nothing. Worse,
-    // BrowserLlmWorkerProtocol.js mirrors two codegen'd enums by hand, so a
+    // LocalLlmWorkerProtocol.js mirrors two codegen'd enums by hand, so a
     // stale copy can silently disagree with the bundle that talks to it.
     //
-    // The vendored BrowserLlm.js beside them is genuinely third-party and keeps
+    // The vendored LocalLlm.js beside them is genuinely third-party and keeps
     // its cache — it is 6.8 MB and really does change only on an upgrade.
     static FIRST_PARTY_THIRD_PARTY_FILE_NAMES = new Set([
         "browserllmenginerunner.js",

@@ -6,7 +6,7 @@ import PaidDeckUploadActivitySource from "./Sources/PaidDeckUploadActivitySource
 import { activityEntryTypes } from "../../Globals/Enumerations/ActivityEntryTypes.js";
 import { activitySortFields } from "../../Globals/Enumerations/ActivitySortFields.js";
 import { taskStatus } from "../../Globals/Enumerations/TaskStatus.js";
-import BrowserLlmDownloadEvents from "../../Globals/Events/BrowserLlmDownloadEvents.js";
+import LocalLlmDownloadEvents from "../../Globals/Events/LocalLlmDownloadEvents.js";
 import PaidDeckUploadEvents from "../../Globals/Events/PaidDeckUploadEvents.js";
 
 
@@ -129,12 +129,12 @@ class ActivityPage extends HTMLElement
     {
         if (this.#boundCapabilityChangedHandler)
         {
-            window.removeEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundCapabilityChangedHandler);
+            window.removeEventListener(LocalLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundCapabilityChangedHandler);
             this.#boundCapabilityChangedHandler = null;
         }
         if (this.#boundProgressHandler)
         {
-            window.removeEventListener(BrowserLlmDownloadEvents.PROGRESS, this.#boundProgressHandler);
+            window.removeEventListener(LocalLlmDownloadEvents.PROGRESS, this.#boundProgressHandler);
             this.#boundProgressHandler = null;
         }
         if (this.#boundUploadProgressHandler)
@@ -156,7 +156,7 @@ class ActivityPage extends HTMLElement
         {
             this.#runSearch();
         };
-        window.addEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundCapabilityChangedHandler);
+        window.addEventListener(LocalLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundCapabilityChangedHandler);
 
         // Paid-deck upload: re-run search only when the entry appears or
         // disappears (so the row enters/leaves the list). Per-% updates are

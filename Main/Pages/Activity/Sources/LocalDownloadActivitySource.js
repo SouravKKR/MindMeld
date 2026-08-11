@@ -1,14 +1,14 @@
 import { activityEntryTypes } from "../../../Globals/Enumerations/ActivityEntryTypes.js";
-import { browserLlmDownloadStates } from "../../../Globals/Enumerations/BrowserLlmDownloadStates.js";
+import { localLlmDownloadStates } from "../../../Globals/Enumerations/LocalLlmDownloadStates.js";
 import { taskStatus } from "../../../Globals/Enumerations/TaskStatus.js";
-import BrowserLlmCapability from "../../../Globals/Classes/BrowserLlm/BrowserLlmCapability.js";
-import BrowserLlmDownloadManager from "../../../Globals/Classes/BrowserLlm/BrowserLlmDownloadManager.js";
+import LocalLlmCapability from "../../../Globals/Classes/LocalLlm/LocalLlmCapability.js";
+import LocalLlmDownloadManager from "../../../Globals/Classes/LocalLlm/LocalLlmDownloadManager.js";
 
 
 /**
  * LocalDownloadActivitySource
  *
- * Adapts the per-device BrowserLlm download state into a synthetic
+ * Adapts the per-device LocalLlm download state into a synthetic
  * activity entry that the ActivityPage and ActivityPreviewComponent can
  * splice into their server-fetched list. The server has no knowledge of
  * this download — it's a client-side asset cache — so we surface it
@@ -37,17 +37,17 @@ class LocalDownloadActivitySource
      */
     static getEntry()
     {
-        const currentState = BrowserLlmCapability.getState();
+        const currentState = LocalLlmCapability.getState();
 
-        if (currentState !== browserLlmDownloadStates.DOWNLOADING
-            && currentState !== browserLlmDownloadStates.FAILED
-            && currentState !== browserLlmDownloadStates.DECLINED)
+        if (currentState !== localLlmDownloadStates.DOWNLOADING
+            && currentState !== localLlmDownloadStates.FAILED
+            && currentState !== localLlmDownloadStates.DECLINED)
         {
             return null;
         }
 
-        const completionFraction = BrowserLlmCapability.getProgressFraction();
-        const startedAt = BrowserLlmDownloadManager.getDownloadStartedAt();
+        const completionFraction = LocalLlmCapability.getProgressFraction();
+        const startedAt = LocalLlmDownloadManager.getDownloadStartedAt();
         const timestampIso = (startedAt ? new Date(startedAt) : new Date()).toISOString();
 
         return {
@@ -60,10 +60,10 @@ class LocalDownloadActivitySource
             payload:
             {
                 completion: completionFraction,
-                isLive: currentState === browserLlmDownloadStates.DOWNLOADING,
+                isLive: currentState === localLlmDownloadStates.DOWNLOADING,
                 // Which model this is depends on the device, so it is read
                 // from the resolved selection rather than a fixed constant.
-                modelId: BrowserLlmCapability.getSelectedModelKey(),
+                modelId: LocalLlmCapability.getSelectedModelKey(),
                 downloadState: currentState
             }
         };
@@ -86,16 +86,16 @@ class LocalDownloadActivitySource
 
     static #subtitleFor(currentState, completionFraction)
     {
-        if (currentState === browserLlmDownloadStates.DOWNLOADING)
+        if (currentState === localLlmDownloadStates.DOWNLOADING)
         {
             const percent = Math.round(Math.max(0, Math.min(1, completionFraction)) * 100);
             return `Downloading… ${percent}%`;
         }
-        if (currentState === browserLlmDownloadStates.FAILED)
+        if (currentState === localLlmDownloadStates.FAILED)
         {
             return "Download failed — retry from the model picker";
         }
-        if (currentState === browserLlmDownloadStates.DECLINED)
+        if (currentState === localLlmDownloadStates.DECLINED)
         {
             return "Declined — retry from the model picker";
         }
@@ -104,7 +104,7 @@ class LocalDownloadActivitySource
 
     static #statusFor(currentState)
     {
-        if (currentState === browserLlmDownloadStates.FAILED)
+        if (currentState === localLlmDownloadStates.FAILED)
         {
             return taskStatus.FAILED;
         }

@@ -30,7 +30,7 @@ const CATALOGUED = [
     "pascalCaseToTitleCase", "rgbToHex", "sanitizeForJsPdf", "sha256",
     "smoothCurve", "createPromiseMutex", "buildContentOverlayId",
     "PaidDeckMoveGuard.canMove",
-    "ModelTierKeyLookup", "BrowserLlmPromptBuilder.build",
+    "ModelTierKeyLookup", "LocalLlmPromptBuilder.build",
 ];
 
 function moduleUrl(fileName)
@@ -64,7 +64,7 @@ async function main()
     let rgbToHex, sanitizeForJsPdf, sha256, smoothCurve, createPromiseMutex;
     let buildContentOverlayId;
     let PaidDeckMoveGuard;
-    let ModelTierKeyLookup, BrowserLlmPromptBuilder;
+    let ModelTierKeyLookup, LocalLlmPromptBuilder;
     let askAiPromptModes, askAiContextKinds, modelTiers;
     let mutexOrder;
     try
@@ -85,7 +85,7 @@ async function main()
         // can be exercised here — a stray DialogBox import in either would take
         // this whole suite down with "HTMLElement is not defined".
         ModelTierKeyLookup = (await import(classModuleUrl("ModelTierKeyLookup.js"))).default;
-        BrowserLlmPromptBuilder = (await import(classModuleUrl("BrowserLlm/BrowserLlmPromptBuilder.js"))).default;
+        LocalLlmPromptBuilder = (await import(classModuleUrl("LocalLlm/LocalLlmPromptBuilder.js"))).default;
         ({ askAiPromptModes } = await import(enumerationModuleUrl("AskAiPromptModes.js")));
         ({ askAiContextKinds } = await import(enumerationModuleUrl("AskAiContextKinds.js")));
         ({ modelTiers } = await import(enumerationModuleUrl("ModelTiers.js")));
@@ -377,7 +377,7 @@ async function main()
         assert(typeof ModelTierKeyLookup.metadataFor(modelTiers.PRO_PLUS).apiPath === "string");
     });
 
-    // -- BrowserLlmPromptBuilder: the on-device prompt fits, and keeps the ask -
+    // -- LocalLlmPromptBuilder: the on-device prompt fits, and keeps the ask -
 
     const HUGE_CONTENT = "Mitochondria are the powerhouse of the cell. ".repeat(6000);
     const LEARNER_QUESTION = "Why does this matter for ATP yield?";
@@ -403,20 +403,20 @@ async function main()
         return { question: HUGE_CONTENT, answer: HUGE_CONTENT };
     }
 
-    harness.test("BrowserLlmPromptBuilder.build: every mode and context fits the model's window", "BrowserLlmPromptBuilder.build", () =>
+    harness.test("LocalLlmPromptBuilder.build: every mode and context fits the model's window", "LocalLlmPromptBuilder.build", () =>
     {
         // Overrunning the window truncates inside the engine, silently and from
         // the wrong end — the learner gets a confident answer to a prompt that
         // lost its instructions.
         for (const modelKey of ["QWEN2_5_1_5B_WEBGPU_Q4F16", "QWEN2_5_0_5B_WEBGPU_Q4F16"])
         {
-            const budgetCharacters = BrowserLlmPromptBuilder.getPromptBudgetCharacters(modelKey);
+            const budgetCharacters = LocalLlmPromptBuilder.getPromptBudgetCharacters(modelKey);
 
             for (const promptModeName of PROMPT_MODE_NAMES)
             {
                 for (const contextKindName of CONTEXT_KIND_NAMES)
                 {
-                    const built = BrowserLlmPromptBuilder.build({
+                    const built = LocalLlmPromptBuilder.build({
                         modelKey:       modelKey,
                         promptMode:     askAiPromptModes[promptModeName],
                         contextKind:    askAiContextKinds[contextKindName],
@@ -435,13 +435,13 @@ async function main()
         }
     });
 
-    harness.test("BrowserLlmPromptBuilder.build: context is shed before the learner's question", "BrowserLlmPromptBuilder.build", () =>
+    harness.test("LocalLlmPromptBuilder.build: context is shed before the learner's question", "LocalLlmPromptBuilder.build", () =>
     {
         // The fixed truncation order. A question dropped to make room produces
         // an answer to something nobody asked, which is worse than thin context.
         for (const contextKindName of CONTEXT_KIND_NAMES)
         {
-            const built = BrowserLlmPromptBuilder.build({
+            const built = LocalLlmPromptBuilder.build({
                 modelKey:       "QWEN2_5_0_5B_WEBGPU_Q4F16",
                 promptMode:     askAiPromptModes.ASK,
                 contextKind:    askAiContextKinds[contextKindName],
@@ -457,25 +457,25 @@ async function main()
         }
     });
 
-    harness.test("BrowserLlmPromptBuilder.build: budgets scale with the model's context window", "BrowserLlmPromptBuilder.build", () =>
+    harness.test("LocalLlmPromptBuilder.build: budgets scale with the model's context window", "LocalLlmPromptBuilder.build", () =>
     {
         // Derived from the selected model rather than hardcoded, so provisioning
         // a model with a bigger window widens the context with no code change.
-        const largeWindowBudget = BrowserLlmPromptBuilder.getPromptBudgetCharacters("QWEN2_5_1_5B_WEBGPU_Q4F16");
-        const smallWindowBudget = BrowserLlmPromptBuilder.getPromptBudgetCharacters("QWEN2_5_0_5B_WEBGPU_Q4F16");
+        const largeWindowBudget = LocalLlmPromptBuilder.getPromptBudgetCharacters("QWEN2_5_1_5B_WEBGPU_Q4F16");
+        const smallWindowBudget = LocalLlmPromptBuilder.getPromptBudgetCharacters("QWEN2_5_0_5B_WEBGPU_Q4F16");
         assert(largeWindowBudget > smallWindowBudget, "a 4096-token model must be given more prompt room than a 2048-token one");
 
-        const largeDeckBudget = BrowserLlmPromptBuilder.getDeckContextBudget("QWEN2_5_1_5B_WEBGPU_Q4F16");
-        const smallDeckBudget = BrowserLlmPromptBuilder.getDeckContextBudget("QWEN2_5_0_5B_WEBGPU_Q4F16");
+        const largeDeckBudget = LocalLlmPromptBuilder.getDeckContextBudget("QWEN2_5_1_5B_WEBGPU_Q4F16");
+        const smallDeckBudget = LocalLlmPromptBuilder.getDeckContextBudget("QWEN2_5_0_5B_WEBGPU_Q4F16");
         assert(
             largeDeckBudget.maximumContextPayloadCharacters > smallDeckBudget.maximumContextPayloadCharacters,
             "and correspondingly more deck grounding in chat"
         );
     });
 
-    harness.test("BrowserLlmPromptBuilder.build: SUMMARIZE ignores a selection, other modes honour it", "BrowserLlmPromptBuilder.build", () =>
+    harness.test("LocalLlmPromptBuilder.build: SUMMARIZE ignores a selection, other modes honour it", "LocalLlmPromptBuilder.build", () =>
     {
-        const summarized = BrowserLlmPromptBuilder.build({
+        const summarized = LocalLlmPromptBuilder.build({
             modelKey: "QWEN2_5_1_5B_WEBGPU_Q4F16",
             promptMode: askAiPromptModes.SUMMARIZE,
             contextKind: askAiContextKinds.CARD,
@@ -485,7 +485,7 @@ async function main()
         });
         assert(!summarized.userPrompt.includes("UNIQUE-SELECTION-MARKER"), "summarising one highlighted phrase is not a meaningful request");
 
-        const explained = BrowserLlmPromptBuilder.build({
+        const explained = LocalLlmPromptBuilder.build({
             modelKey: "QWEN2_5_1_5B_WEBGPU_Q4F16",
             promptMode: askAiPromptModes.EXPLAIN,
             contextKind: askAiContextKinds.CARD,
@@ -496,10 +496,10 @@ async function main()
         assert(explained.userPrompt.includes("UNIQUE-SELECTION-MARKER"), "explaining a highlighted phrase must actually carry it");
     });
 
-    harness.test("BrowserLlmPromptBuilder.build: inline images are stripped from the context", "BrowserLlmPromptBuilder.build", () =>
+    harness.test("LocalLlmPromptBuilder.build: inline images are stripped from the context", "LocalLlmPromptBuilder.build", () =>
     {
         // A single base64 image in a card would consume the entire window.
-        const built = BrowserLlmPromptBuilder.build({
+        const built = LocalLlmPromptBuilder.build({
             modelKey: "QWEN2_5_1_5B_WEBGPU_Q4F16",
             promptMode: askAiPromptModes.EXPLAIN,
             contextKind: askAiContextKinds.CARD,
@@ -511,16 +511,16 @@ async function main()
         assert(built.userPrompt.includes("after"), "the surrounding text is kept");
     });
 
-    harness.test("BrowserLlmPromptBuilder: FORMAT is not offered on the on-device model", "BrowserLlmPromptBuilder.build", () =>
+    harness.test("LocalLlmPromptBuilder: FORMAT is not offered on the on-device model", "LocalLlmPromptBuilder.build", () =>
     {
         // It needs table and figure discipline a small model does not hold, and
         // half-restructured content written back over a learner's own card is
         // worse than an honest refusal.
-        assertEqual(BrowserLlmPromptBuilder.isPromptModeSupported(askAiPromptModes.FORMAT), false);
+        assertEqual(LocalLlmPromptBuilder.isPromptModeSupported(askAiPromptModes.FORMAT), false);
         for (const promptModeName of PROMPT_MODE_NAMES)
         {
             assertEqual(
-                BrowserLlmPromptBuilder.isPromptModeSupported(askAiPromptModes[promptModeName]),
+                LocalLlmPromptBuilder.isPromptModeSupported(askAiPromptModes[promptModeName]),
                 true,
                 `${promptModeName} is supported`
             );

@@ -95,7 +95,7 @@ const { handlePaidDeckEndpoints } = require("./Endpoints/HandlePaidDeckEndpoints
 const { handleActivityEndpoints } = require("./Endpoints/HandleActivityEndpoints");
 const { handleAnalysisEndpoints } = require("./Endpoints/HandleAnalysisEndpoints");
 const { handleProfileEndpoints } = require("./Endpoints/HandleProfileEndpoints");
-const { handleBrowserLlmEndpoints } = require("./Endpoints/BrowserLlm/HandleBrowserLlmEndpoints");
+const { handleLocalLlmEndpoints } = require("./Endpoints/LocalLlm/HandleLocalLlmEndpoints");
 const { handleAskAiEndpoints } = require("./Endpoints/AskAi/HandleAskAiEndpoints");
 const { handleMockTestEndpoints } = require("./Endpoints/HandleMockTestEndpoints");
 const { handleTaskStateEndpoints } = require("./Endpoints/HandleTaskStateEndpoints");
@@ -389,7 +389,7 @@ server.serve({ directory: path.join(__dirname, "Static"), plugins: [staticCacheP
 
 // Offline-AI model files live OUTSIDE Dock/Static/ so they're not wiped
 // by CopyStaticFiles. Served at /Assets/<...> — frontend constants
-// (BrowserLlmDownloadConstants.ASSETS_BASE_PATH) assume "/Assets/Models",
+// (LocalLlmDownloadConstants.ASSETS_BASE_PATH) assume "/Assets/Models",
 // and the ONNX Runtime binary sits under "/Assets/Runtime". The same cache
 // plugin the Static tree uses grants both prefixes a year of immutable
 // caching: the URL embeds the model's own folder name, so it can never come
@@ -481,7 +481,7 @@ handlePaidDeckEndpoints(server);
 handleActivityEndpoints(server);
 handleAnalysisEndpoints(server);
 handleProfileEndpoints(server);
-handleBrowserLlmEndpoints(server);
+handleLocalLlmEndpoints(server);
 handleAskAiEndpoints(server);
 handleMockTestEndpoints(server);
 handleTaskStateEndpoints(server);

@@ -5,7 +5,7 @@ import LanguageSelect from "../../../CommonComponents/LanguageSelect.js";
 import { modelTiers } from "../../../Globals/Enumerations/ModelTiers.js";
 import { askAiPromptModes } from "../../../Globals/Enumerations/AskAiPromptModes.js";
 import ModelTierKeyLookup from "../../../Globals/Classes/ModelTierKeyLookup.js";
-import BrowserLlmDownloadConstants from "../../../Globals/Constants/BrowserLlmDownloadConstants.js";
+import LocalLlmDownloadConstants from "../../../Globals/Constants/LocalLlmDownloadConstants.js";
 import InformationSourceSelector from "../../AutomaticGeneration/Components/InformationSourceSelector.js";
 import ExtractableInformationSource from "../../../Globals/Classes/Decorators/ExtractableInformationSource.js";
 import AutomaticGenerationEvents from "../../../Globals/Events/AutomaticGenerationEvents.js";
@@ -66,7 +66,7 @@ class StudySessionBottomPanel extends HTMLElement
     // toggle per deck drives both surfaces' grounding state — the user
     // configures sources once and they apply wherever the AskAi flow
     // runs.
-    static #ADDITIONAL_DATA_KEY = BrowserLlmDownloadConstants.DECK_PREFERENCES_FIELD_KEY;
+    static #ADDITIONAL_DATA_KEY = LocalLlmDownloadConstants.DECK_PREFERENCES_FIELD_KEY;
 
     #mode             = StudySessionBottomPanel.MODE_CARD;
     #currentCard      = null;

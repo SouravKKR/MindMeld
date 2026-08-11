@@ -12,7 +12,7 @@ import { WebLLM, Transformers } from "./BrowserLlm.js";
  * It contains no model names, no sizes and no quantisations. Everything it
  * needs — the engine id, where the weights are served from, the ONNX data
  * type, the context window — arrives in the descriptor the caller passes,
- * which originates in Common/Constants/BrowserLlmModelCatalogue.json. Adding
+ * which originates in Common/Constants/LocalLlmModelCatalogue.json. Adding
  * a model never touches this file.
  *
  * SELF-HOSTED, ALWAYS. WebLLM's own `prebuiltAppConfig` is deliberately never
@@ -71,7 +71,7 @@ class BrowserLlmEngineRunner
 
     // Set on errors matching the pattern above so callers can tell "retry this"
     // from "stop using the graphics backend on this machine".
-    static DEVICE_LOST_ERROR_NAME = "BrowserLlmDeviceLostError";
+    static DEVICE_LOST_ERROR_NAME = "LocalLlmDeviceLostError";
 
     #engine = null;
     #generationPipeline = null;

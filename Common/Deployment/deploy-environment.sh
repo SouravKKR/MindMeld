@@ -253,13 +253,46 @@ build_agent_context()
         -czf "$output_path" Agent
 }
 
+# Guard for the exclusions above. If one is ever dropped, the symptom is a
+# deploy that mysteriously takes an hour rather than an obvious error, so the
+# size is checked outright and the deploy stops before the upload starts.
+DOCK_CONTEXT_MAXIMUM_MEGABYTES=300
+
+# Dock/Assets/Models and Dock/Assets/Runtime hold the Free tier's on-device AI
+# model weights — hundreds of megabytes per model, several gigabytes across the
+# catalogue. They are gitignored, and they are excluded here for the same
+# reason: without these two lines every routine deploy would upload the whole
+# lot, turning a one-minute push into a multi-gigabyte one. A node obtains them
+# once via Common/Scripts/ProvisionLocalLlmModels.js, and because
+# BaseNodeUpdate.sh extracts this tarball as an overlay rather than replacing
+# the directory, the copies already on the node survive every later deploy
+# untouched.
 build_dock_context()
 {
     local output_path="$1"
     tar --exclude='Dock/.production.env' --exclude='Dock/.env' --exclude='Dock/.env.*' \
         --exclude='Dock/.local.env' --exclude='Dock/.development.env' --exclude='Dock/.testing.env' \
         --exclude='Dock/logs' --exclude='Dock/Tasks' \
+        --exclude='Dock/Assets/Models' --exclude='Dock/Assets/Runtime' \
         -czf "$output_path" Dock
+
+    assert_context_size_within_limit "$output_path" "$DOCK_CONTEXT_MAXIMUM_MEGABYTES" "Dock"
+}
+
+assert_context_size_within_limit()
+{
+    local archive_path="$1"
+    local maximum_megabytes="$2"
+    local context_label="$3"
+
+    local actual_megabytes
+    actual_megabytes=$(( $(wc -c < "$archive_path") / 1048576 ))
+
+    if [ "$actual_megabytes" -gt "$maximum_megabytes" ]; then
+        log_error "${context_label} deploy archive is ${actual_megabytes} MB, over the ${maximum_megabytes} MB limit."
+        log_error "Something large slipped into the tar — check that the Dock/Assets/Models and Dock/Assets/Runtime excludes are still in build_dock_context."
+        exit 1
+    fi
 }
 
 # The files under Common/ that a RUNNING server executes, as opposed to the ones
@@ -277,7 +310,9 @@ build_common_runtime_context()
     local output_path="$1"
     tar -czf "$output_path" \
         Common/Scripts/RenderPaidDeckAuditTrail.py \
-        Common/Scripts/RenderOrganizationEngagementReport.py
+        Common/Scripts/RenderOrganizationEngagementReport.py \
+        Common/Scripts/ProvisionLocalLlmModels.js \
+        Common/Constants/LocalLlmModelCatalogue.json
 }
 
 build_frontend()

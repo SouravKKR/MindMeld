@@ -1,4 +1,4 @@
-import BrowserLlmDownloadConstants from "./BrowserLlmDownloadConstants.js";
+import LocalLlmDownloadConstants from "./LocalLlmDownloadConstants.js";
 
 /**
  * UserIdentityConstants
@@ -53,12 +53,23 @@ class UserIdentityConstants
     // a real model load. That is a fact about the hardware, not the person, and
     // it has to outlive both the session and the identity or the next load
     // walks straight back into the same hang.
+    //
+    // THE KEY STRINGS THEMSELVES ARE FROZEN AT THEIR PRE-RENAME "BrowserLlm/…"
+    // VALUES and must stay that way, even though the subsystem around them is
+    // now LocalLlm. A persistence key is not a name, it is an address: every
+    // device that has already downloaded a model recorded it under the old
+    // string. Renaming the value would not migrate that record, it would
+    // orphan it — the read misses, the model reports itself missing, and the
+    // learner is asked for a fresh ~880 MB download they already have. The
+    // same reasoning freezes MODEL_OVERRIDE_QUERY_PARAMETER (a URL other
+    // people may have bookmarked) and the /ThirdParty/BrowserLlm/ script
+    // paths (that directory is excluded from bundling by name).
     static GLOBAL_KEYS = new Set([
         UserIdentityConstants.OFFLINE_SESSION_CACHE_PATH,
-        BrowserLlmDownloadConstants.LOCAL_STATE_PERSISTENCE_KEY,
-        BrowserLlmDownloadConstants.LOCAL_PREFERRED_TIER_PERSISTENCE_KEY,
-        BrowserLlmDownloadConstants.LOCAL_ASK_AI_LANGUAGE_PERSISTENCE_KEY,
-        BrowserLlmDownloadConstants.LOCAL_GRAPHICS_UNUSABLE_PERSISTENCE_KEY,
+        LocalLlmDownloadConstants.LOCAL_STATE_PERSISTENCE_KEY,
+        LocalLlmDownloadConstants.LOCAL_PREFERRED_TIER_PERSISTENCE_KEY,
+        LocalLlmDownloadConstants.LOCAL_ASK_AI_LANGUAGE_PERSISTENCE_KEY,
+        LocalLlmDownloadConstants.LOCAL_GRAPHICS_UNUSABLE_PERSISTENCE_KEY,
     ]);
 }
 

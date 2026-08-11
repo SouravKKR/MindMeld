@@ -89,7 +89,7 @@ const PROTECTED_ROUTES = [
     { method: "POST", path: "/MockTest/EvaluateAttempt" },
     { method: "GET", path: "/TaskState" },
     { method: "POST", path: "/TaskState/Discard" },
-    { method: "GET", path: "/BrowserLlm/Manifest" },
+    { method: "GET", path: "/LocalLlm/Manifest" },
     { method: "POST", path: "/AskAi/Query/Basic" },
     { method: "POST", path: "/AskAi/Query/Pro" },
     { method: "POST", path: "/AskAi/Query/ProPlus" },

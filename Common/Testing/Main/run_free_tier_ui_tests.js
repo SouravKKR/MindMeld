@@ -149,7 +149,7 @@ async function runSelectionSection(page)
 
     const resolution = await page.evaluate(async () =>
     {
-        // Ask the platform the same questions BrowserLlmDeviceProbe does, so
+        // Ask the platform the same questions LocalLlmDeviceProbe does, so
         // the assertions below can be about AGREEMENT between the device and
         // the selection rather than about whichever machine happens to run
         // this suite. Chromium's WebGPU support varies by build and by driver.
@@ -173,9 +173,9 @@ async function runSelectionSection(page)
             }
         }
 
-        // Mounting the picker is what pulls the whole BrowserLlm graph into the
+        // Mounting the picker is what pulls the whole LocalLlm graph into the
         // page: the component's connectedCallback calls
-        // BrowserLlmCapability.initialize(), which probes the device, fetches
+        // LocalLlmCapability.initialize(), which probes the device, fetches
         // the manifest and runs the selection.
         const pickerElement = document.createElement("llm-tier-select");
         pickerElement.dataset.role = "free-tier-suite-probe";
@@ -223,7 +223,7 @@ async function runSelectionSection(page)
         }
         const manifest = await manifestResponse.json();
         return { bProvisioned: true, models: manifest.models.map((servedModel) => servedModel.modelKey) };
-    }, "/BrowserLlm/Manifest");
+    }, "/LocalLlm/Manifest");
 
     const bGraphicsModelServed = manifestModels.models.some((modelKey) => modelKey.includes("WEBGPU"));
     const bProcessorModelServed = manifestModels.models.some((modelKey) => modelKey.includes("WASM"));
@@ -363,7 +363,7 @@ async function runUnprovisionedServerSection(browser)
         await page.setRequestInterception(true);
         page.on("request", (interceptedRequest) =>
         {
-            if (interceptedRequest.url().includes("/BrowserLlm/Manifest"))
+            if (interceptedRequest.url().includes("/LocalLlm/Manifest"))
             {
                 interceptedRequest.respond(
                 {
@@ -478,7 +478,7 @@ async function runGenerationSection(page, bAnyModelUsable)
 
     try
     {
-        // BrowserLlmEngineRunner lives under ThirdParty/, which the build
+        // LocalLlmEngineRunner lives under ThirdParty/, which the build
         // leaves unbundled precisely so the 6.8 MB vendor payload is fetched
         // lazily — which also makes it the one piece of this feature that a
         // page can import directly. Driving it against a descriptor built from
@@ -486,7 +486,7 @@ async function runGenerationSection(page, bAnyModelUsable)
         // the real self-hosted URLs, and needs no test hook in production code.
         const generationResult = await page.evaluate(async () =>
         {
-            const manifestResponse = await fetch("/BrowserLlm/Manifest", { credentials: "include" });
+            const manifestResponse = await fetch("/LocalLlm/Manifest", { credentials: "include" });
             const manifest = await manifestResponse.json();
             const bWebGpuUsable = Boolean(navigator.gpu) && Boolean(await navigator.gpu.requestAdapter().catch(() => null));
             const preferredBackend = bWebGpuUsable ? "WEBGPU" : "WASM";

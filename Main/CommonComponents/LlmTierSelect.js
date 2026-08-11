@@ -1,10 +1,10 @@
 import { modelTiers } from "../Globals/Enumerations/ModelTiers.js";
-import { browserLlmDownloadStates } from "../Globals/Enumerations/BrowserLlmDownloadStates.js";
+import { localLlmDownloadStates } from "../Globals/Enumerations/LocalLlmDownloadStates.js";
 import ModelTierMetadata from "../Globals/Constants/ModelTierMetadata.js";
-import BrowserLlmDownloadEvents from "../Globals/Events/BrowserLlmDownloadEvents.js";
-import BrowserLlmCapability from "../Globals/Classes/BrowserLlm/BrowserLlmCapability.js";
-import BrowserLlmDownloadManager from "../Globals/Classes/BrowserLlm/BrowserLlmDownloadManager.js";
-import PreferredModelTier from "../Globals/Classes/BrowserLlm/PreferredModelTier.js";
+import LocalLlmDownloadEvents from "../Globals/Events/LocalLlmDownloadEvents.js";
+import LocalLlmCapability from "../Globals/Classes/LocalLlm/LocalLlmCapability.js";
+import LocalLlmDownloadManager from "../Globals/Classes/LocalLlm/LocalLlmDownloadManager.js";
+import PreferredModelTier from "../Globals/Classes/LocalLlm/PreferredModelTier.js";
 
 
 /**
@@ -14,10 +14,10 @@ import PreferredModelTier from "../Globals/Classes/BrowserLlm/PreferredModelTier
  * on-device WebLLM model) plus the three cloud tiers (Basic, Pro, Pro
  * Plus). The tier concept spans both the in-browser and the cloud
  * backends, so the component name is deliberately neutral; the
- * BrowserLlm.* classes still own the offline-model download lifecycle.
+ * LocalLlm.* classes still own the offline-model download lifecycle.
  *
  * Each <option> reads "Tier name (tagline)". The Free option is
- * `disabled` when BrowserLlmCapability isn't READY — the browser
+ * `disabled` when LocalLlmCapability isn't READY — the browser
  * handles greying / no-pick natively. A small status line below the
  * select surfaces the *reason* Free is unavailable (download not
  * started, in progress, declined, failed, or unsupported hardware) so
@@ -26,7 +26,7 @@ import PreferredModelTier from "../Globals/Classes/BrowserLlm/PreferredModelTier
  *
  * Cross-component sync: any `change` event writes to
  * `PreferredModelTier.setCurrentTier`, which dispatches
- * `BrowserLlmDownloadEvents.PREFERRED_TIER_CHANGED`. Every mounted
+ * `LocalLlmDownloadEvents.PREFERRED_TIER_CHANGED`. Every mounted
  * <llm-tier-select> instance listens for that event and re-syncs its
  * value, so a tier picked in Settings flips the bottom-panel + text-
  * selection menu selects live (and vice versa).
@@ -96,7 +96,7 @@ class LlmTierSelect extends HTMLElement
         // prior READY / DECLINED / UNSUPPORTED the moment the picker
         // mounts — independent of any boot hook having run yet. initialize()
         // shares one in-flight promise, so repeated calls are cheap.
-        BrowserLlmCapability.initialize().then(() =>
+        LocalLlmCapability.initialize().then(() =>
         {
             this.#renderOptions();
             this.#renderStatus();
@@ -118,26 +118,26 @@ class LlmTierSelect extends HTMLElement
         {
             this.#syncSelectionFromCache();
         };
-        window.addEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundCapabilityChangedHandler);
-        window.addEventListener(BrowserLlmDownloadEvents.PROGRESS, this.#boundProgressHandler);
-        window.addEventListener(BrowserLlmDownloadEvents.PREFERRED_TIER_CHANGED, this.#boundPreferredTierChangedHandler);
+        window.addEventListener(LocalLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundCapabilityChangedHandler);
+        window.addEventListener(LocalLlmDownloadEvents.PROGRESS, this.#boundProgressHandler);
+        window.addEventListener(LocalLlmDownloadEvents.PREFERRED_TIER_CHANGED, this.#boundPreferredTierChangedHandler);
     }
 
     disconnectedCallback()
     {
         if (this.#boundCapabilityChangedHandler)
         {
-            window.removeEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundCapabilityChangedHandler);
+            window.removeEventListener(LocalLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundCapabilityChangedHandler);
             this.#boundCapabilityChangedHandler = null;
         }
         if (this.#boundProgressHandler)
         {
-            window.removeEventListener(BrowserLlmDownloadEvents.PROGRESS, this.#boundProgressHandler);
+            window.removeEventListener(LocalLlmDownloadEvents.PROGRESS, this.#boundProgressHandler);
             this.#boundProgressHandler = null;
         }
         if (this.#boundPreferredTierChangedHandler)
         {
-            window.removeEventListener(BrowserLlmDownloadEvents.PREFERRED_TIER_CHANGED, this.#boundPreferredTierChangedHandler);
+            window.removeEventListener(LocalLlmDownloadEvents.PREFERRED_TIER_CHANGED, this.#boundPreferredTierChangedHandler);
             this.#boundPreferredTierChangedHandler = null;
         }
     }
@@ -158,7 +158,7 @@ class LlmTierSelect extends HTMLElement
         const orderedKeys = Array.isArray(ModelTierMetadata.ORDER)
             ? ModelTierMetadata.ORDER
             : ["FREE", "BASIC", "PRO", "PRO_PLUS"];
-        const capabilityState = BrowserLlmCapability.getState();
+        const capabilityState = LocalLlmCapability.getState();
         const currentTier = PreferredModelTier.getCurrentTier();
 
         const optionsHtml = orderedKeys.map((tierKeyName) =>
@@ -166,7 +166,7 @@ class LlmTierSelect extends HTMLElement
             const tierValue = modelTiers[tierKeyName];
             const tierMeta = ModelTierMetadata[tierKeyName] || {};
             const isFreeTier = tierValue === modelTiers.FREE;
-            const isDisabled = isFreeTier && capabilityState !== browserLlmDownloadStates.READY;
+            const isDisabled = isFreeTier && capabilityState !== localLlmDownloadStates.READY;
 
             const label = tierMeta.label || tierKeyName;
             // The Free tier's tagline is device-specific: which model this
@@ -229,14 +229,14 @@ class LlmTierSelect extends HTMLElement
         // nothing at all.
         this.#renderDiagnostic();
 
-        const reasonText = BrowserLlmCapability.getDisabledReasonText();
+        const reasonText = LocalLlmCapability.getDisabledReasonText();
         if (!reasonText)
         {
             // Free is usable. It may still be a compromise — a smaller model,
             // or the processor backend — and the learner is told which,
             // rather than being left to guess why answers differ from
             // another device.
-            const selectionNote = BrowserLlmCapability.getSelectionNoteText();
+            const selectionNote = LocalLlmCapability.getSelectionNoteText();
             if (selectionNote)
             {
                 this.#statusElement.hidden = false;
@@ -252,7 +252,7 @@ class LlmTierSelect extends HTMLElement
         }
         this.#statusElement.hidden = false;
         this.#statusElement.textContent = `Free unavailable — ${reasonText}`;
-        this.#setStatusClickable(BrowserLlmCapability.isRecoverableByUser());
+        this.#setStatusClickable(LocalLlmCapability.isRecoverableByUser());
     }
 
     /**
@@ -283,7 +283,7 @@ class LlmTierSelect extends HTMLElement
             this.#statusElement.parentElement.insertBefore(diagnosticElement, this.#statusElement.nextSibling);
         }
 
-        diagnosticElement.textContent = BrowserLlmCapability.getDiagnosticText();
+        diagnosticElement.textContent = LocalLlmCapability.getDiagnosticText();
     }
 
     /**
@@ -293,13 +293,13 @@ class LlmTierSelect extends HTMLElement
      */
     static #buildFreeTierTagline(defaultTagline)
     {
-        const parameterLabel = BrowserLlmCapability.getSelectedParameterLabel();
+        const parameterLabel = LocalLlmCapability.getSelectedParameterLabel();
         if (!parameterLabel)
         {
             return defaultTagline;
         }
 
-        return BrowserLlmCapability.isSelectedModelProcessorBacked()
+        return LocalLlmCapability.isSelectedModelProcessorBacked()
             ? `on-device ${parameterLabel}, processor — slow`
             : `on-device ${parameterLabel}`;
     }
@@ -335,17 +335,17 @@ class LlmTierSelect extends HTMLElement
      * Click / keyboard activation of the status line — the settings-only
      * entry point for starting the offline-model download. Inert unless
      * the current state is user-recoverable (UNSUPPORTED and DOWNLOADING
-     * do nothing). BrowserLlmDownloadManager.start() clears any DECLINED
+     * do nothing). LocalLlmDownloadManager.start() clears any DECLINED
      * pin and no-ops while a download is already running, so it safely
      * covers every recoverable case.
      */
     #handleStatusActivation()
     {
-        if (!BrowserLlmCapability.isRecoverableByUser())
+        if (!LocalLlmCapability.isRecoverableByUser())
         {
             return;
         }
-        BrowserLlmDownloadManager.start().catch((startError) =>
+        LocalLlmDownloadManager.start().catch((startError) =>
         {
             console.error("[LlmTierSelect] Failed to start model download:", startError);
         });

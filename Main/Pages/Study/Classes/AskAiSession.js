@@ -1,10 +1,10 @@
 import DialogBox from "../../../CommonComponents/DialogBox.js";
 import AiFeatureGate from "../../../Globals/Classes/AiFeatureGate.js";
 import ModelTierKeyLookup from "../../../Globals/Classes/ModelTierKeyLookup.js";
-import BrowserLlmCapability from "../../../Globals/Classes/BrowserLlm/BrowserLlmCapability.js";
-import BrowserLlmDownloadManager from "../../../Globals/Classes/BrowserLlm/BrowserLlmDownloadManager.js";
-import LocalAskAiRunner from "../../../Globals/Classes/BrowserLlm/LocalAskAiRunner.js";
-import { browserLlmDownloadStates } from "../../../Globals/Enumerations/BrowserLlmDownloadStates.js";
+import LocalLlmCapability from "../../../Globals/Classes/LocalLlm/LocalLlmCapability.js";
+import LocalLlmDownloadManager from "../../../Globals/Classes/LocalLlm/LocalLlmDownloadManager.js";
+import LocalAskAiRunner from "../../../Globals/Classes/LocalLlm/LocalAskAiRunner.js";
+import { localLlmDownloadStates } from "../../../Globals/Enumerations/LocalLlmDownloadStates.js";
 import { modelTiers } from "../../../Globals/Enumerations/ModelTiers.js";
 import { askAiPromptModes } from "../../../Globals/Enumerations/AskAiPromptModes.js";
 import { askAiContextKinds } from "../../../Globals/Enumerations/AskAiContextKinds.js";
@@ -203,9 +203,9 @@ class AskAiSession
      */
     async #runLocal()
     {
-        await BrowserLlmCapability.initialize();
+        await LocalLlmCapability.initialize();
 
-        if (BrowserLlmCapability.getState() !== browserLlmDownloadStates.READY)
+        if (LocalLlmCapability.getState() !== localLlmDownloadStates.READY)
         {
             await this.#offerModelDownload();
             return;
@@ -255,10 +255,10 @@ class AskAiSession
      */
     async #offerModelDownload()
     {
-        const reasonText = BrowserLlmCapability.getDisabledReasonText()
+        const reasonText = LocalLlmCapability.getDisabledReasonText()
             || "The on-device model isn't ready yet.";
 
-        if (!BrowserLlmCapability.isRecoverableByUser())
+        if (!LocalLlmCapability.isRecoverableByUser())
         {
             await DialogBox.alert("Free tier unavailable", reasonText);
             return;
@@ -274,7 +274,7 @@ class AskAiSession
         // minutes and reports into the activity feed and the tier picker, so
         // holding a modal open over it would be worse than letting the
         // learner carry on studying.
-        BrowserLlmDownloadManager.start().catch((downloadError) =>
+        LocalLlmDownloadManager.start().catch((downloadError) =>
         {
             console.error("[AskAiSession] On-device model download failed:", downloadError);
         });

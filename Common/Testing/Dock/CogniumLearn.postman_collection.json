@@ -1932,7 +1932,7 @@
           ]
         },
         {
-          "name": "PROTECTED GET /BrowserLlm/Manifest",
+          "name": "PROTECTED GET /LocalLlm/Manifest",
           "request": {
             "method": "GET",
             "header": [
@@ -1942,12 +1942,12 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/BrowserLlm/Manifest",
+              "raw": "{{baseUrl}}/LocalLlm/Manifest",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "BrowserLlm",
+                "LocalLlm",
                 "Manifest"
               ]
             }

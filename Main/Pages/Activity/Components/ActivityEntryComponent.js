@@ -1,10 +1,10 @@
 import PageNavigator from "../../../Globals/Classes/PageNavigator.js";
 import { activityEntryTypes } from "../../../Globals/Enumerations/ActivityEntryTypes.js";
-import { browserLlmDownloadStates } from "../../../Globals/Enumerations/BrowserLlmDownloadStates.js";
+import { localLlmDownloadStates } from "../../../Globals/Enumerations/LocalLlmDownloadStates.js";
 import { taskStatus } from "../../../Globals/Enumerations/TaskStatus.js";
-import BrowserLlmDownloadEvents from "../../../Globals/Events/BrowserLlmDownloadEvents.js";
-import BrowserLlmCapability from "../../../Globals/Classes/BrowserLlm/BrowserLlmCapability.js";
-import BrowserLlmDownloadManager from "../../../Globals/Classes/BrowserLlm/BrowserLlmDownloadManager.js";
+import LocalLlmDownloadEvents from "../../../Globals/Events/LocalLlmDownloadEvents.js";
+import LocalLlmCapability from "../../../Globals/Classes/LocalLlm/LocalLlmCapability.js";
+import LocalLlmDownloadManager from "../../../Globals/Classes/LocalLlm/LocalLlmDownloadManager.js";
 import PaidDeckUploadEvents from "../../../Globals/Events/PaidDeckUploadEvents.js";
 import PaidDeckUploadActivitySource from "../Sources/PaidDeckUploadActivitySource.js";
 
@@ -57,8 +57,8 @@ class ActivityEntryComponent extends HTMLElement
         {
             this.#boundDownloadProgressHandler = () => this.#refreshDownloadEntry();
             this.#boundDownloadCapabilityHandler = () => this.#refreshDownloadEntry();
-            window.addEventListener(BrowserLlmDownloadEvents.PROGRESS, this.#boundDownloadProgressHandler);
-            window.addEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundDownloadCapabilityHandler);
+            window.addEventListener(LocalLlmDownloadEvents.PROGRESS, this.#boundDownloadProgressHandler);
+            window.addEventListener(LocalLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundDownloadCapabilityHandler);
         }
 
         // UPLOAD entries are live too — re-render from the client-side upload
@@ -74,12 +74,12 @@ class ActivityEntryComponent extends HTMLElement
     {
         if (this.#boundDownloadProgressHandler)
         {
-            window.removeEventListener(BrowserLlmDownloadEvents.PROGRESS, this.#boundDownloadProgressHandler);
+            window.removeEventListener(LocalLlmDownloadEvents.PROGRESS, this.#boundDownloadProgressHandler);
             this.#boundDownloadProgressHandler = null;
         }
         if (this.#boundDownloadCapabilityHandler)
         {
-            window.removeEventListener(BrowserLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundDownloadCapabilityHandler);
+            window.removeEventListener(LocalLlmDownloadEvents.CAPABILITY_CHANGED, this.#boundDownloadCapabilityHandler);
             this.#boundDownloadCapabilityHandler = null;
         }
         if (this.#boundUploadProgressHandler)
@@ -116,17 +116,17 @@ class ActivityEntryComponent extends HTMLElement
         // and re-render. The parent ActivityPage will eventually re-run
         // its search and replace this row entirely, but in the interim
         // the user sees live progress without a full refresh.
-        const currentState = BrowserLlmCapability.getState();
-        const percent = Math.round(Math.max(0, Math.min(1, BrowserLlmCapability.getProgressFraction())) * 100);
+        const currentState = LocalLlmCapability.getState();
+        const percent = Math.round(Math.max(0, Math.min(1, LocalLlmCapability.getProgressFraction())) * 100);
 
         const subtitleByState =
         {
-            [browserLlmDownloadStates.DOWNLOADING]: `Downloading… ${percent}%`,
-            [browserLlmDownloadStates.FAILED]:      "Download failed — retry from the model picker",
-            [browserLlmDownloadStates.DECLINED]:    "Declined — retry from the model picker",
-            [browserLlmDownloadStates.READY]:       "Ready",
-            [browserLlmDownloadStates.NOT_STARTED]: "Not started",
-            [browserLlmDownloadStates.UNSUPPORTED]: "Not supported on this device",
+            [localLlmDownloadStates.DOWNLOADING]: `Downloading… ${percent}%`,
+            [localLlmDownloadStates.FAILED]:      "Download failed — retry from the model picker",
+            [localLlmDownloadStates.DECLINED]:    "Declined — retry from the model picker",
+            [localLlmDownloadStates.READY]:       "Ready",
+            [localLlmDownloadStates.NOT_STARTED]: "Not started",
+            [localLlmDownloadStates.UNSUPPORTED]: "Not supported on this device",
         };
         this.#entry.subtitle = subtitleByState[currentState] ?? this.#entry.subtitle;
         this.#entry.payload = { ...(this.#entry.payload || {}), completion: percent / 100, downloadState: currentState };
@@ -173,13 +173,13 @@ class ActivityEntryComponent extends HTMLElement
 
     static #downloadActionLabel(entry)
     {
-        const downloadState = entry.payload?.downloadState ?? BrowserLlmCapability.getState();
-        if (downloadState === browserLlmDownloadStates.DOWNLOADING)
+        const downloadState = entry.payload?.downloadState ?? LocalLlmCapability.getState();
+        if (downloadState === localLlmDownloadStates.DOWNLOADING)
         {
             return "Cancel";
         }
-        if (downloadState === browserLlmDownloadStates.FAILED
-            || downloadState === browserLlmDownloadStates.DECLINED)
+        if (downloadState === localLlmDownloadStates.FAILED
+            || downloadState === localLlmDownloadStates.DECLINED)
         {
             return "Retry";
         }
@@ -207,17 +207,17 @@ class ActivityEntryComponent extends HTMLElement
         }
         if (entry.entryType === activityEntryTypes.DOWNLOAD)
         {
-            const downloadState = entry.payload?.downloadState ?? BrowserLlmCapability.getState();
-            if (downloadState === browserLlmDownloadStates.DOWNLOADING)
+            const downloadState = entry.payload?.downloadState ?? LocalLlmCapability.getState();
+            if (downloadState === localLlmDownloadStates.DOWNLOADING)
             {
-                BrowserLlmDownloadManager.cancel();
+                LocalLlmDownloadManager.cancel();
                 return;
             }
-            if (downloadState === browserLlmDownloadStates.FAILED
-                || downloadState === browserLlmDownloadStates.DECLINED
-                || downloadState === browserLlmDownloadStates.NOT_STARTED)
+            if (downloadState === localLlmDownloadStates.FAILED
+                || downloadState === localLlmDownloadStates.DECLINED
+                || downloadState === localLlmDownloadStates.NOT_STARTED)
             {
-                BrowserLlmDownloadManager.start();
+                LocalLlmDownloadManager.start();
                 return;
             }
         }

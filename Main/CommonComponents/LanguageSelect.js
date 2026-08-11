@@ -1,6 +1,6 @@
 import { askAiLanguages } from "../Globals/Enumerations/AskAiLanguages.js";
-import BrowserLlmDownloadEvents from "../Globals/Events/BrowserLlmDownloadEvents.js";
-import PreferredAskAiLanguage from "../Globals/Classes/BrowserLlm/PreferredAskAiLanguage.js";
+import LocalLlmDownloadEvents from "../Globals/Events/LocalLlmDownloadEvents.js";
+import PreferredAskAiLanguage from "../Globals/Classes/LocalLlm/PreferredAskAiLanguage.js";
 
 
 /**
@@ -25,7 +25,7 @@ import PreferredAskAiLanguage from "../Globals/Classes/BrowserLlm/PreferredAskAi
  * Persistence is global and device-local, owned by PreferredAskAiLanguage
  * (the same idiom LlmTierSelect uses for PreferredModelTier). Any change
  * writes to PreferredAskAiLanguage.setLanguage, which dispatches
- * BrowserLlmDownloadEvents.PREFERRED_ASK_AI_LANGUAGE_CHANGED; every
+ * LocalLlmDownloadEvents.PREFERRED_ASK_AI_LANGUAGE_CHANGED; every
  * mounted instance listens for that event and re-syncs, so a language
  * picked in Settings ▸ AI flips the Study menu / bottom-panel selects
  * live (and vice versa). Hosts call getSelectedLanguageKey() /
@@ -105,14 +105,14 @@ class LanguageSelect extends HTMLElement
         {
             this.#syncFromPreference();
         };
-        window.addEventListener(BrowserLlmDownloadEvents.PREFERRED_ASK_AI_LANGUAGE_CHANGED, this.#boundPreferredLanguageChangedHandler);
+        window.addEventListener(LocalLlmDownloadEvents.PREFERRED_ASK_AI_LANGUAGE_CHANGED, this.#boundPreferredLanguageChangedHandler);
     }
 
     disconnectedCallback()
     {
         if (this.#boundPreferredLanguageChangedHandler)
         {
-            window.removeEventListener(BrowserLlmDownloadEvents.PREFERRED_ASK_AI_LANGUAGE_CHANGED, this.#boundPreferredLanguageChangedHandler);
+            window.removeEventListener(LocalLlmDownloadEvents.PREFERRED_ASK_AI_LANGUAGE_CHANGED, this.#boundPreferredLanguageChangedHandler);
             this.#boundPreferredLanguageChangedHandler = null;
         }
     }

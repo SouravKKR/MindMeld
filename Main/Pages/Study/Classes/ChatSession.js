@@ -11,10 +11,10 @@ import Lifecycle from "../../../Globals/Model/Lifecycle.js";
 import ChatStudyMaterialFields from "../../../Globals/Classes/Analysis/ChatStudyMaterialFields.js";
 import DeckEvents from "../../../Globals/Events/DeckEvents.js";
 import DialogBox from "../../../CommonComponents/DialogBox.js";
-import BrowserLlmCapability from "../../../Globals/Classes/BrowserLlm/BrowserLlmCapability.js";
-import BrowserLlmPromptBuilder from "../../../Globals/Classes/BrowserLlm/BrowserLlmPromptBuilder.js";
-import LocalAskAiRunner from "../../../Globals/Classes/BrowserLlm/LocalAskAiRunner.js";
-import { browserLlmDownloadStates } from "../../../Globals/Enumerations/BrowserLlmDownloadStates.js";
+import LocalLlmCapability from "../../../Globals/Classes/LocalLlm/LocalLlmCapability.js";
+import LocalLlmPromptBuilder from "../../../Globals/Classes/LocalLlm/LocalLlmPromptBuilder.js";
+import LocalAskAiRunner from "../../../Globals/Classes/LocalLlm/LocalAskAiRunner.js";
+import { localLlmDownloadStates } from "../../../Globals/Enumerations/LocalLlmDownloadStates.js";
 import { studyMaterialDetailLevels } from "../../../Globals/Enumerations/StudyMaterialDetailLevels.js";
 
 /**
@@ -42,7 +42,7 @@ class ChatSession extends StudySession
     // the 400 body validator; least-relevant snippets are dropped from the
     // tail until the payload fits.
     //
-    // The Free tier does NOT use these — it asks BrowserLlmPromptBuilder for
+    // The Free tier does NOT use these — it asks LocalLlmPromptBuilder for
     // caps sized to whichever on-device model this device resolved to, which
     // is smaller by two orders of magnitude and varies per device.
     static #CLOUD_CONTEXT_BUDGET =
@@ -131,10 +131,10 @@ class ChatSession extends StudySession
 
         if (bIsLocalTier)
         {
-            await BrowserLlmCapability.initialize();
-            if (BrowserLlmCapability.getState() !== browserLlmDownloadStates.READY)
+            await LocalLlmCapability.initialize();
+            if (LocalLlmCapability.getState() !== localLlmDownloadStates.READY)
             {
-                this.#chatView.showError(BrowserLlmCapability.getDisabledReasonText()
+                this.#chatView.showError(LocalLlmCapability.getDisabledReasonText()
                     || "The on-device model isn't ready yet.");
                 return;
             }
@@ -212,7 +212,7 @@ class ChatSession extends StudySession
             // forty thousand tokens into a window that holds a couple of
             // thousand, which would fail every turn.
             const contextBudget = bIsLocalTier
-                ? BrowserLlmPromptBuilder.getDeckContextBudget(BrowserLlmCapability.getSelectedModelKey())
+                ? LocalLlmPromptBuilder.getDeckContextBudget(LocalLlmCapability.getSelectedModelKey())
                 : ChatSession.#CLOUD_CONTEXT_BUDGET;
 
             const boundedConversation = conversation.slice(-contextBudget.maximumConversationTurns * 2);

@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "setup": "node Common/Scripts/Setup.js",
+    "provision-local-llm": "node Common/Scripts/ProvisionLocalLlmModels.js",
     "web": "node Common/Scripts/RunWeb.js",
     "production": "node Common/Scripts/RunProduction.js",
     "desktop": "node Common/Scripts/RunDesktop.js",
