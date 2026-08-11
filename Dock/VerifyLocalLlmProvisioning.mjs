@@ -849,6 +849,29 @@ function runNativeProtocolMirrorTier()
         Array.from(rustSource.matchAll(/const\s+EVENT_[A-Z_]+:\s*&str\s*=\s*"([^"]+)"/g))
             .map((eventMatch) => eventMatch[1]));
 
+    // Registering a command is not the same as being allowed to call it. The
+    // window loads the deployed site over the network, and Tauri refuses an
+    // app's own commands from a REMOTE origin unless a capability names each
+    // one — "This ensures remote content can never reach custom commands
+    // unless an explicit `remote` capability has been configured for them."
+    //
+    // The failure is silent in the worst way: the rejection arrives as a
+    // rejected promise, the driver reads that as "no native runtime here" and
+    // falls back to the browser engine. Nothing errors, nothing looks broken,
+    // and the entire native path is simply never used.
+    const buildScriptPath = path.join(repositoryRoot, "Native", "src-tauri", "build.rs");
+    const remoteCapabilityPath = path.join(repositoryRoot, "Native", "src-tauri", "capabilities", "remote.json");
+
+    const bBuildFilesExist = fs.existsSync(buildScriptPath) && fs.existsSync(remoteCapabilityPath);
+    assert(bBuildFilesExist, "the native build script and remote capability exist");
+
+    const declaredInBuildScript = bBuildFilesExist
+        ? new Set(Array.from(fs.readFileSync(buildScriptPath, "utf8").matchAll(/"([a-z_]+)"/g)).map((nameMatch) => nameMatch[1]))
+        : new Set();
+    const grantedPermissions = bBuildFilesExist
+        ? new Set(JSON.parse(fs.readFileSync(remoteCapabilityPath, "utf8")).permissions || [])
+        : new Set();
+
     for (const [constantName, constantValue] of Object.entries(NativeLlmProtocolConstants))
     {
         if (constantName.startsWith("COMMAND_"))
@@ -856,6 +879,14 @@ function runNativeProtocolMirrorTier()
             assert(
                 declaredCommands.has(constantValue),
                 `${constantName} ("${constantValue}") is a command the native side actually registers`,
+            );
+            assert(
+                declaredInBuildScript.has(constantValue),
+                `${constantValue} is declared in build.rs, so an ACL permission is generated for it`,
+            );
+            assert(
+                grantedPermissions.has(`allow-${constantValue.replace(/_/g, "-")}`),
+                `${constantValue} is granted to the deployed origin, so remote content may actually call it`,
             );
         }
         else if (constantName.startsWith("EVENT_"))

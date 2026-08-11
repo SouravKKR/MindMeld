@@ -2,9 +2,13 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "remote-application",
   "description": "What the deployed CogniumLearn site may do when it is loaded inside this shell. The window points at the live site rather than at bundled files, so without this capability the page is an ordinary web page with no native access at all.",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "remote": {
-    "urls": ["https://learn.cogniumlabs.io"]
+    "urls": [
+      "https://learn.cogniumlabs.io"
+    ]
   },
   "permissions": [
     "core:default",
@@ -17,6 +21,12 @@
     "fs:allow-remove",
     "fs:allow-exists",
     "dialog:allow-open",
-    "notification:default"
+    "notification:default",
+    "allow-probe-native-llm-capability",
+    "allow-ensure-native-model-present",
+    "allow-load-native-model",
+    "allow-generate-native-completion",
+    "allow-interrupt-native-generation",
+    "allow-unload-native-model"
   ]
 }
