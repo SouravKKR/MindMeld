@@ -119,6 +119,18 @@ class SyncOrchestrator
     // pull succeeds or an ordinary drain runs to completion, so a bail-out can
     // never bounce between the two paths.
     static #bBulkSnapshotResyncAttempted = false;
+    // One-shot guard for the fresh-client bulk-snapshot fast path below. The
+    // empty-server branch in sync() resets lastSync to 0 so the NEXT cycle
+    // pushes the locally-bootstrapped root deck — but that reset re-creates
+    // this fast path's own entry condition exactly (lastSync === 0 AND an
+    // effectively-empty local library), and the branch returns before the
+    // normal cycle's gatherAllLocalEntities push can ever run. Without this
+    // flag the two conditions chase each other forever: pull an empty
+    // snapshot, reset, pull again — roughly one /Sync/BulkSnapshot request
+    // per second, with the "Restoring sync state" modal never dismissing.
+    // Set once the empty-server reset fires so the second pass falls through
+    // to the normal cycle, which is where the root actually gets pushed.
+    static #bEmptyServerRootPushAttempted = false;
 
     // ── Connection-quality strings (no magic strings leak out) ────────
     static #CONNECTION_ISSUE_OFFLINE        = "offline";
@@ -356,6 +368,14 @@ class SyncOrchestrator
         SyncOrchestrator.#bInitialized = false;
         SyncOrchestrator.#bAutoForcePullAttempted = false;
         SyncOrchestrator.#bBulkSnapshotResyncAttempted = false;
+        // Cleared HERE and nowhere else. Logout / account switch is the one
+        // point where a genuinely different fresh client can appear inside a
+        // single page session, so the fast path has to be re-armed. It is
+        // deliberately NOT re-armed on a completed cycle: anything that later
+        // resets lastSync to 0 (stale-state detection, the joinDate check)
+        // would otherwise put an empty account straight back into the pull /
+        // reset loop this flag exists to break.
+        SyncOrchestrator.#bEmptyServerRootPushAttempted = false;
         SyncOrchestrator.#setState(syncStates.IDLE);
 
         await SyncTransport.saveSyncLog();
@@ -479,7 +499,8 @@ class SyncOrchestrator
         }
 
         if (SyncTransport.getLastSyncTimestamp() === 0
-            && SyncOrchestrator.#isLocalLibraryEffectivelyEmpty())
+            && SyncOrchestrator.#isLocalLibraryEffectivelyEmpty()
+            && !SyncOrchestrator.#bEmptyServerRootPushAttempted)
         {
             console.log("[SyncOrchestrator] sync() — fresh client with empty local library; routing to bulk snapshot path.");
             await SyncOrchestrator.forcePullFromServer();
@@ -490,10 +511,17 @@ class SyncOrchestrator
             // exists but was never registered server-side. Roll lastSync
             // back to 0 so the next cycle's `gatherAllLocalEntities`
             // branch fires and pushes it.
+            //
+            // The one-shot flag is what makes that next cycle actually
+            // REACH the push. Both conditions guarding this branch are
+            // still true after the reset, so without it the next cycle
+            // re-enters here and returns early again — the empty-account
+            // "Restoring sync state" loop.
             if (SyncOrchestrator.#isLocalLibraryEffectivelyEmpty()
                 && SyncTransport.getLastSyncTimestamp() > 0)
             {
                 console.log("[SyncOrchestrator] sync() — bulk snapshot returned an empty library; resetting lastSync so the next cycle pushes the local root.");
+                SyncOrchestrator.#bEmptyServerRootPushAttempted = true;
                 SyncTransport.setLastSyncTimestamp(0);
                 await SyncTransport.saveSyncLog();
             }
