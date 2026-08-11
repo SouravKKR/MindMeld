@@ -490,8 +490,20 @@ class StaticBundler
                     // per file across thousands of them, immediately behind
                     // the copy that a real-time scanner is still working
                     // through. The wait is only ever paid on contention.
+                    //
+                    // `recursive: true` on a plain file looks redundant and is
+                    // the entire reason the retry works. Node documents
+                    // maxRetries/retryDelay as IGNORED unless recursive is
+                    // true, so without it the two options above were dead
+                    // configuration: the first EPERM aborted the build
+                    // immediately, having waited none of the 15 seconds the
+                    // numbers promise. That is what made this failure look
+                    // random and unfixable, and why deploy-environment.sh
+                    // carries a five-attempt retry around the whole frontend
+                    // build to work around it.
                     fs.rmSync(entryPath, {
                         force:      true,
+                        recursive:  true,
                         maxRetries: 60,
                         retryDelay: 250,
                     });
