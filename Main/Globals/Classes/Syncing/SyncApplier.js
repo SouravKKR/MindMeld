@@ -7,8 +7,8 @@ import MockTest from "../../Model/MockTest.js";
 import StudyMaterial from "../../Model/StudyMaterial.js";
 import ActiveEntityTracker from "../ActiveEntityTracker.js";
 import Persistence from "../Persistence.js";
-import SyncTransport from "./SyncTransport.js";
 import ContentOverlayStore from "../Content/ContentOverlayStore.js";
+import DeckOrphanResolver from "./DeckOrphanResolver.js";
 
 
 /**
@@ -36,13 +36,13 @@ class SyncApplier
     // Keyed by deck id, carrying the raw incoming deck data.
     //
     // A deck can only be attached once its parent is in the local tree, so
-    // #applyDeckChangesInOrder used to treat "parent not found" as a genuine
-    // orphan and queue a DELETION tombstone for it — which is correct for a
-    // single-cycle pull, but destroys data mid-drain, where the parent may
-    // simply be scheduled for a later chunk. Unresolved decks are parked here
-    // instead and retried at the head of every subsequent cycle; the final
-    // (non-chunked) cycle applies the original tombstone rule to whatever is
-    // still unresolved, so genuine orphans are still cleaned up.
+    // mid-drain a still-unresolved deck is parked here and retried at the
+    // head of every subsequent cycle, since the parent may simply be
+    // scheduled for a later chunk. The final (non-chunked) cycle instead
+    // attaches whatever is still unresolved onto the root via
+    // DeckOrphanResolver — a parent that is never delivered (a withheld
+    // paid deck, or a genuinely missing record) is never inferred as a
+    // reason to delete the child.
     static #deferredOrphanDeckDataById = new Map();
 
     // ── Apply server changes ──────────────────────────────────────────
@@ -51,22 +51,17 @@ class SyncApplier
      * Hydrates the local Deck tree with the server's incoming changes.
      *
      * Orphan handling: when an incoming deck references a parent that
-     * exists neither locally nor in the same batch, the orphan is
-     * queued as a deletion tombstone (via SyncTransport.setPendingChange)
-     * so the next push tells the server to remove it. The server's
-     * cascading delete handler (SyncQueryEngine.bulkRecordDeletions)
-     * then propagates the removal to every other device. We never force
-     * a full resync — historically the "force resync to pull missing
-     * parents" path was self-reinforcing because the missing parent
-     * was genuinely gone server-side and the catastrophic resync just
-     * re-uploaded the orphan from stale local state.
+     * exists neither locally nor in the same batch, it is attached to the
+     * current root instead (via DeckOrphanResolver) rather than deleted —
+     * a parent commonly never arrives because it's a paid deck the account
+     * has no license for, which is not evidence the child was deleted.
      *
      * @param {boolean} [bDeferUnresolvedDecks=false] Pass true while a chunked
      *   drain is still running (the server reported `morePending`). A missing
      *   parent is then treated as "not delivered yet" and the deck is parked in
      *   #deferredOrphanDeckDataById for the next cycle instead of being
-     *   tombstoned. The final cycle passes false, so anything still unresolved
-     *   goes through the normal orphan cleanup.
+     *   attached to root immediately. The final cycle passes false, so
+     *   anything still unresolved is attached to root.
      */
     static async applyServerChanges(changes, dirtyDeckIds, onProgress = null, bDeferUnresolvedDecks = false)
     {
@@ -854,45 +849,34 @@ class SyncApplier
             }
         };
 
-        let totalCards          = 0;
+        let totalCards = 0;
         let totalStudyMaterials = 0;
-        let totalMockTests      = 0;
-        let orphanCount         = 0;
+        let totalMockTests = 0;
+        let reparentedOrphanCount = 0;
 
         for (let deckIndex = 0; deckIndex < allDecks.length; deckIndex++)
         {
             const deck = allDecks[deckIndex];
 
             // Defensive orphan check: a non-root deck whose persisted
-            // `parent` id no longer resolves in the in-memory id map
-            // is broken local state — pushing it would re-create the
-            // orphan server-side and re-trigger the resync loop. Push
-            // a deletion tombstone instead so the server (and every
-            // other device) drops it.
-            const deckSyncData = deck.toSyncJson();
-            const isOrphan     = !deck.isRoot()
+            // `parent` id no longer resolves in the in-memory id map is
+            // broken local state — pushing it as-is would re-create the
+            // same dangling reference server-side. Reparent it onto the
+            // root locally instead (Deck.setParent bumps its lifecycle, so
+            // it and its content sync normally from there) rather than
+            // pushing a deletion tombstone, which would cascade-delete the
+            // deck and everything under it on every device over nothing
+            // more than a broken pointer.
+            let deckSyncData = deck.toSyncJson();
+            const isOrphan   = !deck.isRoot()
                 && deckSyncData.parent
                 && !Deck.getById(deckSyncData.parent);
 
             if (isOrphan)
             {
-                // In reconciliation mode a long-standing orphan (unchanged
-                // since the cutoff) is already-known broken state; only
-                // (re)queue its deletion when it is fresh, so we don't spam
-                // the same tombstone every cycle.
-                if (isModifiedSinceCutoff(deck))
-                {
-                    console.warn(`[SyncApplier] gatherAllLocalEntities — local orphan deck "${deck.getName?.() || deckSyncData.name}" (${deck.getId()}); parent ${deckSyncData.parent} not in id map. Queuing deletion.`);
-                    gatheredChanges[deck.getId()] =
-                    {
-                        entityId: deck.getId(),
-                        entityType: entityTypes.DECK,
-                        data: null,
-                        deleted: true,
-                    };
-                    orphanCount++;
-                }
-                continue;
+                DeckOrphanResolver.reparentLocalOrphanToRoot(deck);
+                deckSyncData = deck.toSyncJson();
+                reparentedOrphanCount++;
             }
 
             // The deck record itself is gathered only when it changed since
@@ -1043,7 +1027,7 @@ class SyncApplier
             }
         }
 
-        console.log(`[SyncApplier] gathered ${allDecks.length - orphanCount} decks, ${totalCards} cards, ${totalStudyMaterials} study materials, ${totalMockTests} mock tests${orphanCount > 0 ? ` (skipped ${orphanCount} local orphan deck(s) — queued as deletions)` : ""}.`);
+        console.log(`[SyncApplier] gathered ${allDecks.length} decks, ${totalCards} cards, ${totalStudyMaterials} study materials, ${totalMockTests} mock tests${reparentedOrphanCount > 0 ? ` (${reparentedOrphanCount} local orphan deck(s) reparented to root)` : ""}.`);
         return gatheredChanges;
     }
 
@@ -1107,9 +1091,9 @@ class SyncApplier
      * Applies the queued deck-data array in dependency order so a child
      * deck whose parent is in the same batch isn't created before its
      * parent. Orphans (whose parent exists neither locally nor in the
-     * batch) are queued as deletion tombstones via SyncTransport — the
-     * next push tells the server to remove them and the server-side
-     * cascade ensures every device converges on the same state — unless
+     * batch) are attached to the current root via DeckOrphanResolver —
+     * never deleted, since a parent not being delivered this cycle is not
+     * evidence the child was deleted server-side — unless
      * bDeferUnresolvedDecks says the drain still has chunks to deliver, in
      * which case they are parked for the next cycle instead.
      */
@@ -1185,27 +1169,12 @@ class SyncApplier
         if (remaining.length > 0)
         {
             // Orphans: parent exists neither locally nor in this batch.
-            // The missing parent is almost always a deck that was deleted
-            // on another device without its descendants being cascaded
-            // (historical bug — server-side cascade now prevents new
-            // occurrences). Queue a deletion tombstone for each orphan
-            // so the next push instructs the server to remove it. We
-            // bypass the SyncEvents.ENTITY_DELETED event because its
-            // handler in SyncOrchestrator gates on #bApplyingServerChanges
-            // (true right now) and would drop our tombstone.
-            console.warn(`[SyncApplier] ${remaining.length} orphan deck(s) detected — queuing deletion tombstones (parent not found locally or in batch).`);
-            for (let remainingIndex = 0; remainingIndex < remaining.length; remainingIndex++)
-            {
-                const orphan = remaining[remainingIndex];
-                console.warn(`[SyncApplier]   • deck "${orphan.name}" (${orphan.id}) — missing parent ${orphan.parent}`);
-                SyncTransport.setPendingChange(orphan.id,
-                {
-                    entityId: orphan.id,
-                    entityType: entityTypes.DECK,
-                    data: null,
-                    deleted: true,
-                });
-            }
+            // The missing parent is most often a paid deck this account
+            // has no license for (the server withholds it but still
+            // counts it toward the sync total) or a legacy pre-cascade-fix
+            // orphaned reference — neither means the child was deleted, so
+            // attach it to root instead of inferring a deletion from it.
+            DeckOrphanResolver.attachUnresolvedDecksToRoot(remaining, SyncApplier.#applyDeckChange, dirtyDeckIds);
         }
     }
 

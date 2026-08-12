@@ -610,6 +610,12 @@ class MapTopicsWithContent(Workflow):
                     "licenceType": content_source.get("licenceType"),
                     "licenceNote": content_source.get("licenceNote") or "",
                     "sourceNote": content_source.get("sourceNote") or "",
+
+                    # Carried so the audit report can tell a document that was
+                    # also checked against from one that only wrote content.
+                    # Both are here — this list is the content sources — so the
+                    # distinction is invisible without it.
+                    "usageMode": content_source.get("usageMode"),
                     "topicCount": topic_counts_by_source_id.get(content_source.get("informationSourceId") or "", 0),
                 }
                 for content_source in content_sources

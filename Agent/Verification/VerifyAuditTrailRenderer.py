@@ -266,6 +266,54 @@ def build_pathological_provenance() -> dict:
                 "declaredByEmail": "admin@example.com",
                 "createdAt": 1_760_000_007_000,
             },
+
+            # declaration-1 and -2 above carry no usageMode at all, which is what
+            # every record written before the field existed looks like. The three
+            # below cover the modes themselves plus a value this renderer does
+            # not know, so the Used for column is exercised across every input it
+            # can actually receive rather than only the ones in use today.
+            {
+                "declarationId": "declaration-3",
+                "event": "ATTACHED",
+                "deckId": "deck-pathological",
+                "sourceName": "Licensed question paper with a very long descriptive filename attached to it",
+                "sourceUrl": "https://example.com/paper",
+                "sourceHash": "d" * 128,
+                "licenceType": 5,
+                "licenceNote": "Purchased under order #1234.",
+                "usageMode": 2,
+                "declaredByUserId": "admin-under-test",
+                "declaredByEmail": "admin@example.com",
+                "createdAt": 1_760_000_008_000,
+            },
+            {
+                "declarationId": "declaration-4",
+                "event": "ATTACHED",
+                "deckId": "deck-pathological",
+                "sourceName": "Publisher chapter",
+                "sourceUrl": "",
+                "sourceHash": "e" * 128,
+                "licenceType": 4,
+                "licenceNote": "",
+                "usageMode": 1,
+                "declaredByUserId": "admin-under-test",
+                "declaredByEmail": "admin@example.com",
+                "createdAt": 1_760_000_009_000,
+            },
+            {
+                "declarationId": "declaration-5",
+                "event": "ATTACHED",
+                "deckId": "deck-pathological",
+                "sourceName": "Source stamped by a newer build",
+                "sourceUrl": "",
+                "sourceHash": "f" * 128,
+                "licenceType": 1,
+                "licenceNote": "",
+                "usageMode": 99,
+                "declaredByUserId": "admin-under-test",
+                "declaredByEmail": "admin@example.com",
+                "createdAt": 1_760_000_010_000,
+            },
         ],
     }
 

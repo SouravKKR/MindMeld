@@ -34,6 +34,11 @@ const ErrorCodes = require("../../../Globals/Constants/ErrorCodes");
  *   verificationSources — declared documents, each with a licence and a usage
  *                         mode, retained as proof of the basis for using them.
  *
+ * THE FIELD NAME IS NARROWER THAN WHAT IT CARRIES, and renaming it now would
+ * break replayed payloads for no gain. It is the list of DECLARED sources; the
+ * usage mode on each says whether it is written from, checked against, or both.
+ * A source in it may well never be checked against anything.
+ *
  * A source admitted for CONTENT is read by a generator wired to its own
  * ModelPool entry outside the PAID_DECK_* namespace, so the route boundary
  * ("nothing that reaches a PAID_DECK_* entry has ever seen a third-party
@@ -50,6 +55,11 @@ class VerificationSourceAdmission
      * AdminSourceCorpus.CHARACTER_BUDGET_PER_SOURCE each, in the same process
      * that has already been killed by the OOM reaper on the production box.
      * Twelve textbooks would be several million characters plus their index.
+     *
+     * BOTH content-bearing modes count against it. The cost this bounds is the
+     * corpus, and CONTENT_ONLY loads exactly the same corpus as
+     * CONTENT_AND_VERIFICATION — declining to check the deck against a document
+     * afterwards frees no memory during the stage that reads it.
      */
     static MAXIMUM_CONTENT_SOURCES_PER_RUN = 4;
 
@@ -115,13 +125,15 @@ class VerificationSourceAdmission
      * Kept as a named selector rather than an inline filter so there is one
      * definition of "is this a content source" on the server, and so every
      * caller that hands sources to a generator is visibly going through it.
+     * Delegates to SourceUsageGate, which owns the rule, so widening what counts
+     * as content is one edit in one file rather than one per call site.
      *
      * @param {object[]} resolvedSources
      * @return {object[]}
      */
     static selectContentSources(resolvedSources)
     {
-        return (resolvedSources || []).filter(resolvedSource => SourceUsageGate.isContentUsage(resolvedSource.usageMode));
+        return SourceUsageGate.selectContentSources(resolvedSources);
     }
 
     /**
@@ -157,7 +169,7 @@ class VerificationSourceAdmission
         {
             return VerificationSourceAdmission.#refuse(
                 ErrorCodes.INVALID_REQUEST,
-                `A deck can be checked against at most ${PaidDeckVerificationSourceQueryEngine.MAXIMUM_SOURCES_PER_DECK} verification sources.`,
+                `A deck can have at most ${PaidDeckVerificationSourceQueryEngine.MAXIMUM_SOURCES_PER_DECK} licensed sources attached.`,
             );
         }
 

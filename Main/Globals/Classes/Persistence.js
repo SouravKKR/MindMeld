@@ -340,7 +340,22 @@ class Persistence
         {
             case platforms.APP:
             {
+                // Mirrors the web branch's indexedDB.deleteDatabase() — every
+                // identity prefix under this app's AppData root, not just the
+                // current user's, so a stale prior identity's files can never
+                // linger past a reset. Enumerate top-level entries and remove
+                // each by name rather than assuming an empty/root path is a
+                // valid `remove` target, since that is not documented Tauri
+                // fs-plugin behaviour to rely on.
+                const { fs } = window.__TAURI__;
+                const { readDir, remove, BaseDirectory } = fs;
 
+                const topLevelEntries = await readDir("", { baseDir: BaseDirectory.AppData });
+
+                for (const topLevelEntry of topLevelEntries)
+                {
+                    await remove(topLevelEntry.name, { baseDir: BaseDirectory.AppData, recursive: true });
+                }
             }
             break;
 

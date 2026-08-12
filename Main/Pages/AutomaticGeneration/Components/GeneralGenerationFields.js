@@ -475,17 +475,26 @@ class GeneralGenerationFields extends GenerationFields
             const licenceType = typeof informationSource.getLicenceType === "function" ? informationSource.getLicenceType() : 0;
             const bPermitsContent = SourceLicenceDeclarationForm.permitsContentUsage(licenceType);
             const previousChoice = previousChoices.get(informationSourceId);
-            const usageMode = previousChoice && bPermitsContent ? previousChoice.usageMode : sourceUsageModes.VERIFICATION_ONLY;
+
+            // A remembered choice survives a re-render unless the licence cannot
+            // carry it. Tested on the choice itself rather than on "was content
+            // permitted at all", so re-picking a source under a restrictive
+            // licence no longer discards a verification-only choice that was
+            // always allowed.
+            const bPreviousChoiceStillAllowed = previousChoice !== undefined
+                && (bPermitsContent || !SourceLicenceDeclarationForm.isContentUsage(previousChoice.usageMode));
+
+            const usageMode = bPreviousChoiceStillAllowed
+                ? previousChoice.usageMode
+                : sourceUsageModes.VERIFICATION_ONLY;
 
             const usageRow = document.createElement("div");
             usageRow.className = "verification-source-usage-row";
             usageRow.innerHTML = `
                 <span class="verification-source-usage-name"></span>
                 <select data-usage-for="${informationSourceId}">
-                    <option value="${sourceUsageModes.VERIFICATION_ONLY}">Check against only</option>
-                    <option value="${sourceUsageModes.CONTENT_AND_VERIFICATION}"${bPermitsContent ? "" : " disabled"}>
-                        Write content from it${bPermitsContent ? "" : " — licence does not allow"}
-                    </option>
+                    ${SourceLicenceDeclarationForm.buildUsageModeOptionsMarkup(
+                        usageMode, bPermitsContent, { bCompact: true })}
                 </select>
                 <input type="text" data-note-for="${informationSourceId}" maxlength="2048"
                     placeholder="Note for the audit report (optional)">

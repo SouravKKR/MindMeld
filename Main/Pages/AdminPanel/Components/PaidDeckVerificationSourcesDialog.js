@@ -10,19 +10,28 @@ import { sourceUsageModes } from "../../../Globals/Enumerations/SourceUsageModes
  * declared for them.
  *
  * WHAT A SOURCE IS USED FOR IS PER SOURCE, and the dialog shows it on every
- * card because the two mean very different things:
+ * card because the three mean very different things:
  *
  *   Checking only — the default. The document is read by the verification pass,
  *       which runs after content already exists and can only raise flags for a
  *       person to review. Nothing in the deck was written from it.
  *   Writing content, and checking — the deck's content may also be written from
- *       this document. Offered only under a licence that records a right to
- *       create new material from it, and refused by the server otherwise.
+ *       this document, and the result is then checked back against it. Offered
+ *       only under a licence that records a right to create new material from
+ *       it, and refused by the server otherwise.
+ *   Writing content only — written from, and deliberately kept out of the
+ *       checks. Held to the same licence rule as the mode above; what differs is
+ *       that the document is not a fair yardstick for the whole deck. A chapter
+ *       covering part of the syllabus, or a past question paper, writes its part
+ *       well and would report everything outside its scope as a gap.
  *
  * They rest on different bases — independent creation for the first, the
- * declared licence for the second — and the audit report keeps them apart, per
- * topic. An administrator who could not see which a source was would not be able
- * to tell which claim their deck actually supports.
+ * declared licence for the other two — and the audit report keeps them apart,
+ * per topic. An administrator who could not see which a source was would not be
+ * able to tell which claim their deck actually supports. The badge is three
+ * states for that reason: the distinction that matters most on this card is
+ * between the two writing modes, which is exactly the one a content/not-content
+ * badge would hide.
  *
  * The ordinary generation source list is unaffected: it still accepts a
  * curriculum or syllabus and nothing else. A licensed document reaches
@@ -273,10 +282,8 @@ class PaidDeckVerificationSourcesDialog
                 </div>
                 <div class="verification-source-row">
                     <span class="verification-source-label">Used for</span>
-                    <span class="verification-source-usage verification-source-usage-${Number(source.usageMode) === sourceUsageModes.CONTENT_AND_VERIFICATION ? "content" : "verification"}">
-                        ${Number(source.usageMode) === sourceUsageModes.CONTENT_AND_VERIFICATION
-                            ? "Writing content, and checking"
-                            : "Checking only"}
+                    <span class="verification-source-usage ${PaidDeckVerificationSourcesDialog.#buildUsageClassName(source.usageMode)}">
+                        ${SourceLicenceDeclarationForm.describeUsage(source.usageMode)}
                     </span>
                 </div>
                 ${source.sourceNote ? `
@@ -461,9 +468,11 @@ class PaidDeckVerificationSourcesDialog
      */
     static #promptSourceRevision(source)
     {
-        const storedUsageMode = Number(source.usageMode) === sourceUsageModes.CONTENT_AND_VERIFICATION
-            ? sourceUsageModes.CONTENT_AND_VERIFICATION
-            : sourceUsageModes.VERIFICATION_ONLY;
+        // Through the shared normaliser, never a ternary over the modes this
+        // file happens to name. A ternary silently rewrites anything it does not
+        // recognise, so opening this dialog on a source would have offered a
+        // downgrade as its default and saved one on OK.
+        const storedUsageMode = SourceLicenceDeclarationForm.normaliseUsageMode(source.usageMode);
 
         const bPermitsContent = SourceLicenceDeclarationForm.permitsContentUsage(source.licenceType);
 
@@ -478,15 +487,16 @@ class PaidDeckVerificationSourcesDialog
                             SourceLicenceDeclarationForm.describeLicence(source.licenceType, source.licenceNote))}.
                         The licence itself cannot be changed here — detach the source and re-attach it if it was
                         declared wrongly, so both acts appear in the history.
+                        This deck's content has already been written, so changing the usage now affects only
+                        future checks: setting a source to write content only removes it from them, and nothing
+                        already generated changes either way.
                     </div>
                     <div class="source-licence-fields">
                         <label class="source-licence-field">
                             <span>How this source is used</span>
                             <select data-role="source-usage-mode">
-                                <option value="${sourceUsageModes.VERIFICATION_ONLY}">Check the deck against it only</option>
-                                <option value="${sourceUsageModes.CONTENT_AND_VERIFICATION}"${bPermitsContent ? "" : " disabled"}>
-                                    Also write the deck's content from it${bPermitsContent ? "" : " — not available under this licence"}
-                                </option>
+                                ${SourceLicenceDeclarationForm.buildUsageModeOptionsMarkup(
+                                    storedUsageMode, bPermitsContent)}
                             </select>
                         </label>
                         <label class="source-licence-field">
@@ -502,7 +512,10 @@ class PaidDeckVerificationSourcesDialog
                 </div>
             `);
 
-            dialog.querySelector('[data-role="source-usage-mode"]').value = String(storedUsageMode);
+            // The usage select is not assigned here: the markup carries the
+            // selection, and it declines to pre-select an option it had to
+            // disable. Assigning the stored value afterwards would put the
+            // select back onto a disabled option, which submits.
             dialog.querySelector('[data-role="source-note"]').value = source.sourceNote || "";
 
             let bResolved = false;
@@ -522,7 +535,7 @@ class PaidDeckVerificationSourcesDialog
                 const usageMode = Number(dialog.querySelector('[data-role="source-usage-mode"]').value);
                 const sourceNote = dialog.querySelector('[data-role="source-note"]').value.trim();
 
-                if (usageMode === sourceUsageModes.CONTENT_AND_VERIFICATION && !bPermitsContent)
+                if (SourceLicenceDeclarationForm.isContentUsage(usageMode) && !bPermitsContent)
                 {
                     const errorElement = dialog.querySelector('[data-role="licence-error"]');
                     errorElement.textContent = "This licence does not record a right to create new material from the source.";
@@ -788,6 +801,29 @@ class PaidDeckVerificationSourcesDialog
         }
 
         return responseJson;
+    }
+
+    /**
+     * The badge's modifier class for one stored usage mode.
+     *
+     * Three states rather than two, and named after the mode rather than after
+     * "is it content", because the difference the reviewer is looking for on
+     * this card is precisely between the two content modes: one of them was
+     * checked back against the document and one was deliberately not.
+     */
+    static #buildUsageClassName(usageMode)
+    {
+        switch (SourceLicenceDeclarationForm.normaliseUsageMode(usageMode))
+        {
+            case sourceUsageModes.CONTENT_AND_VERIFICATION:
+                return "verification-source-usage-content";
+
+            case sourceUsageModes.CONTENT_ONLY:
+                return "verification-source-usage-content-only";
+
+            default:
+                return "verification-source-usage-verification";
+        }
     }
 
     static #escape(value)

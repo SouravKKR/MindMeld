@@ -47,9 +47,23 @@ class AuthenticationQueryEngine
 
     static async createUser(user)
     {
+        const userJson = user.toJson();
+
+        // Every login path funnels through here for both new and existing
+        // users, so deriving normalizedEmail here — rather than at each of
+        // Google/OTP's call sites — is what keeps it in sync automatically.
+        // Written alongside additionalData.email rather than as its own
+        // top-level field, since additionalData is what toJson()/$set
+        // already carries wholesale.
+        const rawEmail = userJson.additionalData?.email;
+        if (typeof rawEmail === "string" && rawEmail.trim().length > 0)
+        {
+            userJson.additionalData.normalizedEmail = rawEmail.trim().toLowerCase();
+        }
+
         await (await DatabaseConnector.getDatabase())
             .collection(DatabaseConstants.USERS_COLLECTION)
-            .updateOne({ id: user.getId() }, { $set: user.toJson() }, { upsert: true });
+            .updateOne({ id: user.getId() }, { $set: userJson }, { upsert: true });
     }
 
     static async getUserById(id)
@@ -63,29 +77,51 @@ class AuthenticationQueryEngine
 
     static async getUserByEmail(email)
     {
+        const matchingUsers = await AuthenticationQueryEngine.getUsersByEmail(email);
+        return matchingUsers.length > 0 ? matchingUsers[0] : null;
+    }
+
+    /**
+     * Returns every user document whose additionalData.email matches,
+     * case-insensitively — plural because more than one can legitimately
+     * exist: a Google-provider row and an Email+OTP-provider row created
+     * independently for the same person before either login path
+     * cross-checked the other's identity space. getUserByEmail's single
+     * result would silently hide that a second match exists; callers that
+     * need to detect (and resolve) a split identity must use this instead.
+     * @param {string} email
+     * @returns {Promise<User[]>}
+     */
+    static async getUsersByEmail(email)
+    {
         if (typeof email !== "string" || email.length === 0)
         {
-            return null;
+            return [];
         }
 
         const normalisedEmail = email.trim().toLowerCase();
         if (normalisedEmail.length === 0)
         {
-            return null;
+            return [];
         }
 
-        // Case-insensitive match — existing Google-flow users may have
-        // stored their email with whatever casing Google returned (the
-        // OAuth payload is not guaranteed lowercase), while OTP-flow
-        // users are always lowercased on write. Anchor + escape to
-        // prevent any regex injection from the caller's input.
+        // Matches on the fast, exact normalizedEmail field wherever it has
+        // already been backfilled (createUser writes it on every login —
+        // new or returning), and falls back to the legacy case-insensitive
+        // regex on additionalData.email for any account that has not
+        // logged in since normalizedEmail was introduced, so this stays
+        // complete through the transition rather than silently missing
+        // not-yet-backfilled rows. Anchor + escape the regex branch to
+        // prevent regex injection from the caller's input.
         const escapedEmail = normalisedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const emailRegex = new RegExp(`^${escapedEmail}$`, "i");
 
-        const userJson = await (await DatabaseConnector.getDatabase())
+        const userDocuments = await (await DatabaseConnector.getDatabase())
             .collection(DatabaseConstants.USERS_COLLECTION)
-            .findOne({ "additionalData.email": emailRegex });
-        return userJson ? User.fromJson(userJson) : null;
+            .find({ $or: [{ "additionalData.normalizedEmail": normalisedEmail }, { "additionalData.email": emailRegex }] })
+            .toArray();
+
+        return userDocuments.map((userDocument) => User.fromJson(userDocument));
     }
 
     static async updateUserAdditionalData(userId, partialAdditionalData)

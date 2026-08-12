@@ -6,24 +6,28 @@
  *     node VerifyAgeConsentGate.mjs
  *     VERIFY_AGE_CONSENT_DB=1 node VerifyAgeConsentGate.mjs
  *
+ * The two-stage guardian consent flow (code emailed to the guardian, promoted
+ * only on confirmation) has its own harness: VerifyGuardianConsentOtp.mjs. This
+ * one owns the declaration and the gate around it.
+ *
  * What it pins:
  *
- *   A-01  The state machine. An account with no date of birth is blocked; an
- *         adult is allowed; a Child is blocked until a guardian is recorded.
- *         Derived from the stored date of birth on every read, so an account
- *         is released the day it turns 18 with no migration and no cron.
+ *   A-01  The state machine. An account with no declaration is blocked; an
+ *         adult is allowed; a Child is blocked until a CONFIRMED guardian
+ *         record exists. Derived on every read, so an account is released the
+ *         day it turns 18 with no migration and no cron.
  *
- *   A-02  Age arithmetic on the calendar, not by dividing a duration. The day
- *         before an eighteenth birthday must still be 17 — including across a
- *         leap day, where a milliseconds-per-year division gets it wrong.
+ *   A-02  Age arithmetic on the calendar, not by dividing a duration — for both
+ *         the declared-age model and the legacy date-of-birth rows still in the
+ *         collection. The day before an eighteenth birthday must still be 17,
+ *         including across a leap day.
  *
  *   A-03  Write-once declaration. A minor who can re-declare has not been
  *         gated, and the block screen is exactly where the incentive is.
  *
  *   A-04  Consent cannot be self-asserted. Every field the service owns is
- *         refused by the generic /UpdateUserAdditionalData merge, and the
- *         guardian write is refused for an account that is not a minor
- *         awaiting consent.
+ *         refused by the generic /UpdateUserAdditionalData merge — including
+ *         the legacy dateOfBirth, which would otherwise override a declared age.
  *
  *   A-05  The gate's allowlist actually contains the endpoints that clear it.
  *         A gate that blocks the route out of itself is a lockout.
@@ -79,7 +83,10 @@ function skip(description)
 /** Minimal stand-in for the User model — resolveState only reads additionalData. */
 function buildUser(additionalData)
 {
-    return { getAdditionalData: () => additionalData };
+    return {
+        getAdditionalData: () => additionalData,
+        getDisplayName: () => "Fixture Student"
+    };
 }
 
 function buildGuardianDetails(overrides = {})
@@ -93,12 +100,32 @@ function buildGuardianDetails(overrides = {})
     }, overrides);
 }
 
+/** A confirmed consent record, as confirmGuardianConsent writes it. */
+function buildConfirmedConsent()
+{
+    return Object.assign(buildGuardianDetails(),
+    {
+        recordedAt: new Date().toISOString(),
+        verificationMethod: "EMAIL_CODE"
+    });
+}
+
+/** An age declaration made `agoYears` ago, as recordDeclaredAge writes it. */
+function buildAgeDeclaration(declaredAgeYears, agoYears = 0)
+{
+    const declaredAt = new Date();
+    declaredAt.setUTCFullYear(declaredAt.getUTCFullYear() - agoYears);
+    // Step back a day so a run landing exactly on the anniversary is unambiguous.
+    declaredAt.setUTCDate(declaredAt.getUTCDate() - 1);
+
+    return { declaredAgeYears: declaredAgeYears, ageDeclaredAt: declaredAt.toISOString() };
+}
+
 /** A date of birth that makes the account holder exactly `years` old today. */
 function buildDateOfBirthForAge(years)
 {
     const birthDate = new Date();
     birthDate.setUTCFullYear(birthDate.getUTCFullYear() - years);
-    // Step back a day so a run exactly on a birthday boundary is unambiguous.
     birthDate.setUTCDate(birthDate.getUTCDate() - 1);
     return birthDate.toISOString().slice(0, 10);
 }
@@ -107,66 +134,105 @@ console.log("\n[A-01] State machine (always runs)\n");
 
 {
     const undeclared = AgeVerificationService.resolveState(buildUser({}));
-    assertThat(undeclared.state === ageConsentStates.UNDECLARED, "no date of birth resolves to UNDECLARED");
+    assertThat(undeclared.state === ageConsentStates.UNDECLARED, "no declaration resolves to UNDECLARED");
     assertThat(undeclared.bProcessingAllowed === false, "an undeclared account is blocked");
 
-    const adult = AgeVerificationService.resolveState(buildUser({ dateOfBirth: buildDateOfBirthForAge(30) }));
-    assertThat(adult.state === ageConsentStates.ADULT, "an adult resolves to ADULT");
+    const adult = AgeVerificationService.resolveState(buildUser(buildAgeDeclaration(30)));
+    assertThat(adult.state === ageConsentStates.ADULT, "a declared adult resolves to ADULT");
     assertThat(adult.bProcessingAllowed === true, "an adult is allowed");
 
-    const minor = AgeVerificationService.resolveState(buildUser({ dateOfBirth: buildDateOfBirthForAge(14) }));
+    const minor = AgeVerificationService.resolveState(buildUser(buildAgeDeclaration(14)));
     assertThat(minor.state === ageConsentStates.MINOR_AWAITING_GUARDIAN_CONSENT, "a Child with no guardian resolves to MINOR_AWAITING_GUARDIAN_CONSENT");
     assertThat(minor.bProcessingAllowed === false, "a Child with no guardian is blocked");
 
     const consentedMinor = AgeVerificationService.resolveState(buildUser(
-    {
-        dateOfBirth: buildDateOfBirthForAge(14),
-        guardianConsent: Object.assign(buildGuardianDetails(), { recordedAt: new Date().toISOString() })
-    }));
-    assertThat(consentedMinor.state === ageConsentStates.MINOR_CONSENTED, "a Child with a guardian record resolves to MINOR_CONSENTED");
-    assertThat(consentedMinor.bProcessingAllowed === true, "a Child with a guardian record is allowed");
+        Object.assign(buildAgeDeclaration(14), { guardianConsent: buildConfirmedConsent() })));
+    assertThat(consentedMinor.state === ageConsentStates.MINOR_CONSENTED, "a Child with a confirmed guardian record resolves to MINOR_CONSENTED");
+    assertThat(consentedMinor.bProcessingAllowed === true, "a Child with a confirmed guardian record is allowed");
+
+    // The security property of the two-stage flow: the details a child types are
+    // stored as pending and unblock nothing on their own.
+    const pendingOnly = AgeVerificationService.resolveState(buildUser(
+        Object.assign(buildAgeDeclaration(14),
+        {
+            guardianConsentPending: Object.assign(buildGuardianDetails(), { requestedAt: new Date().toISOString() })
+        })));
+    assertThat(pendingOnly.state === ageConsentStates.MINOR_AWAITING_GUARDIAN_CONSENT, "pending guardian details leave the account awaiting consent");
+    assertThat(pendingOnly.bProcessingAllowed === false, "pending guardian details do NOT unblock the account");
 
     // A record missing the server-stamped timestamp is a forged or partial
     // write, not a consent.
     const halfConsented = AgeVerificationService.resolveState(buildUser(
-    {
-        dateOfBirth: buildDateOfBirthForAge(14),
-        guardianConsent: buildGuardianDetails()
-    }));
+        Object.assign(buildAgeDeclaration(14), { guardianConsent: buildGuardianDetails() })));
     assertThat(halfConsented.bProcessingAllowed === false, "a guardian record with no server timestamp does not unblock");
 
-    const garbageDateOfBirth = AgeVerificationService.resolveState(buildUser({ dateOfBirth: "not-a-date" }));
-    assertThat(garbageDateOfBirth.state === ageConsentStates.UNDECLARED, "an unparseable stored date falls back to UNDECLARED rather than allowing");
+    const garbageDeclaration = AgeVerificationService.resolveState(buildUser({ declaredAgeYears: "sixteen", ageDeclaredAt: new Date().toISOString() }));
+    assertThat(garbageDeclaration.state === ageConsentStates.UNDECLARED, "an unparseable declared age falls back to UNDECLARED rather than allowing");
+
+    const undatedDeclaration = AgeVerificationService.resolveState(buildUser({ declaredAgeYears: 30 }));
+    assertThat(undatedDeclaration.state === ageConsentStates.UNDECLARED, "an age with no declaration date is unusable rather than trusted");
+
+    // Legacy rows written by the date-of-birth flow must keep working untouched.
+    const legacyAdult = AgeVerificationService.resolveState(buildUser({ dateOfBirth: buildDateOfBirthForAge(30) }));
+    assertThat(legacyAdult.state === ageConsentStates.ADULT, "a legacy date-of-birth adult still resolves to ADULT");
+
+    const legacyMinor = AgeVerificationService.resolveState(buildUser({ dateOfBirth: buildDateOfBirthForAge(14) }));
+    assertThat(legacyMinor.state === ageConsentStates.MINOR_AWAITING_GUARDIAN_CONSENT, "a legacy date-of-birth Child still resolves to MINOR_AWAITING_GUARDIAN_CONSENT");
+
+    const legacyGarbage = AgeVerificationService.resolveState(buildUser({ dateOfBirth: "not-a-date" }));
+    assertThat(legacyGarbage.state === ageConsentStates.UNDECLARED, "an unparseable legacy date falls back to UNDECLARED rather than allowing");
 }
 
 console.log("\n[A-02] Age arithmetic (always runs)\n");
 
 {
-    const eighteenthBirthday = Date.UTC(2026, 5, 15);
+    // Declared age ages forward on the calendar.
+    const declaredAt = "2026-06-15T00:00:00.000Z";
     assertThat(
-        AgeVerificationService.computeAgeYears("2008-06-15", eighteenthBirthday) === 18,
-        "on the eighteenth birthday the age is 18",
+        AgeVerificationService.computeCurrentAgeYears(17, declaredAt, Date.UTC(2026, 5, 15)) === 17,
+        "on the day of declaration the age is what was declared",
     );
     assertThat(
-        AgeVerificationService.computeAgeYears("2008-06-16", eighteenthBirthday) === 17,
-        "the day before the eighteenth birthday the age is still 17",
+        AgeVerificationService.computeCurrentAgeYears(17, declaredAt, Date.UTC(2027, 5, 14)) === 17,
+        "the day before the declaration's anniversary the age has not advanced",
+    );
+    assertThat(
+        AgeVerificationService.computeCurrentAgeYears(17, declaredAt, Date.UTC(2027, 5, 15)) === 18,
+        "on the declaration's anniversary a declared 17 becomes 18",
+    );
+    assertThat(
+        AgeVerificationService.computeCurrentAgeYears(14, declaredAt, Date.UTC(2030, 5, 15)) === 18,
+        "four years after declaring 14 the account holder is 18",
     );
 
-    // Born on a leap day. A milliseconds-per-year division drifts here; counting
-    // completed calendar years does not.
+    assertThat(AgeVerificationService.computeCurrentAgeYears(null, declaredAt, Date.now()) === null, "a null age has no reading");
+    assertThat(AgeVerificationService.computeCurrentAgeYears(17, null, Date.now()) === null, "an age with no declaration date has no reading");
+    assertThat(AgeVerificationService.computeCurrentAgeYears(17, "not-a-date", Date.now()) === null, "an unparseable declaration date has no reading");
     assertThat(
-        AgeVerificationService.computeAgeYears("2008-02-29", Date.UTC(2026, 1, 28)) === 17,
+        AgeVerificationService.computeCurrentAgeYears(17, "2099-01-01T00:00:00.000Z", Date.UTC(2026, 0, 1)) === null,
+        "a declaration stamped in the future is unusable rather than aged backwards",
+    );
+
+    // Legacy date-of-birth arithmetic, unchanged.
+    const eighteenthBirthday = Date.UTC(2026, 5, 15);
+    assertThat(
+        AgeVerificationService.computeAgeYearsFromDateOfBirth("2008-06-15", eighteenthBirthday) === 18,
+        "on the eighteenth birthday the legacy age is 18",
+    );
+    assertThat(
+        AgeVerificationService.computeAgeYearsFromDateOfBirth("2008-06-16", eighteenthBirthday) === 17,
+        "the day before the eighteenth birthday the legacy age is still 17",
+    );
+    assertThat(
+        AgeVerificationService.computeAgeYearsFromDateOfBirth("2008-02-29", Date.UTC(2026, 1, 28)) === 17,
         "a leap-day birth is 17 the day before its 2026 birthday",
     );
     assertThat(
-        AgeVerificationService.computeAgeYears("2008-02-29", Date.UTC(2026, 2, 1)) === 18,
+        AgeVerificationService.computeAgeYearsFromDateOfBirth("2008-02-29", Date.UTC(2026, 2, 1)) === 18,
         "a leap-day birth is 18 the day after its 2026 birthday",
     );
-
-    assertThat(AgeVerificationService.computeAgeYears(null, Date.now()) === null, "a null date of birth has no age");
-    assertThat(AgeVerificationService.computeAgeYears("", Date.now()) === null, "an empty date of birth has no age");
     assertThat(
-        AgeVerificationService.computeAgeYears("2099-01-01", Date.UTC(2026, 0, 1)) === null,
+        AgeVerificationService.computeAgeYearsFromDateOfBirth("2099-01-01", Date.UTC(2026, 0, 1)) === null,
         "a future date of birth has no age rather than a negative one",
     );
 }
@@ -174,19 +240,35 @@ console.log("\n[A-02] Age arithmetic (always runs)\n");
 console.log("\n[A-03] Declaration validation (always runs)\n");
 
 {
-    const validDeclaration = AgeVerificationService.validateDateOfBirth("2005-03-12", Date.UTC(2026, 7, 8));
-    assertThat(validDeclaration.bValid === true, "a plausible date is accepted");
-    assertThat(validDeclaration.ageYears === 21, "the accepted date yields the right age");
+    const validDeclaration = AgeVerificationService.validateDeclaredAge(21);
+    assertThat(validDeclaration.bValid === true, "a plausible age is accepted");
+    assertThat(validDeclaration.normalizedAgeYears === 21, "the accepted age is returned normalized");
 
-    assertThat(AgeVerificationService.validateDateOfBirth("12-03-2005", Date.now()).bValid === false, "a non-ISO format is rejected");
-    assertThat(AgeVerificationService.validateDateOfBirth("2011-02-31", Date.now()).bValid === false, "a date the calendar does not have is rejected");
-    assertThat(AgeVerificationService.validateDateOfBirth("", Date.now()).bValid === false, "an empty string is rejected");
-    assertThat(AgeVerificationService.validateDateOfBirth(null, Date.now()).bValid === false, "null is rejected");
-    assertThat(AgeVerificationService.validateDateOfBirth("1823-01-01", Date.now()).bValid === false, "an implausibly old date is rejected");
-    assertThat(AgeVerificationService.validateDateOfBirth("2099-01-01", Date.now()).bValid === false, "a future date is rejected");
+    assertThat(AgeVerificationService.validateDeclaredAge("17").bValid === true, "a numeric string is accepted");
+    assertThat(AgeVerificationService.validateDeclaredAge("17").normalizedAgeYears === 17, "a numeric string normalizes to a number");
+
+    assertThat(AgeVerificationService.validateDeclaredAge("").bValid === false, "an empty string is rejected");
+    assertThat(AgeVerificationService.validateDeclaredAge(null).bValid === false, "null is rejected");
+    assertThat(AgeVerificationService.validateDeclaredAge("seventeen").bValid === false, "a word is rejected");
+    assertThat(AgeVerificationService.validateDeclaredAge(17.5).bValid === false, "a fractional age is rejected");
+    assertThat(AgeVerificationService.validateDeclaredAge(-3).bValid === false, "a negative age is rejected");
+    assertThat(
+        AgeVerificationService.validateDeclaredAge(AgeVerificationConstants.MINIMUM_PLAUSIBLE_AGE_YEARS - 1).bValid === false,
+        "an implausibly low age is rejected",
+    );
+    assertThat(
+        AgeVerificationService.validateDeclaredAge(AgeVerificationConstants.MAXIMUM_PLAUSIBLE_AGE_YEARS + 1).bValid === false,
+        "an implausibly high age is rejected",
+    );
+
+    // The lenient-coercion guard: Number(true) is 1 and Number([17]) is 17, and
+    // an age coerced out of either is not a declaration anybody made.
+    assertThat(AgeVerificationService.validateDeclaredAge(true).bValid === false, "a boolean is rejected rather than coerced");
+    assertThat(AgeVerificationService.validateDeclaredAge([21]).bValid === false, "an array is rejected rather than coerced");
+    assertThat(AgeVerificationService.validateDeclaredAge({}).bValid === false, "an object is rejected");
 
     assertThat(
-        AgeVerificationService.validateDateOfBirth("2011-02-31", Date.now()).reason === ErrorCodes.INVALID_DATE_OF_BIRTH,
+        AgeVerificationService.validateDeclaredAge("seventeen").reason === ErrorCodes.INVALID_AGE,
         "a rejection carries the enumerated reason rather than a bare false",
     );
 }
@@ -194,9 +276,15 @@ console.log("\n[A-03] Declaration validation (always runs)\n");
 console.log("\n[A-04] Self-assertion defences (always runs)\n");
 
 {
-    assertThat(AgeVerificationService.isReservedAgeKey("dateOfBirth") === true, "dateOfBirth is reserved from the generic merge");
+    assertThat(AgeVerificationService.isReservedAgeKey("declaredAgeYears") === true, "declaredAgeYears is reserved from the generic merge");
+    assertThat(AgeVerificationService.isReservedAgeKey("ageDeclaredAt") === true, "the declaration timestamp is reserved");
     assertThat(AgeVerificationService.isReservedAgeKey("guardianConsent") === true, "guardianConsent is reserved from the generic merge");
-    assertThat(AgeVerificationService.isReservedAgeKey("dateOfBirthRecordedAt") === true, "the declaration timestamp is reserved");
+    assertThat(AgeVerificationService.isReservedAgeKey("guardianConsentPending") === true, "the pending guardian record is reserved");
+    // Reserved even though it is never written any more: a client able to plant
+    // one would override its own declared age, since the legacy field wins in
+    // #resolveAgeYears.
+    assertThat(AgeVerificationService.isReservedAgeKey("dateOfBirth") === true, "the legacy dateOfBirth is still reserved");
+    assertThat(AgeVerificationService.isReservedAgeKey("dateOfBirthRecordedAt") === true, "the legacy declaration timestamp is still reserved");
     assertThat(AgeVerificationService.isReservedAgeKey("displayName") === false, "an ordinary profile field is not reserved");
 
     const handlerSource = require("fs").readFileSync(
@@ -208,14 +296,25 @@ console.log("\n[A-04] Self-assertion defences (always runs)\n");
         "the generic additionalData merge actually calls the reserved-key check",
     );
 
-    const guardianForAdult = AgeVerificationService.normalizeGuardianDetails(buildGuardianDetails());
-    assertThat(guardianForAdult !== null, "complete guardian details normalize");
+    const guardianDetails = AgeVerificationService.normalizeGuardianDetails(buildGuardianDetails());
+    assertThat(guardianDetails !== null, "complete guardian details normalize");
+    assertThat(
+        AgeVerificationService.normalizeGuardianDetails(buildGuardianDetails({ guardianEmail: "Guardian@Example.INVALID" })).guardianEmail === "guardian@example.invalid",
+        "the guardian email is lower-cased so it matches the key OtpManager files the code under",
+    );
     assertThat(AgeVerificationService.normalizeGuardianDetails(buildGuardianDetails({ guardianName: "  " })) === null, "a blank guardian name is refused");
     assertThat(AgeVerificationService.normalizeGuardianDetails(buildGuardianDetails({ guardianEmail: "not-an-email" })) === null, "an unusable guardian email is refused");
     assertThat(AgeVerificationService.normalizeGuardianDetails(null) === null, "a missing guardian payload is refused");
     assertThat(
         AgeVerificationService.normalizeGuardianDetails(buildGuardianDetails({ guardianName: "x".repeat(AgeVerificationConstants.GUARDIAN_NAME_MAXIMUM_LENGTH + 1) })) === null,
         "an over-length guardian name is refused",
+    );
+
+    // The single-shot write that used to record consent without any confirmation
+    // must be gone, not merely unused — a surviving export is a bypass.
+    assertThat(
+        typeof AgeVerificationService.recordGuardianConsent === "undefined",
+        "the old unverified recordGuardianConsent entry point no longer exists",
     );
 }
 
@@ -227,10 +326,30 @@ console.log("\n[A-05] Gate allowlist (always runs)\n");
         "utf8",
     );
 
-    for (const requiredPath of ["/age/state", "/age/declaredateofbirth", "/age/guardianconsent", "/logout", "/getuser"])
+    const requiredPaths =
+    [
+        "/age/state",
+        "/age/declareage",
+        "/age/guardianconsent/requestcode",
+        "/age/guardianconsent/verify",
+        "/logout",
+        "/getuser"
+    ];
+
+    for (const requiredPath of requiredPaths)
     {
         assertThat(pluginSource.includes(`"${requiredPath}"`), `the gate allowlists ${requiredPath} so a blocked account can reach it`);
     }
+
+    const routeSource = require("fs").readFileSync(path.join(currentDirectory, "Endpoints", "HandleAgeEndpoints.js"), "utf8");
+    for (const registeredPath of ["/Age/State", "/Age/DeclareAge", "/Age/GuardianConsent/RequestCode", "/Age/GuardianConsent/Verify"])
+    {
+        assertThat(routeSource.includes(`\`${registeredPath}\``), `${registeredPath} is actually registered`);
+    }
+
+    // Sending an email to a caller-chosen address is the shape the per-IP OTP cap
+    // exists for; the per-(email, purpose) cooldown only bounds ONE address.
+    assertThat(routeSource.includes("ensureOtpRateLimit"), "the guardian code endpoints carry the per-IP OTP rate limit");
 
     const indexSource = require("fs").readFileSync(path.join(currentDirectory, "index.js"), "utf8");
     assertThat(indexSource.includes("insertGlobalPlugin(ageConsentPlugin)"), "the gate is actually registered as a global plugin");
@@ -270,20 +389,27 @@ else
 
         try
         {
-            await users.insertOne({ id: fixtureUserId, additionalData: {} });
+            await users.insertOne({ id: fixtureUserId, displayName: "Fixture Student", additionalData: {} });
 
             const freshUser = await AuthenticationQueryEngine.getUserById(fixtureUserId);
             assertThat(freshUser !== null, "the fixture account is readable through the query engine");
 
-            const minorDateOfBirth = buildDateOfBirthForAge(13);
-            const declaration = await AgeVerificationService.recordDateOfBirth(fixtureUserId, freshUser, minorDateOfBirth);
+            const declaration = await AgeVerificationService.recordDeclaredAge(fixtureUserId, freshUser, 13);
             assertThat(declaration.ok === true, "a first declaration is accepted");
             assertThat(declaration.state === ageConsentStates.MINOR_AWAITING_GUARDIAN_CONSENT, "a Child's declaration lands in MINOR_AWAITING_GUARDIAN_CONSENT");
 
             const afterDeclaration = await AuthenticationQueryEngine.getUserById(fixtureUserId);
-            const secondDeclaration = await AgeVerificationService.recordDateOfBirth(fixtureUserId, afterDeclaration, buildDateOfBirthForAge(25));
+            const storedDeclaration = afterDeclaration.getAdditionalData();
+            assertThat(storedDeclaration.declaredAgeYears === 13, "the declared age is stored as a number");
+            assertThat(
+                typeof storedDeclaration.ageDeclaredAt === "string" && storedDeclaration.ageDeclaredAt.length > 0,
+                "the declaration carries a server-stamped date, so the age can age forward",
+            );
+            assertThat(storedDeclaration.dateOfBirth === undefined, "no date of birth is written by the new flow");
+
+            const secondDeclaration = await AgeVerificationService.recordDeclaredAge(fixtureUserId, afterDeclaration, 25);
             assertThat(secondDeclaration.ok === false, "a second declaration is refused");
-            assertThat(secondDeclaration.reason === ErrorCodes.DATE_OF_BIRTH_ALREADY_DECLARED, "the refusal names the write-once rule");
+            assertThat(secondDeclaration.reason === ErrorCodes.AGE_ALREADY_DECLARED, "the refusal names the write-once rule");
 
             const stillMinor = await AuthenticationQueryEngine.getUserById(fixtureUserId);
             assertThat(
@@ -291,24 +417,12 @@ else
                 "the refused re-declaration did not age the account up",
             );
 
-            const consentResult = await AgeVerificationService.recordGuardianConsent(fixtureUserId, stillMinor, buildGuardianDetails());
-            assertThat(consentResult.ok === true, "guardian consent is accepted for a Child awaiting it");
-
-            const afterConsent = await AuthenticationQueryEngine.getUserById(fixtureUserId);
-            const consentedState = AgeVerificationService.resolveState(afterConsent);
-            assertThat(consentedState.state === ageConsentStates.MINOR_CONSENTED, "the account is released after consent");
-            assertThat(consentedState.bProcessingAllowed === true, "processing is allowed after consent");
-
-            const storedConsent = afterConsent.getAdditionalData().guardianConsent;
-            assertThat(typeof storedConsent.recordedAt === "string" && storedConsent.recordedAt.length > 0, "the consent carries a server-stamped timestamp");
-
-            const duplicateConsent = await AgeVerificationService.recordGuardianConsent(fixtureUserId, afterConsent, buildGuardianDetails());
-            assertThat(duplicateConsent.ok === false, "consent is refused for an account that is no longer awaiting it");
-            assertThat(duplicateConsent.reason === ErrorCodes.GUARDIAN_CONSENT_NOT_APPLICABLE, "the refusal names the state mismatch");
-
-            const consentBeforeDeclaration = await AgeVerificationService.recordGuardianConsent(fixtureUserId, buildUser({}), buildGuardianDetails());
-            assertThat(consentBeforeDeclaration.ok === false, "consent before any declaration is refused");
-            assertThat(consentBeforeDeclaration.reason === ErrorCodes.AGE_DECLARATION_REQUIRED, "the refusal points back at the declaration step");
+            // A legacy account has already answered; letting it also declare an
+            // age would give it two answers for #resolveAgeYears to choose between.
+            const legacyUser = buildUser({ dateOfBirth: buildDateOfBirthForAge(15) });
+            const legacyRedeclaration = await AgeVerificationService.recordDeclaredAge(fixtureUserId, legacyUser, 25);
+            assertThat(legacyRedeclaration.ok === false, "an account holding a legacy date of birth cannot also declare an age");
+            assertThat(legacyRedeclaration.reason === ErrorCodes.AGE_ALREADY_DECLARED, "the legacy refusal names the write-once rule too");
         }
         finally
         {

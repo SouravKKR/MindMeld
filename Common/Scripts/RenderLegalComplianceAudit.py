@@ -14,6 +14,8 @@ Run with the repo's Python venv:
     Agent/.venv/Scripts/python.exe Common/Scripts/RenderLegalComplianceAudit.py
 """
 
+import os
+from datetime import datetime
 from pathlib import Path
 
 from reportlab.lib.pagesizes import A4
@@ -60,7 +62,9 @@ CONTENT_WIDTH = PAGE_WIDTH - LEFT_MARGIN - RIGHT_MARGIN
 
 OUTPUT_PATH = Path(__file__).resolve().parent.parent / "Reports" / "LegalComplianceAuditReport.pdf"
 DOCUMENT_TITLE = "Legal & Compliance Exposure Audit"
-DOCUMENT_DATE = "8 August 2026"
+# Stamped at render time. A hardcoded date survives a re-audit unchanged, which
+# is how a report ends up describing a tree it was not derived from.
+DOCUMENT_DATE = datetime.now().strftime("%-d %B %Y") if os.name != "nt" else datetime.now().strftime("%#d %B %Y")
 
 
 # --- Paragraph styles -----------------------------------------------------
@@ -327,19 +331,22 @@ def build_story():
 
     story.append(make_callout(
         "CogniumLearn ingests third-party copyrighted material by design, so its exposure lives in how source "
-        "documents are retained, how they are re-expressed, and who can reach them. On this pass the erasure "
-        "cascade is whole: a document's stored bytes, its extracted page text, its figure rows and the figure "
-        "images themselves all go together, a takedown deletes one copy per holder rather than one in total, and "
-        "no removal reports a success it has not achieved. The retention rule the code enforces is the one the "
-        "Privacy Policy publishes, to the day. "
-        "What this sweep surfaced instead is quieter and sits in two places. <b>Three object-storage prefixes "
-        "still have no lifecycle at all</b> &mdash; the mock-test evaluation payload, the folder an abandoned "
-        "generation run leaves behind, and deal invoices &mdash; none of them reached by any reaper. And "
-        "<b>two retrieval paths resolve across the tenant boundary</b>: Ask AI can label a citation with another "
-        "account's filename, and the document download reads out of another account's storage prefix whenever two "
-        "users hold the same file. Neither leaks content, because the bytes are identical either way; both "
-        "quietly undo the per-user separation the platform deliberately adopted, and one of them puts a stranger's "
-        "brand-bearing filename in front of the model."))
+        "documents are retained, how they are re-expressed, and who can reach them. Every finding below was "
+        "re-derived from the current tree; nothing was carried forward. "
+        "<b>The retention picture has closed since the previous pass.</b> Every upload surface now has a real "
+        "lifecycle: the mock-test evaluation payload, the folder a generation run leaves behind and deal invoices "
+        "are each registered with the ephemeral-upload registry and swept, and the answer-sheet scan is now kept "
+        "for the sixty days the Privacy Policy promises rather than deleted the moment it is read. "
+        "<b>The safe-harbour picture has closed too:</b> the Terms now name a Grievance Officer with a postal "
+        "address, commit to the IT Rules 2021 windows of twenty-four hours to acknowledge and fifteen days to "
+        "dispose, and publish a dedicated copyright mailbox behind an unauthenticated complaint channel. "
+        "What survives this pass is narrower and sits in three places. <b>Two retrieval paths still resolve "
+        "across the tenant boundary</b> &mdash; Ask AI can label a citation with another account's filename, and "
+        "the document download reads out of another account's storage prefix whenever two users hold the same "
+        "file; neither leaks content, because the bytes are identical either way, but both undo the per-user "
+        "separation the platform deliberately adopted. <b>Generated content still records no provenance</b>, so a "
+        "rightsholder notice cannot enumerate what was derived from a work. And <b>Ask AI remains the one path "
+        "that puts verbatim source excerpts in front of the model with no expression contract leading it</b>."))
     story.append(Spacer(1, 4))
 
     # ── Executive summary ─────────────────────────────────────────────────
@@ -351,12 +358,6 @@ def build_story():
         make_table(
             ["Component", "Rating", "Headline", "Action"],
             [
-                ["Unlifecycled storage prefixes", risk("MEDIUM"),
-                 "Three object-storage prefixes are written by user action and deleted by nothing: the mock-test "
-                 "evaluation payload (the candidate's answers plus the question text), the task folder an "
-                 "abandoned generation run leaves behind, and deal invoices. Every other upload surface now has a "
-                 "reaper; these were never given one.",
-                 action("RECOMMENDED")],
                 ["Cross-tenant retrieval resolution", risk("MEDIUM"),
                  "Two paths resolve past the tenant boundary once two accounts hold the same file: the Ask AI "
                  "citation label can resolve to another user's filename, and the download reads the blob out of "
@@ -373,20 +374,10 @@ def build_story():
                  "generation, but not Ask AI &mdash; the one path that puts verbatim source excerpts in front of "
                  "the model behind a one-paragraph system prompt.",
                  action("RECOMMENDED")],
-                ["Answer-sheet promise divergence", risk("MEDIUM"),
-                 "The Privacy Policy promises a scanned answer sheet is kept 60 days so a candidate can dispute "
-                 "their marks against it. The worker deletes each scan the moment it is read into memory. The "
-                 "privacy posture is better than published; the dispute guarantee is not kept.",
-                 action("RECOMMENDED")],
                 ["Third-party mark handling", risk("MEDIUM"),
                  "A cross-tenant egress path exists (paid-deck library, organization deck shelf). Mark detection "
                  "runs there as an advisory warning; the redaction function it was built around is called from "
                  "nowhere.",
-                 action("RECOMMENDED")],
-                ["Grievance timelines", risk("MEDIUM"),
-                 "The Grievance Officer is named with a postal address in both documents, but neither commits to a "
-                 "statutory acknowledgement or disposal window, and no public copyright-complaint route is "
-                 "published.",
                  action("RECOMMENDED")],
                 ["Residual prompt exposure", risk("MEDIUM"),
                  "Exam-paper extraction requests verbatim text deliberately, and the pool self-expires with the "
@@ -405,6 +396,23 @@ def build_story():
                  "Takedown removes the source and its derived artefacts, but not content generated from it. "
                  "Deliberate: original wording about facts is not a reproduction, and full lineage is "
                  "unachievable across synced and user-edited copies.",
+                 action("NONE")],
+                ["Ephemeral upload lifecycle", risk("PASS"),
+                 "Every upload surface now has a lifecycle. The mock-test evaluation payload, the generation task "
+                 "folder and deal invoices are each registered with the ephemeral-upload registry at the point "
+                 "they are written, and the reaper sweeps expired prefixes on a timer. Closed since the previous "
+                 "pass, where all three were retained by omission.",
+                 action("NONE")],
+                ["Answer-sheet retention vs. promise", risk("PASS"),
+                 "The transcription worker now reads each scan and explicitly never deletes it, leaving the "
+                 "registered sixty-day window to expire it &mdash; which is exactly what Privacy Policy clause "
+                 "10.5 promises a candidate disputing their marks. Code and published promise now agree.",
+                 action("NONE")],
+                ["Grievance and complaint channel", risk("PASS"),
+                 "Terms clause 19 names the Grievance Officer with a postal address, a general mailbox and a "
+                 "dedicated copyright mailbox, and commits to the IT Rules 2021 windows &mdash; acknowledgement "
+                 "within 24 hours, disposal within 15 days. Three unauthenticated endpoints and a public "
+                 "/copyright page carry the notice itself.",
                  action("NONE")],
                 ["Erasure cascade completeness", risk("PASS"),
                  "A document's blob, page text, figure rows and figure images are removed together, ordered so no "
@@ -464,45 +472,43 @@ def build_story():
     story.extend(section("2. File Lifecycle &amp; Retention", [
         Paragraph(
             "Six upload surfaces were traced end to end: study documents, support attachments, answer-sheet "
-            "scans, mock-test attempt payloads, deal invoices and generation task staging. The document cascade "
-            "is now complete and the two secondary surfaces have real windows. What remains is three prefixes "
-            "that no reaper covers, and one place where the code is stricter than the promise it publishes.",
+            "scans, mock-test attempt payloads, deal invoices and generation task staging. Every one of them now "
+            "has a lifecycle, and the document cascade is complete. The three unlifecycled prefixes and the "
+            "answer-sheet divergence recorded on the previous pass have all been closed; they are re-verified "
+            "below as controls rather than dropped, so this section states what is working and not only what is "
+            "left.",
             styles["body"]),
         findings_table([
-            ["R-01", where("Dock/Endpoints/MockTest/EvaluateAttempt.js", "227-244, 303-316"),
-             "The attempt payload &mdash; the candidate's answers plus the question text they answered &mdash; is "
-             "written to <font face='Courier' size='7'>Tasks/&lt;evaluationTaskId&gt;/MockTestEvaluations/</font> "
-             "and the graded output lands beside it. Nothing registers that prefix with "
-             "<font face='Courier' size='7'>EphemeralUploadRegistry</font>, and the only code that deletes a task "
-             "folder is the generation success path, which never runs for an evaluation task. The transcription "
-             "flow immediately alongside it registers its prefix; this one does not, so it keeps a graded exam "
-             "attempt indefinitely by omission rather than by decision.",
-             risk("MEDIUM"), action("RECOMMENDED")],
-            ["R-02", where("Dock/Endpoints/Helpers/MoveToDatabase.js", "319-339"),
-             "The generation task folder is listed and deleted as the last step of the SUCCESS path only. A run "
-             "that fails, is paused and abandoned, or is orphaned by a restart leaves "
-             "<font face='Courier' size='7'>Tasks/&lt;mainTaskId&gt;/</font> intact &mdash; staged flashcards and "
-             "study material, worker logs, the web image cache and the figure scratch prefix, all of it derived "
-             "from the uploaded book. The orphan reconciler reads that folder to decide what happened "
-             "(<font face='Courier' size='7'>OrphanedGenerationReconciler.js:100</font>) and deliberately leaves "
-             "it in place; no reaper covers the prefix afterwards.",
-             risk("MEDIUM"), action("RECOMMENDED")],
-            ["R-03", where("Agent/Workflows/TranscribeMockTestAttempt/TranscribeMockTestAttempt.py", "252-270"),
-             "Each answer-sheet scan is deleted as soon as it has been read into memory. Privacy Policy clause "
-             "10.5 states the opposite: the scan is retained &quot;for 60 (sixty) days from upload so that it "
-             "remains available if You dispute the transcription or the marks awarded&quot;. The registry entry "
-             "written at upload does book a 60-day window "
-             "(<font face='Courier' size='7'>TranscribeOfflineAttempt.js:268-275</font>), but by the time the "
-             "reaper sees it the images are already gone. The privacy posture is better than published; the "
-             "dispute-evidence guarantee is not kept, and it is the half a candidate would rely on.",
-             risk("MEDIUM"), action("RECOMMENDED")],
-            ["R-04", where("Dock/Endpoints/Admin/Deals/UploadDealInvoice.js", "110-135"),
-             "Deal invoices are moved to <font face='Courier' size='7'>Invoices/&lt;dealId&gt;/</font> with no "
-             "deletion path anywhere in the file and no registry entry. Admin-authored commercial documents "
-             "rather than third-party content, so the copyright exposure is negligible; listed because it is the "
-             "last upload surface with no lifecycle at all, and because a commercial record deserves a stated "
-             "retention period rather than an unstated one.",
-             risk("LOW"), action("RECOMMENDED")],
+            ["R-01", where("Dock/Endpoints/MockTest/EvaluateAttempt.js", "252, 359"),
+             "<b>Control verified &mdash; closed since the previous pass.</b> The attempt payload (the "
+             "candidate's answers plus the question text) is now registered with "
+             "<font face='Courier' size='7'>EphemeralUploadRegistry</font> at the point it is written, and the "
+             "evaluation prefix is purged eagerly when the flow completes. The registration is the backstop: a "
+             "run that never reaches the eager purge is still swept by the reaper when its window expires, so "
+             "a graded exam attempt is no longer retained by omission.",
+             risk("PASS"), action("NONE")],
+            ["R-02", where("Dock/Endpoints/AutomaticGeneration/Generate.js", "581"),
+             "<b>Control verified &mdash; closed since the previous pass.</b> The generation task prefix is "
+             "registered at run start rather than relying on the success path to clean it, and "
+             "<font face='Courier' size='7'>MoveToDatabase.js:390</font> still purges it eagerly on success. A "
+             "run that fails, is paused and abandoned, or is orphaned by a restart therefore leaves a prefix the "
+             "reaper will collect, instead of staged flashcards, worker logs and figure scratch derived from the "
+             "uploaded book sitting indefinitely.",
+             risk("PASS"), action("NONE")],
+            ["R-03", where("Agent/Workflows/TranscribeMockTestAttempt/TranscribeMockTestAttempt.py", "44-46, 143-144"),
+             "<b>Control verified &mdash; closed since the previous pass.</b> The worker now states in its own "
+             "documentation that it &quot;reads from it and never deletes from it&quot;, deliberately leaving the "
+             "sixty-day registry window to expire the scan. That is exactly what Privacy Policy clause 10.5 "
+             "promises &mdash; the scan &quot;remains available if You dispute the transcription or the marks "
+             "awarded&quot; &mdash; so the code and the published promise now agree, in the direction that keeps "
+             "the candidate's dispute evidence.",
+             risk("PASS"), action("NONE")],
+            ["R-04", where("Dock/Endpoints/Admin/Deals/UploadDealInvoice.js", "140"),
+             "<b>Control verified &mdash; closed since the previous pass.</b> Deal invoices are registered with "
+             "the same registry and carry a stated retention window. Admin-authored commercial documents rather "
+             "than third-party content, so the copyright exposure was always negligible; the value is that no "
+             "upload surface is now left with an unstated lifecycle.",
+             risk("PASS"), action("NONE")],
             ["R-05", where("Dock/Globals/Classes/Content/SourceRetentionPolicy.js", "30-124"),
              "<b>Control verified.</b> Three branches &mdash; subscribed, lapsed, never-subscribed &mdash; all at "
              "<font face='Courier' size='7'>SOURCE_RETENTION_GRACE_DAYS = 60</font>, which is exactly the period "
@@ -722,14 +728,20 @@ def build_story():
              "from implied endorsement &mdash; but nothing applies the redaction on the one path where content "
              "crosses to an account that is not the publisher's.",
              risk("MEDIUM"), action("RECOMMENDED")],
-            ["H-03", where("Dock/SeedData/LegalDocuments.json", "Terms cl.19; Privacy cl.18"),
-             "A Grievance Officer is named in both documents with a full postal address and an email, which is "
-             "the substantive part of the obligation. Neither commits to a timeline: the Terms promise "
-             "&quot;reasonable efforts&hellip; at the earliest possible opportunity&quot; and the Privacy Policy "
-             "&quot;within the timelines prescribed under Applicable Law&quot;, where the IT Rules 2021 specify "
-             "24 hours to acknowledge and 15 days to dispose. No separate copyright-complaint route is published "
-             "either, so a rightsholder's only entry point is the general support address.",
-             risk("MEDIUM"), action("RECOMMENDED")],
+            ["H-03", where("Dock/SeedData/LegalDocuments.json", "Terms of Service v7, cl.19"),
+             "<b>Control verified &mdash; closed since the previous pass.</b> Clause 19 now names the Grievance "
+             "Officer under Rule 3(2) of the IT Rules 2021 with a full postal address, a general mailbox and a "
+             "<i>separate</i> copyright mailbox, and clause 19.2 commits to the statutory windows explicitly: "
+             "acknowledgement within twenty-four hours of receipt and disposal within fifteen days. The route "
+             "exists in the product as well as in the document &mdash; three unauthenticated endpoints "
+             "(<font face='Courier' size='7'>/Legal/IntellectualPropertyComplaint</font>, its "
+             "<font face='Courier' size='7'>/Verify</font> and <font face='Courier' size='7'>/Evidence</font> "
+             "siblings) and a public <font face='Courier' size='7'>/copyright</font> landing page reachable "
+             "without a session, each rate-limited by "
+             "<font face='Courier' size='7'>ensurePublicReportRateLimit</font> and covered by "
+             "<font face='Courier' size='7'>Dock/VerifyIntellectualPropertyComplaints.mjs</font>. A signed-in "
+             "user who owes legal acceptance is deliberately allowed through the gate to reach it.",
+             risk("PASS"), action("NONE")],
             ["H-04", where("Dock/Globals/Classes/Content/InformationSourcePurger.js", "81-215"),
              "<b>Control verified.</b> The takedown purge builds one blob path per matching row from that row's "
              "own directory, deduplicates, and deletes each independently so one failure does not abandon the "
@@ -788,14 +800,6 @@ def build_story():
         make_table(
             ["Priority", "Addresses", "Specification"],
             [
-                ["P1", "R-01, R-02",
-                 "Register the evaluation prefix with "
-                 "<font face='Courier' size='7'>EphemeralUploadRegistry</font> at the point the attempt payload "
-                 "is written, and register the generation task prefix at run start rather than relying on the "
-                 "success path to clean it. The success path can still purge eagerly; the registration is the "
-                 "backstop for every path that does not reach it. Reuse the existing reaper &mdash; it already "
-                 "runs this exact shape of sweep for two other content types, so this is one call per producer "
-                 "and no new machinery."],
                 ["P1", "T-01",
                  "Add <font face='Courier' size='7'>userId</font> to the source-name lookup, matching every other "
                  "query in that method. One filter term; it cannot regress retrieval because the hash set is "
@@ -807,13 +811,6 @@ def build_story():
                  "&mdash; return it instead of a boolean and use it. Add the missing null check on "
                  "<font face='Courier' size='7'>getUser</font> so the handler answers 401 on its own rather than "
                  "depending solely on the route guard."],
-                ["P1", "R-03",
-                 "Decide which half is right and make the other match, rather than leaving them divergent. The "
-                 "recommended direction is to keep the code and correct clause 10.5: state that the scan is "
-                 "deleted as soon as it has been transcribed and that the transcription is what a dispute is "
-                 "reviewed against. That is the stronger privacy posture and it is what already happens. If the "
-                 "dispute-evidence guarantee is wanted instead, remove the eager delete and let the registered "
-                 "60-day window do the work it was already booked for."],
                 ["P2", "H-01",
                  "Persist the <font face='Courier' size='7'>sourcePages</font> and source hash the workers "
                  "already stage onto the stored card, study material and mock test, then add an admin lookup that "
@@ -847,16 +844,6 @@ def build_story():
                  "fields of paid decks and organization decks at the point they are shown to an account other "
                  "than the publisher's, leaving the publisher's own view unmodified. That is exactly the posture "
                  "the class documents and has never been wired to."],
-                ["P2", "H-03",
-                 "State the IT Rules 2021 windows explicitly in both documents &mdash; acknowledgement within 24 "
-                 "hours, disposal within 15 days &mdash; and publish a dedicated copyright-notice route "
-                 "identifying what a valid notice must contain. The takedown machinery to honour one already "
-                 "exists; what is missing is the published address that lets a rightsholder reach it."],
-                ["P3", "R-04",
-                 "Give deal invoices a stated retention period and a deletion path, either through the same "
-                 "registry with a commercial-records window or through an explicit archival rule. The exposure is "
-                 "negligible; the value is that no upload surface is left with an unstated lifecycle, which is "
-                 "how the three findings above came to exist."],
                 ["P3", "X-04",
                  "Delete the extracted question pool from the worker payload once the rephrase pass has consumed "
                  "it, rather than relying on the five-hour task TTL. The TTL is a real bound and the current "
@@ -895,10 +882,17 @@ def build_story():
              "the head of the prefix. The sweep is idempotent, so this costs repeated listing rather than "
              "correctness &mdash; but on a bucket large enough that a full pass spans many ticks, frequent "
              "restarts will keep it near the beginning."),
-            ("Answer-sheet retention is shorter than published",
-             "Per R-03 the scans are deleted within minutes of transcription, not the 60 days clause 10.5 "
-             "states. Support answering a marks dispute cannot retrieve the original image today, whatever the "
-             "policy says."),
+            ("Answer-sheet scans now persist for sixty days",
+             "The transcription worker no longer deletes each scan as it reads it; the registered sixty-day "
+             "window is what expires it. That is the published promise honoured, and it also means the "
+             "answer-sheet prefix now holds real storage for two months rather than minutes &mdash; a capacity "
+             "change, not just a policy one."),
+            ("A public, unauthenticated complaint channel is live",
+             "<font face='Courier' size='7'>/copyright</font> and the three "
+             "<font face='Courier' size='7'>/Legal/IntellectualPropertyComplaint</font> endpoints are reachable "
+             "with no session and are allow-listed past both the legal-acceptance and age-consent gates by "
+             "design. They are rate-limited by <font face='Courier' size='7'>ensurePublicReportRateLimit</font> "
+             "rather than by authentication, so that limiter is the only thing between the mailbox and a flood."),
         ]),
     ]))
 
@@ -907,10 +901,11 @@ def build_story():
         make_table(
             ["Area", "Weight", "Score", "Reasoning"],
             [
-                ["File lifecycle &amp; retention", "High", "8",
-                 "The document cascade is complete and ordered correctly, the published retention period is the "
-                 "one enforced, and two secondary surfaces have real registry-backed windows. Against that: three "
-                 "prefixes no reaper covers, and a published promise the code contradicts."],
+                ["File lifecycle &amp; retention", "High", "10",
+                 "Every upload surface now has a registry-backed window, the document cascade is complete and "
+                 "ordered so no step destroys the record the next one needs, and the period the code enforces is "
+                 "the period the Privacy Policy publishes &mdash; including the answer-sheet scan, which is now "
+                 "kept rather than deleted on read. Nothing outstanding."],
                 ["Derivative-work risk", "High", "8",
                  "The shared expression contract is genuinely good and refuses the accuracy trade outright, and "
                  "the closed-book rephrase rule is measurable. The deduction is for the one path that puts "
@@ -924,26 +919,31 @@ def build_story():
                  "All three providers assert their posture in code at the point of reliance, refuse silent "
                  "downgrades, and state honestly what they do not control. The deduction is for sending the "
                  "uploader's brand-bearing document name to a provider the logs are careful to keep it from."],
-                ["Intermediary safeguards", "High", "7",
-                 "Contract, insert-only register, dry-run takedown that now removes every holder's copy, export "
-                 "gates and point-of-action notices are all present and verified. Against that: generated content "
-                 "records no provenance at all, the redaction function is built but unwired, and no statutory "
-                 "timeline is committed."],
+                ["Intermediary safeguards", "High", "8",
+                 "Contract, insert-only register, dry-run takedown that removes every holder's copy, export "
+                 "gates, point-of-action notices and &mdash; new this pass &mdash; a named Grievance Officer "
+                 "committed to the statutory 24-hour and 15-day windows behind a live public complaint channel. "
+                 "Against that: generated content still records no provenance at all, and the redaction function "
+                 "is built but unwired."],
             ],
             [26, 12, 9, 53], centered_columns=(1, 2)),
         Spacer(1, 9),
         make_callout(
-            "<b>Overall: 8 / 10.</b> No HIGH finding survived this pass. The erasure cascade &mdash; the thing "
-            "that most determines whether a retention promise means anything &mdash; is complete and, more to the "
-            "point, honest: it reports partial removal as partial, which is the property that lets an operator "
-            "trust the register. What holds the score at eight is a consistent pattern rather than any single "
-            "defect: <b>the platform is good at the mechanism and less good at its edges</b>. Three storage "
-            "prefixes were never handed to the reaper that already exists. Two lookups sitting inches from "
+            "<b>Overall: 9 / 10.</b> No HIGH finding survived this pass, and the whole of the retention and "
+            "safe-harbour exposure recorded last time has been closed rather than argued away: every upload "
+            "surface has a lifecycle, the answer-sheet promise is now kept in the direction that favours the "
+            "candidate, and a rightsholder has a named officer, a statutory timeline and a public channel to "
+            "reach them through. The erasure cascade &mdash; the thing that most determines whether a retention "
+            "promise means anything &mdash; is complete and, more to the point, honest: it reports partial "
+            "removal as partial, which is the property that lets an operator trust the register. "
+            "What holds the score at nine is one consistent pattern rather than any single defect: <b>the "
+            "platform is good at the mechanism and less good at its edges</b>. Two lookups sitting inches from "
             "correctly-scoped queries did not inherit the filter. Provenance is computed by the workers and "
-            "dropped by the write-back. A redaction function is written and never called. Each is small and "
-            "individually cheap &mdash; a registration call, a filter term, a persisted field &mdash; and "
-            "together they are the difference between controls that exist and controls that reach. With the P1 "
-            "items done, the same codebase rates around 9."),
+            "dropped by the write-back. A redaction function is written and never called. Ask AI is the one "
+            "generation path with no expression contract leading it. Each is small and individually cheap "
+            "&mdash; a filter term, a persisted field, one composed prompt &mdash; and together they are the "
+            "difference between controls that exist and controls that reach. With the two P1 items done, the "
+            "same codebase rates a 10 on tenancy and around 9.5 overall."),
     ]))
 
     story.append(Spacer(1, 10))

@@ -585,16 +585,25 @@ async function main()
 
     const passedCount = cases.filter(entry => entry.status === "PASS").length;
     const failedCount = cases.filter(entry => entry.status === "FAIL").length;
+    const skippedCount = cases.filter(entry => entry.status === "SKIPPED").length;
 
+    // PASS / FAIL / SKIPPED, spelled exactly as every other browser suite spells
+    // them. This is a CONTRACT, not a label: deploy-environment.sh gates on
+    // `status == "PASS"` and treats anything else as a stop, so the past tense
+    // ("PASSED") aborted the deployment on a suite where all twelve cases had
+    // just passed — a green run reported as a red gate.
+    //
+    // A skipped case counts as a stop for the same reason it does in the other
+    // suites: it means the environment could not prove that flow works.
     writeResult({
         service: "Main", category: CATEGORY,
-        status: failedCount > 0 ? "FAILED" : "PASSED",
-        passed: passedCount, failed: failedCount, skipped: 0, total: cases.length,
+        status: failedCount > 0 ? "FAIL" : (skippedCount > 0 || passedCount === 0 ? "SKIPPED" : "PASS"),
+        passed: passedCount, failed: failedCount, skipped: skippedCount, total: cases.length,
         coverage: { kind: "flows", label: "Flows exercised", percent: null, detail: `${cases.length} plan-view cases` },
         cases: cases, notes: "",
     });
 
-    console.log(`Main ${CATEGORY}: ${failedCount > 0 ? "FAILED" : "PASSED"} - ${passedCount}/${cases.length}`);
+    console.log(`Main ${CATEGORY}: ${passedCount} passed, ${failedCount} failed, ${skippedCount} skipped`);
 
     for (const entry of cases)
     {

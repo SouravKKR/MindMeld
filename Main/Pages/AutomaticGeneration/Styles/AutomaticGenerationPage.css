@@ -418,3 +418,56 @@ automatic-generation-page[page]
         font-size: 0.75rem;
     }
 }
+
+/* ── Portrait tablets and large portrait phones ──────────────────────────────
+   Between 601px and 900px the desktop row survives: a fixed 200px label with a
+   control squeezed into whatever is left. That is tolerable in landscape, where
+   "whatever is left" is still several hundred pixels, and cramped in portrait,
+   where it is not — and the source list, whose rows are the widest controls on
+   the page, is the first thing it breaks.
+
+   Keyed on orientation rather than width alone so a 700px-wide landscape window
+   on a laptop keeps the two-column row it has room for. */
+@media (orientation: portrait) and (min-width: 601px) and (max-width: 900px)
+{
+    .field-container
+    {
+        align-items: stretch;
+        gap: 8px 10px;
+    }
+
+    .field-container > label:first-child
+    {
+        flex: 1 0 100%;
+    }
+
+    .field-container > input,
+    .field-container > select,
+    .field-container > textarea,
+    .field-container > information-source-selector
+    {
+        flex: 1 0 100%;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    /* Same reasoning as the phone block: a lone 90px box under a full-width
+       label reads as a stray fragment. */
+    .field-container > input[type="number"]
+    {
+        flex: 1 0 100%;
+    }
+
+    /* A checkbox is small enough to stay beside its label and reads better
+       there than stranded on its own row. */
+    .field-container:has(> input[type="checkbox"])
+    {
+        align-items: flex-start;
+    }
+
+    .field-container:has(> input[type="checkbox"]) > label:first-child
+    {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+}

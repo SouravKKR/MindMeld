@@ -22,12 +22,24 @@ const DatabaseConstants = require("../../Constants/DatabaseConstants");
  *       document. Admissible only under a licence that records a right to create
  *       new material from it (see SourceUsageGate), because the defence for such
  *       content is the licence itself and not independent creation.
+ *   CONTENT_ONLY — written from, and deliberately NOT checked against. Held to
+ *       the same licence rule as the mode above, because the right engaged is
+ *       the same one; what differs is only the document's fitness as a yardstick
+ *       for the finished deck.
  *
- * The two rest on DIFFERENT legal bases and the audit trail reports them
+ * These rest on DIFFERENT legal bases and the audit trail reports them
  * separately, per topic. A verification-only source contributes nothing to the
  * independent-creation position; a content source replaces it with an evidenced
- * licence. Merging the two would leave a deck that can claim neither cleanly,
+ * licence. Merging them would leave a deck that can claim neither cleanly,
  * which is why the mode lives on the row rather than on the run.
+ *
+ * findActiveByDeckId RETURNS EVERY ATTACHED ROW, of every mode, and callers that
+ * want only the verifiable ones put the result through
+ * SourceUsageGate.selectVerificationSources. The filter is not applied here on
+ * purpose: this engine also answers "what is attached to this deck" for the
+ * admin dialog and the retention hold, and both of those must see content-only
+ * sources — the second one especially, since a content-only document is the
+ * proof behind text that was actually written from it.
  *
  * Either way, no document reaches a PAID_DECK_* model. Content sources are read
  * by a generator wired to its own ModelPool entry outside that namespace — see
@@ -40,9 +52,14 @@ const DatabaseConstants = require("../../Constants/DatabaseConstants");
 class PaidDeckVerificationSourceQueryEngine
 {
     /**
-     * A deck cannot be checked against an unbounded pile of documents: the pass
-     * reads every attached source, and a hundred textbooks would turn one
-     * verification run into an unbounded one.
+     * A deck cannot carry an unbounded pile of attached documents.
+     *
+     * This bounds ATTACHMENT, not verification cost, and the distinction became
+     * a real one once CONTENT_ONLY existed: the pass now reads a subset that can
+     * only be smaller than this. What the cap actually protects is every
+     * per-source cost that survives the run — a retention hold on each uploaded
+     * file, a declaration in the permanent log, a card in the admin dialog, and
+     * a row that has to be read whole on every list.
      */
     static MAXIMUM_SOURCES_PER_DECK = 12;
 

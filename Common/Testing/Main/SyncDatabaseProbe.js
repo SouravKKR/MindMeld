@@ -147,17 +147,44 @@ class SyncDatabaseProbe
             .findOne({ userId: this.#accountId, "data.id": deckId });
     }
 
+    /**
+     * Counts decks a real client would render at root level — which is NOT
+     * simply `data.parent === root's id`. A deck whose stored parent
+     * resolves to nothing in this account (a withheld or otherwise missing
+     * parent) is exactly the case DeckOrphanResolver attaches to root on
+     * every client, even though the server's own stored field still names
+     * the unresolvable id — a strict equality count would under-count what
+     * actually appears on screen.
+     */
     async countRootLevelDecks()
     {
-        const rootDeck = await this.#database.collection(SyncDatabaseProbe.DECKS_COLLECTION)
-            .findOne({ userId: this.#accountId, "data.parent": null });
+        const decksCollection = this.#database.collection(SyncDatabaseProbe.DECKS_COLLECTION);
+
+        const rootDeck = await decksCollection.findOne({ userId: this.#accountId, "data.parent": null });
         if (!rootDeck)
         {
             return { rootDeckId: null, childCount: 0 };
         }
 
-        const childCount = await this.#database.collection(SyncDatabaseProbe.DECKS_COLLECTION)
-            .countDocuments({ userId: this.#accountId, "data.parent": rootDeck.data.id });
+        const everyDeckDocument = await decksCollection
+            .find({ userId: this.#accountId })
+            .project({ "data.id": 1, "data.parent": 1 })
+            .toArray();
+        const allDeckIds = new Set(everyDeckDocument.map((document) => document.data.id));
+
+        let childCount = 0;
+        for (const document of everyDeckDocument)
+        {
+            const parentId = document.data.parent;
+            if (parentId === null || document.data.id === rootDeck.data.id)
+            {
+                continue;
+            }
+            if (parentId === rootDeck.data.id || !allDeckIds.has(parentId))
+            {
+                childCount = childCount + 1;
+            }
+        }
 
         return { rootDeckId: rootDeck.data.id, childCount };
     }
@@ -216,6 +243,30 @@ class SyncDatabaseProbe
 
         await this.#database.collection(SyncDatabaseProbe.CARDS_COLLECTION).insertMany(documents);
         return { insertedCount: documents.length, writeTimestamp };
+    }
+
+    /**
+     * Clones a deck the suite authored through the UI into a new deck document
+     * under a caller-chosen parent id — including one that resolves to
+     * nothing, which is what a withheld (unlicensed paid) or genuinely missing
+     * parent looks like to a syncing client. Cloning rather than hand-building
+     * the document is deliberate, for the same reason as cloneCardsIntoDeck:
+     * `data` is the client's own serialisation and a hand-written stand-in
+     * would drift the moment Deck gains a field.
+     */
+    async cloneDeckWithParent(templateDeck, parentId, shortNameSuffix, namePrefix)
+    {
+        const writeTimestamp = new Date();
+        const clonedData = JSON.parse(JSON.stringify(templateDeck.data));
+        clonedData.id = `${namePrefix}-${shortNameSuffix}-${writeTimestamp.getTime()}`;
+        clonedData.name = `${namePrefix} ${shortNameSuffix}`;
+        clonedData.shortName = `${namePrefix}${shortNameSuffix}`;
+        clonedData.parent = parentId;
+
+        const document = { userId: this.#accountId, data: clonedData, serverUpdatedAt: writeTimestamp };
+        await this.#database.collection(SyncDatabaseProbe.DECKS_COLLECTION).insertOne(document);
+
+        return { deckId: clonedData.id, shortName: clonedData.shortName, writeTimestamp };
     }
 
     /**

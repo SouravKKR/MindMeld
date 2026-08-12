@@ -1,7 +1,7 @@
 /**
- * VerifySourceUsageGate — harness for the per-source decision about whether a
- * declared document may be used to WRITE a paid deck's content, or only to
- * check it.
+ * VerifySourceUsageGate — harness for the per-source decision about what a
+ * declared document may be used for: writing a paid deck's content, checking the
+ * finished deck against it, or both.
  *
  * Run from the Dock directory:
  *     node VerifySourceUsageGate.mjs
@@ -17,8 +17,16 @@
  *   as a right to create new material: "Other — described in the note" is a
  *   complete declaration and is fine for checking a deck against, but nothing in
  *   it commits to the derivative right. Every licence value is driven through
- *   both usage modes so a value added later cannot fall through to whatever the
+ *   every usage mode so a value added later cannot fall through to whatever the
  *   last branch happened to do.
+ *
+ *   A SOURCE READ BY THE WRONG STAGE. "Attached" and "checked against" stopped
+ *   being the same set once a source could be marked write-only, so the two
+ *   questions are asked separately and their defaults point in opposite
+ *   directions: an unreadable mode is NOT content but IS verification. Both
+ *   directions are asserted, because getting either backwards is silent — one
+ *   writes sellable text from a document nobody cleared, the other quietly stops
+ *   checking older decks at all.
  *
  *   A GATE THAT DEPENDS ON ANOTHER GATE HAVING RUN. SourceUsageGate is reached
  *   after VerificationSourceLicenceGate on every current path, but a gate whose
@@ -96,7 +104,7 @@ function section(title)
 
 function runUsageGateTier()
 {
-    section("Every licence is decided for both usage modes");
+    section("Every licence is decided for every usage mode");
 
     // Driven off the enum rather than a hand-written list, so a value added to
     // SourceLicenceTypes without a rule here fails loudly.
@@ -128,26 +136,62 @@ function runUsageGateTier()
             `${licenceName} may be used for checking`,
         );
 
-        const contentDecision = SourceUsageGate.evaluate({
-            licenceType: licenceType,
-            usageMode: sourceUsageModes.CONTENT_AND_VERIFICATION,
-        });
+        // Driven off the gate's own set rather than a list written here, so a
+        // content-bearing mode added later is licence-checked by this harness
+        // the moment it exists. The modes are held to ONE rule on purpose:
+        // declining to check the deck against a document afterwards does not
+        // lessen the right engaged by writing the deck from it.
+        for (const contentUsageMode of SourceUsageGate.CONTENT_BEARING_USAGE_MODES)
+        {
+            const modeName = Object.keys(sourceUsageModes)
+                .find(candidateName => sourceUsageModes[candidateName] === contentUsageMode);
 
+            const contentDecision = SourceUsageGate.evaluate({
+                licenceType: licenceType,
+                usageMode: contentUsageMode,
+            });
+
+            assert(
+                contentDecision.allowed === expectedContentAllowed,
+                `${licenceName} ${expectedContentAllowed ? "MAY" : "may NOT"} be used for ${modeName}`,
+            );
+
+            if (!expectedContentAllowed)
+            {
+                assert(
+                    contentDecision.errorCode === ErrorCodes.SOURCE_USAGE_NOT_PERMITTED_BY_LICENCE,
+                    `${licenceName} is refused for ${modeName} with the code the dialog branches on`,
+                );
+
+                assert(
+                    typeof contentDecision.detail === "string" && contentDecision.detail.length > 0,
+                    `${licenceName} is refused for ${modeName} with a reason a person can act on, not just a code`,
+                );
+            }
+        }
+    }
+
+    section("Every usage mode is covered by exactly one of the two questions, and content is the narrow one");
+
+    // The invariant that stops a mode added later from silently vanishing from
+    // both pipelines, or from quietly joining the one that writes sellable text.
+    for (const [modeName, usageMode] of Object.entries(sourceUsageModes))
+    {
         assert(
-            contentDecision.allowed === expectedContentAllowed,
-            `${licenceName} ${expectedContentAllowed ? "MAY" : "may NOT"} be used to write content`,
+            SourceUsageGate.isContentUsage(usageMode) || SourceUsageGate.isVerificationUsage(usageMode),
+            `${modeName} is read by at least one stage — a mode read by neither is a source that does nothing`,
         );
 
-        if (!expectedContentAllowed)
+        if (SourceUsageGate.isContentUsage(usageMode))
         {
             assert(
-                contentDecision.errorCode === ErrorCodes.SOURCE_USAGE_NOT_PERMITTED_BY_LICENCE,
-                `${licenceName} is refused with the code the dialog branches on`,
+                SourceUsageGate.evaluate({ licenceType: sourceLicenceTypes.OTHER, usageMode: usageMode }).allowed === false,
+                `${modeName} writes content and is therefore refused under "Other"`,
             );
 
             assert(
-                typeof contentDecision.detail === "string" && contentDecision.detail.length > 0,
-                `${licenceName} is refused with a reason a person can act on, not just a code`,
+                SourceUsageGate.evaluate({ licenceType: sourceLicenceTypes.UNSPECIFIED, usageMode: usageMode }).allowed === false,
+                `${modeName} writes content and is therefore refused under UNSPECIFIED`,
             );
         }
     }
@@ -194,28 +238,73 @@ function runUsageGateTier()
 
     section("An unreadable usage mode can only ever narrow what a source is used for");
 
+    const nameOfUsageMode = (usageMode) => Object.keys(sourceUsageModes)
+        .find(candidateName => sourceUsageModes[candidateName] === usageMode) || String(usageMode);
+
     const normalisationCases = [
         [undefined, sourceUsageModes.VERIFICATION_ONLY],
         [null, sourceUsageModes.VERIFICATION_ONLY],
         ["CONTENT_AND_VERIFICATION", sourceUsageModes.VERIFICATION_ONLY],
         [99, sourceUsageModes.VERIFICATION_ONLY],
         [-1, sourceUsageModes.VERIFICATION_ONLY],
+        [1.5, sourceUsageModes.VERIFICATION_ONLY],
         [{}, sourceUsageModes.VERIFICATION_ONLY],
+
+        // Number(true) is 1, and 1 is a content mode. Before the typeof guard
+        // this single value was enough to turn a malformed request body into
+        // permission to write sellable material from a document. Kept as a
+        // named regression rather than folded into the list above.
+        [true, sourceUsageModes.VERIFICATION_ONLY],
+        [false, sourceUsageModes.VERIFICATION_ONLY],
+        [[1], sourceUsageModes.VERIFICATION_ONLY],
+
         [sourceUsageModes.VERIFICATION_ONLY, sourceUsageModes.VERIFICATION_ONLY],
         [sourceUsageModes.CONTENT_AND_VERIFICATION, sourceUsageModes.CONTENT_AND_VERIFICATION],
+        [sourceUsageModes.CONTENT_ONLY, sourceUsageModes.CONTENT_ONLY],
     ];
 
     for (const [rawValue, expected] of normalisationCases)
     {
         assert(
             SourceUsageGate.normaliseUsageMode(rawValue) === expected,
-            `normaliseUsageMode(${JSON.stringify(rawValue)}) is ${expected === sourceUsageModes.CONTENT_AND_VERIFICATION ? "CONTENT" : "VERIFICATION_ONLY"}`,
+            `normaliseUsageMode(${JSON.stringify(rawValue)}) is ${nameOfUsageMode(expected)}`,
+        );
+    }
+
+    section("The two questions are asked separately, and they default in opposite directions");
+
+    // [value, expected isContentUsage, expected isVerificationUsage]
+    const predicateCases = [
+        [sourceUsageModes.VERIFICATION_ONLY, false, true],
+        [sourceUsageModes.CONTENT_AND_VERIFICATION, true, true],
+        [sourceUsageModes.CONTENT_ONLY, true, false],
+        [undefined, false, true],
+        [null, false, true],
+        [99, false, true],
+        [-1, false, true],
+        [true, false, true],
+        ["CONTENT", false, true],
+        [{}, false, true],
+    ];
+
+    for (const [rawValue, expectedContent, expectedVerification] of predicateCases)
+    {
+        assert(
+            SourceUsageGate.isContentUsage(rawValue) === expectedContent,
+            `isContentUsage(${JSON.stringify(rawValue)}) is ${expectedContent}`,
+        );
+
+        assert(
+            SourceUsageGate.isVerificationUsage(rawValue) === expectedVerification,
+            `isVerificationUsage(${JSON.stringify(rawValue)}) is ${expectedVerification}`,
         );
     }
 
     assert(
-        SourceUsageGate.isContentUsage(undefined) === false,
-        "a row written before usageMode existed reads as verification-only, not content",
+        SourceUsageGate.isContentUsage(undefined) === false
+        && SourceUsageGate.isVerificationUsage(undefined) === true,
+        "a row written before usageMode existed is still checked against, and still not written from — "
+        + "the one combination that leaves every older deck behaving exactly as it did",
     );
 }
 
@@ -231,19 +320,48 @@ function runAdmissionShapeTier()
         { informationSourceId: "b", usageMode: sourceUsageModes.VERIFICATION_ONLY },
         { informationSourceId: "c", usageMode: sourceUsageModes.CONTENT_AND_VERIFICATION },
         { informationSourceId: "d" },
+        { informationSourceId: "e", usageMode: sourceUsageModes.CONTENT_ONLY },
     ];
 
     const contentSources = VerificationSourceAdmission.selectContentSources(resolvedSources);
+    const verificationSources = SourceUsageGate.selectVerificationSources(resolvedSources);
+
+    const sortedIdentifiersOf = (sources) => sources.map(source => source.informationSourceId).sort().join(",");
 
     assert(
-        contentSources.length === 2 && contentSources.every(source => ["a", "c"].includes(source.informationSourceId)),
-        "only the content-mode sources are selected for generation",
+        sortedIdentifiersOf(contentSources) === "a,c,e",
+        "every content-bearing source is selected for generation, content-only included",
     );
 
     assert(
+        sortedIdentifiersOf(verificationSources) === "a,b,c,d",
+        "only the sources set to be checked against are selected for verification — the both-mode sources "
+        + "and \"d\", which predates the field, are among them; the content-only \"e\" is not",
+    );
+
+    // The two sets are not complements, and the harness says so explicitly
+    // because the temptation to derive one from the other by negation is exactly
+    // what would break CONTENT_AND_VERIFICATION.
+    assert(
+        contentSources.some(source => verificationSources.includes(source)),
+        "the two sets overlap — a source can be both written from and checked against",
+    );
+
+    for (const resolvedSource of resolvedSources)
+    {
+        assert(
+            contentSources.includes(resolvedSource) || verificationSources.includes(resolvedSource),
+            `"${resolvedSource.informationSourceId}" is read by at least one stage — a source in neither `
+            + "set was attached for nothing",
+        );
+    }
+
+    assert(
         VerificationSourceAdmission.selectContentSources([]).length === 0
-        && VerificationSourceAdmission.selectContentSources(null).length === 0,
-        "an empty or missing list yields no content sources rather than throwing",
+        && VerificationSourceAdmission.selectContentSources(null).length === 0
+        && SourceUsageGate.selectVerificationSources(null).length === 0
+        && SourceUsageGate.selectVerificationSources(undefined).length === 0,
+        "an empty or missing list yields nothing from either selector rather than throwing",
     );
 
     assert(
@@ -251,6 +369,24 @@ function runAdmissionShapeTier()
             < PaidDeckVerificationSourceQueryEngine.MAXIMUM_SOURCES_PER_DECK,
         "fewer sources may be GENERATED from than may be attached — a content source is held in memory "
         + "as a retrieval corpus for the whole mapping stage, on a box that has been OOM-killed before",
+    );
+
+    section("Both content-bearing modes are charged to the same budget");
+
+    // The cap exists because of the corpus, and CONTENT_ONLY loads exactly the
+    // same corpus. Counting only one of the two modes would let a run smuggle
+    // through twice the memory the cap was written to bound.
+    const contentBearingCount = SourceUsageGate.selectContentSources([
+        ...Array.from({ length: 3 }, (unusedValue, sourceIndex) => (
+            { informationSourceId: `content-only-${sourceIndex}`, usageMode: sourceUsageModes.CONTENT_ONLY })),
+        ...Array.from({ length: 2 }, (unusedValue, sourceIndex) => (
+            { informationSourceId: `both-${sourceIndex}`, usageMode: sourceUsageModes.CONTENT_AND_VERIFICATION })),
+    ]).length;
+
+    assert(
+        contentBearingCount === 5 && contentBearingCount > VerificationSourceAdmission.MAXIMUM_CONTENT_SOURCES_PER_RUN,
+        "three content-only sources plus two both-mode sources count as five against the per-run cap of "
+        + `${VerificationSourceAdmission.MAXIMUM_CONTENT_SOURCES_PER_RUN}, and are therefore refused`,
     );
 }
 

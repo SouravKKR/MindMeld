@@ -6,14 +6,20 @@ const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
 const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
 
 /**
- * POST /Age/DeclareDateOfBirth
+ * POST /Age/DeclareAge
  *
- * Body: { dateOfBirth: "YYYY-MM-DD" }
+ * Body: { ageYears: number }
  *
- * Records the authenticated user's date of birth, once. This is the ONLY path
- * that may write it — the generic /UpdateUserAdditionalData merge refuses the
- * field — and the resulting age is derived server-side rather than accepting a
- * client's claim about whether it belongs to an adult.
+ * Records the authenticated user's age, once. This is the ONLY path that may
+ * write it — the generic /UpdateUserAdditionalData merge refuses the field — and
+ * whether the account holder is a Child is decided server-side from the stored
+ * declaration rather than from a claim in the request.
+ *
+ * Replaces the earlier /Age/DeclareDateOfBirth. Only the side of eighteen the
+ * account holder falls on is needed, and an age answers that while pinning the
+ * person to a one-year window rather than to a single day. Accounts that already
+ * declared a date of birth keep it and are not asked again; AgeVerificationService
+ * still reads those.
  *
  * The account record is re-read from the database before the write rather than
  * trusting the session's copy, because write-once is only write-once if the
@@ -26,7 +32,7 @@ const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
  * @param {PacketronRequest} request
  * @param {PacketronResponse} response
  */
-async function handleDeclareDateOfBirth(request, response)
+async function handleDeclareAge(request, response)
 {
     const user = await getUser(request);
 
@@ -48,8 +54,6 @@ async function handleDeclareDateOfBirth(request, response)
         return;
     }
 
-    const submittedDateOfBirth = typeof body?.dateOfBirth === "string" ? body.dateOfBirth : "";
-
     const storedUser = await AuthenticationQueryEngine.getUserById(user.getId());
 
     if (!storedUser)
@@ -58,22 +62,22 @@ async function handleDeclareDateOfBirth(request, response)
         return;
     }
 
-    const result = await AgeVerificationService.recordDateOfBirth(user.getId(), storedUser, submittedDateOfBirth);
+    const result = await AgeVerificationService.recordDeclaredAge(user.getId(), storedUser, body?.ageYears);
 
     if (!result.ok)
     {
-        if (result.reason === ErrorCodes.DATE_OF_BIRTH_ALREADY_DECLARED)
+        if (result.reason === ErrorCodes.AGE_ALREADY_DECLARED)
         {
             // 409 rather than 400: the request was well formed, the account
             // state is what refuses it. A correction is an operator action by
             // design, so the client must not present this as a retryable
             // validation error.
             response.statusCode = httpStatus.CONFLICT;
-            response.sendJson({ error: ErrorCodes.DATE_OF_BIRTH_ALREADY_DECLARED });
+            response.sendJson({ error: ErrorCodes.AGE_ALREADY_DECLARED });
             return;
         }
 
-        if (result.reason === ErrorCodes.INVALID_DATE_OF_BIRTH || result.reason === ErrorCodes.INVALID_REQUEST)
+        if (result.reason === ErrorCodes.INVALID_AGE || result.reason === ErrorCodes.INVALID_REQUEST)
         {
             response.statusCode = httpStatus.BAD_REQUEST;
             response.sendJson({ error: result.reason });
@@ -87,11 +91,9 @@ async function handleDeclareDateOfBirth(request, response)
     response.sendJson
     ({
         state: result.state,
-        // The computed age, not the stored date. The client needs to branch on
-        // adult-versus-minor and has no business re-deriving the boundary.
         ageYears: result.ageYears,
         additionalData: result.additionalData
     });
 }
 
-module.exports = { handleDeclareDateOfBirth };
+module.exports = { handleDeclareAge };

@@ -162,6 +162,35 @@ class DatabaseConnector
         // composite-XP score; sparse so only users who have earned XP are indexed.
         await usersCollection.createIndex({ "additionalData.metrics.leaderboardScore": 1 }, { sparse: true });
 
+        // One identity per email — the constraint AccountIdentityResolver /
+        // AccountMergeService exist to restore. Only ever attempted here,
+        // never assumed: production may still hold accounts that split
+        // before those classes existed, and creating a unique index over
+        // existing duplicates fails outright rather than silently admitting
+        // them. Partial (only documents that actually carry the field) so
+        // legacy rows nobody has logged into since normalizedEmail was
+        // introduced don't block the index on an absent value. Boot must
+        // never crash over this — an index that fails to build here simply
+        // means AccountIdentityResolver's live detect-and-merge path (or an
+        // operator running Dock/Scripts/MergeDuplicateAccount.mjs) has not
+        // yet zeroed out every duplicate; try again on the next boot.
+        try
+        {
+            // $exists alone (Mongo partial-index filters do not support $ne /
+            // $not) — createUser only ever writes this field for a non-empty
+            // trimmed email, so "exists" and "exists and non-empty" coincide
+            // in practice.
+            await usersCollection.createIndex
+            (
+                { "additionalData.normalizedEmail": 1 },
+                { unique: true, partialFilterExpression: { "additionalData.normalizedEmail": { $exists: true } } }
+            );
+        }
+        catch (normalizedEmailIndexError)
+        {
+            console.warn(`[DatabaseConnector] Could not create the unique additionalData.normalizedEmail index — duplicate emails likely still exist: ${normalizedEmailIndexError?.message || normalizedEmailIndexError}`);
+        }
+
         // ── Purchases ──────────────────────────────────────────────────────────
         // Drop legacy indexes whose composite fields (purchaseEntityType,
         // entityId, expirationDate) no longer exist on the new Purchase
@@ -1033,6 +1062,17 @@ class DatabaseConnector
         const supportTicketDeduplicationLocksCollection = database.collection(DatabaseConstants.SUPPORT_TICKET_DEDUPLICATION_LOCKS_COLLECTION);
         await supportTicketDeduplicationLocksCollection.createIndex({ id: 1 }, { unique: true });
         await supportTicketDeduplicationLocksCollection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+        // ── Account merge locks ──────────────────────────────────────────────────
+        // Same single-document lease pattern as the support-ticket lock above,
+        // keyed on the normalized email the two split accounts share, so two
+        // logins racing to merge the same pair (one on Google, one on Email+OTP,
+        // arriving within milliseconds of each other) serialise instead of both
+        // attempting the merge at once. The TTL is a crash backstop only — the
+        // real release happens in AccountMergeService's finally block.
+        const accountMergeLocksCollection = database.collection(DatabaseConstants.ACCOUNT_MERGE_LOCKS_COLLECTION);
+        await accountMergeLocksCollection.createIndex({ id: 1 }, { unique: true });
+        await accountMergeLocksCollection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
     }
 }
 

@@ -434,6 +434,74 @@ class KeyManagementService
             );
     }
 
+    /**
+     * Re-issues a license under a different userId — the account-merge
+     * counterpart to rotateKeysForDeck's per-user reissue, except here the
+     * userId changes and the deck's key version does not.
+     *
+     * Only wrappedKeyBlob (keyVersion + userId-salted, via
+     * issueLicenseForUser -> #deriveUserKek) needs re-deriving. Every other
+     * buyer-scoped field — most importantly serverWrappedContentKeyBase64 /
+     * serverWrappedIvBase64, the ACTUAL key that unwraps paid content on the
+     * /Sync wire — is wrapped under #derivePaidDeckServerKek(deckId), salted
+     * only by deckId, never userId, so it is carried forward verbatim rather
+     * than re-wrapped. scopeKey is also safe to carry forward unchanged: it
+     * names which ORGANIZATION library (if any) the content was seeded into,
+     * not the buyer's personal userId — empty means personal, for every
+     * account, so a user-to-user transfer never needs to touch it.
+     *
+     * @param {object} storedLicenseDocument the license document read from Mongo (the OLD owner's)
+     * @param {string} survivorUserId the id the license should belong to afterward
+     * @returns {Promise<{success: boolean, license?: DeckLicense, reason?: string}>}
+     */
+    static async transferLicenseOwnership(storedLicenseDocument, survivorUserId)
+    {
+        KeyManagementService.#ensureReady();
+
+        const deckId = storedLicenseDocument.deckId;
+        const meta = await KeyManagementService.getMasterMeta(deckId, storedLicenseDocument.keyVersion);
+        if (!meta)
+        {
+            // Most commonly a stale license left behind at an old keyVersion
+            // by a rotation it was inactive for (rotateKeysForDeck only
+            // carries ACTIVE licenses forward) — not a reason to fail the
+            // whole account merge over one degraded license.
+            return { success: false, reason: KeyManagementService.#REASON_ASSET_NOT_FOUND };
+        }
+
+        const preservedExpiresAt = storedLicenseDocument.expiresAt
+            ? new Date(storedLicenseDocument.expiresAt)
+            : DeckLicense.FOREVER;
+        const preservedGrantSource = typeof storedLicenseDocument.grantSource === "string" && storedLicenseDocument.grantSource.length > 0
+            ? storedLicenseDocument.grantSource
+            : GrantSources.PURCHASE;
+
+        const reissuedLicense = KeyManagementService.issueLicenseForUser
+        (
+            survivorUserId,
+            deckId,
+            storedLicenseDocument.keyVersion,
+            meta.wrappedContentKeyIvBase64,
+            meta.wrappedContentKeyBase64,
+            { expiresAt: preservedExpiresAt, grantSource: preservedGrantSource }
+        );
+
+        LicenseFieldPreserver.carryForwardBuyerScopedFields(reissuedLicense, storedLicenseDocument);
+        await KeyManagementService.persistLicense(reissuedLicense);
+
+        // persistLicense upserts on {userId, deckId} — the survivor's new row
+        // is correct, but the previous owner's row is a SEPARATE document
+        // (different userId) and that upsert never touches it. Remove it
+        // explicitly, or the deck ends up double-licensed to two ids that
+        // now represent the same merged person.
+        const database = await DatabaseConnector.getDatabase();
+        await database
+            .collection(DatabaseConstants.DECK_LICENSES_COLLECTION)
+            .deleteOne({ userId: storedLicenseDocument.userId, deckId: deckId });
+
+        return { success: true, license: reissuedLicense };
+    }
+
     static async getLicensesForUser(userId)
     {
         if (!userId)

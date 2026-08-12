@@ -552,6 +552,92 @@ async function main()
             return "refused";
         });
 
+        await runCase("A source set to write content only is attached, but is not something to check against", async () =>
+        {
+            // usageMode 2 is CONTENT_ONLY. Sent as the raw value the browser
+            // would send, because what is under test is the server's handling of
+            // the field, not the enum import.
+            const attachResult = await postVerificationSources("Attach",
+            {
+                deckId: sourceDeckId,
+                sourceUrl: "https://example.org/licensed-question-paper",
+                name: "Licensed question paper",
+
+                // LICENSED_PERMISSION with a note — writing content from a
+                // document engages the derivative right whether or not the deck
+                // is later checked against it, so the same licence rule applies.
+                licenceType: 5,
+                licenceNote: "Purchased under order #1234.",
+                usageMode: 2,
+            });
+
+            if (attachResult.status !== 200)
+            {
+                throw new Error(`Expected the attach to succeed, got ${attachResult.status}: ${JSON.stringify(attachResult.body)}`);
+            }
+
+            const listResult = await postVerificationSources("List", { deckId: sourceDeckId });
+
+            if (listResult.body.sources.length !== 1)
+            {
+                throw new Error(`A content-only source must still be listed, got ${listResult.body.sources.length} source(s).`);
+            }
+
+            if (listResult.body.sources[0].usageMode !== 2)
+            {
+                throw new Error(`The stored mode was not preserved: ${JSON.stringify(listResult.body.sources[0].usageMode)}`);
+            }
+
+            // The point of the whole change: attached, licensed, recorded — and
+            // still nothing to check the deck against. Refused rather than run
+            // against a document the administrator excluded, and the detail must
+            // name that cause rather than telling them to attach a source they
+            // are looking at.
+            const runResult = await postVerificationSources("Run", { deckId: sourceDeckId, mainTaskId: sourceRunId });
+
+            if (runResult.status !== 400 || runResult.body.error !== "VERIFICATION_SOURCES_ABSENT")
+            {
+                throw new Error(`Expected the check to be refused, got ${runResult.status}: ${JSON.stringify(runResult.body)}`);
+            }
+
+            if (!String(runResult.body.detail || "").includes("content only"))
+            {
+                throw new Error(`The refusal does not name the real cause: ${JSON.stringify(runResult.body.detail)}`);
+            }
+
+            return "attached and listed, check refused naming the cause";
+        });
+
+        await runCase("Writing content from a source is refused unless the licence records the right", async () =>
+        {
+            // "Other, see note" is a COMPLETE declaration and is fine for
+            // checking — it is refused here only because nothing in it commits
+            // to the derivative right. The content-only mode is held to that
+            // rule exactly as the both-mode is; declining the later check does
+            // not lessen the right engaged by writing.
+            const result = await postVerificationSources("Attach",
+            {
+                deckId: sourceDeckId,
+                sourceUrl: "https://example.org/other-basis",
+                name: "Document under an unnamed basis",
+                licenceType: 6,
+                licenceNote: "Permission discussed by email.",
+                usageMode: 2,
+            });
+
+            if (result.status === 200)
+            {
+                throw new Error("A content-only source was admitted under a licence that records no derivative right.");
+            }
+
+            if (result.body.error !== "SOURCE_USAGE_NOT_PERMITTED_BY_LICENCE")
+            {
+                throw new Error(`Expected SOURCE_USAGE_NOT_PERMITTED_BY_LICENCE, got ${JSON.stringify(result.body)}`);
+            }
+
+            return `refused: ${result.body.error}`;
+        });
+
         // ── The dialog's layout, at both viewports ────────────────────────────
         //
         // Mounted markup rather than the live component, matching how
@@ -580,8 +666,31 @@ async function main()
                                 <span class="verification-source-label">Content hash</span>
                                 <span class="verification-source-value-wrap">e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</span>
                             </div>
+                            <div class="verification-source-row">
+                                <span class="verification-source-label">Used for</span>
+                                <span class="verification-source-usage verification-source-usage-verification">Checking only</span>
+                            </div>
                             <div class="verification-source-card-actions">
                                 <button type="button" class="verification-source-detach">Detach</button>
+                            </div>
+                        </div>
+
+                        <!-- One card per usage mode. The badge is the only thing
+                             on a card that changes what claim the deck can make,
+                             and its longest label is what breaks first on a
+                             phone, so all three are laid out and measured. -->
+                        <div class="verification-source-card">
+                            <div class="verification-source-name">Publisher chapter.pdf</div>
+                            <div class="verification-source-row">
+                                <span class="verification-source-label">Used for</span>
+                                <span class="verification-source-usage verification-source-usage-content">Writing content, and checking</span>
+                            </div>
+                        </div>
+                        <div class="verification-source-card">
+                            <div class="verification-source-name">Licensed question paper.pdf</div>
+                            <div class="verification-source-row">
+                                <span class="verification-source-label">Used for</span>
+                                <span class="verification-source-usage verification-source-usage-content-only">Writing content only</span>
                             </div>
                         </div>
                     </div>
@@ -627,8 +736,53 @@ async function main()
                 actionWidths: actionButtons.map(button => Math.round(button.getBoundingClientRect().width)),
                 shortestActionHeight: Math.min(...actionButtons.map(button => Math.round(button.getBoundingClientRect().height))),
                 errorVisible: errorBanner.getBoundingClientRect().width > 0,
+
+                usageBadges: Array.from(document.querySelectorAll(".verification-source-usage")).map(badge => (
+                {
+                    text: badge.textContent.trim(),
+                    colour: window.getComputedStyle(badge).color,
+                    right: Math.round(badge.getBoundingClientRect().right),
+                })),
             };
         });
+
+        /**
+         * The badge tells a reviewer which of three different claims the deck
+         * can make, so it has to be readable, distinct, and inside the viewport
+         * at both widths. Checked at each size rather than once, because the
+         * longest label is what breaks first on a phone.
+         */
+        const assertUsageBadgesHold = (layout) =>
+        {
+            if (layout.usageBadges.length !== 3)
+            {
+                throw new Error(`Expected all three usage badges, found ${layout.usageBadges.length}.`);
+            }
+
+            const badgeTexts = new Set(layout.usageBadges.map(badge => badge.text));
+
+            if (badgeTexts.size !== 3)
+            {
+                throw new Error(`The usage badges do not read distinctly: ${[...badgeTexts].join(" / ")}.`);
+            }
+
+            const badgeColours = new Set(layout.usageBadges.map(badge => badge.colour));
+
+            if (badgeColours.size !== 3)
+            {
+                throw new Error(
+                    "Two usage badges resolve to the same colour — a state without its own rule reads as "
+                    + `another state: ${[...badgeColours].join(" / ")}.`);
+            }
+
+            const overflowingBadge = layout.usageBadges
+                .find(badge => badge.right > layout.viewportWidth + 1);
+
+            if (overflowingBadge !== undefined)
+            {
+                throw new Error(`The "${overflowingBadge.text}" badge runs past the viewport edge.`);
+            }
+        };
 
         await runCase("The verification-sources dialog holds together at 1280x800", async () =>
         {
@@ -653,7 +807,9 @@ async function main()
                 throw new Error("The error banner is not rendered.");
             }
 
-            return `dialog ${layout.dialogWidth}px, no page overflow`;
+            assertUsageBadgesHold(layout);
+
+            return `dialog ${layout.dialogWidth}px, no page overflow, 3 usage states distinct`;
         });
 
         await runCase("The verification-sources dialog holds together at 390x844 (phone)", async () =>
@@ -692,7 +848,9 @@ async function main()
                 throw new Error(`An action button is under a comfortable tap target (${layout.shortestActionHeight}px).`);
             }
 
-            return `actions ${layout.actionWidths.join("/")}px, table scrolls in place`;
+            assertUsageBadgesHold(layout);
+
+            return `actions ${layout.actionWidths.join("/")}px, table scrolls in place, badges hold at 390px`;
         });
 
         await runCase("The measured classes are the ones the components actually emit", async () =>
@@ -705,6 +863,8 @@ async function main()
                         "verification-sources-tab", "verification-sources-error", "verification-source-list", "verification-source-card",
                         "verification-source-name", "verification-source-row", "verification-source-label", "verification-source-value-wrap",
                         "verification-source-card-actions", "verification-source-detach", "verification-declaration-scroller",
+                        "verification-source-usage", "verification-source-usage-verification", "verification-source-usage-content",
+                        "verification-source-usage-content-only",
                         "verification-declaration-table", "verification-declaration-event", "verification-sources-actions",
                         "verification-sources-secondary", "verification-sources-run"],
                 },

@@ -187,6 +187,68 @@ class EmailSender
         await EmailSender.send(emailMessage);
     }
 
+    /**
+     * Asks a parent or lawful guardian to consent to a Child's account being
+     * processed, and carries the code that records it.
+     *
+     * This email IS the consent notice. Everything a guardian needs in order to
+     * decide has to be in the body, because it is the only thing they will ever
+     * see — they have no account, will not visit the app, and are not present
+     * when the child types the code in. So it states what CogniumLearn is, what
+     * is processed, what supplying the code means, and how to withdraw later.
+     * A bare "your code is 123456" would be a code, not a consent.
+     *
+     * It also states the do-nothing default explicitly. A guardian who does not
+     * consent should not have to reply, click anything, or work out how to
+     * object: withholding the code already leaves the account blocked, and
+     * saying so is what makes silence a safe answer rather than an ambiguous
+     * one.
+     *
+     * @param {string} toEmailAddress the guardian's address, as declared by the child
+     * @param {string} sixDigitCode
+     * @param {string} childDisplayName the account holder's name, so the guardian knows who this is about
+     * @param {number} expiryMinutes how long the code lasts; passed in because OtpManager owns that number
+     * @returns {Promise<void>}
+     */
+    static async sendGuardianConsentCodeEmail(toEmailAddress, sixDigitCode, childDisplayName, expiryMinutes)
+    {
+        const childName = String(childDisplayName ?? "").trim() || "A student";
+
+        const subject = "A CogniumLearn account needs your consent";
+
+        const introText =
+            `${childName} has created a CogniumLearn account and told us they are under 18, and gave this address as `
+            + `their parent's or guardian's. Indian data-protection law requires your consent before we may process a `
+            + `child's personal data. CogniumLearn is a study app from Cognium Labs: it turns study material into `
+            + `flashcards, notes and practice tests, schedules revision, and tracks progress over time. To do that we `
+            + `store their name and email address, the study material they add, and their study history. We do not show `
+            + `them advertising, we do not track them across other websites, and we do not sell their data. If you `
+            + `consent to this, give them the code below to enter on their screen — supplying it records your consent.`;
+
+        const footerText =
+            `This code expires in ${expiryMinutes} minutes. It is NOT a sign-in code and gives nobody `
+            + `access to any account. If you do not consent, or you were not expecting this, do nothing — without the `
+            + `code the account stays blocked and we will not process their data. You can withdraw consent or ask us to `
+            + `delete the account at any time by writing to support@cogniumlabs.io. Our full Privacy Policy is at `
+            + `${EmailTemplate.ASSET_BASE_URL}.`;
+
+        const plainTextBody =
+            `${introText}\n\n` +
+            `    ${sixDigitCode}\n\n` +
+            footerText;
+
+        const htmlBody = EmailTemplate.buildCodeEmail
+        (
+            "A parent's or guardian's consent is needed",
+            introText,
+            sixDigitCode,
+            footerText
+        );
+
+        const emailMessage = new EmailMessage("", toEmailAddress, subject, plainTextBody, htmlBody, EmailSenderIdentities.GUARDIAN_CONSENT);
+        await EmailSender.send(emailMessage);
+    }
+
     static async sendOrgAdminVerificationEmail(toEmailAddress, sixDigitCode, organizationName)
     {
         // Distinct subject + body from sendOtpEmail so the recipient knows

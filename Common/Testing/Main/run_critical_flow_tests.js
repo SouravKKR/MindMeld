@@ -34,7 +34,19 @@ const path = require("path");
 // leaves no trace in the UI, so a database read is the only trustworthy check.
 const CreditLedgerProbe = require("./CreditLedgerProbe");
 
+// The paid-deck deep-link case needs a PUBLISHED listing to open. Publishing is
+// an admin operation that no ordinary account can drive through the UI, so that
+// case seeds its own listing under the same create-register-teardown discipline
+// the paid-deck and organization suites use.
+const { FixtureRegistry } = require("./FixtureRegistry");
+
 const REPOSITORY_ROOT = path.resolve(__dirname, "..", "..", "..");
+
+// Dock's own model, so the seeded listing is written through exactly the shape
+// PaidDeckPublishService writes. A hand-authored document would drift from what
+// the app produces the moment a field is added, and the case would then be
+// proving the deep link against a listing no publish path can create.
+const PaidDeck = require(path.join(REPOSITORY_ROOT, "Dock", "Globals", "Model", "PaidDeck"));
 const RESULT_FILE = process.env.RESULT_FILE
     || path.join(REPOSITORY_ROOT, "Common", "Reports", ".results", "critical-flow-ui.json");
 const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:3000";
@@ -65,6 +77,17 @@ const FIXTURE_DECK_SHORT_NAME = `${FIXTURE_PREFIX}${RUN_TAG}`;
 const FIXTURE_DECK_RENAMED = `${FIXTURE_PREFIX} Renamed ${RUN_TAG}`;
 const FIXTURE_SUB_DECK_NAME = `${FIXTURE_PREFIX} Sub ${RUN_TAG}`;
 const FIXTURE_SUB_DECK_SHORT_NAME = `Sub${RUN_TAG}`;
+
+// The storefront listing the share/QR case deep-links to.
+//
+// Its ID is NOT prefixed, and cannot be: the share route validates the ID
+// against a UUID pattern before it looks anything up (PaidDeckDeepLinkCookie),
+// so a readable fixture ID is refused as malformed and the store page reports
+// the deck as unavailable. The listing is minted by PaidDeck's own constructor
+// instead — the same crypto.randomUUID() a published deck gets — and carries
+// the fixture prefix in its TITLE, which is what it is swept by.
+const FIXTURE_PAID_DECK_TITLE = `${FIXTURE_PREFIX} Paid Deck ${RUN_TAG}`;
+const FIXTURE_PAID_DECK_PRICE_MINOR = 9900;
 
 const CARD_ONE_QUESTION = "Which phase of the lifecycle is Spaced Repetition for?";
 const CARD_ONE_ANSWER   = "The Encode phase.";
@@ -898,6 +921,11 @@ async function returnToHome(page)
     const cases = [];
     const scriptErrors = [];
     let caseNumber = 0;
+
+    // Set the moment the share/QR case seeds a storefront listing. Declared out
+    // here because that listing lives only in MongoDB — no UI sweep can remove
+    // it, so teardown has to be reachable from the finally.
+    let paidDeckFixtureRegistry = null;
 
     let browser;
     try
@@ -1940,14 +1968,44 @@ async function returnToHome(page)
                 }
             });
 
-            if (!publishedDeck || !publishedDeck.id)
+            // A local database holds no catalogue, so waiting for a published
+            // listing to happen to exist made this case skip — and a skipped
+            // case in a deployment gate proves nothing while stopping the
+            // deploy. It seeds its own listing instead, exactly as the paid-deck
+            // suite seeds the decks it needs, and removes it in teardown.
+            // A listing whose TITLE carries the fixture prefix is debris from a
+            // run that died mid-case, not a catalogue entry. Adopting it would
+            // pass the case AND leave the row in the catalogue forever, since
+            // only the seeding path registers anything for teardown — so it is
+            // treated as absent, and the seed below sweeps it before re-creating.
+            const bLibraryDeckIsLeakedFixture = Boolean(publishedDeck?.title && publishedDeck.title.startsWith(FIXTURE_PREFIX));
+            let deckToOpen = publishedDeck && publishedDeck.id && !bLibraryDeckIsLeakedFixture ? publishedDeck : null;
+            let bSeededListing = false;
+
+            if (!deckToOpen)
             {
-                throw new EnvironmentUnavailableError(
-                    "This environment has no published paid deck, so there is no store page to deep-link to"
-                    + (publishedDeck?.error ? ` (${publishedDeck.error})` : "") + ".");
+                try
+                {
+                    // The registry is created and connected BEFORE the insert,
+                    // so a failure between writing and returning still leaves
+                    // teardown able to find the row.
+                    paidDeckFixtureRegistry = new FixtureRegistry(FIXTURE_PREFIX);
+                    await paidDeckFixtureRegistry.connect();
+                    deckToOpen = await seedPublishedPaidDeckFixture(paidDeckFixtureRegistry);
+                    bSeededListing = true;
+                }
+                catch (seedError)
+                {
+                    // Being unable to reach MongoDB is the environment failing,
+                    // not the app being wrong — recorded as such so whoever
+                    // reads the gate output looks at the right thing.
+                    throw new EnvironmentUnavailableError(
+                        `No published paid deck exists and one could not be seeded: ${seedError.message}`
+                        + (publishedDeck?.error ? ` (library said: ${publishedDeck.error})` : "") + ".");
+                }
             }
 
-            const shareUrl = `${BASE_URL}/PaidDeck?id=${encodeURIComponent(publishedDeck.id)}&tutorialE2E=1`;
+            const shareUrl = `${BASE_URL}/PaidDeck?id=${encodeURIComponent(deckToOpen.id)}&tutorialE2E=1`;
             await page.goto(shareUrl, { waitUntil: "networkidle2", timeout: 30000 });
 
             await waitForPage(page, "paid-deck-details-page");
@@ -1991,7 +2049,7 @@ async function returnToHome(page)
                 throw new Error("The share panel is missing its Download QR / Copy link actions.");
             }
 
-            const expectedLink = `${BASE_URL}/PaidDeck?id=${publishedDeck.id}`;
+            const expectedLink = `${BASE_URL}/PaidDeck?id=${deckToOpen.id}`;
             if (panelState.linkValue !== expectedLink)
             {
                 throw new Error(`The share link field reads "${panelState.linkValue}" but should read "${expectedLink}".`);
@@ -2009,7 +2067,8 @@ async function returnToHome(page)
             await page.goto(BASE_URL + "/index.html?tutorialE2E=1", { waitUntil: "networkidle2", timeout: 30000 });
             await waitForPage(page, "home-page");
 
-            return `deep-linked to ${publishedDeck.title || publishedDeck.id}, QR rendered at ${qrWidth}px`;
+            return `deep-linked to ${deckToOpen.title || deckToOpen.id}`
+                + `${bSeededListing ? " (seeded listing)" : ""}, QR rendered at ${qrWidth}px`;
         });
 
         // ── The issue-report dialog, in both of its modes ────────────────────
@@ -2398,6 +2457,25 @@ async function returnToHome(page)
             // Best effort: never leave a fixture deck behind on the account.
             await sweepLeftoverFixtures(page).catch(() => {});
         }
+
+        if (paidDeckFixtureRegistry)
+        {
+            // The seeded storefront listing exists only in MongoDB, so the UI
+            // sweep above cannot see it. A failure to remove it is reported as
+            // a failing case rather than swallowed: a leaked listing would sit
+            // in the catalogue of every later run.
+            const teardownFailures = await paidDeckFixtureRegistry.teardown().catch(error => [error.message]);
+            if (teardownFailures.length > 0)
+            {
+                cases.push({
+                    name: "Seeded paid-deck listing removed",
+                    status: "FAIL",
+                    detail: `Fixture listing left behind: ${teardownFailures.join(" | ")}`,
+                });
+            }
+            await paidDeckFixtureRegistry.close().catch(() => {});
+        }
+
         if (browser)
         {
             await browser.close();
@@ -2447,6 +2525,59 @@ async function returnToHome(page)
 });
 
 // -- Fixture housekeeping -----------------------------------------------------
+
+// Publishes one throwaway storefront listing so the share/QR case has a real
+// store page to deep-link to.
+//
+// It writes to MongoDB rather than driving the publish endpoint because
+// publishing is an ADMIN operation that also demands an encrypted asset upload —
+// the suite's account cannot perform it, and a listing is the only part of that
+// machinery this case needs. The document is built through Dock's own PaidDeck
+// model and finished with the same three fields PaidDeckPublishService adds
+// after it (updatedAt, lastKeyRotationAt, contentSummary), so the row is the
+// shape the real publish path produces, not an approximation of it.
+//
+// Registered with the registry the caller owns, and swept by prefix first so a
+// previous run killed mid-case cannot leave a second listing in the catalogue.
+async function seedPublishedPaidDeckFixture(registry)
+{
+    const database = registry.getDatabase();
+
+    // Swept by TITLE, because the ID is a UUID with nothing recognisable in it.
+    await registry.sweepPreviousRuns([{ collectionName: "paidDecks", fieldName: "title" }]);
+
+    const publishedAt = new Date();
+    // No id is supplied, so PaidDeck's constructor mints one exactly as it does
+    // for a real listing — a crypto.randomUUID() the share route will accept.
+    const listingDocument = PaidDeck.fromJson
+    ({
+        title: FIXTURE_PAID_DECK_TITLE,
+        description: "A throwaway listing created by the critical-flow suite to prove the share link and QR code render.",
+        category: "Testing",
+        tags: [FIXTURE_PREFIX],
+        basePriceMinor: FIXTURE_PAID_DECK_PRICE_MINOR,
+        currency: "INR",
+        isPerpetual: true,
+        keyVersion: 1,
+        isPublished: true,
+        // The public catalogue. An organization id here would make the listing
+        // invisible to the suite's own account and the deep link would answer
+        // NOT_FOUND — which is the audience rule working, not a bug.
+        audienceOrganizationId: "",
+        publishedAt: publishedAt.toISOString(),
+    }).toJson();
+
+    listingDocument.updatedAt = publishedAt;
+    listingDocument.lastKeyRotationAt = publishedAt;
+    listingDocument.contentSummary = { contentVersion: 1 };
+
+    // Registered the moment before it exists, so the row cannot outlive a
+    // failure between the insert and the return.
+    registry.register("paidDecks", { id: listingDocument.id });
+    await database.collection("paidDecks").insertOne(listingDocument);
+
+    return { id: listingDocument.id, title: FIXTURE_PAID_DECK_TITLE };
+}
 
 // Deletes every deck whose name carries the fixture prefix, through the real
 // deck-editor delete flow, so a run that died mid-way cannot poison the next

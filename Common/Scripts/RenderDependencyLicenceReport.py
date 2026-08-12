@@ -30,7 +30,9 @@ Run with the repo's Python venv, from the repository root:
 """
 
 import json
+import os
 import re
+from datetime import datetime
 from importlib import metadata
 from pathlib import Path
 
@@ -80,7 +82,11 @@ CONTENT_WIDTH = PAGE_WIDTH - LEFT_MARGIN - RIGHT_MARGIN
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent.parent
 OUTPUT_PATH = REPOSITORY_ROOT / "Common" / "Reports" / "DependencyLicenceReport.pdf"
 DOCUMENT_TITLE = "Third-Party Dependency Licence Report"
-DOCUMENT_DATE = "7 August 2026"
+# The report collects its whole inventory live at render time, so the date on the
+# cover has to be the render date. A hardcoded string dated a report to whenever
+# it was last hand-edited, which is exactly the "the document and the artefact
+# disagree" failure this report exists to catch.
+DOCUMENT_DATE = datetime.now().strftime("%-d %B %Y") if os.name != "nt" else datetime.now().strftime("%#d %B %Y")
 
 
 # --- Paragraph styles -----------------------------------------------------

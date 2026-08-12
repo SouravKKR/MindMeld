@@ -102,6 +102,137 @@ class MockTestAssembler
     }
 
     /**
+     * Marks are floats entered in hundredths, so the exact-fit search works in
+     * integer hundredths — 4.5 + 4.5 + 11 must land on 20 and not on
+     * 19.999999999999996, which no equality test would accept.
+     */
+    static #MARKS_SCALE = 100;
+
+    /**
+     * Ceiling on how many (count, running-total) states the exact-fit search may
+     * hold before it gives up and lets the greedy pass finish the section.
+     *
+     * The search is a bounded subset-sum, which is only cheap because a real
+     * section's budget and question count are both small. A pathological
+     * configuration — a 500-mark budget in questions worth 0.25 — would other-
+     * wise turn one section's assembly into millions of states. Bailing out
+     * costs an inexact section; not bailing out costs the whole request.
+     */
+    static #MAXIMUM_EXACT_FIT_STATES = 200000;
+
+    /**
+     * Finds a subset of `scaledMarks` that sums to EXACTLY `scaledBudget` using
+     * between `minimumCount` and `maximumCount` items, or null when no such
+     * subset exists (or the search grew past its state ceiling).
+     *
+     * A greedy largest-first pass is not enough here, and the failure is not
+     * exotic: a 20-mark budget over questions worth 10, 8, 6, 5 and 4 leads
+     * greedy to 10 then 8, at which point 2 marks remain and nothing fits — it
+     * stops at 18 while 10 + 6 + 4 was available. Sections that quietly miss
+     * their own stated total are exactly what this feature exists to prevent,
+     * so the exact subset is searched for properly.
+     *
+     * The search is a dynamic program over (item count, running total): each
+     * reachable total is recorded once per count, with the item that reached it,
+     * so the chosen subset can be walked back out. That is linear in the number
+     * of reachable states rather than exponential in the number of questions.
+     *
+     * @returns {number[]|null} indices into `scaledMarks`, smallest qualifying
+     *          count first.
+     */
+    static #findExactMarksSubset(scaledMarks, scaledBudget, minimumCount, maximumCount)
+    {
+        if (scaledBudget <= 0 || maximumCount <= 0 || scaledMarks.length === 0)
+        {
+            return null;
+        }
+
+        // reachableByCount[count] maps a running total to the step that reached
+        // it: which item was added, and what the total was before it.
+        const reachableByCount = [];
+        for (let countIndex = 0; countIndex <= maximumCount; countIndex++)
+        {
+            reachableByCount.push(new Map());
+        }
+        reachableByCount[0].set(0, null);
+
+        let stateCount = 1;
+
+        for (let itemIndex = 0; itemIndex < scaledMarks.length; itemIndex++)
+        {
+            const itemMarks = scaledMarks[itemIndex];
+            if (itemMarks <= 0 || itemMarks > scaledBudget)
+            {
+                continue;
+            }
+
+            // Counts descend so an item added at count N is never seen again by
+            // the same pass at count N + 1 — that is what keeps each question
+            // usable at most once.
+            for (let countIndex = maximumCount - 1; countIndex >= 0; countIndex--)
+            {
+                const reachableTotals = reachableByCount[countIndex];
+                if (reachableTotals.size === 0)
+                {
+                    continue;
+                }
+
+                const nextReachableTotals = reachableByCount[countIndex + 1];
+
+                for (const runningTotal of Array.from(reachableTotals.keys()))
+                {
+                    const nextTotal = runningTotal + itemMarks;
+                    if (nextTotal > scaledBudget || nextReachableTotals.has(nextTotal))
+                    {
+                        continue;
+                    }
+
+                    nextReachableTotals.set(nextTotal, { itemIndex: itemIndex, previousTotal: runningTotal });
+                    stateCount = stateCount + 1;
+                }
+            }
+
+            if (stateCount > MockTestAssembler.#MAXIMUM_EXACT_FIT_STATES)
+            {
+                console.warn(
+                    `[MoveToDatabase] Exact marks-fit search exceeded ${MockTestAssembler.#MAXIMUM_EXACT_FIT_STATES} states `
+                    + "— falling back to a closest-fit section."
+                );
+                return null;
+            }
+        }
+
+        const smallestQualifyingCount = Math.max(1, minimumCount);
+        for (let countIndex = smallestQualifyingCount; countIndex <= maximumCount; countIndex++)
+        {
+            if (!reachableByCount[countIndex].has(scaledBudget))
+            {
+                continue;
+            }
+
+            const chosenIndices = [];
+            let walkCount = countIndex;
+            let walkTotal = scaledBudget;
+
+            while (walkCount > 0)
+            {
+                const step = reachableByCount[walkCount].get(walkTotal);
+                if (!step)
+                {
+                    return null;
+                }
+                chosenIndices.push(step.itemIndex);
+                walkTotal = step.previousTotal;
+                walkCount = walkCount - 1;
+            }
+
+            return chosenIndices;
+        }
+
+        return null;
+    }
+
+    /**
      * Fills a marks-driven section: take questions until their marks add up to
      * the section's budget, rather than until a question count is reached.
      *
@@ -110,11 +241,9 @@ class MockTestAssembler
      * questions whose marks fall inside the section's band, and this picks the
      * subset that lands on the total.
      *
-     * The selection is greedy-largest-fit: at each step take the biggest
-     * question that still fits in what is left. That reaches the budget exactly
-     * whenever the pool allows it and gets closest when it does not, without the
-     * cost of searching every subset — and it naturally front-loads the heavier
-     * questions, which is how a real paper of mixed-weight questions reads.
+     * Exact fit is tried first. Only when no subset of the available questions
+     * can reach the budget does it fall back to greedy-largest-fit, which gets
+     * as close as the pool allows.
      *
      * Claimed questions are spliced out of `remainingQuestions`, matching the
      * count-driven path so a later section cannot claim the same question twice.
@@ -124,13 +253,79 @@ class MockTestAssembler
         const countBand = MockTestSectionGeometry.resolveQuestionCountBand(sectionEntry);
         const totalMarksBudget = MockTestSectionGeometry.resolveTotalMarksBudget(sectionEntry);
 
-        const claimedQuestions = [];
-
         if (totalMarksBudget <= 0 || countBand.maximum <= 0)
         {
-            return claimedQuestions;
+            return [];
         }
 
+        const candidateIndices = [];
+        const candidateScaledMarks = [];
+
+        for (let candidateIndex = 0; candidateIndex < remainingQuestions.length; candidateIndex++)
+        {
+            const candidateQuestion = remainingQuestions[candidateIndex];
+            if (!MockTestAssembler.#matchesSectionTypeFilter(candidateQuestion, allowedTypeKeys, typeKeyByValue))
+            {
+                continue;
+            }
+
+            const candidateMarks = Number.isFinite(candidateQuestion.marks) && candidateQuestion.marks > 0
+                ? candidateQuestion.marks
+                : 0;
+
+            if (candidateMarks <= 0)
+            {
+                continue;
+            }
+
+            candidateIndices.push(candidateIndex);
+            candidateScaledMarks.push(Math.round(candidateMarks * MockTestAssembler.#MARKS_SCALE));
+        }
+
+        const scaledBudget = Math.round(totalMarksBudget * MockTestAssembler.#MARKS_SCALE);
+        const exactSubset = MockTestAssembler.#findExactMarksSubset(
+            candidateScaledMarks,
+            scaledBudget,
+            countBand.minimum,
+            countBand.maximum
+        );
+
+        if (exactSubset !== null)
+        {
+            // Splice from the back so each removal cannot shift the position of
+            // one still to be removed.
+            const poolIndicesToClaim = exactSubset
+                .map(candidatePosition => candidateIndices[candidatePosition])
+                .sort((firstIndex, secondIndex) => secondIndex - firstIndex);
+
+            const claimedInReverse = [];
+            for (const poolIndex of poolIndicesToClaim)
+            {
+                claimedInReverse.push(remainingQuestions[poolIndex]);
+                remainingQuestions.splice(poolIndex, 1);
+            }
+
+            return claimedInReverse.reverse();
+        }
+
+        return MockTestAssembler.#claimClosestFitForMarksBudget(
+            remainingQuestions,
+            allowedTypeKeys,
+            typeKeyByValue,
+            totalMarksBudget,
+            countBand
+        );
+    }
+
+    /**
+     * The fallback when the pool simply cannot add up to a section's budget:
+     * repeatedly take the largest question that still fits. It gets as close as
+     * the available questions allow, which is the best that can be done once an
+     * exact subset has been ruled out.
+     */
+    static #claimClosestFitForMarksBudget(remainingQuestions, allowedTypeKeys, typeKeyByValue, totalMarksBudget, countBand)
+    {
+        const claimedQuestions = [];
         let remainingBudget = totalMarksBudget;
 
         while (claimedQuestions.length < countBand.maximum && remainingBudget > MockTestSectionGeometry.FLOATING_POINT_TOLERANCE)

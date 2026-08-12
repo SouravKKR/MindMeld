@@ -3,8 +3,17 @@ const { sourceUsageModes } = require("../../Enumerations/SourceUsageModes");
 const ErrorCodes = require("../../Constants/ErrorCodes");
 
 /**
- * SourceUsageGate — decides whether a declared source may be used to WRITE the
- * content of a paid deck, as opposed to only being checked against afterwards.
+ * SourceUsageGate — decides what a declared source may be used for: writing the
+ * content of a paid deck, checking the finished deck against it, or both.
+ *
+ * THESE ARE TWO INDEPENDENT AXES, NOT ONE SWITCH. A source is content-bearing or
+ * it is not; separately, it is checked against or it is not. Three of the four
+ * combinations are offered — the fourth, neither, is a source with no reason to
+ * be attached — and each stage of the pipeline reads exactly the axis that
+ * concerns it. `isContentUsage` answers the first question, `isVerificationUsage`
+ * the second, and no caller is allowed to derive one from the other: a source
+ * that writes a chapter is often a poor yardstick to then mark that chapter
+ * against, which is the whole reason CONTENT_ONLY exists.
  *
  * WHY THIS IS A SEPARATE GATE FROM VerificationSourceLicenceGate. That gate asks
  * "is this declaration complete?" — has a licence been named, and does it carry
@@ -37,9 +46,14 @@ const ErrorCodes = require("../../Constants/ErrorCodes");
  *   - UNSPECIFIED — the absence of a declaration. Refused for everything.
  *
  * The gate is authoritative. The generation page and the admin dialog both
- * disable the content option for a licence that would fail here, but that is a
+ * disable the content options for a licence that would fail here, but that is a
  * courtesy so the user is told while choosing; a request that never went through
  * either surface is refused by this class on the way in.
+ *
+ * The licence question is asked of CONTENT_ONLY exactly as it is asked of
+ * CONTENT_AND_VERIFICATION. Declining to check the deck against a document does
+ * not lessen the right engaged by writing the deck from it — if anything that is
+ * the mode where derivation is least observable afterwards.
  */
 class SourceUsageGate
 {
@@ -57,19 +71,16 @@ class SourceUsageGate
     ]);
 
     /**
-     * True when the mode means the source feeds generation.
+     * The modes under which the pipeline may WRITE from the document.
      *
-     * Tolerates undefined and null, which is what every row written before this
-     * field existed carries. Those read as VERIFICATION_ONLY — the behaviour
-     * they were attached under, and the safe direction to guess in.
-     *
-     * @param {number|null|undefined} usageMode
-     * @return {boolean}
+     * Both of them engage the same right and are therefore held to the same
+     * licence rule by evaluate() below. What separates them is only what happens
+     * to the document AFTERWARDS, which is a question for isVerificationUsage.
      */
-    static isContentUsage(usageMode)
-    {
-        return Number(usageMode) === sourceUsageModes.CONTENT_AND_VERIFICATION;
-    }
+    static CONTENT_BEARING_USAGE_MODES = new Set([
+        sourceUsageModes.CONTENT_AND_VERIFICATION,
+        sourceUsageModes.CONTENT_ONLY,
+    ]);
 
     /**
      * Normalises a client-supplied usage mode to a known enumeration value.
@@ -79,14 +90,110 @@ class SourceUsageGate
      * failing closed here means a malformed field can only ever narrow what a
      * source is used for.
      *
+     * THE typeof GUARD IS LOAD-BEARING, not defensive clutter. Number() is
+     * lenient in ways JSON bodies reach: Number(true) is 1, Number([1]) is 1,
+     * Number(" 1 ") is 1. Without the guard a body carrying `"usageMode": true`
+     * coerces to a content mode — a silent promotion, which is the one outcome
+     * this class exists to make impossible. Only a number, or a string that is
+     * wholly a number, is even considered.
+     *
      * @param {*} usageMode
      * @return {number}
      */
     static normaliseUsageMode(usageMode)
     {
-        return SourceUsageGate.isContentUsage(usageMode)
-            ? sourceUsageModes.CONTENT_AND_VERIFICATION
-            : sourceUsageModes.VERIFICATION_ONLY;
+        if (typeof usageMode !== "number" && typeof usageMode !== "string")
+        {
+            return sourceUsageModes.VERIFICATION_ONLY;
+        }
+
+        if (typeof usageMode === "string" && usageMode.trim().length === 0)
+        {
+            return sourceUsageModes.VERIFICATION_ONLY;
+        }
+
+        const numericUsageMode = Number(usageMode);
+
+        if (!Number.isInteger(numericUsageMode) || !Object.values(sourceUsageModes).includes(numericUsageMode))
+        {
+            return sourceUsageModes.VERIFICATION_ONLY;
+        }
+
+        return numericUsageMode;
+    }
+
+    /**
+     * True when the mode means the source feeds generation.
+     *
+     * Tolerates undefined and null, which is what every row written before this
+     * field existed carries. Those read as VERIFICATION_ONLY — the behaviour
+     * they were attached under, and the safe direction to guess in.
+     *
+     * Asked of the NORMALISED value, so an unreadable mode can never arrive here
+     * as content by way of a lenient coercion.
+     *
+     * @param {number|null|undefined} usageMode
+     * @return {boolean}
+     */
+    static isContentUsage(usageMode)
+    {
+        return SourceUsageGate.CONTENT_BEARING_USAGE_MODES.has(SourceUsageGate.normaliseUsageMode(usageMode));
+    }
+
+    /**
+     * True when the mode means the finished deck is CHECKED AGAINST the source.
+     *
+     * The asymmetry with isContentUsage is the safety property of this pair, and
+     * it is deliberate in both directions. An absent or unreadable mode is not
+     * content — guessing otherwise would generate sellable material from a
+     * document on the strength of a malformed field — but it IS verification,
+     * because that is what every row written before this field existed was
+     * attached to do, and because the failure it causes (a deck checked against
+     * one document more than intended) is the harmless one.
+     *
+     * @param {number|null|undefined} usageMode
+     * @return {boolean}
+     */
+    static isVerificationUsage(usageMode)
+    {
+        return SourceUsageGate.normaliseUsageMode(usageMode) !== sourceUsageModes.CONTENT_ONLY;
+    }
+
+    /**
+     * The subset the pipeline may WRITE from.
+     *
+     * @param {object[]} sources
+     * @return {object[]}
+     */
+    static selectContentSources(sources)
+    {
+        if (!Array.isArray(sources))
+        {
+            return [];
+        }
+
+        return sources.filter(source => SourceUsageGate.isContentUsage(source ? source.usageMode : undefined));
+    }
+
+    /**
+     * The subset a verification pass may CHECK AGAINST.
+     *
+     * Lives beside its counterpart rather than being written inline at each call
+     * site, because "attached" and "checked against" stopped being the same set
+     * the moment CONTENT_ONLY existed, and three separate places had been
+     * relying on them being the same.
+     *
+     * @param {object[]} sources
+     * @return {object[]}
+     */
+    static selectVerificationSources(sources)
+    {
+        if (!Array.isArray(sources))
+        {
+            return [];
+        }
+
+        return sources.filter(source => SourceUsageGate.isVerificationUsage(source ? source.usageMode : undefined));
     }
 
     /**
@@ -110,6 +217,12 @@ class SourceUsageGate
 
         // Verification-only is what every source could already do, under any
         // complete declaration. Nothing further to ask.
+        //
+        // EVERY OTHER MODE FALLS THROUGH TO THE LICENCE CHECK, and the check is
+        // written that way round on purpose. Listing the content-bearing modes
+        // here instead would mean a mode added later is permitted by default
+        // until somebody remembers to add it to the list; this way a mode nobody
+        // has thought about yet is refused until its licence is declared.
         if (usageMode === sourceUsageModes.VERIFICATION_ONLY)
         {
             return { allowed: true, errorCode: null, detail: null };

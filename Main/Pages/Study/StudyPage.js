@@ -225,7 +225,7 @@ class StudyPage extends HTMLElement
         };
         document.addEventListener("visibilitychange", this.#visibilityHandler);
 
-        // ── Mock test: separate layout — timed test TODO ───────────────────────
+        // ── Mock test: separate layout — the countdown lives in MockTestRunner ─
         if (this.#session instanceof MockTestSession)
         {
             const mockTest  = this.#session.getMockTest();

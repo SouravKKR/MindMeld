@@ -27,11 +27,22 @@ const { httpStatus } = require("../../../Globals/Enumerations/HttpStatus");
  * CONTENT_AND_VERIFICATION means the deck's content may also be WRITTEN from it,
  * which SourceUsageGate permits only under a licence recording a right to create
  * new material.
+ * CONTENT_ONLY means the same right is engaged — the deck is written from it —
+ * but the document is deliberately kept OUT of the verification pass. That is
+ * not a weaker declaration; it is a statement about the document's fitness as a
+ * yardstick. A chapter covering a third of the deck, or a past question paper,
+ * writes its part well and would flag everything outside its scope as a gap.
  *
- * The two rest on different bases — independent creation for the first, an
- * evidenced licence for the second — and the audit trail reports them separately,
- * per topic. That is why the mode is a property of the source rather than of the
- * run, and why changing it is logged rather than merely applied.
+ * The bases differ — independent creation for the first, an evidenced licence for
+ * the other two — and the audit trail reports them separately, per topic. That is
+ * why the mode is a property of the source rather than of the run, and why
+ * changing it is logged rather than merely applied.
+ *
+ * LISTING A SOURCE IS NOT THE SAME AS CHECKING AGAINST IT. The list endpoint
+ * below returns every attached row whatever its mode — a content-only source is
+ * the one a reviewer most needs to see — while the run endpoint selects only the
+ * verification-eligible subset through SourceUsageGate. Confusing the two is how
+ * a deck ends up checked against a document the administrator excluded.
  *
  * The ordinary generation source list is untouched by any of this: it still
  * accepts a curriculum or syllabus and nothing else, enforced by
@@ -153,7 +164,7 @@ async function attachVerificationSource(request, response)
         response.statusCode = httpStatus.CONFLICT;
         response.sendJson({
             error: ErrorCodes.INVALID_REQUEST,
-            detail: `A deck can be checked against at most ${PaidDeckVerificationSourceQueryEngine.MAXIMUM_SOURCES_PER_DECK} sources. Detach one first.`,
+            detail: `A deck can have at most ${PaidDeckVerificationSourceQueryEngine.MAXIMUM_SOURCES_PER_DECK} sources attached. Detach one first.`,
         });
         return;
     }
@@ -515,14 +526,21 @@ async function runVerificationAgainstSources(request, response)
         return;
     }
 
-    const verificationSources = await PaidDeckVerificationSourceQueryEngine.findActiveByDeckId(provenanceDeckId);
+    const attachedSources = await PaidDeckVerificationSourceQueryEngine.findActiveByDeckId(provenanceDeckId);
+    const verificationSources = SourceUsageGate.selectVerificationSources(attachedSources);
 
     if (verificationSources.length === 0)
     {
+        // Refused here as well as inside the runner, so the dialog gets an
+        // immediate answer rather than a pass that starts and fails a moment
+        // later. The two refusals share their wording through the runner's
+        // static member for exactly that reason.
         response.statusCode = httpStatus.BAD_REQUEST;
         response.sendJson({
             error: ErrorCodes.VERIFICATION_SOURCES_ABSENT,
-            detail: "Attach at least one verification source before running the check.",
+            detail: attachedSources.length === 0
+                ? "Attach at least one verification source before running the check."
+                : SourceVerificationRunner.EVERY_SOURCE_IS_CONTENT_ONLY_DETAIL,
         });
         return;
     }

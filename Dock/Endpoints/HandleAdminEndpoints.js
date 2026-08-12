@@ -303,7 +303,11 @@ function handleAdminEndpoints(server)
     // by a pass that runs after content exists and can only raise flags;
     // CONTENT_AND_VERIFICATION means the content may also be WRITTEN from it,
     // which SourceUsageGate permits only under a licence recording a right to
-    // create new material.
+    // create new material; CONTENT_ONLY means written from but deliberately not
+    // checked against, held to the same licence rule as the mode above.
+    //
+    // List returns every attached source whatever its mode. Run selects only the
+    // ones set to be checked against, and refuses when that subset is empty.
     //
     // The ordinary generation source list is unaffected — it still accepts a
     // curriculum or syllabus and nothing else.

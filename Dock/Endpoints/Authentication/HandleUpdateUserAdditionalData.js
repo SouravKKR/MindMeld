@@ -54,9 +54,9 @@ async function handleUpdateUserAdditionalData(request, response)
         }
         // Age and guardian-consent state is written only by the /Age endpoints,
         // which derive it server-side. A client that could merge its own
-        // dateOfBirth or guardianConsent through here would be able to declare
-        // itself an adult, or consent on its own guardian's behalf, and the
-        // gate would be decorative.
+        // declaredAgeYears or guardianConsent through here would be able to
+        // declare itself an adult, or consent on its own guardian's behalf, and
+        // the gate would be decorative.
         if (AgeVerificationService.isReservedAgeKey(fieldKey))
         {
             continue;

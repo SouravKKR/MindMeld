@@ -75,6 +75,124 @@ class SourceLicenceDeclarationForm
     ];
 
     /**
+     * What a source may be used for, in the order the choices are offered.
+     *
+     * Declared once here and rendered by all three surfaces — the generation
+     * page's per-source rows, the admin attach dialog and the admin edit dialog
+     * — so the wording cannot differ between the place a mode is chosen and the
+     * place it is changed. `bRequiresDerivativeLicence` is what each surface
+     * asks when deciding which options to disable, rather than each testing the
+     * modes it happens to remember.
+     *
+     * `compactLabel` exists because one of those surfaces is a three-column grid
+     * row carrying a file name and a note beside the select, where the full
+     * sentence would widen the select and squeeze both. It is a shorter way of
+     * saying the same thing, not a different choice — which is exactly why it
+     * belongs in this table rather than being written out again at that surface.
+     */
+    static USAGE_MODE_CHOICES =
+    [
+        {
+            value: sourceUsageModes.VERIFICATION_ONLY,
+            label: "Check the deck against it only",
+            compactLabel: "Check against only",
+            bRequiresDerivativeLicence: false,
+        },
+        {
+            value: sourceUsageModes.CONTENT_AND_VERIFICATION,
+            label: "Write the deck's content from it, and check against it",
+            compactLabel: "Write from it, and check",
+            bRequiresDerivativeLicence: true,
+        },
+        {
+            value: sourceUsageModes.CONTENT_ONLY,
+            label: "Write the deck's content from it — do not check against it",
+            compactLabel: "Write from it only",
+            bRequiresDerivativeLicence: true,
+        },
+    ];
+
+    /**
+     * The modes under which the deck is WRITTEN from the source. Mirrors
+     * SourceUsageGate.CONTENT_BEARING_USAGE_MODES.
+     */
+    static CONTENT_BEARING_USAGE_MODES = [
+        sourceUsageModes.CONTENT_AND_VERIFICATION,
+        sourceUsageModes.CONTENT_ONLY,
+    ];
+
+    /**
+     * True when the mode means the deck is written from the source.
+     */
+    static isContentUsage(usageMode)
+    {
+        return SourceLicenceDeclarationForm.CONTENT_BEARING_USAGE_MODES.includes(Number(usageMode));
+    }
+
+    /**
+     * A stored usage mode as a value this form can render, or VERIFICATION_ONLY.
+     *
+     * Needed because a select seeded with a two-way ternary silently rewrites
+     * any mode it does not recognise — which would mean opening the edit dialog
+     * on a source and being offered, by default, a downgrade nobody asked for.
+     * Mirrors SourceUsageGate.normaliseUsageMode, which is authoritative; this
+     * one only decides what to show.
+     */
+    static normaliseUsageMode(usageMode)
+    {
+        const numericUsageMode = Number(usageMode);
+
+        return SourceLicenceDeclarationForm.USAGE_MODE_CHOICES
+            .some(choice => choice.value === numericUsageMode)
+                ? numericUsageMode
+                : sourceUsageModes.VERIFICATION_ONLY;
+    }
+
+    /**
+     * The short label for a stored mode, for a badge rather than a dropdown.
+     */
+    static describeUsage(usageMode)
+    {
+        switch (SourceLicenceDeclarationForm.normaliseUsageMode(usageMode))
+        {
+            case sourceUsageModes.CONTENT_AND_VERIFICATION:
+                return "Writing content, and checking";
+
+            case sourceUsageModes.CONTENT_ONLY:
+                return "Writing content only";
+
+            default:
+                return "Checking only";
+        }
+    }
+
+    /**
+     * The markup for the usage-mode options, disabled where the licence cannot
+     * carry them.
+     *
+     * Shared by all three surfaces so a mode can never be offered by one and
+     * withheld by another. The suffix explains the disabling in place, because a
+     * greyed option with no reason beside it reads as a bug.
+     */
+    static buildUsageModeOptionsMarkup(selectedUsageMode, bPermitsContent, options = {})
+    {
+        const bCompact = options.bCompact === true;
+        const unavailableSuffix = bCompact ? " — licence does not allow" : " — not available under this basis";
+        const normalisedUsageMode = SourceLicenceDeclarationForm.normaliseUsageMode(selectedUsageMode);
+
+        return SourceLicenceDeclarationForm.USAGE_MODE_CHOICES.map(choice =>
+        {
+            const bDisabled = choice.bRequiresDerivativeLicence && !bPermitsContent;
+            const baseLabel = bCompact ? choice.compactLabel : choice.label;
+            const label = bDisabled ? `${baseLabel}${unavailableSuffix}` : baseLabel;
+            const bSelected = choice.value === normalisedUsageMode && !bDisabled;
+
+            return `<option value="${choice.value}"${bDisabled ? " disabled" : ""}${bSelected ? " selected" : ""}>`
+                + `${label}</option>`;
+        }).join("");
+    }
+
+    /**
      * Whether the chosen licence permits writing new material from the source.
      * Used to enable or disable the content-usage option while the user is
      * choosing, so they are told the rule rather than refused after saving.
@@ -101,7 +219,7 @@ class SourceLicenceDeclarationForm
             return "Choose the basis on which this source may be used.";
         }
 
-        if (Number(declaration ? declaration.usageMode : 0) === sourceUsageModes.CONTENT_AND_VERIFICATION
+        if (SourceLicenceDeclarationForm.isContentUsage(declaration ? declaration.usageMode : 0)
             && !SourceLicenceDeclarationForm.permitsContentUsage(licenceType))
         {
             return "This basis does not record a right to create new material from the source, so it can only be "
@@ -145,8 +263,8 @@ class SourceLicenceDeclarationForm
                 <label class="source-licence-field">
                     <span>How this source is used</span>
                     <select data-role="source-usage-mode">
-                        <option value="${sourceUsageModes.VERIFICATION_ONLY}">Check the deck against it only</option>
-                        <option value="${sourceUsageModes.CONTENT_AND_VERIFICATION}">Also write the deck's content from it</option>
+                        ${SourceLicenceDeclarationForm.buildUsageModeOptionsMarkup(
+                            sourceUsageModes.VERIFICATION_ONLY, true)}
                     </select>
                 </label>
                 <label class="source-licence-field">
@@ -210,13 +328,18 @@ class SourceLicenceDeclarationForm
     }
 
     /**
-     * Keeps the content-usage option in step with the chosen licence, disabling
-     * it (and falling back to verification-only) when the licence does not
+     * Keeps the content-usage options in step with the chosen licence, disabling
+     * them (and falling back to verification-only) when the licence does not
      * record a derivative right.
      *
      * Bound by any caller that renders the usage fields. This is a courtesy, not
      * a control — SourceUsageGate refuses the same combination server-side — so
      * it is safe for it to be bypassed.
+     *
+     * Every content-bearing option is walked, not a remembered one. Holding a
+     * single option here was what made adding a third mode a correctness change
+     * rather than a markup change: the mode nobody updated this function for
+     * would have stayed selectable under a licence that cannot carry it.
      */
     static bindUsageModeToLicence(containerElement)
     {
@@ -228,21 +351,31 @@ class SourceLicenceDeclarationForm
             return;
         }
 
-        const contentOption = usageModeSelect.querySelector(`option[value="${sourceUsageModes.CONTENT_AND_VERIFICATION}"]`);
-
         const applyLicenceRule = () =>
         {
             const bPermitted = SourceLicenceDeclarationForm.permitsContentUsage(licenceTypeSelect.value);
 
-            if (contentOption)
+            for (const choice of SourceLicenceDeclarationForm.USAGE_MODE_CHOICES)
             {
-                contentOption.disabled = !bPermitted;
-                contentOption.textContent = bPermitted
-                    ? "Also write the deck's content from it"
-                    : "Also write the deck's content from it — not available under this basis";
+                if (!choice.bRequiresDerivativeLicence)
+                {
+                    continue;
+                }
+
+                const optionElement = usageModeSelect.querySelector(`option[value="${choice.value}"]`);
+
+                if (optionElement === null)
+                {
+                    continue;
+                }
+
+                optionElement.disabled = !bPermitted;
+                optionElement.textContent = bPermitted
+                    ? choice.label
+                    : `${choice.label} — not available under this basis`;
             }
 
-            if (!bPermitted && Number(usageModeSelect.value) === sourceUsageModes.CONTENT_AND_VERIFICATION)
+            if (!bPermitted && SourceLicenceDeclarationForm.isContentUsage(usageModeSelect.value))
             {
                 usageModeSelect.value = String(sourceUsageModes.VERIFICATION_ONLY);
             }

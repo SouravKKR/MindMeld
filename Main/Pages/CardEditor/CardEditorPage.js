@@ -194,15 +194,6 @@ class CardEditorPage extends HTMLElement
             });
 
             this.#setupInputs();
-
-            // TODO: Decide if you need this
-            // const editNewCard = await DialogBox.confirm("Edit Another Card?", "Would you like to continue making/editing cards?");
-
-            // if(!editNewCard)
-            // {
-            //     PageNavigator.back();
-            // }
-
         });
 
         const onPaste = (pasteEvent) =>

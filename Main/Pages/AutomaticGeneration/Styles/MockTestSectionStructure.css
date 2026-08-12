@@ -329,8 +329,19 @@
 
 /* Every numeric control in a section sits in this grid, so the "Questions",
    "Marks" and "Scoring override" groups line up with each other instead of
-   each inventing its own column widths. */
-.mock-test-section-field-grid,
+   each inventing its own column widths.
+   The upper bound on a column is what stops a two-field group from splitting
+   the full card width between them — a 380px box to type "10" into is the
+   overspaced end of the same problem as a cramped one. */
+.mock-test-section-field-grid
+{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 200px));
+    justify-content: start;
+    gap: 10px 12px;
+    min-width: 0;
+}
+
 .mock-test-marking-section-row-rule
 {
     display: grid;
@@ -460,6 +471,7 @@
     .mock-test-marking-section-row-rule
     {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+        justify-content: stretch;
     }
 
     .mock-test-section-field-wide
@@ -494,6 +506,7 @@
     .mock-test-marking-section-row-rule
     {
         grid-template-columns: minmax(0, 1fr);
+        justify-content: stretch;
     }
 
     .mock-test-marking-override-row

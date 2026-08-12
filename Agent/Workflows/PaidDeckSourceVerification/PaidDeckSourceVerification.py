@@ -19,6 +19,7 @@ from Globals.Enumerations.WebFetchReasons import WebFetchReasons
 from Globals.Utility.JoinPath import join_path
 from Globals.Utility.StripJsonMarkdown import strip_json_markdown
 from Globals.Classes.Generation.AdminSourceCorpus import AdminSourceCorpus
+from Globals.Classes.Generation.SourceUsageSelector import SourceUsageSelector
 from Workflows.Workflow import Workflow
 
 
@@ -39,11 +40,25 @@ class PaidDeckSourceVerification(Workflow):
     third-party document, and this workflow is the reason that sentence needs
     protecting.
 
-    THE SOURCES NEVER REACH GENERATION. They are read here and nowhere else. The
-    content was already written, by models that never saw them, and this pass can
-    only RAISE FLAGS — it rewrites nothing. That is what lets the audit trail keep
-    saying the deck was independently created while also saying it was
-    independently checked.
+    THIS PASS ONLY RAISES FLAGS. It rewrites nothing, whatever it finds. That is
+    what lets the audit trail say the deck was checked without the check itself
+    becoming another way for content to be written.
+
+    WHICH SOURCES IT READS IS A PER-SOURCE DECISION, and it is not "all of them".
+    Every row carries a usageMode, and this pass reads only the rows set to be
+    checked against — see SourceUsageSelector. Two consequences worth stating
+    plainly, because the older wording here asserted the first and denied the
+    second:
+
+      - A VERIFICATION_ONLY source did not reach generation. The content was
+        written by models that never saw it, so agreement between the two is
+        independent corroboration.
+      - A CONTENT_AND_VERIFICATION source DID reach generation, and the deck was
+        then checked back against it. That is a narrower claim — it establishes
+        faithfulness to the licensed document, not independence from it — and the
+        action-log note this pass writes now says which of the two applies rather
+        than asserting the first about both.
+      - A CONTENT_ONLY source is never read here at all.
 
     Three passes, all advisory in the sense that a human decides:
 
@@ -121,6 +136,35 @@ class PaidDeckSourceVerification(Workflow):
         verification_sources = await self.__load_verification_sources(database)
 
         if not verification_sources:
+            # The two empty cases are reported apart. A deck with nothing
+            # attached was never meant to be checked; a deck whose every source
+            # is set to write content only was, and silently returning a clean
+            # report for it would be indistinguishable from a deck that passed.
+            attached_source_count = await self.__count_attached_sources(database)
+
+            if attached_source_count > 0:
+                print(
+                    f"[PaidDeckSourceVerification] All {attached_source_count} attached source(s) are content-only "
+                    "— the deck was not checked against anything."
+                )
+                # Its own flag rather than __build_unchecked_flag, whose
+                # remediation is "run the check again" — which would not help.
+                # Re-running changes nothing until a source is actually set to be
+                # checked against, and an instruction that cannot work reads as
+                # the check being broken.
+                await self.__write_report(
+                    report_path,
+                    [self.__build_stage_flag(
+                        "Not checked against any source: every one of the "
+                        f"{attached_source_count} source(s) attached to this deck is set to write content only.",
+                        "Set at least one attached source to be checked against, then run the source check again.",
+                    )],
+                    0,
+                    [],
+                )
+                await self.__update_progress(1.0)
+                return
+
             print("[PaidDeckSourceVerification] No verification sources attached to this deck — nothing to check against.")
             await self.__write_report(report_path, [], 0, [])
             await self.__update_progress(1.0)
@@ -132,6 +176,13 @@ class PaidDeckSourceVerification(Workflow):
         # source there would state that a third-party document was an input to
         # generation, which is the opposite of what happened. The declarations
         # themselves are rendered from their own permanent log.
+        #
+        # WHAT THE NOTE CLAIMS IS DERIVED FROM THE ROW, not fixed. It used to
+        # assert "not an input to generation" about every source it looped over,
+        # which stopped being true the moment a source could be admitted for
+        # content and then also checked against. A note in an audit report that
+        # denies something the same report goes on to describe is worse than no
+        # note.
         for verification_source in verification_sources:
             await action_log.record_note(
                 phase_name = PaidDeckSourceVerification.PHASE_NAME,
@@ -139,7 +190,7 @@ class PaidDeckSourceVerification(Workflow):
                     f"Checked against \"{verification_source.get('name') or '(unnamed)'}\" "
                     f"(licence type {verification_source.get('licenceType')}, "
                     f"declared by {verification_source.get('declaredByUserId') or 'unknown'}). "
-                    "Read for verification only; not an input to generation."
+                    f"{SourceUsageSelector.describe_usage(verification_source.get('usageMode'))}"
                 ),
             )
 
@@ -235,10 +286,36 @@ class PaidDeckSourceVerification(Workflow):
     # ── Loading ───────────────────────────────────────────────────────────────
 
     async def __load_verification_sources(self, database) -> list:
+        """
+        The attached sources this pass may READ — never simply "all attached".
+
+        A source set to write content only is excluded here rather than filtered
+        out further down, so there is no path by which its text reaches the
+        corpus. The exclusion is the query's, not this function's: see
+        SourceUsageSelector.build_verification_source_filter for why it is
+        written as an exclusion and what that does to rows predating the field.
+        """
+        collection = database[DatabaseConstants.PAID_DECK_VERIFICATION_SOURCES_COLLECTION]
+
+        selector = {"deckId": self.__deck_id, "active": True}
+        selector.update(SourceUsageSelector.build_verification_source_filter())
+
+        return await asyncio.to_thread(
+            lambda: list(collection.find(selector, {"_id": 0}).sort("attachedAt", 1))
+        )
+
+    async def __count_attached_sources(self, database) -> int:
+        """
+        How many sources are attached at all, of every usage mode.
+
+        Read only when the verifiable list came back empty, to tell "nothing was
+        attached" apart from "everything attached is content-only". Those need
+        different reports and, for the administrator, different actions.
+        """
         collection = database[DatabaseConstants.PAID_DECK_VERIFICATION_SOURCES_COLLECTION]
 
         return await asyncio.to_thread(
-            lambda: list(collection.find({"deckId": self.__deck_id, "active": True}, {"_id": 0}).sort("attachedAt", 1))
+            lambda: collection.count_documents({"deckId": self.__deck_id, "active": True})
         )
 
     async def __load_generated_items(self, database) -> list:

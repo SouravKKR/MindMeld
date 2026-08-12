@@ -34,8 +34,10 @@ sys.path.insert(0, str(AGENT_DIRECTORY))
 
 from Globals.Classes.Automation.Pools.ModelPool import ModelPool
 from Globals.Classes.Automation.Pools.PromptPool import PromptPool
+from Globals.Enumerations.SourceUsageModes import SourceUsageModes
 from Globals.Enumerations.WebFetchReasons import WebFetchReasons
 from Globals.Classes.Generation.AdminSourceCorpus import AdminSourceCorpus
+from Globals.Classes.Generation.SourceUsageSelector import SourceUsageSelector
 from Workflows.PaidDeckSourceVerification.PaidDeckSourceVerification import PaidDeckSourceVerification
 
 
@@ -381,6 +383,124 @@ def verify_workflow_contract() -> None:
     )
 
 
+def verify_usage_mode_partition() -> None:
+    section("Only the sources set to be checked against are read by this pass")
+
+    # The predicates, including the two directions they default in. A row that
+    # predates the field must be verification-eligible and non-content; anything
+    # unreadable must land the same way.
+    predicate_cases = [
+        (SourceUsageModes.VERIFICATION_ONLY, False, True),
+        (SourceUsageModes.CONTENT_AND_VERIFICATION, True, True),
+        (SourceUsageModes.CONTENT_ONLY, True, False),
+        (None, False, True),
+        (99, False, True),
+        (-1, False, True),
+        (True, False, True),
+        ("1", False, True),
+        ({}, False, True),
+    ]
+
+    for raw_value, expected_content, expected_verification in predicate_cases:
+        assert_that(
+            SourceUsageSelector.is_content_usage(raw_value) is expected_content,
+            f"is_content_usage({raw_value!r}) is {expected_content}",
+        )
+
+        assert_that(
+            SourceUsageSelector.is_verification_usage(raw_value) is expected_verification,
+            f"is_verification_usage({raw_value!r}) is {expected_verification}",
+        )
+
+    source_filter = SourceUsageSelector.build_verification_source_filter()
+
+    assert_that(
+        source_filter == {"usageMode": {"$nin": [int(SourceUsageModes.CONTENT_ONLY)]}},
+        "the filter EXCLUDES content-only rather than allow-listing the others",
+    )
+
+    # The property the $nin choice rests on, asserted rather than assumed: in
+    # Mongo a missing field compares as null and so escapes an exclusion. An
+    # allow-list of {0, 1} would drop every row written before the field existed
+    # and quietly stop checking older decks at all.
+    excluded_values = source_filter["usageMode"]["$nin"]
+
+    assert_that(
+        int(SourceUsageModes.VERIFICATION_ONLY) not in excluded_values
+        and int(SourceUsageModes.CONTENT_AND_VERIFICATION) not in excluded_values,
+        "a legacy row with no usageMode field at all is NOT excluded — it matches an exclusion it is absent from",
+    )
+
+    # The filter has to be applied where the rows are actually read. Parsed, not
+    # grepped: the assertion is about this one function's selector, and a
+    # matching string anywhere else in the file would satisfy a text search.
+    workflow_tree = ast.parse(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    loader_nodes = [
+        node for node in ast.walk(workflow_tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name.endswith("__load_verification_sources")
+    ]
+
+    assert_that(len(loader_nodes) == 1, "the pass has exactly one place it loads its sources from")
+
+    if loader_nodes:
+        loader_source = ast.dump(loader_nodes[0])
+
+        assert_that(
+            "build_verification_source_filter" in loader_source,
+            "that loader narrows its query through the selector rather than reading every attached row",
+        )
+
+    # An empty result now has two causes, and they are not the same event. A deck
+    # whose every source is content-only was MEANT to be checked and was not;
+    # reporting that as a clean run would make it indistinguishable from a deck
+    # that passed.
+    counter_nodes = [
+        node for node in ast.walk(workflow_tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name.endswith("__count_attached_sources")
+    ]
+
+    assert_that(
+        len(counter_nodes) == 1,
+        "the pass can tell \"nothing attached\" apart from \"everything attached is content-only\"",
+    )
+
+    section("The action-log note describes what actually happened to each source")
+
+    described_phrases = {
+        int(usage_mode): SourceUsageSelector.describe_usage(usage_mode)
+        for usage_mode in SourceUsageModes
+    }
+
+    assert_that(
+        len(set(described_phrases.values())) == len(SourceUsageModes),
+        "each mode is described distinctly — a shared phrase would flatten the distinction the report exists to draw",
+    )
+
+    assert_that(
+        all(len(phrase) > 0 for phrase in described_phrases.values()),
+        "no mode is described by an empty string",
+    )
+
+    # The regression: this phrase used to be asserted about EVERY source the pass
+    # looped over, including ones the deck had been written from. A note in an
+    # audit report that denies what the same report goes on to describe is worse
+    # than no note.
+    denying_modes = [
+        usage_mode_value for usage_mode_value, phrase in described_phrases.items()
+        if "not an input to generation" in phrase
+    ]
+
+    assert_that(
+        denying_modes == [int(SourceUsageModes.VERIFICATION_ONLY)],
+        "only VERIFICATION_ONLY claims the document was not an input to generation — the one mode it is true of",
+    )
+
+    assert_that(
+        SourceUsageSelector.describe_usage(None) == SourceUsageSelector.VERIFICATION_ONLY_PHRASE,
+        "a row predating the field is described as what it was attached under",
+    )
+
+
 def main() -> int:
     print(f"Verifying source-grounded paid-deck verification (Agent at {AGENT_DIRECTORY})")
 
@@ -389,6 +509,7 @@ def main() -> int:
     verify_flag_normalisation()
     verify_retrieval()
     verify_workflow_contract()
+    verify_usage_mode_partition()
 
     print("\n=== Summary ===")
     print(f"  passed: {passed_count}")

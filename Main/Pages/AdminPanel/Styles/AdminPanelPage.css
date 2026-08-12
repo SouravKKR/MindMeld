@@ -2527,15 +2527,28 @@ dialog-box:has(.paid-deck-verification-sources-dialog)
 }
 
 /* The usage badge is the one thing on a card that changes what claim the deck
-   can make, so the two states are colour-separated rather than left as text. */
+   can make, so the three states are colour-separated rather than left as text.
+   Both writing modes are marked; only the state that writes without being
+   checked back is warned about, because that is the one whose basis rests
+   entirely on the declared licence with no later check against the document. */
 .verification-source-usage
 {
     font-weight: 600;
 }
 
+.verification-source-usage-verification
+{
+    color: var(--secondary-text-color);
+}
+
 .verification-source-usage-content
 {
     color: var(--accent-color);
+}
+
+.verification-source-usage-content-only
+{
+    color: var(--highlight-color);
 }
 
 .verification-source-detach

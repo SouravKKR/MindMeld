@@ -799,7 +799,12 @@ async function handleSync(request, response)
         serverTime,
         morePending:         bMorePending,
         remainingEntityCount,
-        requestFullResync:   bRequestFullResync
+        requestFullResync:   bRequestFullResync,
+        // Lets a device that has been open since before an account merge
+        // notice its session now resolves to a different (the merged-into)
+        // account, even without a reload — see
+        // Main/Globals/Classes/Authentication/AccountMergeRecoveryController.js.
+        resolvedUserId: personalUserId
     });
 }
 

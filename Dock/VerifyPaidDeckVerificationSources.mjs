@@ -51,6 +51,7 @@ const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 require("dotenv").config({ path: path.join(currentDirectory, ".env") });
 
 const VerificationSourceLicenceGate = require("./Globals/Classes/PaidDeck/VerificationSourceLicenceGate");
+const SourceUsageGate = require("./Globals/Classes/PaidDeck/SourceUsageGate");
 const PaidDeckPublishGate = require("./Globals/Classes/Generation/PaidDeckPublishGate");
 const GenerationProvenanceQueryEngine = require("./Globals/Classes/Database/GenerationProvenanceQueryEngine");
 const PaidDeckVerificationSourceQueryEngine = require("./Globals/Classes/Database/PaidDeckVerificationSourceQueryEngine");
@@ -62,6 +63,7 @@ const DatabaseConstants = require("./Globals/Constants/DatabaseConstants");
 const ErrorCodes = require("./Globals/Constants/ErrorCodes");
 const InformationSource = require("./Globals/Model/InformationSource");
 const { sourceLicenceTypes } = require("./Globals/Enumerations/SourceLicenceTypes");
+const { sourceUsageModes } = require("./Globals/Enumerations/SourceUsageModes");
 
 const TEST_PREFIX = "verify-verification-sources-";
 
@@ -305,7 +307,7 @@ function runCollectionContractTier()
     assert(
         Number.isInteger(PaidDeckVerificationSourceQueryEngine.MAXIMUM_SOURCES_PER_DECK)
             && PaidDeckVerificationSourceQueryEngine.MAXIMUM_SOURCES_PER_DECK > 0,
-        "There is a bound on how many sources one deck is checked against",
+        "There is a bound on how many sources one deck may have attached",
     );
 }
 
@@ -453,6 +455,69 @@ async function runDatabaseTier()
             "The hold union finds a hash declared as a verification source, not only refinement hashes",
         );
 
+        section("A content-only source is attached and held, but never checked against (database)");
+
+        // The row above deliberately carries NO usageMode at all — it is the
+        // legacy shape, and everything asserted about it so far is what a row
+        // written before the field existed must still do.
+        assert(
+            verificationSource.usageMode === undefined
+            && SourceUsageGate.isVerificationUsage(activeSources[0].usageMode) === true
+            && SourceUsageGate.isContentUsage(activeSources[0].usageMode) === false,
+            "A stored row with no usageMode field is still checked against, and still not written from",
+        );
+
+        const contentOnlySource =
+        {
+            ...verificationSource,
+            id: `${TEST_PREFIX}source-2`,
+            informationSourceId: `${TEST_PREFIX}info-2`,
+            name: "Licensed question paper",
+            contentHash: `${TEST_PREFIX}hash-2`,
+            storagePath: `/InformationSources/${testUserId}/${TEST_PREFIX}hash-2`,
+            licenceType: sourceLicenceTypes.LICENSED_PERMISSION,
+            licenceNote: "Purchased under order #1234.",
+            usageMode: sourceUsageModes.CONTENT_ONLY,
+        };
+
+        await SourceLicenceDeclarationQueryEngine.record({
+            event: SourceLicenceDeclarationQueryEngine.EVENT_ATTACHED,
+            deckId: testDeckId,
+            verificationSourceId: contentOnlySource.id,
+            informationSourceId: contentOnlySource.informationSourceId,
+            sourceName: contentOnlySource.name,
+            sourceHash: contentOnlySource.contentHash,
+            licenceType: contentOnlySource.licenceType,
+            usageMode: contentOnlySource.usageMode,
+            declaredByUserId: testUserId,
+            declaredByEmail: "admin@example.test",
+        });
+
+        await PaidDeckVerificationSourceQueryEngine.attach(contentOnlySource);
+
+        const bothAttached = await PaidDeckVerificationSourceQueryEngine.findActiveByDeckId(testDeckId);
+
+        assert(
+            bothAttached.length === 2,
+            "The content-only source IS attached — the list a reviewer sees shows every mode, and the row "
+            + "is what records the licence the deck was written under",
+        );
+
+        assert(
+            SourceUsageGate.selectVerificationSources(bothAttached).length === 1,
+            "...and is NOT among the sources a check would read — attached and checked-against are now "
+            + "different sets, and this is the row that separates them",
+        );
+
+        const heldWithContentOnly = await ReferencedProofSourceHashes.findForUser(testUserId);
+        assert(
+            heldWithContentOnly.has(contentOnlySource.contentHash),
+            "Its document is held against deletion like any other — it is the proof behind text that was "
+            + "actually written from it, which makes it the last file that may ever be swept",
+        );
+
+        await PaidDeckVerificationSourceQueryEngine.detach(contentOnlySource.id, Date.now());
+
         const bDetached = await PaidDeckVerificationSourceQueryEngine.detach(verificationSource.id, Date.now());
         assert(bDetached === true, "Detaching removes it from the working set");
 
@@ -472,8 +537,20 @@ async function runDatabaseTier()
         );
 
         const declarations = await SourceLicenceDeclarationQueryEngine.findAllByDeckId(testDeckId);
-        assert(declarations.length === 2, "Both acts are in the log — the attachment was not erased by the removal");
-        assert(declarations[0].event === "ATTACHED" && declarations[1].event === "DETACHED", "The log reads in the order it happened");
+        assert(
+            declarations.length === 3,
+            "Every act is in the log — two attachments and a removal, and the removal erased neither attachment",
+        );
+        assert(
+            declarations.map(declaration => declaration.event).join(",") === "ATTACHED,ATTACHED,DETACHED",
+            "The log reads in the order it happened",
+        );
+
+        assert(
+            declarations.some(declaration => declaration.usageMode === sourceUsageModes.CONTENT_ONLY),
+            "The permanent log records the mode the source was declared under, so what the deck was written "
+            + "from stays answerable after the source is detached",
+        );
 
         const heldAfterDetach = await ReferencedProofSourceHashes.findForUser(testUserId);
         assert(

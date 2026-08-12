@@ -65,6 +65,41 @@ dialog-box.age-verification-dialog .age-verification-note
     line-height: 1.35;
 }
 
+/* The guardian consent code. Centred and spaced so six digits read as a code
+   rather than as ordinary text, matching how the same code is presented in the
+   email it came from. */
+dialog-box.age-verification-dialog .guardian-code-input
+{
+    text-align: center;
+    letter-spacing: 0.4em;
+    font-size: 1.15rem;
+    font-family: monospace;
+}
+
+/* Secondary actions that sit inline inside the note paragraph — resending the
+   code and going back to change the address. Buttons rather than anchors
+   because they act on this dialog and navigate nowhere. */
+dialog-box.age-verification-dialog .link-button
+{
+    background: none;
+    border: none;
+    padding: 0;
+    margin-left: 6px;
+    font-size: inherit;
+    font-family: inherit;
+    color: var(--accent-color, #5a9cff);
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+dialog-box.age-verification-dialog .link-button:disabled
+{
+    color: inherit;
+    opacity: 0.6;
+    text-decoration: none;
+    cursor: not-allowed;
+}
+
 dialog-box.age-verification-dialog .age-verification-error
 {
     color: #ff6b6b;

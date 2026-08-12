@@ -35,6 +35,16 @@
  *      must behave exactly as it did before: everything delivered, no trim, no
  *      `morePending`.
  *
+ *   4. WITHHELD PAID CONTENT DOES NOT STALL OR SILENTLY VANISH FROM THE
+ *      SERVER'S OWN DATA. A deck tagged with a paidDeckId the account has no
+ *      active license for is genuinely present and matched by the server's
+ *      own collection query (it is not filtered out upstream) but is never
+ *      delivered to the client, and the cursor still advances past it so the
+ *      drain does not stall re-fetching it forever. This is the server-side
+ *      precondition behind a real client-side bug: a deck whose PARENT is
+ *      withheld this way used to make the client infer the child was
+ *      deleted and cascade-delete it — see DeckOrphanResolver.js.
+ *
  * Self-contained: the real endpoint runs against an in-memory stand-in for
  * MongoDB, so there is no Mongo, no Redis and no network. Nothing to opt into
  * and nothing to skip.
@@ -185,6 +195,12 @@ class InMemoryCollection
     async countDocuments(filter)
     {
         return this.documents.filter((document) => documentMatchesFilter(document, filter)).length;
+    }
+
+    async findOne(filter)
+    {
+        const matched = this.documents.find((document) => documentMatchesFilter(document, filter));
+        return matched ? { ...matched } : null;
     }
 }
 
@@ -691,6 +707,57 @@ async function runDeletionHeavyChecks()
     assert(largestTotalIncrease === 0, `The total never grew with tombstones in the mix (largest increase ${largestTotalIncrease})`);
 }
 
+async function runWithheldPaidDeckChecks()
+{
+    section("A paid deck with no resolvable license is withheld, not lost");
+
+    const baseTime = Date.UTC(2026, 0, 1, 0, 0, 0);
+    const database = new InMemoryDatabase();
+
+    database.seed(DatabaseConstants.DECKS_COLLECTION,
+    [
+        {
+            userId: TEST_USER_ID,
+            serverUpdatedAt: new Date(baseTime + 10),
+            data: { id: "ordinary-deck", additionalData: {} },
+        },
+        {
+            userId: TEST_USER_ID,
+            serverUpdatedAt: new Date(baseTime + 20),
+            data: { id: "unlicensed-paid-deck", additionalData: { paidDeckId: "unlicensed-paid-deck" } },
+        },
+    ]);
+    database.seed(DatabaseConstants.DELETIONS_COLLECTION, []);
+
+    activeDatabaseHolder.database = database;
+
+    // No row seeded in DECK_LICENSES_COLLECTION for this user/deck at all —
+    // KeyManagementService.getLicense's findOne correctly returns null, and
+    // getPaidDeckContentKeyBufferForUser returns null without ever touching
+    // the master key, exactly like a real never-purchased deck.
+    const decksCollection = database.collection(DatabaseConstants.DECKS_COLLECTION);
+    const rawMatchCountIncludingWithheld = await decksCollection.countDocuments({ userId: TEST_USER_ID });
+    assert(rawMatchCountIncludingWithheld === 2, "The server's own collection query matches both decks, including the one about to be withheld — it is genuinely counted, not filtered out upstream");
+
+    const cycles = await runDrain();
+
+    const deliveredDeckIds = new Set();
+    for (const cycle of cycles)
+    {
+        for (const change of cycle.changes)
+        {
+            if (change.entityType === entityTypes.DECK)
+            {
+                deliveredDeckIds.add(change.entityId);
+            }
+        }
+    }
+
+    assert(deliveredDeckIds.has("ordinary-deck"), "The ordinary deck was delivered normally");
+    assert(!deliveredDeckIds.has("unlicensed-paid-deck"), "The unlicensed paid deck was withheld — never delivered to the client");
+    assert(cycles[cycles.length - 1].morePending === false, "The drain still terminated cleanly with a withheld row present (the cursor advanced past it rather than stalling)");
+}
+
 async function main()
 {
     console.log("CogniumLearn — chunked sync drain verification");
@@ -698,6 +765,7 @@ async function main()
     await runChunkedDrainChecks();
     await runSingleCycleChecks();
     await runDeletionHeavyChecks();
+    await runWithheldPaidDeckChecks();
 
     console.log("\n---------------------------------------------");
     console.log(`Passed: ${passedCount}   Failed: ${failedCount}`);

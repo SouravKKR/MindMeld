@@ -52,6 +52,20 @@ class EmailSenderIdentities
      * under the same name as "we fixed your bug" would bury it.
      */
     static GRIEVANCE = "CogniumLearn Grievance Office";
+
+    /**
+     * The code that asks a parent or lawful guardian to consent to a Child's
+     * account being processed.
+     *
+     * Separate from SECURITY even though it carries a six-digit code, for the
+     * same reason GRIEVANCE is separate from SUPPORT: the recipient is not a
+     * user, did not ask for anything, and is being asked to make a decision
+     * rather than to confirm one they already made. Filing it under "Security"
+     * would read as an attempt to break into an account they do not have, and
+     * the likeliest response to that is to delete it — which leaves a child
+     * blocked and a consent unrecorded.
+     */
+    static GUARDIAN_CONSENT = "CogniumLearn Parental Consent";
 }
 
 module.exports = EmailSenderIdentities;

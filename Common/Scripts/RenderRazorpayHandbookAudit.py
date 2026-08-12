@@ -17,6 +17,8 @@ Run with the repo's Python venv:
     Agent/.venv/Scripts/python.exe Common/Scripts/RenderRazorpayHandbookAudit.py
 """
 
+import os
+from datetime import datetime
 from pathlib import Path
 
 from reportlab.lib.pagesizes import A4
@@ -59,7 +61,9 @@ CONTENT_WIDTH = PAGE_WIDTH - LEFT_MARGIN - RIGHT_MARGIN
 
 OUTPUT_PATH = Path(__file__).resolve().parent.parent / "Reports" / "RazorpayHandbookComplianceReport.pdf"
 DOCUMENT_TITLE = "Razorpay Handbook Compliance Report"
-DOCUMENT_DATE = "5 August 2026"
+# Stamped at render time. This report is re-derived on every audit, so a
+# hardcoded date would date it to whenever the file was last hand-edited.
+DOCUMENT_DATE = datetime.now().strftime("%-d %B %Y") if os.name != "nt" else datetime.now().strftime("%#d %B %Y")
 
 
 # --- Status and action vocabulary (requirements section E) ----------------
@@ -724,20 +728,25 @@ def build_story():
              "tier follows from the integration model rather than being asserted.",
              ACTION_NONE],
             ["28. A justified inventory of every payment-page script [PCI 6.4.3]",
-             STATUS_DONE,
+             STATUS_PART,
              "<font face='Courier'>Common/ReadmeFiles/PaymentPageScriptInventory.md</font> lists "
              "each payment surface, the one authorised remote script and why it cannot be pinned, "
-             "the first-party set, and an explicit table of excluded categories. It has been kept "
-             "current: it already names the new organization credits surface as a payment entry "
-             "point.",
-             ACTION_NONE],
+             "the first-party set, and an explicit table of excluded categories &mdash; and it "
+             "already names the organization credits surface as a payment entry point. It is "
+             "nevertheless <b>incomplete</b>: loading the app in a real browser during this audit "
+             "showed the checkout script fetching a second remote script of its own from "
+             "<font face='Courier'>cdn.razorpay.com/static/cx/razorpay-risk-detection/bundle.js</font>, "
+             "an origin the inventory does not mention at all. An inventory that omits a script the "
+             "payment page actually requests cannot answer the question PCI 6.4.3 asks of it.",
+             ACTION_CHANGE],
             ["29. Tamper detection reaches a human [PCI 11.6.1]",
              STATUS_PART,
-             "The strict CSP candidate ships report-only and its reports land in the admin Alerts "
-             "tab through <font face='Courier'>/Security/CspReport</font>, so a script from an "
-             "unexpected origin does reach a person. What is missing is change detection on the "
-             "authorised scripts themselves &mdash; control 113, and unsolvable in-repo for a file "
-             "the vendor mutates deliberately.",
+             "The strict CSP is now the ENFORCED policy and carries "
+             "<font face='Courier'>report-uri</font>, so violations keep landing in the admin "
+             "Alerts tab through <font face='Courier'>/Security/CspReport</font> and a script from "
+             "an unexpected origin reaches a person whichever mode is selected. What is missing is "
+             "change detection on the authorised scripts themselves &mdash; control 113, and "
+             "unsolvable in-repo for a file the vendor mutates deliberately.",
              ACTION_CHANGE],
             ["30. Subresource Integrity wherever a script can be pinned",
              STATUS_NA,
@@ -1157,19 +1166,23 @@ def build_story():
              "results.",
              ACTION_NONE],
             ["83. [B4] The payment page is defended by an ENFORCED policy",
-             STATUS_PART,
-             "Judged on the enforced policy, not the candidate. The enforced compatible CSP locks "
-             "<font face='Courier'>object-src</font>, <font face='Courier'>base-uri</font>, "
-             "<font face='Courier'>frame-ancestors</font> and "
-             "<font face='Courier'>form-action</font>, but keeps "
-             "<font face='Courier'>'unsafe-inline'</font> and a blanket "
-             "<font face='Courier'>https:</font> in <font face='Courier'>script-src</font>, which "
-             "does not block injected script. The strict candidate that would ships report-only and "
-             "is not yet promoted &mdash; that, and only that, is what keeps this partial. The "
-             "premise the strict policy rests on is now true again: the stray empty inline "
-             "<font face='Courier'>&lt;script&gt;</font> is gone from "
-             "<font face='Courier'>Main/index.html</font> and from the built shell, so neither "
-             "document contains an inline script of any kind.",
+             STATUS_DONE,
+             "Judged on the enforced policy, not a candidate &mdash; and the strict policy is now "
+             "the ENFORCED default. <font face='Courier'>script-src</font> drops "
+             "<font face='Courier'>'unsafe-inline'</font> and "
+             "<font face='Courier'>'unsafe-eval'</font> and replaces blanket "
+             "<font face='Courier'>https:</font> with two named origins, so an injected "
+             "<font face='Courier'>&lt;script&gt;</font> on the payment page is genuinely blocked. "
+             "The permissive policy survives only when "
+             "<font face='Courier'>CONTENT_SECURITY_POLICY_MODE</font> is set to "
+             "<font face='Courier'>compatible</font>, and a mangled value falls towards strict; no "
+             "env file present sets it. <b>One collateral effect was observed at runtime and needs "
+             "attention:</b> the enforced allow-list names "
+             "<font face='Courier'>checkout.razorpay.com</font> but not "
+             "<font face='Courier'>cdn.razorpay.com</font>, so the risk-detection bundle Razorpay's "
+             "own checkout script fetches is refused on every page load, in every environment. The "
+             "policy is doing its job; the allow-list is one origin short of what the provider "
+             "needs.",
              ACTION_CHANGE],
             ["84. [B5] Frontend supply chain controlled",
              STATUS_DONE,
@@ -1607,7 +1620,9 @@ def build_story():
                 ["14", "No reconciliation for the paid-but-not-settled case", "<b><font color='#1A6B62'>Absent</font></b>",
                  "Sweep reaches all three order-creating flows and alerts on every repair."],
                 ["15", "Third-party script on the payment page", "<b><font color='#1A6B62'>Absent</font></b>",
-                 "Ads moved off; only the Razorpay widget remains. SPA residual documented."],
+                 "Advertising removed from the product; the Razorpay widget is the only third-party "
+                 "script the markup loads. It pulls a second Razorpay origin of its own at runtime "
+                 "&mdash; see control 28; the origin is the provider's, but the inventory omits it."],
                 ["16", "Refund or chargeback leaving entitlement intact", "<b><font color='#B8791C'>Partly</font></b>",
                  "Reversed for credits, decks and organization pools; alert-only for subscriptions."],
                 ["17", "Payment reads not scoped to the buyer", "<b><font color='#1A6B62'>Absent</font></b>",
@@ -1645,20 +1660,28 @@ def build_story():
                  "against an organization pool block, which is now covered, that is small. Worth "
                  "scheduling, not worth rushing.",
                  ACTION_CHANGE],
-                ["83<br/>strict CSP still<br/>report-only",
-                 "The enforced policy keeps <font face='Courier'>'unsafe-inline'</font> and a blanket "
-                 "<font face='Courier'>https:</font> in <font face='Courier'>script-src</font>, so it "
-                 "does not block injected script on the payment page. This is now the largest "
-                 "remaining item on the whole surface, and the only one that would change what an "
-                 "ATTACKER can do rather than what this server does about it afterwards.",
-                 "Watch the <font face='Courier'>/Security/CspReport</font> stream over a normal "
-                 "traffic period, resolve whatever it names, then set "
-                 "<font face='Courier'>CONTENT_SECURITY_POLICY_MODE=strict</font>.",
-                 "<b>Yes for now &mdash; but it is the thing to do next.</b> Promoting blind could "
-                 "break the site, and the staged rollout is deliberately observable and reversible. "
-                 "The premise it rests on is now verified true: neither shell contains an inline "
-                 "script of any kind.",
-                 ACTION_CHANGE],
+                ["28, 83<br/>strict CSP blocks<br/>a Razorpay script",
+                 "The strict policy is now ENFORCED, which closes the previous pass's largest gap "
+                 "&mdash; injected script on the payment page is genuinely blocked. It also blocks "
+                 "something it should not. Loading the app in a real browser shows every page refuse "
+                 "<font face='Courier'>cdn.razorpay.com/static/cx/razorpay-risk-detection/bundle.js</font>, "
+                 "a script Razorpay's own checkout fetches for itself, because the allow-list names "
+                 "<font face='Courier'>checkout.razorpay.com</font> only. No env file overrides the "
+                 "policy, so this is the behaviour in production too. A second request to "
+                 "<font face='Courier'>checkout-static-next.razorpay.com/build/undefined</font> is "
+                 "also refused, and that literal <font face='Courier'>undefined</font> suggests the "
+                 "checkout script is failing to derive something it expects.",
+                 "Add <font face='Courier'>https://cdn.razorpay.com</font> to "
+                 "<font face='Courier'>SecurityHeaders.STRICT_SCRIPT_ORIGINS</font> &mdash; a named "
+                 "first-party provider origin, so the policy's strength is unchanged. Record it in "
+                 "the script inventory, re-check the console for any further refusal, and add a "
+                 "violation assertion to <font face='Courier'>VerifySecurityHardening.mjs</font> so "
+                 "the next policy change cannot repeat this silently.",
+                 "<b>No.</b> A fraud-detection component the provider ships is disabled today, in "
+                 "every environment, and nothing alerts on it &mdash; a refused script is a console "
+                 "message, not an exception, so the payment still completes and no gate notices. "
+                 "This was found by watching a browser, which is the only way it could be.",
+                 ACTION_NOW],
                 ["120<br/>checklist misses<br/>a whole flow",
                  "The adversarial checklist contains no mention of the organization or credit-deal "
                  "flow. Its manual rows were already unwalked; the sharper problem is that walking "
@@ -1771,9 +1794,11 @@ def build_story():
                  "three of four flows including the largest. A reversed subscription charge is still "
                  "alert-only."],
                 ["Client-side and transport security", "Medium", "8.5",
-                 "Ads off the payment path with a single enforced caller; no inline script in either "
-                 "shell; full header baseline; TLS intact. Held back, alone, by a strict CSP still "
-                 "riding report-only."],
+                 "Advertising removed from the product outright; no inline script in either shell; "
+                 "full header baseline; TLS intact; and the strict CSP is now the enforced default, "
+                 "so injected script on the payment page is genuinely blocked. Held back by the "
+                 "collateral of that promotion: the allow-list is one origin short and refuses "
+                 "Razorpay's own risk-detection bundle, unnoticed until a browser was watched."],
                 ["Secrets and configuration", "Medium", "9.5",
                  "Production keys blank, no env file ever committed, test prefixes and the absence "
                  "of duplicate keys both re-confirmed on disk, fatal boot gate in both directions."],
@@ -1798,47 +1823,53 @@ def build_story():
             "longer the same weakness: <i>this system now prevents loss considerably better than it "
             "would notice one.</i> Nothing can take money without provisioning, nothing can "
             "provision without money, and all three order-creating flows are swept, reversed and "
-            "asserted end to end. But there is still no comparison of this ledger against an "
-            "accounting source, no named owner for bank reconciliation, and a payment page whose "
-            "enforced policy would not block injected script. A determined attacker who got past "
-            "the prevention layer would meet a per-payment alert and very little else."),
+            "asserted end to end. The payment page's enforced policy now genuinely blocks injected "
+            "script, which was the last prevention gap. But there is still no comparison of this "
+            "ledger against an accounting source and no named owner for bank reconciliation, and "
+            "this pass found the detection weakness reaching further than expected: the strict "
+            "policy has been quietly refusing one of Razorpay's own scripts in every environment, "
+            "and nothing anywhere noticed, because a refused script is a console message rather "
+            "than an exception. A determined attacker who got past the prevention layer would meet "
+            "a per-payment alert and very little else."),
         Spacer(1, 9),
         Paragraph("If only three things are done", styles["h3"]),
         Paragraph(
-            "None of the three is code, which is itself the finding. <b>Confirm the four Razorpay "
+            "Only one of the three is code, which is itself the finding. <b>Allow-list "
+            "<font face='Courier'>cdn.razorpay.com</font> and record it in the script inventory</b> "
+            "&mdash; the provider's own risk-detection bundle is being blocked by our policy on "
+            "every page load in every environment, and the fix is one named origin that weakens "
+            "nothing; add the CSP-violation assertion to the hardening harness in the same change, "
+            "so the next policy edit cannot repeat this silently. <b>Confirm the four Razorpay "
             "Dashboard settings</b>, auto-capture first: it is the only remaining way a customer "
             "could be charged and correctly receive nothing, because the code would refuse to "
             "provision an uncaptured payment exactly as it should while every control in this report "
-            "passed. Ten minutes for someone with dashboard access. <b>Watch the CSP report stream "
-            "and promote the strict policy</b> &mdash; the last control that would change what an "
-            "attacker can do on the payment page rather than what this server does about it "
-            "afterwards; the evidence it needs is already being collected, so this is a matter of "
-            "reading it and flipping one variable. <b>Name an owner and a cadence for bank "
-            "reconciliation</b>, which costs nothing to build and closes the widest remaining hole "
-            "in detection: prevention here is now thorough enough that the realistic failure is one "
-            "nobody notices rather than one nobody stopped.", styles["body"]),
+            "passed. Ten minutes for someone with dashboard access. <b>Name an owner and a cadence "
+            "for bank reconciliation</b>, which costs nothing to build and closes the widest "
+            "remaining hole in detection: prevention here is now thorough enough that the realistic "
+            "failure is one nobody notices rather than one nobody stopped.", styles["body"]),
     ]))
 
     # 26. Closing line.
     story.append(Spacer(1, 12))
     story.append(HorizontalRule(CONTENT_WIDTH, 0.6, RULE_HAIRLINE, top_padding=2, bottom_padding=6))
     story.append(Paragraph(
-        "Derived from branch <b>main</b> at commit <b>3e5999a</b>. The working tree was <b>not "
-        "clean</b>: 859 paths differ, an in-progress organization feature &mdash; 49 more than at the "
-        "last pass, including an organization deck shelf that did not exist then and is audited here. "
-        "Audited files differing from the commit include CreateOrganizationCreditDeal.js, the "
-        "OrganizationAdmin/Credits and OrganizationAdmin/Decks directories, "
-        "OrganizationCreditDealCompletionService, PaymentAccessPolicy, PaymentRequestSchema, "
-        "PendingPaymentReconciler, PaymentReversalService, RefundPolicy, CheckoutReceiptIdentifier, "
-        "SettlementAmountGuard, TimeToLiveIndexReconciler and the four payment harnesses (all "
-        "untracked); and HandleRazorpayWebhook.js, both pending-order query engines, "
-        "CreditDealPaymentQueryEngine, OrganizationCreditLedger, both buyer initiation endpoints, "
-        "PaymentAttemptQueryEngine, WebhookEventQueryEngine, HandleOrganizationEndpoints.js, "
-        "Dock/index.js and Main/index.html (modified). <b>Every one was audited exactly as it exists "
-        "on disk</b> &mdash; which is why the organization credit deal and the deck shelf appear in "
-        "this report at all, since neither exists in any commit yet. The four payment harnesses were "
-        "executed during this audit and reported 302 assertions with zero failures; the four "
-        "organization harnesses reported a further 140. No source file was modified to produce this "
+        "Derived from branch <b>native-on-device-llm</b>, which advanced from commit "
+        "<b>9ad446c</b> to <b>e6dee9f</b> while this audit ran &mdash; an in-progress on-device-LLM "
+        "feature being committed in parallel. The working tree was <b>not clean</b> at either point. "
+        "<b>None of that movement touched the audited payment surface:</b> a diff of "
+        "<font face='Courier'>Payments/</font>, <font face='Courier'>Plans/</font>, "
+        "<font face='Courier'>Pricing/</font>, the credit, paid-deck, subscription and webhook "
+        "endpoints, the perimeter plugins and <font face='Courier'>Dock/index.js</font> across that "
+        "range is empty. The only audited paths differing from the commit are "
+        "<font face='Courier'>Dock/Endpoints/Plugins/EnsureAgeConsent.js</font> and three browser "
+        "suites under <font face='Courier'>Common/Testing/Main/</font> (modified), plus one "
+        "untracked scratch probe beside them; each was audited exactly as it exists on disk. "
+        "<font face='Courier'>Main/index.html</font> changed by one stylesheet link during the run "
+        "and carries no new script tag. "
+        "All four payment harnesses were executed during this audit and reported <b>311 assertions "
+        "with zero failures</b> (signatures 50, settlement reliability 51, adversarial 33, lifecycle "
+        "177). The runtime observation behind controls 28 and 83 was made by loading the real app in "
+        "a headless Chromium against a local server. No source file was modified to produce this "
         "report.",
         styles["closing"]))
 

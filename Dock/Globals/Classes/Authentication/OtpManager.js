@@ -3,6 +3,7 @@ const DatabaseConstants = require("../../Constants/DatabaseConstants");
 const ErrorCodes = require("../../Constants/ErrorCodes");
 const DatabaseConnector = require("../Database/DatabaseConnector");
 const AuthenticationQueryEngine = require("../Database/AuthenticationQueryEngine");
+const AccountIdentityResolver = require("./AccountIdentityResolver");
 const EmailSender = require("../Email/EmailSender");
 const User = require("../../Model/User");
 const { authenticationProviders } = require("../../Enumerations/AuthenticationProviders");
@@ -12,9 +13,10 @@ const { otpPurposes } = require("../../Enumerations/OtpPurposes");
  * OtpManager — issues and checks the six-digit codes emailed to an address.
  *
  * Codes are SCOPED BY PURPOSE. A code is issued for exactly one thing — signing
- * in, or confirming the contact address on an intellectual-property complaint —
- * and it is only ever accepted back for that same thing. The document is keyed
- * on (email, purpose), so the two live side by side.
+ * in, confirming the contact address on an intellectual-property complaint, or
+ * recording a parent's consent for a Child's account — and it is only ever
+ * accepted back for that same thing. The document is keyed on (email, purpose),
+ * so they live side by side.
  *
  * That scoping is not tidiness. Before it, the collection held one row per
  * email: a rightsholder confirming a copyright complaint would silently
@@ -23,9 +25,11 @@ const { otpPurposes } = require("../../Enumerations/OtpPurposes");
  * login endpoint, turning "prove you can read this inbox" into "here is a
  * session". Purpose is therefore compared on the way in AND on the way out.
  *
- * A complaint code never provisions an account. Only the LOGIN purpose runs the
+ * A non-login code never provisions an account. Only the LOGIN purpose runs the
  * signup path below; every other purpose returns a bare confirmation of the
- * address, because a complainant is a correspondent and not a user.
+ * address, because a complainant is a correspondent and not a user, and a
+ * consenting parent is answering about somebody else's account rather than
+ * asking for one of their own.
  *
  * Backward compatibility: a stored document written before purposes existed has
  * no `purpose` field and reads as LOGIN, so codes in flight across a deploy
@@ -114,9 +118,12 @@ class OtpManager
      *
      * @param {string} rawEmail
      * @param {number} purpose an otpPurposes value; defaults to LOGIN
+     * @param {object} deliveryContext extra values the wording for THIS purpose needs
+     *   (the child's name on a guardian-consent code). Ignored by purposes whose
+     *   email needs nothing beyond the code, so no caller has to supply it.
      * @returns {Promise<{ok: boolean, reason?: string, isNewUser?: boolean, retryAfterSeconds?: number}>}
      */
-    static async requestOtp(rawEmail, purpose = otpPurposes.LOGIN)
+    static async requestOtp(rawEmail, purpose = otpPurposes.LOGIN, deliveryContext = {})
     {
         const email = OtpManager.#normaliseEmail(rawEmail);
         if (!email)
@@ -173,7 +180,7 @@ class OtpManager
             await collection.deleteMany({ email: email, purpose: { $exists: false } });
         }
 
-        await OtpManager.#deliverCode(email, sixDigitCode, effectivePurpose);
+        await OtpManager.#deliverCode(email, sixDigitCode, effectivePurpose, deliveryContext);
 
         // Only meaningful for a login: it drives the "tell us your name" step of
         // the sign-in dialog. A complaint confirmation deliberately does not
@@ -200,13 +207,28 @@ class OtpManager
      * @param {string} email
      * @param {string} sixDigitCode
      * @param {number} purpose
+     * @param {object} deliveryContext
      * @returns {Promise<void>}
      */
-    static async #deliverCode(email, sixDigitCode, purpose)
+    static async #deliverCode(email, sixDigitCode, purpose, deliveryContext)
     {
         if (purpose === otpPurposes.INTELLECTUAL_PROPERTY_COMPLAINT_VERIFICATION)
         {
             await EmailSender.sendIntellectualPropertyComplaintCodeEmail(email, sixDigitCode);
+            return;
+        }
+
+        if (purpose === otpPurposes.GUARDIAN_CONSENT_VERIFICATION)
+        {
+            // The expiry is quoted in the body, so it is passed from here rather
+            // than read back from this class by EmailSender — which requires
+            // this module, and would be a require cycle in the other direction.
+            await EmailSender.sendGuardianConsentCodeEmail(
+                email,
+                sixDigitCode,
+                (deliveryContext || {}).childDisplayName || "",
+                OtpManager.OTP_EXPIRY_MINUTES
+            );
             return;
         }
 
@@ -295,7 +317,13 @@ class OtpManager
             return { ok: true, email: email };
         }
 
-        let user = await AuthenticationQueryEngine.getUserByEmail(email);
+        // Resolves by email — the only identity space Email+OTP has — through
+        // the same shared resolver Google login uses, so a same-email
+        // Google-provider row (living under a different id) is found and
+        // consistently preferred over minting yet another split account. No
+        // separate candidateId: a brand-new OTP account's id IS the email,
+        // so the email lookup alone already covers that case.
+        let user = await AccountIdentityResolver.resolveAccountForLogin("", email, authenticationProviders.EMAIL_OTP);
 
         if (!user)
         {

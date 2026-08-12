@@ -36,6 +36,7 @@ sys.path.insert(0, str(AGENT_DIRECTORY))
 from Globals.Classes.Automation.Pools.ModelPool import ModelPool
 from Globals.Classes.Automation.Pools.PromptPool import PromptPool
 from Globals.Classes.Generation.AdminSourceCorpus import AdminSourceCorpus
+from Globals.Enumerations.SourceUsageModes import SourceUsageModes
 from Workflows.MapTopicsWithContent.SourceGroundedChunkGenerator import SourceGroundedChunkGenerator
 
 
@@ -203,6 +204,26 @@ def verify_fallback_cannot_see_a_document() -> None:
     assert_that(
         (MapTopicsWithContent({})._payload or {}).get("contentSources") is None,
         "...and an ordinary run without content sources reads as having none rather than raising",
+    )
+
+    # A content-only source is still a content source. The partition that keeps
+    # it out of the verification pass happens on the OTHER side of the pipeline,
+    # against the stored rows — nothing on this path may look at usageMode and
+    # decide to skip it, or a document the administrator licensed to write from
+    # would silently write nothing.
+    content_only_workflow = MapTopicsWithContent({
+        "contentSources": [{"informationSourceId": "src-1", "usageMode": int(SourceUsageModes.CONTENT_ONLY)}],
+    })
+
+    assert_that(
+        (content_only_workflow._payload.get("contentSources") or []) != [],
+        "a run whose sources are all content-only still arrives with content sources to generate from",
+    )
+
+    assert_that(
+        "usageMode" not in orchestrator_source.split("def __write_source_grounded_provenance")[0],
+        "nothing before the provenance writer branches on usageMode — the selection was Dock's to make, "
+        "and re-deciding it here would give one source two different answers",
     )
 
 

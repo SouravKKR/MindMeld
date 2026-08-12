@@ -1246,6 +1246,72 @@ function applyPhaseProgressSeries(recorder)
                 + `no new deck tombstones`;
         });
 
+        // ── A permanently unresolvable parent is reparented, never deleted ──
+
+        let unresolvableParentDeckId = "";
+        let unresolvableParentDeckShortName = "";
+        let unresolvableParentTombstonesBefore = 0;
+
+        await runCase("Seed a deck whose parent will never resolve, simulating a withheld or missing parent", async () =>
+        {
+            // A deck's parent can fail to arrive for reasons that have nothing to
+            // do with drain chunking — most commonly a paid deck the account has
+            // no license for, which the server withholds from every pull while
+            // still counting it toward the total (see Sync.js's
+            // resolvePaidContentKey). To a syncing client this looks identical to
+            // a parent id that simply does not exist, which is the simplest
+            // faithful way to reproduce it here without standing up a full
+            // paid-deck/license fixture.
+            const fixtureDeck = await probe.findDeckById(fixtureDeckId);
+            if (!fixtureDeck)
+            {
+                throw new Error("The fixture deck's own server row is missing — cannot clone a template from it.");
+            }
+
+            unresolvableParentTombstonesBefore = await probe.countDeletionTombstones(SyncDatabaseProbe.ENTITY_TYPE_DECK);
+
+            const seeded = await probe.cloneDeckWithParent(fixtureDeck, `nonexistent-parent-${RUN_TAG}`, "UnresolvedParent", FIXTURE_PREFIX);
+            unresolvableParentDeckId = seeded.deckId;
+            unresolvableParentDeckShortName = seeded.shortName;
+
+            return `seeded deck ${seeded.shortName} with parent nonexistent-parent-${RUN_TAG}`;
+        });
+
+        await runCase("An established device's incremental sync attaches the unresolvable-parent deck to root instead of deleting it", async () =>
+        {
+            // THE REGRESSION THIS CASE EXISTS FOR.
+            //
+            // A fresh device's bulk-snapshot pull already attached an
+            // unresolved-parent deck to root safely. An established device's
+            // INCREMENTAL pull instead treated it as a genuine orphan on the
+            // drain's final cycle, queued a deletion tombstone, and the
+            // server-side cascade turned that into a real delete of the deck
+            // (and everything under it) for every device. Device B already has
+            // a full local library from the cases above, so this sync exercises
+            // exactly that incremental path (SyncApplier#applyDeckChangesInOrder),
+            // never the fresh-device bulk-snapshot path.
+            const deviceB = devices[1];
+
+            await syncNowAndWait(deviceB);
+
+            const serverDeckAfter = await probe.findDeckById(unresolvableParentDeckId);
+            if (!serverDeckAfter)
+            {
+                throw new Error("The deck with an unresolvable parent was deleted server-side — an unresolved parent was mistaken for an orphan and cascade-deleted.");
+            }
+
+            const tombstonesAfter = await probe.countDeletionTombstones(SyncDatabaseProbe.ENTITY_TYPE_DECK);
+            if (tombstonesAfter > unresolvableParentTombstonesBefore)
+            {
+                throw new Error(`${tombstonesAfter - unresolvableParentTombstonesBefore} deck deletion tombstone(s) were queued for a deck whose parent simply never resolved.`);
+            }
+
+            await BrowserSuiteHelpers.returnToHome(deviceB.page);
+            await waitForDeckTile(deviceB.page, unresolvableParentDeckShortName, "the unresolvable-parent deck attached to root");
+
+            return "deck survived server-side, no new deletion tombstone, and it is visible on Home (attached to root)";
+        });
+
         // ── Bulk snapshot at scale ──────────────────────────────────────────
 
         await runCase("A brand-new device receives the whole multi-hundred-entity library", async () =>

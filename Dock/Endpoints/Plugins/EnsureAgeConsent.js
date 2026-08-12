@@ -31,7 +31,9 @@ const ErrorCodes = require("../../Globals/Constants/ErrorCodes");
  * Deliberately NOT blocked, so the user can always reach the flow that unblocks
  * them: the SPA shell and static assets, the login handshake, /GetUser,
  * /Logout, the legal documents and acceptance endpoints (which are gated ahead
- * of this one anyway), and the two age endpoints themselves.
+ * of this one anyway), and the age endpoints themselves — including BOTH
+ * guardian-consent stages, since an account in MINOR_AWAITING_GUARDIAN_CONSENT
+ * is blocked precisely while it needs to reach them.
  *
  * Fail-open on lookup errors, matching EnsureLegalAcceptance: a database hiccup
  * must never lock the entire API. It does NOT fail open on an unresolved state
@@ -63,8 +65,9 @@ const ALLOWLISTED_PATHS = new Set
     "/legaldocuments",
     "/legal/accept",
     "/age/state",
-    "/age/declaredateofbirth",
-    "/age/guardianconsent",
+    "/age/declareage",
+    "/age/guardianconsent/requestcode",
+    "/age/guardianconsent/verify",
     // The infringement-complaint channel and the public account-access report.
     // Same reasoning as in EnsureLegalAcceptance: they are unauthenticated
     // routes that read and write no user data, and a rightsholder must not be

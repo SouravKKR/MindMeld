@@ -4,6 +4,7 @@ const PaidDeckVerificationSourceQueryEngine = require("../Database/PaidDeckVerif
 const Persistence = require("../Persistence");
 const TaskDescriptor = require("../Task/TaskDescriptor");
 const TaskManager = require("../Task/TaskManager");
+const SourceUsageGate = require("./SourceUsageGate");
 const PersistenceConstants = require("../../Constants/PersistenceConstants");
 const { joinPath } = require("../../UtilityFunctions.js/JoinPath");
 const { taskExecutionTargets } = require("../../Enumerations/TaskExecutionTargets");
@@ -13,9 +14,9 @@ const { taskTypes } = require("../../Enumerations/TaskTypes");
  * SourceVerificationRunner — starts a source-grounded verification pass for one
  * deck, and reports on it while it runs.
  *
- * WHY THIS IS NOT AWAITED BY THE REQUEST. The pass reads every attached source
- * and checks every generated item against it, which takes minutes on a real
- * deck. Holding the HTTP request open for that would time out in the browser
+ * WHY THIS IS NOT AWAITED BY THE REQUEST. The pass reads every source attached
+ * for checking and compares every generated item against it, which takes minutes
+ * on a real deck. Holding the HTTP request open for that would time out in the browser
  * and leave the administrator with no idea whether the run was still going.
  *
  * WHY THE IN-PROCESS MARKER IS SAFE DESPITE BEING EPHEMERAL. The running/idle
@@ -39,6 +40,19 @@ class SourceVerificationRunner
     static STATE_RUNNING = "RUNNING";
     static STATE_FINISHED = "FINISHED";
     static STATE_FAILED = "FAILED";
+
+    /**
+     * Why a deck with sources attached still has nothing to check against.
+     *
+     * A static member rather than an inline string because the admin Run
+     * endpoint refuses the same case synchronously, before this class is ever
+     * reached, and the two refusals have to say the same thing — an
+     * administrator who sees one wording in the dialog and another in the run
+     * status has been told about two different problems.
+     */
+    static EVERY_SOURCE_IS_CONTENT_ONLY_DETAIL =
+        "Every source attached to this deck is set to write content only, so there is nothing to check the deck "
+        + "against. Set at least one source to check against, then run the check again.";
 
     /**
      * deckId -> {passId, state, startedAt, finishedAt, flagsRaised, detail}
@@ -104,12 +118,19 @@ class SourceVerificationRunner
     {
         const { provenanceDeckId, mainTaskId, ownerUserId, subjectName } = runRequest;
 
-        const verificationSources = await PaidDeckVerificationSourceQueryEngine.findActiveByDeckId(provenanceDeckId);
+        const attachedSources = await PaidDeckVerificationSourceQueryEngine.findActiveByDeckId(provenanceDeckId);
+        const verificationSources = SourceUsageGate.selectVerificationSources(attachedSources);
 
         if (verificationSources.length === 0)
         {
+            // The two empty cases are reported apart because they call for
+            // different actions. "Attach a source" is unhelpful — and reads as a
+            // bug — to an administrator looking at four attached sources they
+            // deliberately set to write content only.
             SourceVerificationRunner.#finish(provenanceDeckId, SourceVerificationRunner.STATE_FAILED, 0,
-                "No verification sources are attached to this deck.");
+                attachedSources.length === 0
+                    ? "No verification sources are attached to this deck."
+                    : SourceVerificationRunner.EVERY_SOURCE_IS_CONTENT_ONLY_DETAIL);
             return;
         }
 

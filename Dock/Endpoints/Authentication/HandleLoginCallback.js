@@ -5,6 +5,7 @@ const UserSession = require("../../Globals/Model/UserSession");
 const App = require("../../Globals/Classes/App");
 const AuthenticationQueryEngine = require("../../Globals/Classes/Database/AuthenticationQueryEngine");
 const AccessGate = require("../../Globals/Classes/Authentication/AccessGate");
+const AccountIdentityResolver = require("../../Globals/Classes/Authentication/AccountIdentityResolver");
 const SyncQueryEngine = require("../../Globals/Classes/Database/SyncQueryEngine");
 const UserRoleReconciliator = require("../../Globals/Classes/Authentication/UserRoleReconciliator");
 const OrganizationMemberQueryEngine = require("../../Globals/Classes/Organization/OrganizationMemberQueryEngine");
@@ -126,18 +127,15 @@ async function handleLoginCallback(request, response)
         return;
     }
 
-    // Look up by Google sub first; if absent, fall back to email match so
-    // a user who first signed up via email-OTP lands on the same record
-    // when they later use Google with the same address. Keeps "one
-    // identity per email" symmetric across both providers.
-    let existingUser = await AuthenticationQueryEngine.getUserById(user?.getId() || "");
-    if (!existingUser && user?.getAdditionalData()?.email)
+    // Resolves by BOTH the Google sub and the email on every login — not
+    // only as a fallback when the sub lookup misses — so an already-split
+    // identity (e.g. a pre-existing Email+OTP row under a different id)
+    // is detected and consistently resolved, instead of a sub-lookup hit
+    // silently shadowing a same-email account the OTP path would find.
+    let existingUser = await AccountIdentityResolver.resolveAccountForLogin(user?.getId() || "", user?.getAdditionalData()?.email || "", authenticationProviders.GOOGLE);
+    if (existingUser)
     {
-        existingUser = await AuthenticationQueryEngine.getUserByEmail(user.getAdditionalData().email);
-        if (existingUser)
-        {
-            user.setId(existingUser.getId());
-        }
+        user.setId(existingUser.getId());
     }
 
     // Whether this is a brand-new account decides if the one-time signup
