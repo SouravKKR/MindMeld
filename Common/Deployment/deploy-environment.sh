@@ -883,9 +883,21 @@ publish_desktop_release()
 
     log_step "Checking for a desktop release to publish..."
 
-    local manifest_status=0
-    ( cd "$REPOSITORY_ROOT" && node Common/Scripts/BuildDesktopUpdateManifest.js \
-        --domain "$ENVIRONMENT_DOMAIN" --output "$staging_directory" ) || manifest_status=$?
+    # Node is a native binary, so on Git Bash it does NOT understand the MSYS
+    # path mktemp hands back: given "/tmp/xxx" it writes to C:\tmp\xxx while the
+    # shell means somewhere else entirely. Converted once, here, rather than
+    # letting the two disagree silently — which is exactly how the first run of
+    # this staged its files into a directory the upload never looked at.
+    local staging_directory_for_node="$staging_directory"
+    if command -v cygpath >/dev/null 2>&1
+    then
+        staging_directory_for_node="$(cygpath -w "$staging_directory")"
+    fi
+
+    local manifest_output manifest_status=0
+    manifest_output="$( cd "$REPOSITORY_ROOT" && node Common/Scripts/BuildDesktopUpdateManifest.js \
+        --domain "$ENVIRONMENT_DOMAIN" --output "$staging_directory_for_node" 2>&1 )" || manifest_status=$?
+    printf '%s\n' "$manifest_output"
 
     if [ "$manifest_status" -eq 3 ]
     then
@@ -901,10 +913,33 @@ publish_desktop_release()
         return 1
     fi
 
+    # Taken from the builder's own report rather than by loading the manifest
+    # back through a second Node process, which would reintroduce the path
+    # mismatch above.
     local staged_version published_version
-    staged_version="$(node -e "process.stdout.write(require('$staging_directory/latest.json').version)")"
+    staged_version="$(printf '%s\n' "$manifest_output" | sed -n 's/^DESKTOP_RELEASE_VERSION=//p' | tail -n1)"
+
+    # An empty version is a broken run, never a reason to continue. Left
+    # unchecked it compares equal to an empty served version at the end and the
+    # step announces "release is live" having uploaded nothing at all — which is
+    # precisely what happened the first time this ran.
+    if [ -z "$staged_version" ]
+    then
+        log_error "The desktop manifest builder reported no version, so nothing can be published safely."
+        rm -rf "$staging_directory"
+        return 1
+    fi
+
+    if [ ! -f "$staging_directory/latest.json" ]
+    then
+        log_error "The desktop manifest was reported as staged but $staging_directory/latest.json does not exist."
+        log_error "That means the builder and this script disagree about where the staging directory is."
+        rm -rf "$staging_directory"
+        return 1
+    fi
+
     published_version="$(curl -fsS --max-time 20 "https://${ENVIRONMENT_DOMAIN}/DesktopUpdates/latest.json" 2>/dev/null \
-        | node -e "let raw=''; process.stdin.on('data', chunk => raw += chunk).on('end', () => { try { process.stdout.write(JSON.parse(raw).version || ''); } catch (parseError) { process.stdout.write(''); } })" || true)"
+        | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)"
 
     if [ -n "$published_version" ]
     then
@@ -930,27 +965,38 @@ publish_desktop_release()
 
     run_ssh "$base_node_target" "mkdir -p '$BASE_NODE_REPO_DIR/Dock/DesktopUpdates'"
 
+    # The installer goes up FIRST and latest.json last. An app that reads a
+    # manifest naming a file that has not finished uploading gets a failed
+    # download; the reverse order simply means the new version is announced a
+    # few seconds later than it exists.
     local staged_file
     for staged_file in "$staging_directory"/*
     do
-        copy_over_scp "$staged_file" "${base_node_target}:$BASE_NODE_REPO_DIR/Dock/DesktopUpdates/"
+        case "$staged_file" in
+            */latest.json) continue ;;
+        esac
+        copy_over_scp "$staged_file" "${base_node_target}:$BASE_NODE_REPO_DIR/Dock/DesktopUpdates/" \
+            || { log_error "Could not upload $(basename "$staged_file")."; rm -rf "$staging_directory"; return 1; }
     done
+
+    copy_over_scp "$staging_directory/latest.json" "${base_node_target}:$BASE_NODE_REPO_DIR/Dock/DesktopUpdates/" \
+        || { log_error "Could not upload latest.json."; rm -rf "$staging_directory"; return 1; }
 
     rm -rf "$staging_directory"
 
-    # latest.json is written last by the loop above only by luck of ordering, so
-    # the check that matters is this one: prove the manifest is actually being
-    # served before claiming the release is out.
+    # Proven by asking the public URL, not by the absence of an scp error. The
+    # files land in a directory Dock serves, and "it copied" is a weaker claim
+    # than "an installed app can now fetch it".
     local served_version
     served_version="$(curl -fsS --max-time 20 "https://${ENVIRONMENT_DOMAIN}/DesktopUpdates/latest.json" 2>/dev/null \
-        | node -e "let raw=''; process.stdin.on('data', chunk => raw += chunk).on('end', () => { try { process.stdout.write(JSON.parse(raw).version || ''); } catch (parseError) { process.stdout.write(''); } })" || true)"
+        | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)"
 
-    if [ "$served_version" = "$staged_version" ]
+    if [ -n "$served_version" ] && [ "$served_version" = "$staged_version" ]
     then
         log_success "Desktop release $staged_version is live — installed apps will offer it at next launch."
     else
         log_warning "Uploaded desktop release $staged_version but /DesktopUpdates/latest.json reports '${served_version:-nothing}'."
-        log_warning "The upload may still be propagating; check https://${ENVIRONMENT_DOMAIN}/DesktopUpdates/latest.json."
+        log_warning "Check https://${ENVIRONMENT_DOMAIN}/DesktopUpdates/latest.json before relying on this release."
     fi
 }
 

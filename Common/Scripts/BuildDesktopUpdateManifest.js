@@ -101,6 +101,17 @@ class DesktopUpdateManifestBuilder
 
         console.log(`[DesktopUpdateManifest] Staged ${installer.fileName} (${(installer.sizeBytes / 1048576).toFixed(1)} MB) and latest.json for ${declaredVersion}.`);
         console.log(`[DesktopUpdateManifest] Download URL: ${manifest.platforms[DesktopUpdateManifestBuilder.WINDOWS_PLATFORM_KEY].url}`);
+
+        // Reported on stdout in a form the shell can read directly, rather than
+        // leaving the caller to load the manifest back with its own `node -e`.
+        // That round trip is what broke the first run of this: the staging
+        // directory comes from `mktemp -d`, which on Git Bash is an MSYS path
+        // like /tmp/xxx, and Node — a Windows binary — resolved the same string
+        // to C:\tmp\xxx. Two different directories, no error, an empty version,
+        // and a publish step that went on to announce success having uploaded
+        // nothing. One process resolving the path once removes the mismatch.
+        console.log(`DESKTOP_RELEASE_VERSION=${declaredVersion}`);
+        console.log(`DESKTOP_RELEASE_INSTALLER=${installer.fileName}`);
         return 0;
     }
 
