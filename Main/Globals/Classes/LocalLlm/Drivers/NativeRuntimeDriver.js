@@ -88,6 +88,33 @@ class NativeRuntimeDriver extends LocalLlmDriver
         }
     }
 
+    /**
+     * Turns a rejected command into something a learner can act on.
+     *
+     * The installed app updates on its own schedule while the page it loads is
+     * the live site, so a shell OLDER than this frontend is a completely
+     * ordinary state — and the whole installed base passes through it after
+     * every frontend deploy that adds a command. Tauri's own rejection for
+     * that case reads "Command delete_native_model not found", which names an
+     * internal symbol and suggests nothing to do about it.
+     *
+     * The distinction is worth drawing rather than flattening: "update the
+     * app" is a real, sufficient instruction, and reporting a version skew as
+     * a deletion failure would send someone looking for a fault that is not
+     * there.
+     */
+    static #describeCommandFailure(commandError, descriptor)
+    {
+        const failureMessage = commandError?.message || String(commandError || "");
+
+        if (/not found|not allowed|unknown command|missing permission/i.test(failureMessage))
+        {
+            return new Error("This version of the CogniumLearn app can't delete models yet. Update the app, then try again.");
+        }
+
+        return new Error(`Could not delete ${descriptor.parameterLabel || descriptor.modelKey}: ${failureMessage}`);
+    }
+
     async probeCapability()
     {
         if (!NativeBridge.isAvailable())
@@ -405,11 +432,18 @@ class NativeRuntimeDriver extends LocalLlmDriver
             throw new Error("The on-device model can only be deleted from inside the CogniumLearn app.");
         }
 
-        await NativeBridge.invoke(NativeLlmProtocolConstants.COMMAND_DELETE_MODEL,
+        try
         {
-            modelKey: descriptor.modelKey,
-            weightsFileName: descriptor.weightsFileName,
-        });
+            await NativeBridge.invoke(NativeLlmProtocolConstants.COMMAND_DELETE_MODEL,
+            {
+                modelKey: descriptor.modelKey,
+                weightsFileName: descriptor.weightsFileName,
+            });
+        }
+        catch (deletionError)
+        {
+            throw NativeRuntimeDriver.#describeCommandFailure(deletionError, descriptor);
+        }
 
         if (this.#loadedModelKey === descriptor.modelKey)
         {

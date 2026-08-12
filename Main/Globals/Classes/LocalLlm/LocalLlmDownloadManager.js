@@ -91,9 +91,22 @@ class LocalLlmDownloadManager
             error: null,
         });
 
+        // The TARGET model's size, not the selected one's. They are the same
+        // for the tier picker's own download and different whenever the table
+        // fetches a model the learner has not switched to — and a progress bar
+        // denominated in the wrong model's bytes would sit at the wrong
+        // percentage for the whole download.
+        const targetDescriptor = LocalLlmManifestClient.getDescriptor(targetModelKey);
+
         window.dispatchEvent(new CustomEvent(LocalLlmDownloadEvents.STARTED,
         {
-            detail: { modelKey: targetModelKey, totalBytes: LocalLlmCapability.getEstimatedTotalBytes() }
+            detail:
+            {
+                modelKey: targetModelKey,
+                totalBytes: targetDescriptor && Number.isFinite(targetDescriptor.totalBytes)
+                    ? targetDescriptor.totalBytes
+                    : 0,
+            }
         }));
 
         try

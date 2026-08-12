@@ -432,13 +432,27 @@ class LocalLlmModelTable extends HTMLElement
         await this.#render();
     }
 
+    /**
+     * Written as text rather than markup. Everything else in this table is
+     * built from the catalogue, but this string comes back from a driver — and
+     * on the native path that means it originated in an operating-system error
+     * that can contain a file path or any other character. Interpolated into
+     * innerHTML, an angle bracket in a Windows error would silently swallow
+     * the rest of the message the learner needs to read.
+     */
     #showRowError(modelKey, message)
     {
-        const rowElement = this.querySelector(`[data-model-key="${modelKey}"] .local-llm-model-cell-status`);
-        if (rowElement)
+        const statusCell = this.querySelector(`[data-model-key="${modelKey}"] .local-llm-model-cell-status`);
+        if (!statusCell)
         {
-            rowElement.innerHTML = `<span class="local-llm-model-status-failed">${message}</span>`;
+            return;
         }
+
+        const errorElement = document.createElement("span");
+        errorElement.className = "local-llm-model-status-failed";
+        errorElement.textContent = message;
+
+        statusCell.replaceChildren(errorElement);
     }
 
     #synchroniseProgressPolling()
