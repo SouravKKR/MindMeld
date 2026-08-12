@@ -544,7 +544,7 @@ dependencies = [
 
 [[package]]
 name = "cognium-learn"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "encoding_rs",
  "futures-util",

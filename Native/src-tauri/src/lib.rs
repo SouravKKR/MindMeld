@@ -16,6 +16,8 @@ pub mod llama_inference_engine;
 pub mod llm_commands;
 pub mod model_download_manager;
 pub mod system_capability_probe;
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+pub mod update_prompter;
 
 use llm_commands::NativeLlmState;
 
@@ -51,10 +53,30 @@ pub fn run()
     // resolved, so the plugin would otherwise be compiled into an Android build
     // and fail there instead.
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    let b_updater_configured = context.config().plugins.0.contains_key("updater");
+
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
-        if context.config().plugins.0.contains_key("updater")
+        if b_updater_configured
         {
             builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        }
+    }
+
+    // REGISTERING THE PLUGIN IS NOT THE SAME AS CHECKING FOR UPDATES. The
+    // plugin only makes the capability available; nothing looks at the endpoint
+    // until something calls it, so without this hook every release could be
+    // built, signed and published correctly and no installed app would ever
+    // notice. Nothing about that failure is visible from either end.
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    {
+        if b_updater_configured
+        {
+            builder = builder.setup(|application|
+            {
+                update_prompter::check_in_background(application.handle().clone());
+                Ok(())
+            });
         }
     }
 
