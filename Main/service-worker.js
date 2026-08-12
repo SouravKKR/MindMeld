@@ -21,6 +21,24 @@ const STATIC_ASSET_EXTENSIONS = new Set([
     "woff", "woff2", "ttf", "otf", "map",
 ]);
 
+// Paths this cache must never touch, however cacheable the extension looks.
+//
+// The on-device model weights live under /Assets/Models/ and are shards named
+// .bin, .json and .wasm — every one of which is in the list above. Caching them
+// here would store a SECOND full copy of a model that already has its own
+// store: WebLLM keeps the browser tier's shards in its own Cache backend, and
+// the native tier writes its weights straight to the app data directory. The
+// duplicate is a gigabyte or more per model, invisible, and buys nothing —
+// neither engine would ever read it.
+//
+// It is also the wrong layer to solve offline weights at. A model is only
+// usable if the engine that owns it has it, so "is the model available
+// offline" is that engine's question, not this cache's.
+const NEVER_CACHED_PATH_PREFIXES = [
+    "/Assets/Models/",
+    "/Assets/Runtime/",
+];
+
 self.addEventListener("install", (installEvent) =>
 {
     // Take over as soon as installed so offline support is active on the next navigation.
@@ -67,6 +85,11 @@ function isCacheableRequest(request)
 
     // Only ever cache assets from our own origin — never third-party scripts or API hosts.
     if (requestUrl.origin !== self.location.origin)
+    {
+        return false;
+    }
+
+    if (NEVER_CACHED_PATH_PREFIXES.some((excludedPrefix) => requestUrl.pathname.startsWith(excludedPrefix)))
     {
         return false;
     }
