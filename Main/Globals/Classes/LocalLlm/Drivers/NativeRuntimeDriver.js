@@ -42,6 +42,36 @@ class NativeRuntimeDriver extends LocalLlmDriver
         return requestId;
     }
 
+    /**
+     * Resolves a manifest URL against the origin serving this page.
+     *
+     * The whole descriptor is written for a browser, where "/Assets/Models/…"
+     * is complete because the document supplies the rest. Everything crossing
+     * into the native process loses that context and has to carry it
+     * explicitly.
+     *
+     * An already-absolute URL passes through unchanged, so a deployment that
+     * one day serves weights from another host — object storage, a CDN —
+     * keeps working without touching this.
+     */
+    static #toAbsoluteUrl(manifestUrl)
+    {
+        if (typeof manifestUrl !== "string" || manifestUrl.length === 0)
+        {
+            return "";
+        }
+
+        try
+        {
+            return new URL(manifestUrl, window.location.origin).href;
+        }
+        catch (resolutionError)
+        {
+            console.warn(`[NativeRuntimeDriver] Could not resolve "${manifestUrl}" against this origin: ${resolutionError?.message || resolutionError}`);
+            return manifestUrl;
+        }
+    }
+
     async probeCapability()
     {
         if (!NativeBridge.isAvailable())
@@ -127,7 +157,14 @@ class NativeRuntimeDriver extends LocalLlmDriver
             {
                 requestId: requestId,
                 modelKey: descriptor.modelKey,
-                weightsUrl: descriptor.weightsUrl,
+                // ABSOLUTE, always. The manifest serves a root-relative path
+                // because that is what a browser wants — it resolves against
+                // the document. The native side has no document: it hands the
+                // string to an HTTP client that rejects anything without a
+                // scheme and host, and the failure surfaces as the uselessly
+                // generic "builder error", naming neither the URL nor the
+                // reason.
+                weightsUrl: NativeRuntimeDriver.#toAbsoluteUrl(descriptor.weightsUrl),
                 weightsFileName: descriptor.weightsFileName,
                 expectedSha256: descriptor.sha256 || null,
                 expectedTotalBytes: Number.isFinite(descriptor.totalBytes) ? descriptor.totalBytes : 0,

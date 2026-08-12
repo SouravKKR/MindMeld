@@ -164,6 +164,19 @@ impl ModelDownloadManager
         progress_event_name: &str,
     ) -> Result<(), ModelDownloadError>
     {
+        // Checked before the request is built, because reqwest reports a URL it
+        // cannot parse as a bare "builder error" — naming neither the URL nor
+        // what was wrong with it. A root-relative path from the manifest is the
+        // realistic way to arrive here, and that message sent the reader
+        // looking at the network rather than at the string.
+        if !weights_url.starts_with("http://") && !weights_url.starts_with("https://")
+        {
+            return Err(ModelDownloadError::RequestFailed(format!(
+                "the weights URL must be absolute, got \"{weights_url}\" — the manifest serves \
+                 root-relative paths and the caller has to resolve them against its origin"
+            )));
+        }
+
         let http_client = reqwest::Client::new();
         let mut request_builder = http_client.get(weights_url);
 

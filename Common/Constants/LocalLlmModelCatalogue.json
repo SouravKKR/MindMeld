@@ -25,6 +25,9 @@
         "minimumMaxBufferSizeBytes": 268435456,
         "minimumMaxStorageBufferBindingSizeBytes": 1073741824,
         "minimumDeviceMemoryGigabytes": 4,
+        "permittedDeviceClasses": [
+            "DESKTOP"
+        ],
         "contextWindowTokens": 4096,
         "approximateTotalBytes": 883500000,
         "approximateTotalLabel": "~880 MB",
@@ -54,6 +57,9 @@
         "minimumMaxBufferSizeBytes": 268435456,
         "minimumMaxStorageBufferBindingSizeBytes": 1073741824,
         "minimumDeviceMemoryGigabytes": 4,
+        "permittedDeviceClasses": [
+            "DESKTOP"
+        ],
         "contextWindowTokens": 4096,
         "approximateTotalBytes": 1073741824,
         "approximateTotalLabel": "~1.0 GB",
@@ -83,6 +89,9 @@
         "minimumMaxBufferSizeBytes": 268435456,
         "minimumMaxStorageBufferBindingSizeBytes": 134217728,
         "minimumDeviceMemoryGigabytes": 2,
+        "permittedDeviceClasses": [
+            "DESKTOP"
+        ],
         "contextWindowTokens": 2048,
         "approximateTotalBytes": 367001600,
         "approximateTotalLabel": "~350 MB",
@@ -112,6 +121,9 @@
         "minimumMaxBufferSizeBytes": 268435456,
         "minimumMaxStorageBufferBindingSizeBytes": 134217728,
         "minimumDeviceMemoryGigabytes": 2,
+        "permittedDeviceClasses": [
+            "DESKTOP"
+        ],
         "contextWindowTokens": 2048,
         "approximateTotalBytes": 450887680,
         "approximateTotalLabel": "~430 MB",
@@ -143,7 +155,11 @@
         "minimumMaxBufferSizeBytes": 0,
         "minimumMaxStorageBufferBindingSizeBytes": 0,
         "minimumDeviceMemoryGigabytes": 0,
-        "minimumSystemMemoryMegabytes": 15000,
+        "minimumSystemMemoryMegabytes": 8000,
+        "permittedDeviceClasses": [
+            "DESKTOP",
+            "HANDHELD"
+        ],
         "recommendedThreadCount": 0,
         "contextWindowTokens": 4096,
         "approximateTotalBytes": 2104932762,
@@ -173,6 +189,10 @@
         "minimumMaxStorageBufferBindingSizeBytes": 0,
         "minimumDeviceMemoryGigabytes": 0,
         "minimumSystemMemoryMegabytes": 3500,
+        "permittedDeviceClasses": [
+            "DESKTOP",
+            "HANDHELD"
+        ],
         "recommendedThreadCount": 0,
         "contextWindowTokens": 4096,
         "approximateTotalBytes": 1117415014,
@@ -202,6 +222,9 @@
         "minimumMaxStorageBufferBindingSizeBytes": 0,
         "minimumDeviceMemoryGigabytes": 0,
         "minimumSystemMemoryMegabytes": 2000,
+        "permittedDeviceClasses": [
+            "HANDHELD"
+        ],
         "recommendedThreadCount": 0,
         "contextWindowTokens": 2048,
         "approximateTotalBytes": 491388273,

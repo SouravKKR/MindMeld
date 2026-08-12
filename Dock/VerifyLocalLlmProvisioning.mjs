@@ -191,6 +191,13 @@ const NATIVE_CAPABLE_HANDHELD =
 };
 
 const NATIVE_CAPABLE_SMALL_HANDHELD = Object.assign({}, NATIVE_CAPABLE_HANDHELD, { systemMemoryMegabytes: 2600 });
+const NATIVE_CAPABLE_TINY_HANDHELD = Object.assign({}, NATIVE_CAPABLE_HANDHELD, { systemMemoryMegabytes: 2200 });
+const NATIVE_CAPABLE_MODEST_DESKTOP = Object.assign({}, DESKTOP_GPU_WITH_F16,
+{
+    bNativeDriverAvailable: true,
+    systemMemoryMegabytes: 4096,
+    logicalCoreCount: 8,
+});
 
 const NATIVE_CAPABLE_LARGE_DESKTOP = Object.assign({}, DESKTOP_GPU_WITH_F16,
 {
@@ -312,6 +319,31 @@ async function runSelectionTier()
     assert(
         selectFor(DESKTOP_GPU_WITH_F16, browserKeys).isDegraded() === false,
         "and is not told it is running a compromise merely because the app could do better",
+    );
+
+    // ── The device-class rule ─────────────────────────────────────────────
+    //
+    // Desktop must never fall below the mid model: on a machine that can run
+    // the 1.5B, the 0.5B is a worse product than saying nothing. A phone has no
+    // such alternative, so there the smallest rung is the difference between a
+    // small model and none. Both directions are asserted, because the rule is
+    // only meaningful if it bites asymmetrically.
+    const modestDesktopOutcome = selectFor(NATIVE_CAPABLE_MODEST_DESKTOP);
+    assert(
+        modestDesktopOutcome.isAvailable()
+            && LocalLlmModelCatalogue[modestDesktopOutcome.getModelKey()].parameterLabel === "1.5B",
+        "a desktop with too little memory for the largest model falls to the mid one, not the smallest",
+    );
+    assert(
+        LocalLlmModelCatalogue[modestDesktopOutcome.getModelKey()].permittedDeviceClasses.includes("DESKTOP"),
+        "and the model it landed on actually permits desktops",
+    );
+
+    const tinyHandheldOutcome = selectFor(NATIVE_CAPABLE_TINY_HANDHELD);
+    assert(
+        tinyHandheldOutcome.isAvailable()
+            && LocalLlmModelCatalogue[tinyHandheldOutcome.getModelKey()].parameterLabel === "0.5B",
+        "a phone with the same shortfall DOES get the smallest model, because its alternative is nothing",
     );
 
     // Ranked highest, so a machine that can run it must get it — otherwise the
@@ -769,6 +801,21 @@ function runManifestFieldCoverageTier()
         Array.from(nativeDriverSource.matchAll(/\bdescriptor\.([a-zA-Z0-9_]+)/g)).map((fieldMatch) => fieldMatch[1]));
 
     assert(requiredFieldNames.size > 0, "the native driver reads fields off the descriptor");
+
+    // The manifest serves root-relative URLs, which are complete only inside a
+    // document. Anything crossing into the native process loses that context,
+    // and reqwest rejects the result as a bare "builder error" that names
+    // neither the URL nor the problem. The driver therefore has to resolve it,
+    // and this is the assertion that says so — the failure is otherwise a
+    // download that never starts, reported in words that point nowhere.
+    assert(
+        /new URL\(\s*manifestUrl\s*,\s*window\.location\.origin\s*\)/.test(nativeDriverSource),
+        "the native driver resolves the manifest's relative weights URL against this origin",
+    );
+    assert(
+        /weightsUrl:\s*NativeRuntimeDriver\.#toAbsoluteUrl\(/.test(nativeDriverSource),
+        "and it is that resolved URL which is handed to the native side, not the raw one",
+    );
 
     for (const requiredFieldName of requiredFieldNames)
     {

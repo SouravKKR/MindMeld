@@ -1,5 +1,6 @@
 import LocalLlmModelCatalogue from "../../Constants/LocalLlmModelCatalogue.js";
 import LocalLlmSelectionOutcome from "./LocalLlmSelectionOutcome.js";
+import { localLlmDeviceClasses } from "../../Enumerations/LocalLlmDeviceClasses.js";
 import { localLlmExecutionBackends } from "../../Enumerations/LocalLlmExecutionBackends.js";
 import { localLlmUnavailableReasons } from "../../Enumerations/LocalLlmUnavailableReasons.js";
 
@@ -62,7 +63,7 @@ class LocalLlmModelSelector
         let bAnyBackendSupported = false;
         let bAnyBlockedByGpuLimits = false;
         let bAnyBlockedByDeviceMemory = false;
-        let bAnyBlockedByHandheld = false;
+        let bAnyBlockedByDeviceClass = false;
 
         for (const modelKey of orderedKeys)
         {
@@ -83,9 +84,9 @@ class LocalLlmModelSelector
             }
             bAnyBackendSupported = true;
 
-            if (!LocalLlmModelSelector.#isHandheldAllowedToRun(descriptor, deviceProfile))
+            if (!LocalLlmModelSelector.#isDeviceClassPermitted(descriptor, deviceProfile))
             {
-                bAnyBlockedByHandheld = true;
+                bAnyBlockedByDeviceClass = true;
                 continue;
             }
 
@@ -117,7 +118,8 @@ class LocalLlmModelSelector
                     bAnyBackendSupported,
                     bAnyBlockedByGpuLimits,
                     bAnyBlockedByDeviceMemory,
-                    bAnyBlockedByHandheld
+                    bAnyBlockedByDeviceClass,
+                    deviceProfile.isHandheldDevice()
                 )
             });
         }
@@ -160,7 +162,8 @@ class LocalLlmModelSelector
             {
                 continue;
             }
-            if (!LocalLlmModelSelector.#isBackendSupported(descriptor, deviceProfile))
+            if (!LocalLlmModelSelector.#isBackendSupported(descriptor, deviceProfile)
+                || !LocalLlmModelSelector.#isDeviceClassPermitted(descriptor, deviceProfile))
             {
                 continue;
             }
@@ -195,24 +198,48 @@ class LocalLlmModelSelector
     }
 
     /**
-     * Whether a handheld may run this particular model.
+     * Whether this model may run on this CLASS of device at all, before any
+     * question of whether the hardware could cope.
      *
-     * The refusal is per backend rather than per device, which is the whole
-     * point. A phone running a model through the browser's graphics stack is a
-     * bad bet — thermally throttled within a minute, visibly draining, and a
-     * tab that idles has its GPU resources reclaimed mid-answer. A phone
-     * running compiled code with the app in the foreground is the ordinary
-     * case for every on-device assistant that works, so the same hardware is
-     * allowed here and refused above purely on how the model would be
-     * executed.
+     * Two different rules live here, and both are data in the catalogue rather
+     * than branches in this file:
+     *
+     *   - Graphics models are DESKTOP only. A phone running a model through the
+     *     browser's graphics stack is a bad bet — thermally throttled within a
+     *     minute, visibly draining, and a tab that idles has its GPU resources
+     *     reclaimed mid-answer. The same phone running compiled code with the
+     *     app in the foreground is the ordinary case, which is why the native
+     *     models permit HANDHELD and these do not.
+     *
+     *   - The smallest native model is HANDHELD only. Not because a desktop
+     *     could not run it — it trivially could — but because a desktop that
+     *     falls that far has fallen too far to be worth offering. Answers from
+     *     the 0.5B are noticeably thinner, and on a machine that can run the
+     *     1.5B it is a worse product than saying nothing. A phone has no such
+     *     alternative, so there it is the difference between a small model and
+     *     none.
+     *
+     * A model that names no classes is treated as running anywhere, so an
+     * entry added without thinking about this is permissive rather than
+     * silently invisible.
      */
-    static #isHandheldAllowedToRun(descriptor, deviceProfile)
+    static #isDeviceClassPermitted(descriptor, deviceProfile)
     {
-        if (!deviceProfile.isHandheldDevice())
+        const permittedClassNames = Array.isArray(descriptor.permittedDeviceClasses)
+            ? descriptor.permittedDeviceClasses
+            : [];
+
+        if (permittedClassNames.length === 0)
         {
             return true;
         }
-        return localLlmExecutionBackends[descriptor.executionBackend] === localLlmExecutionBackends.NATIVE_RUNTIME;
+
+        const deviceClass = deviceProfile.isHandheldDevice()
+            ? localLlmDeviceClasses.HANDHELD
+            : localLlmDeviceClasses.DESKTOP;
+
+        return permittedClassNames.some(
+            (permittedClassName) => localLlmDeviceClasses[permittedClassName] === deviceClass);
     }
 
     /**
@@ -281,7 +308,7 @@ class LocalLlmModelSelector
      * memory shortfall because the limits are a hard fact the adapter
      * reported, whereas the memory figure is a coarse browser hint.
      */
-    static #resolveUnavailableReason(bAnyBackendSupported, bAnyBlockedByGpuLimits, bAnyBlockedByDeviceMemory, bAnyBlockedByHandheld)
+    static #resolveUnavailableReason(bAnyBackendSupported, bAnyBlockedByGpuLimits, bAnyBlockedByDeviceMemory, bAnyBlockedByDeviceClass, bDeviceIsHandheld)
     {
         if (!bAnyBackendSupported)
         {
@@ -291,7 +318,13 @@ class LocalLlmModelSelector
         // whose browser cannot run this is not short of memory or graphics
         // headroom — it needs the app, and saying "your GPU limits are too low"
         // sends the learner to look for a setting that would not help.
-        if (bAnyBlockedByHandheld)
+        //
+        // Gated on the device actually BEING a handheld. A desktop can also be
+        // blocked by device class — if the only provisioned model were the
+        // handheld-only one — and telling that person their phone is the
+        // problem would be worse than saying nothing. They fall through to
+        // "this server has nothing for you", which is exactly true.
+        if (bAnyBlockedByDeviceClass && bDeviceIsHandheld)
         {
             return localLlmUnavailableReasons.HANDHELD_DEVICE;
         }
