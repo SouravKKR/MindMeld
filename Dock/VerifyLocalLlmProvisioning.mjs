@@ -365,6 +365,71 @@ async function runSelectionTier()
         "a low-memory phone falls to a native model small enough to fit rather than being refused",
     );
 
+    // ── The learner's choice of model (Settings ▸ AI) ─────────────────────
+    //
+    // A preference may pick AMONG the models this device can run and never past
+    // them. That is the whole safety property of letting someone choose: the
+    // chooser offers what the selector would admit, and the selector applies
+    // the choice through the same admission — so the two cannot disagree about
+    // what this hardware can hold.
+    const eligibleForLargeDesktop = LocalLlmModelSelector.listEligibleModels(
+        buildProfile(LocalLlmDeviceProfile, NATIVE_CAPABLE_LARGE_DESKTOP), allModelKeys);
+    const eligibleForModestDesktop = LocalLlmModelSelector.listEligibleModels(
+        buildProfile(LocalLlmDeviceProfile, NATIVE_CAPABLE_MODEST_DESKTOP), allModelKeys);
+
+    assert(eligibleForLargeDesktop.length > 1,
+        `a roomy desktop is offered a choice of models (${eligibleForLargeDesktop.length})`);
+    assert(
+        eligibleForLargeDesktop[0].bAutomaticChoice === true
+            && eligibleForLargeDesktop[0].modelKey === selectFor(NATIVE_CAPABLE_LARGE_DESKTOP).getModelKey(),
+        "the option marked automatic is exactly what the selector would have picked unaided",
+    );
+
+    // Everything offered must actually be runnable here — a chooser listing a
+    // model the selector then refuses is the failure this pairing prevents.
+    assert(
+        eligibleForModestDesktop.every((candidate) =>
+            candidate.minimumSystemMemoryMegabytes === undefined
+            || candidate.modelKey !== "QWEN2_5_3B_NATIVE_Q4KM"),
+        "a desktop too small for the largest model is never offered it",
+    );
+    // The NATIVE smallest model, specifically. The graphics 0.5B is a separate
+    // ladder and stays available to a desktop, because it is the last rung for
+    // a GPU that cannot manage the 1.5B — and in a browser, removing it leaves
+    // that machine with no Free tier at all, which is worse than a small model.
+    // "Desktop never falls to 0.5B" is a rule about the app's native ladder,
+    // where a 1.5B fallback always exists.
+    assert(
+        eligibleForModestDesktop.every((candidate) =>
+            !(candidate.executionBackend === "NATIVE_RUNTIME" && candidate.parameterLabel === "0.5B")),
+        "and is never offered the handheld-only NATIVE smallest model",
+    );
+
+    // Honoured when it fits.
+    const midModelKey = eligibleForLargeDesktop.find((candidate) => candidate.parameterLabel === "1.5B")?.modelKey;
+    assert(
+        midModelKey && LocalLlmModelSelector.select(
+            buildProfile(LocalLlmDeviceProfile, NATIVE_CAPABLE_LARGE_DESKTOP), allModelKeys, null, midModelKey
+        ).getModelKey() === midModelKey,
+        "a learner who picks a smaller model than their hardware needs gets exactly that",
+    );
+
+    // Ignored when it does not — a preference carried from a roomier machine,
+    // or naming a model the server has since withdrawn, must fall back rather
+    // than fail. Nobody should have to clear a setting to make the app work.
+    assert(
+        LocalLlmModelSelector.select(
+            buildProfile(LocalLlmDeviceProfile, NATIVE_CAPABLE_MODEST_DESKTOP), allModelKeys, null, "QWEN2_5_3B_NATIVE_Q4KM"
+        ).getModelKey() !== "QWEN2_5_3B_NATIVE_Q4KM",
+        "asking for a model this device cannot hold does not override the memory floor",
+    );
+    assert(
+        LocalLlmModelSelector.select(
+            buildProfile(LocalLlmDeviceProfile, NATIVE_CAPABLE_MODEST_DESKTOP), allModelKeys, null, "NOT_A_REAL_MODEL"
+        ).isAvailable(),
+        "and a preference naming a model that no longer exists falls back instead of breaking the tier",
+    );
+
     const nothingOutcome = selectFor(NOTHING_AT_ALL);
     assert(
         !nothingOutcome.isAvailable()

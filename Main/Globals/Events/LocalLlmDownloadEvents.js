@@ -40,6 +40,11 @@ class LocalLlmDownloadEvents
     // language in one place (Settings ▸ AI, Study text-selection menu,
     // Study bottom panel) updates the others live.
     static PREFERRED_ASK_AI_LANGUAGE_CHANGED = "preferred-ask-ai-language-changed";
+    // Dispatched after PreferredLocalLlmModel.setModelKey persists a new
+    // choice of WHICH Free model this device runs. The capability layer
+    // re-resolves and, if the chosen model is not already downloaded, the
+    // picker drops back to its "click to download" state for the new one.
+    static PREFERRED_MODEL_CHANGED = "browser-llm-preferred-model-changed";
 }
 
 export default LocalLlmDownloadEvents;

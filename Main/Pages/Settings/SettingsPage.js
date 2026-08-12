@@ -12,6 +12,7 @@ import SyncManager from '../../Globals/Classes/SyncManager.js';
 import Persistence from '../../Globals/Classes/Persistence.js';
 import LlmTierSelect from '../../CommonComponents/LlmTierSelect.js';
 import LanguageSelect from '../../CommonComponents/LanguageSelect.js';
+import LocalLlmModelSelect from '../../CommonComponents/LocalLlmModelSelect.js';
 import AppearanceSettingsPanel from './Components/AppearanceSettingsPanel.js';
 import AudioSettingsPanel from './Components/AudioSettingsPanel.js';
 import CreditPurchaseFlow from '../../Globals/Classes/Credits/CreditPurchaseFlow.js';
@@ -565,7 +566,9 @@ class SettingsPage extends HTMLElement
     {
         // The "AI" tab. Two labelled rows, each holding a self-managing
         // select: the model tier (<llm-tier-select> → PreferredModelTier)
-        // and the Ask AI output language (<language-select> →
+        // which Free model runs on this device (<local-llm-model-select> →
+        // PreferredLocalLlmModel; hides itself unless the hardware can run more
+        // than one), and the Ask AI output language (<language-select> →
         // PreferredAskAiLanguage). Both components own their own
         // persistence and cross-component sync (window-level
         // PREFERRED_TIER_CHANGED / PREFERRED_ASK_AI_LANGUAGE_CHANGED
@@ -577,6 +580,12 @@ class SettingsPage extends HTMLElement
                 <span class="settings-row-label">Model</span>
                 <span class="settings-row-value">
                     <llm-tier-select></llm-tier-select>
+                </span>
+            </div>
+            <div class="settings-row settings-local-model-row">
+                <span class="settings-row-label">Free model</span>
+                <span class="settings-row-value">
+                    <local-llm-model-select></local-llm-model-select>
                 </span>
             </div>
             <div class="settings-row settings-language-row">

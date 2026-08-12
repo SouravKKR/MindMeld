@@ -4,6 +4,7 @@ import LocalLlmDownloadConstants from "../../Constants/LocalLlmDownloadConstants
 import LocalLlmDownloadEvents from "../../Events/LocalLlmDownloadEvents.js";
 import LocalLlmDeviceProbe from "./LocalLlmDeviceProbe.js";
 import LocalLlmManifestClient from "./LocalLlmManifestClient.js";
+import LocalLlmModelSelector from "./LocalLlmModelSelector.js";
 import LocalLlmSessionController from "./LocalLlmSessionController.js";
 import Persistence from "../Persistence.js";
 import UserIdentityManager from "../UserIdentityManager.js";
@@ -235,6 +236,63 @@ class LocalLlmCapability
             }
         }
         return String(stateValue);
+    }
+
+    /**
+     * Every model this device could run, best first — what the Settings chooser
+     * offers.
+     *
+     * Delegated to the selector rather than filtered here. The rule about what
+     * a device may run is already written once, and a second copy in the
+     * capability layer would be the one nobody exercises: it would drift, and
+     * the symptom would be a chooser offering a model the selector then refuses
+     * to load.
+     */
+    static async listEligibleModels()
+    {
+        try
+        {
+            const deviceProfile = await LocalLlmDeviceProbe.probe();
+            await LocalLlmManifestClient.fetchDescriptors();
+
+            return LocalLlmModelSelector.listEligibleModels(
+                deviceProfile,
+                LocalLlmManifestClient.getAvailableModelKeys()
+            );
+        }
+        catch (listError)
+        {
+            console.warn(`[LocalLlmCapability] Could not list the eligible models: ${listError?.message || listError}`);
+            return [];
+        }
+    }
+
+    /**
+     * Re-runs resolution after the learner changes which model they want.
+     *
+     * The engine is released as well, because the loaded weights are the OLD
+     * model's. Leaving it would answer the next question from a model the
+     * settings page says is no longer selected — the worst kind of wrong, since
+     * nothing about the answer would look off.
+     *
+     * The download state is then re-read against the new choice: if its weights
+     * are already present it is READY immediately, and if not the picker drops
+     * back to "click to download" for that model rather than reporting the tier
+     * broken.
+     */
+    static async reresolve()
+    {
+        LocalLlmSessionController.release();
+
+        LocalLlmCapability.#bInitialized = false;
+        LocalLlmCapability.#initializePromise = null;
+
+        await LocalLlmCapability.initialize();
+
+        window.dispatchEvent(new CustomEvent(LocalLlmDownloadEvents.CAPABILITY_CHANGED,
+        {
+            detail: { state: LocalLlmCapability.#state }
+        }));
     }
 
     static getState()

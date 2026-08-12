@@ -1,4 +1,5 @@
 import LocalLlmDeviceProbe from "./LocalLlmDeviceProbe.js";
+import PreferredLocalLlmModel from "./PreferredLocalLlmModel.js";
 import LocalLlmDriverFactory from "./Drivers/LocalLlmDriverFactory.js";
 import LocalLlmManifestClient from "./LocalLlmManifestClient.js";
 import LocalLlmModelSelector from "./LocalLlmModelSelector.js";
@@ -136,11 +137,13 @@ class LocalLlmSessionController
     {
         const deviceProfile = await LocalLlmDeviceProbe.probe();
         await LocalLlmManifestClient.fetchDescriptors();
+        await PreferredLocalLlmModel.hydrate();
 
         const selectionOutcome = LocalLlmModelSelector.select(
             deviceProfile,
             LocalLlmManifestClient.getAvailableModelKeys(),
-            LocalLlmDeviceProbe.getForcedModelKey()
+            LocalLlmDeviceProbe.getForcedModelKey(),
+            PreferredLocalLlmModel.getModelKey()
         );
         LocalLlmSessionController.#selectionOutcome = selectionOutcome;
 
@@ -167,11 +170,13 @@ class LocalLlmSessionController
     {
         const deviceProfile = await LocalLlmDeviceProbe.probe();
         await LocalLlmManifestClient.fetchDescriptors();
+        await PreferredLocalLlmModel.hydrate();
 
         LocalLlmSessionController.#selectionOutcome = LocalLlmModelSelector.select(
             deviceProfile,
             LocalLlmManifestClient.getAvailableModelKeys(),
-            LocalLlmDeviceProbe.getForcedModelKey()
+            LocalLlmDeviceProbe.getForcedModelKey(),
+            PreferredLocalLlmModel.getModelKey()
         );
         return LocalLlmSessionController.#selectionOutcome;
     }

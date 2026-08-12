@@ -76,6 +76,13 @@ class UserIdentityConstants
         // has to be readable at boot before any session resolves — which, when
         // the device is offline, is the only moment it will ever be read.
         LocalLlmDownloadConstants.LOCAL_MANIFEST_CACHE_PERSISTENCE_KEY,
+        // WHICH on-device model this machine runs. Device-scoped for the same
+        // reason as the download record: it names weights held in a store every
+        // identity on the device shares, so it is a fact about the hardware
+        // rather than about the person signed in. Per-user it would also be
+        // read before any session resolves and silently reset on every reload,
+        // which is exactly how the tier choice and the Ask AI language broke.
+        LocalLlmDownloadConstants.LOCAL_PREFERRED_MODEL_PERSISTENCE_KEY,
     ]);
 }
 

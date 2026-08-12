@@ -8,6 +8,7 @@ class LocalLlmDownloadConstants:
     LOCAL_STATE_PERSISTENCE_KEY = 'BrowserLlm/DownloadState.mmsd'
     LOCAL_DECLINED_PERSISTENCE_KEY = 'BrowserLlm/Declined.mmsd'
     LOCAL_PREFERRED_TIER_PERSISTENCE_KEY = 'BrowserLlm/PreferredTier.mmsd'
+    LOCAL_PREFERRED_MODEL_PERSISTENCE_KEY = 'BrowserLlm/PreferredModel.mmsd'
     LOCAL_ASK_AI_LANGUAGE_PERSISTENCE_KEY = 'AskAi/LanguagePreference.mmsd'
     LOCAL_GRAPHICS_UNUSABLE_PERSISTENCE_KEY = 'BrowserLlm/GraphicsUnusable.mmsd'
     LOCAL_MANIFEST_CACHE_PERSISTENCE_KEY = 'BrowserLlm/ManifestCache.mmsd'

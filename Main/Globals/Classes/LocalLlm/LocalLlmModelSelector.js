@@ -40,7 +40,7 @@ class LocalLlmModelSelector
      *
      * @returns {LocalLlmSelectionOutcome}
      */
-    static select(deviceProfile, availableModelKeys, forcedModelKey = null)
+    static select(deviceProfile, availableModelKeys, forcedModelKey = null, requestedModelKey = null)
     {
         const orderedKeys = Array.isArray(LocalLlmModelCatalogue.ORDER) ? LocalLlmModelCatalogue.ORDER : [];
         const availableKeySet = new Set(Array.isArray(availableModelKeys) ? availableModelKeys : []);
@@ -54,11 +54,100 @@ class LocalLlmModelSelector
         // is reaching a rung this hardware would not otherwise be offered, so
         // a device with shader-f16 can still be used to test the model meant
         // for devices without it.
+        //
+        // The learner's CHOICE from Settings is a different thing entirely and
+        // is applied below, against the filtered candidates — a preference may
+        // pick among the models this device can run, never past them.
         if (forcedModelKey && availableKeySet.has(forcedModelKey) && LocalLlmModelCatalogue[forcedModelKey])
         {
             return new LocalLlmSelectionOutcome({ modelKey: forcedModelKey, preferredModelKey: forcedModelKey });
         }
 
+        const admission = LocalLlmModelSelector.#gatherCandidates(orderedKeys, availableKeySet, deviceProfile);
+        const candidateKeys = admission.candidateKeys;
+
+        if (candidateKeys.length === 0)
+        {
+            return new LocalLlmSelectionOutcome(
+            {
+                unavailableReason: LocalLlmModelSelector.#resolveUnavailableReason(
+                    admission.bAnyBackendSupported,
+                    admission.bAnyBlockedByGpuLimits,
+                    admission.bAnyBlockedByDeviceMemory,
+                    admission.bAnyBlockedByDeviceClass,
+                    deviceProfile.isHandheldDevice()
+                )
+            });
+        }
+
+        candidateKeys.sort((firstKey, secondKey) =>
+            LocalLlmModelSelector.#rankOf(firstKey) - LocalLlmModelSelector.#rankOf(secondKey));
+
+        // The learner's choice wins ONLY if it survived the same admission the
+        // automatic pick goes through. A device that cannot hold the 3B does
+        // not get it by asking: the choice is which of the models this hardware
+        // can run, and a stale preference — chosen on a roomier machine, or for
+        // a model the server has since withdrawn — falls back to the ranked
+        // best rather than failing.
+        const chosenModelKey = requestedModelKey && candidateKeys.includes(requestedModelKey)
+            ? requestedModelKey
+            : candidateKeys[0];
+        const preferredModelKey = LocalLlmModelSelector.#findPreferredModelKey(orderedKeys, availableKeySet, deviceProfile);
+
+        return new LocalLlmSelectionOutcome(
+        {
+            modelKey: chosenModelKey,
+            preferredModelKey: preferredModelKey,
+            degradeNote: LocalLlmModelCatalogue[chosenModelKey].displayNote || null
+        });
+    }
+
+    /**
+     * Every model this device could run, best first.
+     *
+     * The same admission the automatic pick uses — identical filter, identical
+     * order — so what Settings offers and what the selector would choose can
+     * never disagree. Listing eligibility separately from choosing would be two
+     * implementations of one rule, and the one nobody exercises would drift.
+     *
+     * Each entry carries what a chooser needs to render a row: the label, the
+     * size, and whether it is the one that would be picked automatically.
+     */
+    static listEligibleModels(deviceProfile, availableModelKeys)
+    {
+        const orderedKeys = Array.isArray(LocalLlmModelCatalogue.ORDER) ? LocalLlmModelCatalogue.ORDER : [];
+        const availableKeySet = new Set(Array.isArray(availableModelKeys) ? availableModelKeys : []);
+
+        const candidateKeys = LocalLlmModelSelector
+            .#gatherCandidates(orderedKeys, availableKeySet, deviceProfile)
+            .candidateKeys
+            .sort((firstKey, secondKey) =>
+                LocalLlmModelSelector.#rankOf(firstKey) - LocalLlmModelSelector.#rankOf(secondKey));
+
+        return candidateKeys.map((modelKey, candidateIndex) =>
+        {
+            const descriptor = LocalLlmModelCatalogue[modelKey];
+            return {
+                modelKey: modelKey,
+                displayName: descriptor.displayName,
+                parameterLabel: descriptor.parameterLabel,
+                approximateTotalLabel: descriptor.approximateTotalLabel,
+                contextWindowTokens: descriptor.contextWindowTokens,
+                executionBackend: descriptor.executionBackend,
+                bAutomaticChoice: candidateIndex === 0,
+            };
+        });
+    }
+
+    /**
+     * Runs every model past every requirement, and reports which walls the
+     * rejected ones hit.
+     *
+     * Extracted so choosing and listing cannot diverge — see
+     * listEligibleModels.
+     */
+    static #gatherCandidates(orderedKeys, availableKeySet, deviceProfile)
+    {
         const candidateKeys = [];
         let bAnyBackendSupported = false;
         let bAnyBlockedByGpuLimits = false;
@@ -89,13 +178,11 @@ class LocalLlmModelSelector
                 bAnyBlockedByDeviceClass = true;
                 continue;
             }
-
             if (!LocalLlmModelSelector.#areGpuRequirementsMet(descriptor, deviceProfile))
             {
                 bAnyBlockedByGpuLimits = true;
                 continue;
             }
-
             if (!LocalLlmModelSelector.#isDeviceMemorySufficient(descriptor, deviceProfile))
             {
                 bAnyBlockedByDeviceMemory = true;
@@ -110,32 +197,13 @@ class LocalLlmModelSelector
             candidateKeys.push(modelKey);
         }
 
-        if (candidateKeys.length === 0)
-        {
-            return new LocalLlmSelectionOutcome(
-            {
-                unavailableReason: LocalLlmModelSelector.#resolveUnavailableReason(
-                    bAnyBackendSupported,
-                    bAnyBlockedByGpuLimits,
-                    bAnyBlockedByDeviceMemory,
-                    bAnyBlockedByDeviceClass,
-                    deviceProfile.isHandheldDevice()
-                )
-            });
-        }
-
-        candidateKeys.sort((firstKey, secondKey) =>
-            LocalLlmModelSelector.#rankOf(firstKey) - LocalLlmModelSelector.#rankOf(secondKey));
-
-        const chosenModelKey = candidateKeys[0];
-        const preferredModelKey = LocalLlmModelSelector.#findPreferredModelKey(orderedKeys, availableKeySet, deviceProfile);
-
-        return new LocalLlmSelectionOutcome(
-        {
-            modelKey: chosenModelKey,
-            preferredModelKey: preferredModelKey,
-            degradeNote: LocalLlmModelCatalogue[chosenModelKey].displayNote || null
-        });
+        return {
+            candidateKeys,
+            bAnyBackendSupported,
+            bAnyBlockedByGpuLimits,
+            bAnyBlockedByDeviceMemory,
+            bAnyBlockedByDeviceClass,
+        };
     }
 
     /**

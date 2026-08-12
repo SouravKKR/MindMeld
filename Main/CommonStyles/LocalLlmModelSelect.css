@@ -1,0 +1,49 @@
+/* Deliberately matched to LlmTierSelect.css rather than sharing its class
+   names. The two sit in adjacent Settings rows and must look identical, but
+   they are independent controls with independent lifecycles — reusing the
+   other's selectors would make a change to the tier picker silently restyle
+   this one, which is exactly the coupling that makes UI edits frightening. */
+local-llm-model-select
+{
+    display: inline-flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* Outline rather than border, for the same reason the tier select uses one:
+   the theme's button:hover rule can strip a border and shift layout by a
+   pixel. outline-offset:-1px keeps the footprint unchanged. */
+.local-llm-model-select-input
+{
+    width: 100%;
+    padding: 6px 10px;
+    background-color: var(--tertiary-background-color);
+    color: var(--primary-text-color);
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12.5px;
+    line-height: 1.2;
+    appearance: auto;
+    -webkit-appearance: auto;
+    transition: outline-color 0.15s ease-out, background-color 0.15s ease-out;
+}
+
+.local-llm-model-select-input:hover,
+.local-llm-model-select-input:focus
+{
+    outline-color: var(--outline-color-strong);
+}
+
+/* The download-cost line. Quiet by design — it is context for a choice the
+   learner is already making, not an alert. */
+.local-llm-model-select-note
+{
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--secondary-text-color);
+}
