@@ -817,6 +817,52 @@ function runManifestFieldCoverageTier()
         "and it is that resolved URL which is handed to the native side, not the raw one",
     );
 
+    // Every REQUIRED argument of every native command must appear in the
+    // driver's payload.
+    //
+    // Tauri rejects a call whose payload omits a non-Option parameter before
+    // any Rust runs — "missing required key temperature" — so the mismatch is
+    // caught at the boundary rather than compiled against. Nothing on either
+    // side of that boundary can see the other: the Rust signature and the
+    // JavaScript object literal are checked by different toolchains, and
+    // neither knows the other exists.
+    //
+    // This is exactly how the prompt builder's missing temperature shipped:
+    // it returns only systemPrompt / userPrompt / maximumNewTokens, because
+    // the browser engine applies its own sampling settings and never needed to
+    // pass any down.
+    const commandsSource = fs.readFileSync(
+        path.join(repositoryRoot, "Native", "src-tauri", "src", "llm_commands.rs"), "utf8");
+
+    for (const commandMatch of commandsSource.matchAll(/#\[tauri::command\]\s*pub async fn\s+([a-z_]+)\s*\(([^)]*)\)/g))
+    {
+        const [, commandName, parameterBlock] = commandMatch;
+
+        for (const parameterLine of parameterBlock.split(","))
+        {
+            const parameterMatch = parameterLine.trim().match(/^([a-z_][a-z0-9_]*)\s*:\s*(.+)$/s);
+            if (!parameterMatch)
+            {
+                continue;
+            }
+
+            const [, parameterName, parameterType] = parameterMatch;
+
+            // Tauri injects these itself, and an Option is genuinely optional.
+            if (["app_handle", "state", "window", "webview"].includes(parameterName)
+                || parameterType.includes("Option<"))
+            {
+                continue;
+            }
+
+            const camelCaseName = parameterName.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+            assert(
+                new RegExp(`\\b${camelCaseName}\\s*:`).test(nativeDriverSource),
+                `${commandName} requires "${parameterName}", and the driver always sends "${camelCaseName}"`,
+            );
+        }
+    }
+
     for (const requiredFieldName of requiredFieldNames)
     {
         assert(

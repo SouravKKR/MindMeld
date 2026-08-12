@@ -30,6 +30,22 @@ import NativeLlmProtocolConstants from "../../../Constants/NativeLlmProtocolCons
  */
 class NativeRuntimeDriver extends LocalLlmDriver
 {
+    // Sampling settings the PROMPT does not carry.
+    //
+    // LocalLlmPromptBuilder returns only { systemPrompt, userPrompt,
+    // maximumNewTokens } — deliberately, because the browser path applies its
+    // own temperature inside the engine runner rather than passing one down.
+    // The native command takes them as required arguments, so without a
+    // fallback here the request arrives missing a key and Tauri rejects it
+    // before any Rust code runs.
+    //
+    // Matched to BrowserLlmEngineRunner.GENERATION_TEMPERATURE on purpose: the
+    // two engines answer the same questions for the same learners, and a tier
+    // whose answers change character depending on which one happens to be
+    // installed would be a worse product than either setting alone.
+    static DEFAULT_GENERATION_TEMPERATURE = 0.7;
+    static DEFAULT_MAXIMUM_NEW_TOKENS = 512;
+
     #bModelLoaded = false;
     #loadedModelKey = null;
     #nextRequestId = 1;
@@ -223,10 +239,14 @@ class NativeRuntimeDriver extends LocalLlmDriver
             const completion = await NativeBridge.invoke(NativeLlmProtocolConstants.COMMAND_GENERATE_COMPLETION,
             {
                 requestId: requestId,
-                systemPrompt: request.systemPrompt,
-                userPrompt: request.userPrompt,
-                maximumNewTokens: request.maximumNewTokens,
-                temperature: request.temperature,
+                systemPrompt: request.systemPrompt || "",
+                userPrompt: request.userPrompt || "",
+                maximumNewTokens: Number.isFinite(request.maximumNewTokens)
+                    ? request.maximumNewTokens
+                    : NativeRuntimeDriver.DEFAULT_MAXIMUM_NEW_TOKENS,
+                temperature: Number.isFinite(request.temperature)
+                    ? request.temperature
+                    : NativeRuntimeDriver.DEFAULT_GENERATION_TEMPERATURE,
             });
 
             // The command's own return value wins when it has one: it is the
