@@ -401,7 +401,21 @@ class LocalLlmModelProvisioner
         {
             return false;
         }
-        if (plannedFile.expectedSha256)
+        // Size matches and the file is where it should be. Whether that is
+        // enough depends on why we are asking.
+        //
+        // The hash was already checked once, at download time: a file lands as
+        // ".partial" and is only renamed into place after its digest matches.
+        // So a present, correctly-sized file has been verified — re-hashing it
+        // proves only that the disk has not silently rotted underneath us.
+        //
+        // That is worth checking deliberately and not worth checking on every
+        // deploy. Hashing the full catalogue is minutes of solid I/O on a node
+        // whose job at that moment is to come back up, and this now runs on
+        // EVERY deploy so the reconcile can add newly-catalogued models. The
+        // integrity pass moved behind --verify-only, where an operator asking
+        // the question gets a real answer.
+        if (plannedFile.expectedSha256 && this.bVerifyOnly)
         {
             return LocalLlmModelProvisioner.computeSha256(destinationPath) === plannedFile.expectedSha256;
         }
@@ -759,10 +773,35 @@ class LocalLlmModelProvisioner
         return megabytes >= 1024 ? `${(megabytes / 1024).toFixed(2)} GB` : `${megabytes.toFixed(1)} MB`;
     }
 
+    /**
+     * Streams the file through the hash rather than reading it whole.
+     *
+     * readFileSync on a model is a request for two gigabytes of resident
+     * memory. The production node has under four in total and has already been
+     * killed by the out-of-memory reaper under generation load, so hashing a
+     * model there was capable of taking the whole service down — during a
+     * deploy, which is exactly when nobody is watching for it.
+     */
     static computeSha256(filePath)
     {
         const hash = crypto.createHash('sha256');
-        hash.update(fs.readFileSync(filePath));
+        const fileDescriptor = fs.openSync(filePath, 'r');
+        const readBuffer = Buffer.allocUnsafe(1024 * 1024);
+
+        try
+        {
+            let bytesRead = fs.readSync(fileDescriptor, readBuffer, 0, readBuffer.length, null);
+            while (bytesRead > 0)
+            {
+                hash.update(readBuffer.subarray(0, bytesRead));
+                bytesRead = fs.readSync(fileDescriptor, readBuffer, 0, readBuffer.length, null);
+            }
+        }
+        finally
+        {
+            fs.closeSync(fileDescriptor);
+        }
+
         return hash.digest('hex');
     }
 

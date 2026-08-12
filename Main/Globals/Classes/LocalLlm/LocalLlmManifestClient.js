@@ -43,23 +43,47 @@ class LocalLlmManifestClient
         {
             const descriptorsByModelKey = new Map();
 
+            // ONLY a genuine network failure may fall back to the recorded
+            // manifest. If the server ANSWERED — 401, 403, 500, anything — its
+            // answer is the truth about what it serves, and replaying an older
+            // one puts words in its mouth.
+            //
+            // That distinction is not academic. A 401 during boot, before the
+            // session has settled, used to land in the catch below and replay a
+            // manifest recorded against a DIFFERENT server. The client was then
+            // offered a model this origin had never heard of and every download
+            // answered 404 — which reads as a broken server rather than as a
+            // stale cache, and sent the search in entirely the wrong direction.
+            let manifestResponse = null;
+            let networkFailure = null;
+
             try
             {
-                const manifestResponse = await fetch(LocalLlmDownloadConstants.MANIFEST_ENDPOINT_PATH,
+                manifestResponse = await fetch(LocalLlmDownloadConstants.MANIFEST_ENDPOINT_PATH,
                 {
                     method: "GET",
                     credentials: "include",
                 });
+            }
+            catch (unreachableError)
+            {
+                networkFailure = unreachableError;
+            }
 
-                if (manifestResponse.status === 503)
+            if (manifestResponse !== null)
+            {
+                // 503 is a normal answer: this deployment has provisioned
+                // nothing. So is 401 — the session is not ready, and it will be
+                // asked again. Both are authoritative and empty.
+                if (!manifestResponse.ok)
                 {
+                    if (manifestResponse.status !== 503)
+                    {
+                        console.warn(`[LocalLlmManifestClient] The server answered ${manifestResponse.status} for the model manifest; taking that as "no models from here" rather than replaying an older one.`);
+                    }
                     LocalLlmManifestClient.#bLastFetchFailed = false;
                     LocalLlmManifestClient.#descriptorsByModelKey = descriptorsByModelKey;
                     return descriptorsByModelKey;
-                }
-                if (!manifestResponse.ok)
-                {
-                    throw new Error(`server returned ${manifestResponse.status}`);
                 }
 
                 const manifest = await manifestResponse.json();
@@ -80,23 +104,20 @@ class LocalLlmManifestClient
                 LocalLlmManifestClient.#bLastFetchFailed = false;
                 await LocalLlmManifestClient.#persistManifest(servedModels, LocalLlmManifestClient.#runtimeBaseUrl);
             }
-            catch (fetchError)
+            else
             {
-                // Offline is the expected case here, and it must not be fatal —
-                // the entire premise of this tier is a model that runs without
-                // a request. But the descriptor is what names the model, its
-                // context window and its files, and it only ever came from the
-                // server. Without it the selector sees an empty catalogue and
-                // reports the tier unavailable, on a device whose weights are
-                // sitting right there on disk. That is the shape this used to
-                // fail in, while a comment here claimed the opposite.
+                // Genuinely unreachable. Offline must not be fatal — the whole
+                // premise of this tier is a model that runs without a request —
+                // but the descriptor names the model, its context window and its
+                // files, and it only ever came from the server. Without it the
+                // selector sees an empty catalogue and calls the tier
+                // unavailable on a device whose weights are sitting on disk.
                 //
-                // So the last successful manifest is replayed from local
-                // storage. It can name a model the server has since withdrawn;
-                // that is the right trade, because the only thing that makes it
-                // usable is the weights already being present, and a withdrawn
-                // model the device still holds is one it can still run.
-                console.warn(`[LocalLlmManifestClient] Could not read the model manifest: ${fetchError?.message || fetchError}`);
+                // The recorded manifest can name a model the server has since
+                // withdrawn. That is the right trade: what makes it usable is
+                // the weights already being present, and a withdrawn model the
+                // device still holds is one it can still run.
+                console.warn(`[LocalLlmManifestClient] Could not reach the server for the model manifest: ${networkFailure?.message || networkFailure}`);
                 LocalLlmManifestClient.#bLastFetchFailed = true;
 
                 const restoredModels = await LocalLlmManifestClient.#restorePersistedManifest();
@@ -229,6 +250,11 @@ class LocalLlmManifestClient
      * Best-effort throughout. A device that cannot write this still works
      * exactly as it did before; it simply loses the offline replay.
      */
+    static #currentOrigin()
+    {
+        return typeof window !== "undefined" && window.location ? window.location.origin : "";
+    }
+
     static async #persistManifest(servedModels, runtimeBaseUrl)
     {
         if (!Array.isArray(servedModels) || servedModels.length === 0)
@@ -240,7 +266,19 @@ class LocalLlmManifestClient
         {
             await Persistence.write(
                 LocalLlmDownloadConstants.LOCAL_MANIFEST_CACHE_PERSISTENCE_KEY,
-                { models: servedModels, runtimeBaseUrl: runtimeBaseUrl, at: Date.now() },
+                {
+                    // Stamped with the server it came from. The record lives in
+                    // the app's data directory, which is keyed to the bundle
+                    // identifier and NOT to the URL the app happens to point at
+                    // — so a build aimed at a developer's machine and a build
+                    // aimed at production share one file. Without this stamp,
+                    // the manifest from one is replayed against the other, and
+                    // the client is offered models that origin never had.
+                    origin: LocalLlmManifestClient.#currentOrigin(),
+                    models: servedModels,
+                    runtimeBaseUrl: runtimeBaseUrl,
+                    at: Date.now(),
+                },
                 dataFormats.JSON
             );
         }
@@ -264,6 +302,13 @@ class LocalLlmManifestClient
                 LocalLlmDownloadConstants.LOCAL_MANIFEST_CACHE_PERSISTENCE_KEY,
                 dataFormats.JSON
             );
+
+            const recordedOrigin = record ? record.origin : null;
+            if (recordedOrigin && recordedOrigin !== LocalLlmManifestClient.#currentOrigin())
+            {
+                console.warn(`[LocalLlmManifestClient] The recorded manifest came from ${recordedOrigin} and this app talks to ${LocalLlmManifestClient.#currentOrigin()} — ignoring it rather than offering models this server may not have.`);
+                return [];
+            }
 
             if (record && typeof record.runtimeBaseUrl === "string")
             {

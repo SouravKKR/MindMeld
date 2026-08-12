@@ -74,18 +74,38 @@ fi
 # is a correct and understandable state rather than a broken one.
 if [ -f "$REPO_DIR/Common/Scripts/ProvisionLocalLlmModels.js" ]
 then
-    if [ "${PROVISION_BROWSER_LLM:-0}" = "1" ] || [ ! -d "$DOCK_DIRECTORY/Assets/Models" ] || [ -z "$(ls -A "$DOCK_DIRECTORY/Assets/Models" 2>/dev/null | grep -v '^\.gitkeep$\|^README.txt$')" ]
-    then
-        echo "==> Provisioning the on-device AI models in the background (log: /tmp/provision-browser-llm.log)..."
-        nohup node "$REPO_DIR/Common/Scripts/ProvisionLocalLlmModels.js" \
-            --destination="$DOCK_DIRECTORY/Assets" \
-            > /tmp/provision-browser-llm.log 2>&1 &
-    else
-        echo "==> Verifying the on-device AI models already on this node..."
-        node "$REPO_DIR/Common/Scripts/ProvisionLocalLlmModels.js" \
-            --destination="$DOCK_DIRECTORY/Assets" --verify-only || \
-            echo "    WARNING: on-device AI models failed verification — the Free tier will report itself unavailable until they are re-provisioned."
-    fi
+    # RECONCILE AGAINST THE CATALOGUE, every deploy, unconditionally.
+    #
+    # This used to provision only when Assets/Models was EMPTY and merely
+    # verify otherwise. The effect was that the very first model a node ever
+    # fetched became the only model it would ever have: adding an entry to the
+    # catalogue changed what the manifest advertised but never fetched the
+    # weights, so the client was offered a model the server did not hold and
+    # every download answered 404. Withdrawing an entry was equally invisible —
+    # the files stayed on disk forever.
+    #
+    # A full run is now cheap enough to be routine: a present, correctly-sized
+    # file is skipped on a stat alone, because its hash was already checked at
+    # download time (see isFileAlreadyValid). Only genuinely missing files are
+    # fetched, so the steady state costs a directory walk.
+    #
+    # Still backgrounded. A first pull is gigabytes and a deploy must not sit
+    # behind it; until it finishes /LocalLlm/Manifest answers 503 and the
+    # client says the tier is not available on this server yet, which is a
+    # correct and understandable state rather than a broken one.
+    echo "==> Reconciling the on-device AI models against the catalogue (log: /tmp/provision-local-llm.log)..."
+    nohup node "$REPO_DIR/Common/Scripts/ProvisionLocalLlmModels.js" \
+        --destination="$DOCK_DIRECTORY/Assets" \
+        > /tmp/provision-local-llm.log 2>&1 &
+
+    # Withdrawn models are removed in the same pass, so a node's disk follows
+    # the catalogue in both directions. Weights are gigabytes each and nothing
+    # else would ever notice they had been left behind — removing the
+    # WebAssembly backend stranded 760 MB per node exactly this way.
+    echo "==> Removing model weights no catalogue entry claims..."
+    node "$REPO_DIR/Common/Scripts/ProvisionLocalLlmModels.js" \
+        --destination="$DOCK_DIRECTORY/Assets" --prune-orphans || \
+        echo "    WARNING: could not prune orphaned model weights; disk use will not have gone down."
 fi
 
 echo "==> Ensuring the Agent venv + dependencies..."

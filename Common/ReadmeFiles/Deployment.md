@@ -1346,6 +1346,78 @@ node ./Common/Scripts/MinifyAndObfuscateStaticFiles.js --aggressive
 > are cross-platform Node scripts, driven by the root `package.json`. To run the server
 > the way the base node does (no `--debug`), use `npm run production` locally.
 
+## 1.7.1 On-device AI models — reconciled automatically on every deploy
+
+The Free tier's weights are gigabytes, so they are **excluded from the deploy tar**
+and each node fetches them itself. `BaseNodeUpdate.sh` runs
+[`ProvisionLocalLlmModels.js`](../Scripts/ProvisionLocalLlmModels.js) on **every**
+deploy and reconciles the node's disk against
+[`LocalLlmModelCatalogue.json`](../Constants/LocalLlmModelCatalogue.json) in both
+directions:
+
+| Catalogue change | What the next deploy does |
+|---|---|
+| Entry **added** | fetches it, sha256-verified, in the background |
+| Entry **removed** | deletes its weights (`--prune-orphans`) |
+| Entry unchanged | skips it on a stat — no re-download, no re-hash |
+
+**So adding a model is a catalogue edit plus a deploy. Nothing else.**
+
+### Why this is unconditional
+
+It used to provision only when `Assets/Models` was **empty**, and merely verify
+otherwise. That made the first model a node ever fetched the only model it would
+ever have. Adding a catalogue entry changed what `/LocalLlm/Manifest` advertised
+but never fetched the weights, so the client was offered a model the server did not
+hold and **every download answered 404** — with the manifest, the catalogue and the
+selector all perfectly consistent. Withdrawing an entry was equally invisible: the
+files stayed on disk forever, which is how removing the WebAssembly backend
+stranded 760 MB on every node.
+
+### What it costs
+
+Almost nothing in the steady state. A present, correctly-sized file is skipped on a
+`stat`; its hash was already checked at download time, because a file lands as
+`.partial` and is renamed into place only once its digest matches. The full
+integrity pass lives behind `--verify-only`, which an operator runs deliberately.
+
+That split matters on a small node: hashing the whole catalogue is minutes of solid
+I/O, and it happens during a deploy — precisely when nobody is watching.
+
+### Operating it by hand
+
+```bash
+# What this node has, and anything it holds that the catalogue no longer claims.
+node Common/Scripts/ProvisionLocalLlmModels.js --destination=Dock/Assets --list
+
+# Fetch everything missing (this is what the deploy runs).
+node Common/Scripts/ProvisionLocalLlmModels.js --destination=Dock/Assets
+
+# Just one model.
+node Common/Scripts/ProvisionLocalLlmModels.js --destination=Dock/Assets \
+    --models=QWEN2_5_1_5B_NATIVE_Q4KM
+
+# Full integrity check — re-hashes every file. Minutes, and deliberate.
+node Common/Scripts/ProvisionLocalLlmModels.js --destination=Dock/Assets --verify-only
+
+# Reclaim weights no catalogue entry claims.
+node Common/Scripts/ProvisionLocalLlmModels.js --destination=Dock/Assets --prune-orphans
+```
+
+The deploy backgrounds the fetch, so a first pull does not hold up the rollout. Until
+it finishes `/LocalLlm/Manifest` answers **503** and the client says the tier is not
+available on this server yet — a correct state, not a broken one. Watch it with
+`tail -f /tmp/provision-local-llm.log` on the node.
+
+**`BROWSER_LLM_MODELS`** in `Dock/.env` restricts which catalogue entries an
+environment serves. Leave it unset to serve everything provisioned; set it to narrow
+a small node to one model without editing the shared catalogue.
+
+> **Disk.** Every catalogued model is fetched by every node. The native models are
+> ~470 MB / ~1 GB / ~2 GB and the graphics models a further ~880 MB each, so a full
+> catalogue is several gigabytes per node. Check the node has room before adding an
+> entry — the reconcile will faithfully try to fetch it on the next deploy everywhere.
+
 ## 1.8 Base node — expose it on your domain via Cloudflare Tunnel
 
 OAuth requires your real `https://<domain>`. This deployment uses a **Cloudflare
