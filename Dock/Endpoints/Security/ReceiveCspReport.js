@@ -9,7 +9,7 @@ const { httpStatus } = require("../../Globals/Enumerations/HttpStatus");
  * This exists to make the strict-policy rollout observable: while the strict
  * policy rides along report-only (see SecurityHeaders), every resource it WOULD
  * have blocked arrives here. Once these stop appearing for real user sessions —
- * including the AdSense, checkout and in-browser-LLM paths — the strict policy
+ * including the checkout and in-browser-LLM paths — the strict policy
  * can be promoted to enforcing with CONTENT_SECURITY_POLICY_MODE=strict.
  *
  * Deliberately unauthenticated: a browser posts a violation report without any

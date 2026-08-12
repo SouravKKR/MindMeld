@@ -61,7 +61,6 @@ exactly the kind of drift this audit exists to catch.
                       Dock/Endpoints/Credits/GetCreditPurchaseOptions.js
                       Dock/Endpoints/Admin/GetRevenueStats.js
   Browser             Main/Globals/Classes/Payments/RazorpayCheckout.js, PaymentCheckout.js;
-                      Main/Globals/Classes/Advertising/AdvertisementLoader.js;
                       Main/index.html and Main/login.html script tags
   Perimeter           Dock/Endpoints/Plugins/SecurityHeaders.js, NoCache.js, EnsureLogin.js,
                       EnsureAdmin.js, EnsurePaymentAccess.js,
@@ -436,6 +435,8 @@ Verify claims rather than repeating them. In particular, re-check each run:
   - whether every env file present would pass the boot-time key-mode gate;
   - that any test harness cited actually runs and passes, by running it;
   - that no advertising, analytics or tag-manager script has returned to
-    Main/index.html or Main/login.html, and that AdvertisementLoader still has no
-    caller other than HomePage;
+    Main/index.html or Main/login.html, and that no advertising origin has
+    returned to SecurityHeaders.STRICT_SCRIPT_ORIGINS (advertising was removed
+    from the product outright; VerifySecurityHardening.mjs and
+    VerifyPaymentLifecycle.mjs both assert its absence);
   - that the no-refund policy of section B2 is still enforced in code.

@@ -420,7 +420,7 @@ def build_story():
              "GetOrganizationDeckShelf, RemoveOrganizationDeck and the four "
              "OrganizationAdmin/Decks endpoints. They issue licences with no order behind them, "
              "which puts them squarely inside [B9] even though no money moves."),
-            ("Browser", "RazorpayCheckout, PaymentCheckout, AdvertisementLoader, and the script "
+            ("Browser", "RazorpayCheckout, PaymentCheckout, and the script "
              "tags in <font face='Courier'>Main/index.html</font> and "
              "<font face='Courier'>Main/login.html</font>."),
             ("Perimeter", "SecurityHeaders, NoCache, EnsureLogin, EnsureAdmin, EnsureOrgAdmin, "
@@ -1174,14 +1174,16 @@ def build_story():
             ["84. [B5] Frontend supply chain controlled",
              STATUS_DONE,
              "Confirmed by reading the markup this pass: no tag manager, no session replay, no chat "
-             "widget, no error tracker. The AdSense tag is gone from "
-             "<font face='Courier'>Main/index.html</font> &mdash; replaced by a comment explaining "
-             "why &mdash; and <font face='Courier'>AdvertisementLoader</font> has exactly one "
-             "caller, HomePage, with the class itself refusing any tag name but "
-             "<font face='Courier'>home-page</font>. "
-             "<font face='Courier'>PaymentCheckout.open</font> raises a suppression counter for the "
-             "whole duration of every checkout, in a <font face='Courier'>finally</font> so a "
-             "declined or dismissed payment still lowers it.",
+             "widget, no error tracker. Advertising has been removed from the product outright "
+             "&mdash; there is no loader, no script tag, and no advertising origin in "
+             "<font face='Courier'>STRICT_SCRIPT_ORIGINS</font>, whose script-src now names only "
+             "the Razorpay widget and the Cloudflare beacon. This supersedes the previous control, "
+             "which injected AdSense for the home page only and suppressed it during checkout: that "
+             "closed direct-to-purchase traffic but could not close a session which browsed Home "
+             "first, because an injected script cannot be un-injected. That residual case no longer "
+             "exists. Both <font face='Courier'>VerifyPaymentLifecycle.mjs</font> &sect;7 and "
+             "<font face='Courier'>VerifySecurityHardening.mjs</font> assert the ABSENCE of the "
+             "advertising origins by name, so a stale allow-list entry cannot outlive the code.",
              ACTION_NONE],
             ["85. [B6] State-changing payment endpoints are CSRF-protected",
              STATUS_DONE,

@@ -883,46 +883,34 @@ async function run()
         (await CreditLedger.getBalance("user-refunded")) === 300);
 
     // ── 7. Advertising cannot reach a payment surface (B5) ─────────────────
-    section("7. Advertising cannot load onto a payment surface");
+    section("7. No advertising exists to reach a payment surface");
 
-    const injectedScripts = [];
-    globalThis.document =
-    {
-        createElement: () => ({}),
-        head: { appendChild: (element) => injectedScripts.push(element) }
-    };
+    // This control used to be a suppression: a loader that injected AdSense on
+    // the home page only, and refused while a checkout was open. It came with
+    // an honest limit — once injected, a script cannot be un-injected, so a
+    // user who browsed Home and then opened a checkout without a page reload
+    // still had advertising resident in the document hosting their payment.
+    //
+    // Advertising has since been removed from the product, which satisfies B5
+    // outright rather than mitigating it, and closes that residual case. What
+    // is asserted therefore changed shape: not "the suppression works" but
+    // "there is nothing to suppress". Both halves are checked, because either
+    // one alone can be defeated — code with no allow-listed origin is dead, and
+    // an allow-listed origin with no code is an open door for the next person
+    // who adds a script tag.
+    const fileSystem = require("fs");
+    const filePath = require("path");
+    const advertisingDirectory = filePath.join(
+        filePath.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")),
+        "..", "Main", "Globals", "Classes", "Advertising");
 
-    const { default: AdvertisementLoader } = await import("../Main/Globals/Classes/Advertising/AdvertisementLoader.js");
+    check("no advertising loader remains in the application",
+        !fileSystem.existsSync(advertisingDirectory));
 
-    check("advertising refuses to load on a page that is not home",
-        AdvertisementLoader.loadForPage("paid-deck-details-page") === false && injectedScripts.length === 0);
-
-    AdvertisementLoader.beginPaymentFlow();
-    check("advertising refuses to load while a checkout is open",
-        AdvertisementLoader.loadForPage("home-page") === false && injectedScripts.length === 0);
-
-    // Nested flows: the inner one finishing must not clear the outer's suppression.
-    AdvertisementLoader.beginPaymentFlow();
-    AdvertisementLoader.endPaymentFlow();
-    check("a nested checkout closing does not lift the suppression early",
-        AdvertisementLoader.isPaymentFlowOpen() === true && AdvertisementLoader.loadForPage("home-page") === false);
-
-    AdvertisementLoader.endPaymentFlow();
-    check("the suppression lifts once every flow has closed", AdvertisementLoader.isPaymentFlowOpen() === false);
-
-    check("advertising loads on the home page once nothing is open",
-        AdvertisementLoader.loadForPage("home-page") === true && injectedScripts.length === 1);
-
-    check("a second home-page mount does not inject it twice",
-        AdvertisementLoader.loadForPage("home-page") === true && injectedScripts.length === 1);
-
-    // An unbalanced end() must not drive the counter negative, which would
-    // silently re-enable loading during a genuine checkout.
-    AdvertisementLoader.endPaymentFlow();
-    AdvertisementLoader.beginPaymentFlow();
-    check("an unbalanced close cannot leave suppression permanently off",
-        AdvertisementLoader.isPaymentFlowOpen() === true);
-    AdvertisementLoader.endPaymentFlow();
+    const paymentPagePolicy = require("./Endpoints/Plugins/SecurityHeaders").SecurityHeaders.buildContentSecurityPolicy();
+    const advertisingOrigins = ["googlesyndication", "googletagservices", "doubleclick", "adtrafficquality"];
+    check("no advertising origin may execute a script on any page, payment or otherwise",
+        advertisingOrigins.every((advertisingOrigin) => !paymentPagePolicy.includes(advertisingOrigin)));
 
     // ── 8. Payments are admin-only outside production ──────────────────────
     section("8. Payments are restricted to administrators outside production");

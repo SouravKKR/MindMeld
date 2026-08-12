@@ -747,14 +747,6 @@ class ProgressPage extends HTMLElement
                     <div class="progress-page-ttl-note"></div>
                 </div>
 
-                <div class="progress-page-right">
-                    <div class="progress-page-section-title">Sponsored</div>
-                    <div class="progress-page-ad-slot">
-                        <img class="progress-page-ad-placeholder-icon" src="./Globals/Assets/Images/Icons/AdPlaceholderIcon.svg" alt="">
-                        <span class="progress-page-ad-label">Advertisement</span>
-                    </div>
-                </div>
-
             </div>
 
             <div class="progress-page-footer">

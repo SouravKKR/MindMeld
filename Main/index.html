@@ -16,18 +16,19 @@
     <meta name="twitter:image" content="https://learn.cogniumlabs.io/Globals/Assets/Images/Logos/CogniumLearnLogoWide.png">
 
     <!--
-      Google AdSense is deliberately NOT loaded here.
+      No advertising script runs anywhere in this application, and none should
+      be added here.
 
       This is a single-page application, so a script tag in this document runs
       on every page the user ever reaches — including checkout. An advertising
       script has full DOM access to the document it lives in, which on a payment
       page is the classic card-skimming surface and a direct violation of the
-      Razorpay handbook's B5 control and PCI DSS 6.4.3.
+      Razorpay handbook's B5 control and PCI DSS 6.4.3. That is why the previous
+      AdSense integration was injected at runtime for the home page only rather
+      than declared here; it has since been removed entirely.
 
-      It is instead injected at runtime by AdvertisementLoader, which loads it
-      only for the home page and refuses while a checkout is open. See
-      Common/ReadmeFiles/PaymentPageScriptInventory.md for the full inventory of
-      what may run on a payment page and why.
+      Common/ReadmeFiles/PaymentPageScriptInventory.md is the inventory of what
+      may run on a payment page and why.
     -->
 
     <!-- CSS Imports -->

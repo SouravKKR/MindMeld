@@ -111,7 +111,7 @@ node VerifyPaymentLifecycle.mjs             # receipts, failed attempts, reversa
 | # | Case | Verdict | Evidence |
 |---|---|---|---|
 | L1 | CSP present and blocks an injected inline script on the checkout page | **OPEN** | The **enforced** profile still allows `'unsafe-inline'`; the strict profile is report-only (B4) |
-| L6 | Advertising script present on a payment surface | **AUTOMATED** | Removed from `index.html`; `AdvertisementLoader` loads only for `home-page` and refuses while a checkout is open. `VerifyPaymentLifecycle.mjs` §7. Residual SPA case documented in `Common/ReadmeFiles/PaymentPageScriptInventory.md` |
+| L6 | Advertising script present on a payment surface | **AUTOMATED** | Advertising removed from the product entirely — no loader, no script, and no advertising origin in the Content-Security-Policy. `VerifyPaymentLifecycle.mjs` §7 asserts both the code and the allow-list are clear; `VerifySecurityHardening.mjs` asserts each origin's absence by name. The residual single-page-application case that the previous home-page-only loader could not close no longer exists. |
 | L2 | Checkout page not framable | **VERIFIED** | `X-Frame-Options: SAMEORIGIN` + `frame-ancestors 'self'` — SecurityHeaders.js |
 | L3 | Session cookies `HttpOnly; Secure; SameSite` | **VERIFIED** | HandleLoginCallback.js:273-280 |
 | L4 | No analytics / session-replay / chat scripts on the payment path | **VERIFIED** | Main/index.html carries no such tag |

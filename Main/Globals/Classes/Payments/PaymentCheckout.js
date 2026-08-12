@@ -1,6 +1,5 @@
 import { paymentProviders } from "../../Enumerations/PaymentProviders.js";
 import RazorpayCheckout from "./RazorpayCheckout.js";
-import AdvertisementLoader from "../Advertising/AdvertisementLoader.js";
 
 /**
  * PaymentCheckout
@@ -56,23 +55,7 @@ class PaymentCheckout
             throw new Error(`No browser checkout handler for payment provider ${providerEnumValue}.`);
         }
 
-        // Every checkout in the application goes through this one method, which
-        // makes it the only place that can reliably mark "a payment is open".
-        // While it is raised, AdvertisementLoader refuses to inject the ad
-        // script — so a user who reaches a purchase without passing through the
-        // home page never has advertising code in the document that hosts their
-        // payment. The finally block is load-bearing: paid, declined, dismissed
-        // and thrown must all lower the flag, or advertising would stay
-        // suppressed for the rest of the session after one failed checkout.
-        AdvertisementLoader.beginPaymentFlow();
-        try
-        {
-            return await handler.open(checkoutContext, overrides);
-        }
-        finally
-        {
-            AdvertisementLoader.endPaymentFlow();
-        }
+        return await handler.open(checkoutContext, overrides);
     }
 }
 

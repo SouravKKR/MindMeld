@@ -21,7 +21,7 @@ const { PacketronPlugin, PacketronPluginPriority } = require("@gamiumgamers/pack
  * ── Two policies, and which one is enforced ───────────────────────────────
  *
  * CogniumLearn embeds third parties that are hostile to a nonce/hash policy:
- * Google AdSense, the Razorpay checkout widget, Google OAuth, and in-browser
+ * the Razorpay checkout widget, Google OAuth, and in-browser
  * LLMs (WebLLM / Transformers.js) that compile WebAssembly, spawn blob-URL
  * workers and stream model shards. The Web Components render inline styles
  * throughout. Both policies below therefore lock the high-value, no-risk
@@ -55,7 +55,7 @@ const { PacketronPlugin, PacketronPluginPriority } = require("@gamiumgamers/pack
  * The enforced strict policy carries `report-uri` too, so promotion does not
  * blind the operator: violations keep landing in the admin Alerts tab through
  * /Security/CspReport whichever mode is selected. What cannot be verified from
- * source alone is whether a remote third party (AdSense in particular) injects
+ * source alone is whether a remote third party injects
  * inline script at runtime — that is exactly what those reports answer, and the
  * escape hatch is what makes acting on the answer a config change rather than a
  * deploy.
@@ -132,17 +132,6 @@ class SecurityHeaders
     // The origins the app genuinely loads scripts from, replacing the blanket
     // https: source in the strict policy. Keep in step with the <script src>
     // tags in Main/index.html and Main/login.html.
-    //   • googlesyndication / googletagservices / doubleclick / gstatic —
-    //     AdSense's loader and the further scripts it pulls in.
-    //   • *.adtrafficquality.google — SODAR, Google's ad traffic-quality probe.
-    //     show_ads_impl pulls sodar2.js from ep1/ep2.adtrafficquality.google at
-    //     runtime, so it appears in no markup and is easy to miss when reading
-    //     the <script> tags. Same failure shape as the Cloudflare beacon below:
-    //     without this entry the strict candidate reports it on every ad-bearing
-    //     page load, and promoting strict to enforcing would break AdSense's
-    //     invalid-traffic detection. The wildcard is deliberate — Google picks
-    //     the ep* subdomain per request. The apex is NOT included because CSP
-    //     wildcards do not match it and nothing is served from it.
     //   • checkout.razorpay.com — the Razorpay Standard Checkout widget, the
     //     only payment script the app loads.
     //   • static.cloudflareinsights.com — the Cloudflare RUM/Web-Analytics beacon.
@@ -157,12 +146,6 @@ class SecurityHeaders
     // connect-src entry either — that directive allows https: in both policies.
     static STRICT_SCRIPT_ORIGINS =
     [
-        "https://pagead2.googlesyndication.com",
-        "https://*.googlesyndication.com",
-        "https://*.googletagservices.com",
-        "https://*.doubleclick.net",
-        "https://*.adtrafficquality.google",
-        "https://*.gstatic.com",
         "https://checkout.razorpay.com",
         "https://static.cloudflareinsights.com"
     ];

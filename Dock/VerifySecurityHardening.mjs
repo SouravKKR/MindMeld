@@ -260,13 +260,24 @@ function verifyEnforcedPolicyNamesEveryRealScriptOrigin()
     const SecurityHeaders = loadSecurityHeadersWith({});
     const enforcedPolicy = SecurityHeaders.buildContentSecurityPolicy();
 
-    assert(enforcedPolicy.includes("https://pagead2.googlesyndication.com"),
-        "the AdSense loader origin is allow-listed");
-    // SODAR is fetched by show_ads_impl at runtime, not declared in any markup,
-    // so nothing else in this repo would catch its removal until AdSense's
-    // invalid-traffic detection quietly stopped loading in production.
-    assert(enforcedPolicy.includes("https://*.adtrafficquality.google"),
-        "the AdSense SODAR origin is allow-listed");
+    // Advertising was removed from the product, so its origins must be gone
+    // from the allow-list too. Asserted as an ABSENCE rather than simply
+    // deleted: an allow-list is a statement about what may execute on a page
+    // that also hosts a checkout, and a stale entry there is exactly the kind
+    // of thing that survives a feature removal unnoticed. If advertising ever
+    // returns, this assertion is where the argument has to be made again.
+    for (const removedAdvertisingOrigin of [
+        "googlesyndication.com",
+        "googletagservices.com",
+        "doubleclick.net",
+        "adtrafficquality.google",
+        "gstatic.com",
+    ])
+    {
+        assert(!enforcedPolicy.includes(removedAdvertisingOrigin),
+            `no advertising origin may execute scripts: ${removedAdvertisingOrigin} is absent`);
+    }
+
     assert(enforcedPolicy.includes("https://checkout.razorpay.com"),
         "the Razorpay checkout widget origin is allow-listed — without this, no payment can be taken at all");
     assert(enforcedPolicy.includes("https://static.cloudflareinsights.com"),

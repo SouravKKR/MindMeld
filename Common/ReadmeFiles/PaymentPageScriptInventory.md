@@ -72,44 +72,31 @@ Nothing legitimate rewrites `Dock/Static` after a deploy, so a changed, missing 
 | Session replay | None. No FullStory, Hotjar, LogRocket or equivalent. |
 | Chat widgets | None. Support is a first-party ticket form. |
 | Error trackers | None. Errors are reported to the first-party `/Logs` endpoint, so no payment payload can reach a third-party tracker. |
-| Advertising | **Removed from the payment path** — see below. |
+| Advertising | **None.** Removed from the product entirely — see below. |
 
 ---
 
-## Advertising: what changed and what remains
+## Advertising: removed
 
 Google AdSense used to be a `<script>` tag in `Main/index.html`. In a single-page
 application that meant the advertising script — and everything AdSense pulls in at runtime
 (`googletagservices`, `doubleclick`, `adtrafficquality`) — was resident in the same document
 as every checkout, with full DOM access to it.
 
-It is now injected at runtime by
-[AdvertisementLoader](../../Main/Globals/Classes/Advertising/AdvertisementLoader.js), under
-two rules:
+It was then moved behind a runtime loader that injected it for the home page only and
+refused while a checkout was open. That closed the case where a buyer reached a purchase
+directly, but it carried an honest limit: a script cannot be un-injected, so a session that
+browsed Home first and then opened a checkout without a full page reload still had
+advertising resident in the document hosting the payment.
 
-1. **Home page only.** `loadForPage` refuses any tag name other than `home-page`, and only
-   `HomePage` calls it.
-2. **Never while a checkout is open.** `PaymentCheckout.open` raises a suppression flag for
-   the whole duration of the widget, in a `finally` block so that paid, declined, dismissed
-   and thrown all lower it again.
+**Advertising has now been removed from the product entirely.** There is no loader, no
+script, and no advertising origin in the Content-Security-Policy. B5 is satisfied outright
+rather than mitigated, and the residual case above no longer exists.
 
-**What this fixes.** A user who reaches a purchase without passing through the home page —
-a paid-deck deep link, a credits dialog opened after a fresh load, anything entered from
-the login page — never loads the advertising script at all. That is the majority of
-direct-to-purchase traffic, and it is the case where an attacker would have the clearest
-run at a payment form.
-
-**What it does not fix.** A script cannot be un-injected. A user who browses the home page
-and *then* opens a checkout without a full page reload still has AdSense resident in that
-document. Closing that would require forcing a navigation boundary on the way into
-checkout, which is a worse trade than the risk it removes.
-
-**Residual risk, stated plainly:** for a session that visited the home page first, the
-advertising origins retain DOM access to the document hosting the checkout iframe. They
-cannot read card data — that is inside Razorpay's iframe, on Razorpay's origin, and is
-cross-origin to them — but they could in principle overlay the page. The mitigations that
-remain in force are `Permissions-Policy: payment=()`, `frame-ancestors 'self'`, and the
-enforced Content-Security-Policy described below.
+This is worth stating rather than simply deleting, because the reasoning is what a future
+reader needs: an advertising script on a single-page application is resident on every
+surface that application ever shows, including the one taking card details. Re-introducing
+one is not a product decision that can be made on the home page alone.
 
 ---
 
@@ -120,14 +107,14 @@ survives only as a `CONTENT_SECURITY_POLICY_MODE=compatible` escape hatch. So `s
 now genuinely blocks: an injected inline `<script>` on a checkout document does not run, and
 neither does a script from an origin outside the allow-list.
 
-The advertising origins stay in
 [`SecurityHeaders.STRICT_SCRIPT_ORIGINS`](../../Dock/Endpoints/Plugins/SecurityHeaders.js)
-because AdSense still legitimately loads on the home page, and `script-src` is a
-document-wide directive rather than a per-route one.
+now names two origins: the Razorpay checkout widget and the Cloudflare beacon. The
+advertising origins are gone from it, and `Dock/VerifySecurityHardening.mjs` asserts their
+ABSENCE rather than merely omitting them — an allow-list entry outlives the code that
+needed it, and a stale one is an open door for whoever adds the next script tag.
 
-The gating above does not by itself tighten the policy. What it changes is the *blast
-radius*: the set of origins with script access to a payment document is now the Razorpay
-widget alone for any session that entered directly.
+The set of origins with script access to a payment document is therefore the Razorpay
+widget alone, for every session, however it arrived.
 
 Adding a remote script to a payment surface therefore now takes **three** coordinated
 changes, and skipping any one of them is a visible failure rather than a silent gap: this
@@ -143,5 +130,6 @@ Re-check this inventory when any of the following happens:
 - a new remote `<script>` is added to `Main/index.html` or `Main/login.html`;
 - a new checkout flow is added (it must go through `PaymentCheckout`, which is what makes
   the suppression universal);
-- `AdvertisementLoader.loadForPage` gains a caller other than `HomePage`;
+- any advertising, retargeting or attribution script is proposed — see above for why that
+  is a payment-surface decision and not only a revenue one;
 - an analytics, support or monitoring vendor is introduced.

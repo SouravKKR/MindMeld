@@ -25,10 +25,18 @@ import { WebLLM, Transformers } from "./BrowserLlm.js";
  */
 class BrowserLlmEngineRunner
 {
-    // Threads require SharedArrayBuffer, which requires cross-origin
-    // isolation (COOP + COEP). Turning that on site-wide would break AdSense,
-    // the payment checkout widget and Google sign-in, so the processor
-    // backend runs single-threaded. It is slower; it also actually works.
+    // Threads require SharedArrayBuffer, which requires cross-origin isolation
+    // (COOP + COEP). Turning that on site-wide would still break the payment
+    // checkout widget and Google sign-in, so the processor backend runs
+    // single-threaded. It is slower; it also actually works.
+    //
+    // Advertising used to be the third blocker and has since been removed, so
+    // the case is one obstacle lighter than it was — but not open. The two that
+    // remain are both revenue paths, and neither tolerates being isolated.
+    // Anyone revisiting this should know the honest measurement that made it
+    // moot anyway: single-threaded, this backend managed 0.1 tokens/second,
+    // which is why the processor path was withdrawn in favour of running the
+    // model natively in the installed app.
     static ONNX_RUNTIME_THREAD_COUNT = 1;
 
     static GENERATION_TEMPERATURE = 0.7;

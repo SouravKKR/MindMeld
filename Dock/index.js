@@ -325,7 +325,7 @@ const server = new Packetron({ port: 3000, flags: PacketronServerFlags.START_IMM
 // X-Frame-Options, X-Content-Type-Options, Referrer-Policy and HSTS on every
 // response — endpoints, the SPA shell and static assets alike. The CSP is
 // compatibility-first (locks framing/base-uri/object-src while allowing the
-// https:/inline/wasm/blob sources AdSense, Razorpay, OAuth and the in-browser
+// https:/inline/wasm/blob sources Razorpay, OAuth and the in-browser
 // LLMs require) so no existing functionality is affected. Everything is
 // overridable from the environment — see Endpoints/Plugins/SecurityHeaders.js.
 server.insertGlobalPlugin(securityHeadersPlugin);

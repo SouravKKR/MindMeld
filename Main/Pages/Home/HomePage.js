@@ -13,7 +13,6 @@ import SyncManager from "../../Globals/Classes/SyncManager.js";
 import SyncStatusComponent from "./Components/SyncStatusComponent.js";
 import SignInLegalNoticeComponent from "./Components/SignInLegalNoticeComponent.js";
 import NavigationEvents from "../../Globals/Events/NavigationEvents.js";
-import AdvertisementLoader from "../../Globals/Classes/Advertising/AdvertisementLoader.js";
 // Side-effect import: registers the observer that injects the latest streak
 // badge into the profile dropdown wherever it opens (no dropdown edits).
 import "../../Globals/Classes/Streak/ProfileBadgeInjector.js";
@@ -356,20 +355,6 @@ class HomePage extends HTMLElement
         }
 
         this.#bindInstanceListeners();
-
-        // Advertising is loaded here and nowhere else. It used to be a script
-        // tag in index.html, which in a single-page application meant it was
-        // resident on the checkout surfaces too — see AdvertisementLoader for
-        // why that mattered and what this does and does not fix.
-        AdvertisementLoader.loadForPage("home-page");
-    }
-
-    onPageResumed()
-    {
-        // Returning to home from a deeper page. The loader is idempotent, so
-        // this only matters for the case where the first mount was skipped
-        // because a checkout was open at the time.
-        AdvertisementLoader.loadForPage("home-page");
     }
 }
 
