@@ -24,6 +24,7 @@
 #
 # Flags (same meaning as the legacy deploy.sh):
 #   --skip-base-update  --skip-bake  --skip-frontend-build  --skip-tutorial-tests
+#   --skip-desktop-release
 #   --keep-node-running  --cleanup-bakeboxes  --help
 #
 # Before anything expensive runs, the environment's Linode is checked: if it is
@@ -44,6 +45,7 @@ SKIP_BASE_UPDATE=0
 SKIP_BAKE=0
 SKIP_FRONTEND_BUILD=0
 SKIP_TUTORIAL_TESTS=0
+SKIP_DESKTOP_RELEASE=0
 KEEP_NODE_RUNNING=0
 TUTORIAL_GATE_DOCK_PID=""
 
@@ -852,6 +854,106 @@ update_base_node()
     log_success "Base node updated and Dock restarted."
 }
 
+# ── Desktop release publishing ───────────────────────────────────────────────
+#
+# Uploads a locally built desktop installer and its update manifest to
+# Dock/DesktopUpdates/, which Dock serves at /DesktopUpdates/. An installed app
+# reads latest.json at startup and offers the update when the version is newer
+# than its own.
+#
+# THREE THINGS IT REFUSES TO DO, each because the failure is silent otherwise:
+#
+#   1. Publish an unsigned installer. Every app verifies the signature against
+#      the public key baked into it at build time; an unsigned one is rejected
+#      by every install at once, and nothing at this end would say so.
+#   2. Publish a version no newer than the one already live. The bundle
+#      directory keeps every build ever made here, so a stale local artifact is
+#      always within reach — republishing one would offer an installed app an
+#      "update" it already has, or worse, a downgrade it would take.
+#   3. Publish when nothing was built. Most deploys are frontend-only and never
+#      touch the desktop app; that is the normal case, not an error.
+#
+# It runs after the base node is updated, so a failure here cannot leave the
+# site half-deployed — the web app is already live and correct by this point.
+publish_desktop_release()
+{
+    local base_node_target="${BASE_NODE_SSH_USER}@${BASE_NODE_SSH_HOST}"
+    local staging_directory
+    staging_directory="$(mktemp -d -t cogniumlearn-desktop-release.XXXXXX)"
+
+    log_step "Checking for a desktop release to publish..."
+
+    local manifest_status=0
+    ( cd "$REPOSITORY_ROOT" && node Common/Scripts/BuildDesktopUpdateManifest.js \
+        --domain "$ENVIRONMENT_DOMAIN" --output "$staging_directory" ) || manifest_status=$?
+
+    if [ "$manifest_status" -eq 3 ]
+    then
+        log_info "No desktop installer has been built locally — skipping the desktop release."
+        rm -rf "$staging_directory"
+        return 0
+    fi
+
+    if [ "$manifest_status" -ne 0 ]
+    then
+        log_error "Could not prepare the desktop release. The web deploy above is unaffected."
+        rm -rf "$staging_directory"
+        return 1
+    fi
+
+    local staged_version published_version
+    staged_version="$(node -e "process.stdout.write(require('$staging_directory/latest.json').version)")"
+    published_version="$(curl -fsS --max-time 20 "https://${ENVIRONMENT_DOMAIN}/DesktopUpdates/latest.json" 2>/dev/null \
+        | node -e "let raw=''; process.stdin.on('data', chunk => raw += chunk).on('end', () => { try { process.stdout.write(JSON.parse(raw).version || ''); } catch (parseError) { process.stdout.write(''); } })" || true)"
+
+    if [ -n "$published_version" ]
+    then
+        log_info "Desktop: built $staged_version, currently published $published_version."
+
+        # Sorted by version rather than compared as strings: "1.0.10" is newer
+        # than "1.0.9" and lexically smaller, so a text comparison starts
+        # refusing real releases the moment a component reaches double digits.
+        local newest_version
+        newest_version="$(printf '%s\n%s\n' "$staged_version" "$published_version" | sort -V | tail -n1)"
+
+        if [ "$staged_version" = "$published_version" ] || [ "$newest_version" != "$staged_version" ]
+        then
+            log_info "The published desktop release is already $published_version — leaving it alone."
+            rm -rf "$staging_directory"
+            return 0
+        fi
+    else
+        log_info "Desktop: built $staged_version, nothing published yet."
+    fi
+
+    log_step "Publishing desktop release $staged_version to ${ENVIRONMENT_DOMAIN}..."
+
+    run_ssh "$base_node_target" "mkdir -p '$BASE_NODE_REPO_DIR/Dock/DesktopUpdates'"
+
+    local staged_file
+    for staged_file in "$staging_directory"/*
+    do
+        copy_over_scp "$staged_file" "${base_node_target}:$BASE_NODE_REPO_DIR/Dock/DesktopUpdates/"
+    done
+
+    rm -rf "$staging_directory"
+
+    # latest.json is written last by the loop above only by luck of ordering, so
+    # the check that matters is this one: prove the manifest is actually being
+    # served before claiming the release is out.
+    local served_version
+    served_version="$(curl -fsS --max-time 20 "https://${ENVIRONMENT_DOMAIN}/DesktopUpdates/latest.json" 2>/dev/null \
+        | node -e "let raw=''; process.stdin.on('data', chunk => raw += chunk).on('end', () => { try { process.stdout.write(JSON.parse(raw).version || ''); } catch (parseError) { process.stdout.write(''); } })" || true)"
+
+    if [ "$served_version" = "$staged_version" ]
+    then
+        log_success "Desktop release $staged_version is live — installed apps will offer it at next launch."
+    else
+        log_warning "Uploaded desktop release $staged_version but /DesktopUpdates/latest.json reports '${served_version:-nothing}'."
+        log_warning "The upload may still be propagating; check https://${ENVIRONMENT_DOMAIN}/DesktopUpdates/latest.json."
+    fi
+}
+
 cleanup_after_success()
 {
     if [ -n "$BAKEBOX_INSTANCE_ID" ]
@@ -905,6 +1007,7 @@ main()
             --skip-bake) SKIP_BAKE=1 ;;
             --skip-frontend-build) SKIP_FRONTEND_BUILD=1 ;;
             --skip-tutorial-tests) SKIP_TUTORIAL_TESTS=1 ;;
+            --skip-desktop-release) SKIP_DESKTOP_RELEASE=1 ;;
             --keep-node-running) KEEP_NODE_RUNNING=1 ;;
             --cleanup-bakeboxes) cleanup_only=1 ;;
             --help|-h) show_help; exit 0 ;;
@@ -961,6 +1064,17 @@ main()
     fi
 
     if [ "$SKIP_BASE_UPDATE" -eq 0 ]; then update_base_node; else log_warning "Skipping base-node update (--skip-base-update)."; fi
+
+    # After the base node, deliberately. A desktop release is an independent
+    # artifact — the web app is already live and correct by this point, so a
+    # problem publishing the installer cannot leave the site half-deployed.
+    if [ "$SKIP_BASE_UPDATE" -eq 0 ] && [ "$SKIP_DESKTOP_RELEASE" -eq 0 ]
+    then
+        publish_desktop_release || log_warning "The desktop release was not published. The web deploy above is live and unaffected."
+    elif [ "$SKIP_DESKTOP_RELEASE" -eq 1 ]
+    then
+        log_warning "Skipping the desktop release (--skip-desktop-release)."
+    fi
 
     cleanup_after_success
     print_final_summary

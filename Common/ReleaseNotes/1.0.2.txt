@@ -1,0 +1,6 @@
+Manage your on-device AI models from Settings — see what's downloaded, switch
+between models, and delete ones you no longer want. Deleting the model in use
+moves you to another one you already have.
+
+This version can also update itself: from now on you'll be offered new versions
+when you open the app.

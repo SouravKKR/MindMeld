@@ -2210,6 +2210,47 @@ key. Then:
 
 ## 3.3 Build, then publish a release
 
+**Publishing is automatic.** `deploy-environment.sh` publishes a desktop release whenever a
+locally built installer is newer than the one already live, so the normal flow is:
+
+```bash
+# 1. Bump the version in BOTH Native/src-tauri/tauri.conf.json and Cargo.toml.
+#    They must agree — RunDesktop.js locates the binary by name and version.
+
+# 2. Build + sign (signing vars come from the repo-root deployment.env):
+cd Native
+npm run tauri -- build --features native-inference
+
+# 3. Deploy as usual. The desktop release rides along.
+bash Common/Deployment/deploy-environment.sh production
+```
+
+`publish_desktop_release` runs **after** the base node is updated, so a problem with the
+installer can never leave the site half-deployed. It refuses, loudly, in three cases —
+each of which is otherwise silent:
+
+| Situation | What happens |
+|---|---|
+| No installer built locally | Skipped. This is the normal case; most deploys are frontend-only. |
+| Installer has no `.sig` beside it | **Refused.** Every install verifies against its baked-in public key, so an unsigned release fails for all of them at once with no signal here. |
+| Installer's version ≠ `tauri.conf.json` version | **Refused.** The bundle directory keeps every build ever made, so the newest *file* may not be the declared version. |
+| Built version ≤ published version | Skipped. Stops a stale local artifact downgrading the channel. Compared with `sort -V`, not as text — `1.0.10` is newer than `1.0.9` and lexically smaller. |
+
+Pass `--skip-desktop-release` to deploy the web app without touching the desktop channel.
+
+Release notes come from `Common/ReleaseNotes/<version>.txt` when that file exists, falling
+back to `CogniumLearn <version>`. That text is shown in the update prompt, so write it for a
+learner rather than pasting commit subjects.
+
+> **The updater endpoint MUST be `https`.** Tauri refuses any other scheme by panicking
+> during plugin initialisation — the app then exits before creating a window, with no error
+> dialog and nothing on screen. It is indistinguishable from a crash, and only launching the
+> built app once will reveal it.
+
+### 3.3.1 Doing it by hand
+
+
+
 ```bash
 # From the repo root, with the signing env vars + public key set:
 export TAURI_SIGNING_PRIVATE_KEY=...            # or a path to the key file
