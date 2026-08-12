@@ -10,6 +10,7 @@ class LocalLlmDownloadConstants:
     LOCAL_PREFERRED_TIER_PERSISTENCE_KEY = 'BrowserLlm/PreferredTier.mmsd'
     LOCAL_ASK_AI_LANGUAGE_PERSISTENCE_KEY = 'AskAi/LanguagePreference.mmsd'
     LOCAL_GRAPHICS_UNUSABLE_PERSISTENCE_KEY = 'BrowserLlm/GraphicsUnusable.mmsd'
+    LOCAL_MANIFEST_CACHE_PERSISTENCE_KEY = 'BrowserLlm/ManifestCache.mmsd'
     MODEL_OVERRIDE_QUERY_PARAMETER = 'browserLlmModel'
     LOAD_TIMEOUT_MILLISECONDS = 1800000
     GENERATION_TIMEOUT_MILLISECONDS = 180000

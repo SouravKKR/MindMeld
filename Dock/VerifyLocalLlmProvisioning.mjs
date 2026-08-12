@@ -728,6 +728,58 @@ function runSelfHostingTier()
 }
 
 
+// ── Tier 1e0: the manifest carries what each driver actually reads ─────────
+
+/**
+ * LocalLlmManifestClient.#mergeWithCatalogue builds a NEW descriptor object
+ * from a fixed list of fields rather than spreading the served model. Anything
+ * not named there silently does not exist downstream.
+ *
+ * That is a quiet way to break a driver. NativeRuntimeDriver reads weightsUrl,
+ * weightsFileName and recommendedThreadCount; if the merge drops them it asks
+ * the native side to download `undefined`, which surfaces as a bad URL several
+ * layers from the omission. Nothing else here would notice, because the
+ * selector, the catalogue checks and the manifest endpoint are all still
+ * perfectly consistent — the loss happens between them.
+ *
+ * Read out of the source rather than by running the merge, because running it
+ * needs a browser: the module imports Persistence, which reaches for
+ * IndexedDB.
+ */
+function runManifestFieldCoverageTier()
+{
+    section("The merged descriptor carries the fields each driver reads");
+
+    const manifestClientPath = path.join(repositoryRoot, "Main", "Globals", "Classes", "LocalLlm", "LocalLlmManifestClient.js");
+    const nativeDriverPath = path.join(repositoryRoot, "Main", "Globals", "Classes", "LocalLlm", "Drivers", "NativeRuntimeDriver.js");
+
+    if (!fs.existsSync(manifestClientPath) || !fs.existsSync(nativeDriverPath))
+    {
+        assert(false, "the manifest client and native driver exist");
+        return;
+    }
+
+    const manifestSource = fs.readFileSync(manifestClientPath, "utf8");
+    const nativeDriverSource = fs.readFileSync(nativeDriverPath, "utf8");
+
+    // Every `descriptor.<field>` the native driver reads must be produced by
+    // the merge. Derived from the driver rather than hard-coded, so a new field
+    // is covered the moment it is used.
+    const requiredFieldNames = new Set(
+        Array.from(nativeDriverSource.matchAll(/\bdescriptor\.([a-zA-Z0-9_]+)/g)).map((fieldMatch) => fieldMatch[1]));
+
+    assert(requiredFieldNames.size > 0, "the native driver reads fields off the descriptor");
+
+    for (const requiredFieldName of requiredFieldNames)
+    {
+        assert(
+            new RegExp(`^\\s*${requiredFieldName}\\s*:`, "m").test(manifestSource),
+            `the merged descriptor provides "${requiredFieldName}", which NativeRuntimeDriver reads`,
+        );
+    }
+}
+
+
 // ── Tier 1e1: every driver really implements the driver contract ───────────
 
 /**
@@ -1205,6 +1257,7 @@ async function main()
     runCatalogueIntegrityTier();
     runWorkerProtocolTier();
     runSelfHostingTier();
+    runManifestFieldCoverageTier();
     runDriverContractTier();
     runNativeProtocolMirrorTier();
     runDeviceLostMirrorTier();

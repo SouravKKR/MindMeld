@@ -70,6 +70,12 @@ class UserIdentityConstants
         LocalLlmDownloadConstants.LOCAL_PREFERRED_TIER_PERSISTENCE_KEY,
         LocalLlmDownloadConstants.LOCAL_ASK_AI_LANGUAGE_PERSISTENCE_KEY,
         LocalLlmDownloadConstants.LOCAL_GRAPHICS_UNUSABLE_PERSISTENCE_KEY,
+        // The last manifest the server successfully returned. Device-scoped for
+        // the same reason as the download record above: it describes weights
+        // that live in an origin-wide store shared by every identity, and it
+        // has to be readable at boot before any session resolves — which, when
+        // the device is offline, is the only moment it will ever be read.
+        LocalLlmDownloadConstants.LOCAL_MANIFEST_CACHE_PERSISTENCE_KEY,
     ]);
 }
 
