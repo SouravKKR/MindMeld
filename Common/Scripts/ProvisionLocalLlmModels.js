@@ -32,6 +32,10 @@ const { Readable } = require('stream');
  *     --verify-only        Re-check what is on disk; download nothing.
  *     --concurrency=<n>    Parallel transfers (default 4).
  *     --list               Print the catalogue with sizes and on-disk status, then exit.
+ *                          Also reports model directories no catalogue entry claims.
+ *     --prune-orphans      Delete those unclaimed directories, then exit. Withdrawing a
+ *                          model stops it being served but leaves its weights on every
+ *                          node that ever fetched them; this is what reclaims that space.
  *
  * Integrity: HuggingFace's tree API reports an LFS sha256 for every large
  * file. Each download lands as "<name>.partial" and is renamed only once its
@@ -620,6 +624,139 @@ class LocalLlmModelProvisioner
 
             console.log(`${modelKey.padEnd(28)}  rank ${String(descriptor.preferenceRank).padStart(3)}  ${descriptor.executionBackend.padEnd(6)}  ${descriptor.approximateTotalLabel.padEnd(9)}  ${statusText}`);
         }
+
+        this.reportOrphanedModelDirectories();
+    }
+
+    /**
+     * Model directories on disk that no catalogue entry claims.
+     *
+     * Withdrawing a model removes its catalogue entry, which stops it being
+     * SERVED but leaves its weights on every node that ever provisioned it —
+     * hundreds of megabytes each, invisible to every other check, and never
+     * mentioned again. Nothing else in this script would report them, because
+     * everything else iterates the catalogue and an orphan is by definition
+     * absent from it.
+     *
+     * Reported by --list; deleted only when --prune-orphans is passed.
+     * Deleting gigabytes is not something a status command should do because
+     * the operator happened to run it.
+     */
+    findOrphanedModelDirectories()
+    {
+        const modelsRoot = path.join(this.destinationRoot, 'Models');
+        if (!fs.existsSync(modelsRoot))
+        {
+            return [];
+        }
+
+        // Every path segment leading to a claimed folder is itself claimed —
+        // a folderName like "owner/repo/resolve/main" means "owner" and
+        // "owner/repo" are real directories that must not be swept.
+        const claimedRelativePaths = new Set();
+        for (const modelKey of (Array.isArray(this.catalogue.ORDER) ? this.catalogue.ORDER : []))
+        {
+            const descriptor = this.catalogue[modelKey];
+            if (!descriptor || typeof descriptor.folderName !== 'string')
+            {
+                continue;
+            }
+
+            const segments = descriptor.folderName.split('/').filter((segment) => segment.length > 0);
+            for (let segmentCount = 1; segmentCount <= segments.length; segmentCount++)
+            {
+                claimedRelativePaths.add(segments.slice(0, segmentCount).join('/'));
+            }
+        }
+
+        const orphanedDirectories = [];
+
+        const walk = (absoluteDirectory, relativePath) =>
+        {
+            for (const entry of fs.readdirSync(absoluteDirectory, { withFileTypes: true }))
+            {
+                if (!entry.isDirectory())
+                {
+                    continue;
+                }
+
+                const childRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+                const childAbsolutePath = path.join(absoluteDirectory, entry.name);
+
+                if (claimedRelativePaths.has(childRelativePath))
+                {
+                    // Claimed, but a deeper directory under it may still be an
+                    // orphan — a model whose layout changed leaves the old
+                    // shape behind inside a folder that is still in use.
+                    walk(childAbsolutePath, childRelativePath);
+                    continue;
+                }
+
+                orphanedDirectories.push({
+                    relativePath: childRelativePath,
+                    absolutePath: childAbsolutePath,
+                    byteCount: LocalLlmModelProvisioner.measureDirectoryBytes(childAbsolutePath),
+                });
+            }
+        };
+
+        walk(modelsRoot, '');
+        return orphanedDirectories;
+    }
+
+    reportOrphanedModelDirectories()
+    {
+        const orphanedDirectories = this.findOrphanedModelDirectories();
+        if (orphanedDirectories.length === 0)
+        {
+            return;
+        }
+
+        const totalBytes = orphanedDirectories.reduce((runningTotal, orphan) => runningTotal + orphan.byteCount, 0);
+        console.log(`\nOrphaned (no catalogue entry claims these) — ${LocalLlmModelProvisioner.formatBytes(totalBytes)} total:`);
+        for (const orphan of orphanedDirectories)
+        {
+            console.log(`  ${orphan.relativePath.padEnd(52)}  ${LocalLlmModelProvisioner.formatBytes(orphan.byteCount)}`);
+        }
+        console.log('  Re-run with --prune-orphans to delete them.');
+    }
+
+    pruneOrphanedModelDirectories()
+    {
+        const orphanedDirectories = this.findOrphanedModelDirectories();
+        if (orphanedDirectories.length === 0)
+        {
+            console.log('No orphaned model directories to remove.');
+            return;
+        }
+
+        let reclaimedBytes = 0;
+        for (const orphan of orphanedDirectories)
+        {
+            fs.rmSync(orphan.absolutePath, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+            reclaimedBytes += orphan.byteCount;
+            console.log(`  removed ${orphan.relativePath} (${LocalLlmModelProvisioner.formatBytes(orphan.byteCount)})`);
+        }
+        console.log(`Reclaimed ${LocalLlmModelProvisioner.formatBytes(reclaimedBytes)}.`);
+    }
+
+    static measureDirectoryBytes(absoluteDirectory)
+    {
+        let totalBytes = 0;
+        for (const entry of fs.readdirSync(absoluteDirectory, { withFileTypes: true }))
+        {
+            const childPath = path.join(absoluteDirectory, entry.name);
+            totalBytes += entry.isDirectory()
+                ? LocalLlmModelProvisioner.measureDirectoryBytes(childPath)
+                : fs.statSync(childPath).size;
+        }
+        return totalBytes;
+    }
+
+    static formatBytes(byteCount)
+    {
+        const megabytes = byteCount / (1024 * 1024);
+        return megabytes >= 1024 ? `${(megabytes / 1024).toFixed(2)} GB` : `${megabytes.toFixed(1)} MB`;
     }
 
     static computeSha256(filePath)
@@ -656,6 +793,7 @@ class LocalLlmModelProvisioner
             bForce: false,
             bVerifyOnly: false,
             bList: false,
+            bPruneOrphans: false,
             concurrency: LocalLlmModelProvisioner.DEFAULT_CONCURRENCY,
         };
 
@@ -672,6 +810,10 @@ class LocalLlmModelProvisioner
             else if (argument === '--list')
             {
                 parsed.bList = true;
+            }
+            else if (argument === '--prune-orphans')
+            {
+                parsed.bPruneOrphans = true;
             }
             else if (argument.startsWith('--models='))
             {
@@ -709,6 +851,12 @@ class LocalLlmModelProvisioner
     {
         const options = LocalLlmModelProvisioner.parseCommandLineArguments(process.argv.slice(2), repositoryRoot);
         const provisioner = new LocalLlmModelProvisioner(options);
+
+        if (options.bPruneOrphans)
+        {
+            provisioner.pruneOrphanedModelDirectories();
+            return;
+        }
 
         if (options.bList)
         {
