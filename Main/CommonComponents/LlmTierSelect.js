@@ -222,13 +222,6 @@ class LlmTierSelect extends HTMLElement
             return;
         }
 
-        // Before any of the early returns below. This method has three exits —
-        // Free usable and unremarkable, Free usable with a note, and Free
-        // unavailable — and the diagnostic has to survive all of them, because
-        // the interesting case is often the one where the status line says
-        // nothing at all.
-        this.#renderDiagnostic();
-
         const reasonText = LocalLlmCapability.getDisabledReasonText();
         if (!reasonText)
         {
@@ -253,37 +246,6 @@ class LlmTierSelect extends HTMLElement
         this.#statusElement.hidden = false;
         this.#statusElement.textContent = `Free unavailable — ${reasonText}`;
         this.#setStatusClickable(LocalLlmCapability.isRecoverableByUser());
-    }
-
-    /**
-     * TEMPORARY (added 2026-08-10, remove once the repeat-download fault is
-     * closed out). Prints what the session actually knows about the on-device
-     * model underneath the status line, because the status line alone cannot
-     * distinguish "no record was saved" from "the record named another model"
-     * from "the last download never finished" — and all three read as
-     * "Click to start the download."
-     *
-     * Deliberately rendered on screen rather than left in the console: the
-     * fault reproduces on phones, where a console is not reachable without a
-     * cabled desktop.
-     */
-    #renderDiagnostic()
-    {
-        if (!this.#statusElement || !this.#statusElement.parentElement)
-        {
-            return;
-        }
-
-        let diagnosticElement = this.#statusElement.parentElement.querySelector(".browser-llm-diagnostic");
-        if (!diagnosticElement)
-        {
-            diagnosticElement = document.createElement("div");
-            diagnosticElement.className = "browser-llm-diagnostic";
-            diagnosticElement.style.cssText = "font-size:11px;opacity:0.65;margin-top:4px;word-break:break-all;user-select:text;";
-            this.#statusElement.parentElement.insertBefore(diagnosticElement, this.#statusElement.nextSibling);
-        }
-
-        diagnosticElement.textContent = LocalLlmCapability.getDiagnosticText();
     }
 
     /**
