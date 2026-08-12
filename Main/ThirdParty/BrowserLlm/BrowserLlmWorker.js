@@ -84,6 +84,20 @@ class BrowserLlmWorkerHost
         {
             await this.#engineRunner.unload();
             this.#post(requestId, BrowserLlmWorkerProtocol.GENERATION_COMPLETE, { value: "" });
+            return;
+        }
+
+        if (message.command === BrowserLlmWorkerProtocol.HAS_MODEL)
+        {
+            const bPresent = await this.#engineRunner.hasModel(message.descriptor);
+            this.#post(requestId, BrowserLlmWorkerProtocol.MODEL_PRESENCE, { bPresent: bPresent });
+            return;
+        }
+
+        if (message.command === BrowserLlmWorkerProtocol.DELETE_MODEL)
+        {
+            await this.#engineRunner.deleteModel(message.descriptor);
+            this.#post(requestId, BrowserLlmWorkerProtocol.MODEL_DELETED, { modelKey: message.descriptor?.modelKey || "" });
         }
     }
 

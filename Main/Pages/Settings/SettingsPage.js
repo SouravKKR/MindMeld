@@ -12,7 +12,7 @@ import SyncManager from '../../Globals/Classes/SyncManager.js';
 import Persistence from '../../Globals/Classes/Persistence.js';
 import LlmTierSelect from '../../CommonComponents/LlmTierSelect.js';
 import LanguageSelect from '../../CommonComponents/LanguageSelect.js';
-import LocalLlmModelSelect from '../../CommonComponents/LocalLlmModelSelect.js';
+import LocalLlmModelTable from '../../CommonComponents/LocalLlmModelTable.js';
 import AppearanceSettingsPanel from './Components/AppearanceSettingsPanel.js';
 import AudioSettingsPanel from './Components/AudioSettingsPanel.js';
 import CreditPurchaseFlow from '../../Globals/Classes/Credits/CreditPurchaseFlow.js';
@@ -564,17 +564,22 @@ class SettingsPage extends HTMLElement
 
     #renderModelTabContent()
     {
-        // The "AI" tab. Two labelled rows, each holding a self-managing
-        // select: the model tier (<llm-tier-select> → PreferredModelTier)
-        // which Free model runs on this device (<local-llm-model-select> →
-        // PreferredLocalLlmModel; hides itself unless the hardware can run more
-        // than one), and the Ask AI output language (<language-select> →
-        // PreferredAskAiLanguage). Both components own their own
-        // persistence and cross-component sync (window-level
-        // PREFERRED_TIER_CHANGED / PREFERRED_ASK_AI_LANGUAGE_CHANGED
-        // events), so picking either here updates the Study text-selection
-        // menu and bottom panel live without any explicit wiring on this
-        // page.
+        // The "AI" tab. Three labelled rows, each holding a self-managing
+        // component: the model tier (<llm-tier-select> → PreferredModelTier),
+        // the on-device models this machine holds (<local-llm-model-table> →
+        // LocalLlmCapability; hides itself when no model fits the hardware),
+        // and the Ask AI output language (<language-select> →
+        // PreferredAskAiLanguage). Each owns its own persistence and
+        // cross-component sync (window-level PREFERRED_TIER_CHANGED /
+        // PREFERRED_ASK_AI_LANGUAGE_CHANGED events), so picking any of them
+        // here updates the Study text-selection menu and bottom panel live
+        // without any explicit wiring on this page.
+        //
+        // The model row is a table rather than a dropdown because it is a
+        // management surface, not a choice: it downloads, switches and deletes
+        // weights measured in gigabytes, and each of those is a separate act.
+        // It is laid out full-width beneath its label rather than in the
+        // right-hand value column, which is sized for a single control.
         this.querySelector('.settings-content').innerHTML = `
             <div class="settings-row settings-model-row">
                 <span class="settings-row-label">Model</span>
@@ -582,11 +587,9 @@ class SettingsPage extends HTMLElement
                     <llm-tier-select></llm-tier-select>
                 </span>
             </div>
-            <div class="settings-row settings-local-model-row">
-                <span class="settings-row-label">Free model</span>
-                <span class="settings-row-value">
-                    <local-llm-model-select></local-llm-model-select>
-                </span>
+            <div class="settings-row settings-local-model-row settings-row-stacked">
+                <span class="settings-row-label">Free models on this device</span>
+                <local-llm-model-table></local-llm-model-table>
             </div>
             <div class="settings-row settings-language-row">
                 <span class="settings-row-label">Ask AI language</span>

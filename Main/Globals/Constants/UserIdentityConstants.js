@@ -83,6 +83,12 @@ class UserIdentityConstants
         // read before any session resolves and silently reset on every reload,
         // which is exactly how the tier choice and the Ask AI language broke.
         LocalLlmDownloadConstants.LOCAL_PREFERRED_MODEL_PERSISTENCE_KEY,
+        // What this device holds, per model. Device-scoped for exactly the
+        // reason the single download record above is, and it inherits that
+        // record's history: it is the shape that replaced it, and putting it
+        // behind a per-user prefix would reintroduce the ~880 MB re-download
+        // on every identity change that moving the old key here fixed.
+        LocalLlmDownloadConstants.LOCAL_MODEL_INVENTORY_PERSISTENCE_KEY,
     ]);
 }
 

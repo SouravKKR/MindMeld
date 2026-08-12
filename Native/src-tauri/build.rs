@@ -16,6 +16,8 @@
 const NATIVE_INFERENCE_COMMAND_NAMES: &[&str] = &[
     "probe_native_llm_capability",
     "ensure_native_model_present",
+    "probe_native_model_presence",
+    "delete_native_model",
     "load_native_model",
     "generate_native_completion",
     "interrupt_native_generation",

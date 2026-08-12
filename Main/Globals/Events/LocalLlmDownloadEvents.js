@@ -45,6 +45,19 @@ class LocalLlmDownloadEvents
     // re-resolves and, if the chosen model is not already downloaded, the
     // picker drops back to its "click to download" state for the new one.
     static PREFERRED_MODEL_CHANGED = "browser-llm-preferred-model-changed";
+    // Dispatched whenever LocalLlmModelInventory records or forgets a model —
+    // a download finishing, a deletion completing, a state being reconciled
+    // against what storage actually holds. The model table listens and
+    // re-renders the affected row.
+    //
+    // Separate from CAPABILITY_CHANGED because they answer different
+    // questions. CAPABILITY_CHANGED means "the tier's usability changed" and
+    // concerns only the model currently selected; this means "what this device
+    // holds changed" and concerns every row in the table, including models
+    // that are not selected and never will be.
+    //
+    // Detail: { modelKey, state }
+    static INVENTORY_CHANGED = "browser-llm-inventory-changed";
 }
 
 export default LocalLlmDownloadEvents;

@@ -27,7 +27,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::inference_engine::{
     create_inference_engine, GenerationRequest, InferenceError, ModelLoadRequest,
 };
-use crate::model_download_manager::ModelDownloadManager;
+use crate::model_download_manager::{ModelDownloadManager, ModelPresenceReport};
 use crate::system_capability_probe::{SystemCapability, SystemCapabilityProbe};
 
 // Hand-mirrored from Common/Constants/NativeLlmProtocolConstants.json, which is
@@ -233,6 +233,59 @@ pub async fn ensure_native_model_present(
     .map_err(|error| error.to_string())?;
 
     Ok(model_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn probe_native_model_presence(
+    app_handle: AppHandle,
+    weights_file_name: String,
+) -> Result<ModelPresenceReport, String>
+{
+    ModelDownloadManager::describe_presence(&app_handle, &weights_file_name)
+        .map_err(|error| error.to_string())
+}
+
+/// Removes a model's weights from the device.
+///
+/// UNLOADS FIRST WHEN THIS IS THE MODEL IN USE, and that ordering is the whole
+/// substance of the command. The engine memory-maps the weights file for the
+/// lifetime of the loaded model; on Windows an open mapping makes the file
+/// undeletable outright, and on Unix the unlink succeeds while the space stays
+/// held until the last handle closes. Both end with a learner who asked for a
+/// couple of gigabytes back and did not get them — one loudly, one silently,
+/// and the silent one is worse.
+#[tauri::command]
+pub async fn delete_native_model(
+    app_handle: AppHandle,
+    state: State<'_, NativeLlmState>,
+    model_key: String,
+    weights_file_name: String,
+) -> Result<(), String>
+{
+    let b_model_is_loaded = state
+        .loaded_model_key
+        .lock()
+        .map(|loaded_model_key| loaded_model_key.as_deref() == Some(model_key.as_str()))
+        .unwrap_or(false);
+
+    if b_model_is_loaded
+    {
+        let (responder, response_receiver) = tokio::sync::oneshot::channel();
+        state.send_command(EngineCommand::Unload { responder })?;
+
+        // Awaited rather than fired and forgotten: the unload is what releases
+        // the mapping, so deleting before it completes reintroduces exactly the
+        // failure this ordering exists to prevent.
+        let _ = response_receiver.await;
+
+        if let Ok(mut loaded_model_key) = state.loaded_model_key.lock()
+        {
+            *loaded_model_key = None;
+        }
+    }
+
+    ModelDownloadManager::remove(&app_handle, &weights_file_name)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

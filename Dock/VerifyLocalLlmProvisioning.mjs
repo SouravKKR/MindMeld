@@ -1406,6 +1406,308 @@ async function runHttpTier()
 }
 
 
+// ── Tier 1e4: the inventory keeps models independent of one another ────────
+
+/**
+ * The per-model inventory replaced a single device-wide download record, and
+ * this tier exists because of exactly what that record got wrong.
+ *
+ * With one record there was one `modelKey`, so any transition overwrote the
+ * previous model's state. Downloading the 3B while holding the 1.5B left a
+ * DOWNLOADING record naming the 3B; selecting the 1.5B then read that record,
+ * reconciled DOWNLOADING to NOT_STARTED, and told the learner the Free tier
+ * needed a download — while the 1.5B's cached weights loaded and answered
+ * questions perfectly. The state was wrong, not the engine, and nothing in the
+ * interface could show the difference.
+ *
+ * Run in a child process against the real class. `window` is stubbed because
+ * the inventory broadcasts a change event, and the persistence write is
+ * allowed to fail — it is caught by design, and what is under test is the
+ * in-memory bookkeeping every read goes through.
+ */
+function runModelInventoryTier()
+{
+    section("The model inventory records each model independently");
+
+    const inventoryModuleUrl = pathToFileURL(path.join(
+        repositoryRoot, "Main", "Globals", "Classes", "LocalLlm", "LocalLlmModelInventory.js"
+    )).href;
+    const statesModuleUrl = pathToFileURL(path.join(
+        repositoryRoot, "Main", "Globals", "Enumerations", "LocalLlmDownloadStates.js"
+    )).href;
+
+    const childSource = `
+        globalThis.window = { dispatchEvent: () => {} };
+
+        const LocalLlmModelInventory = (await import(${JSON.stringify(inventoryModuleUrl)})).default;
+        const { localLlmDownloadStates } = await import(${JSON.stringify(statesModuleUrl)});
+
+        const HELD_MODEL = "MODEL_ALREADY_HELD";
+        const FETCHING_MODEL = "MODEL_BEING_FETCHED";
+
+        await LocalLlmModelInventory.setState(HELD_MODEL, localLlmDownloadStates.READY, { fraction: 1 });
+        await LocalLlmModelInventory.setState(FETCHING_MODEL, localLlmDownloadStates.DOWNLOADING, { fraction: 0.4 });
+
+        const report = {
+            heldStateWhileOtherDownloads: LocalLlmModelInventory.getState(HELD_MODEL),
+            fetchingState: LocalLlmModelInventory.getState(FETCHING_MODEL),
+            bHeldStillDownloaded: LocalLlmModelInventory.isDownloaded(HELD_MODEL),
+            downloadingModelKey: LocalLlmModelInventory.getDownloadingModelKey(),
+            downloadedKeys: LocalLlmModelInventory.listDownloadedModelKeys(),
+            unknownModelState: LocalLlmModelInventory.getState("MODEL_NEVER_SEEN"),
+        };
+
+        await LocalLlmModelInventory.forget(HELD_MODEL);
+        report.heldStateAfterForget = LocalLlmModelInventory.getState(HELD_MODEL);
+        report.bHeldDownloadedAfterForget = LocalLlmModelInventory.isDownloaded(HELD_MODEL);
+        report.fetchingStateAfterForget = LocalLlmModelInventory.getState(FETCHING_MODEL);
+
+        // A DOWNLOADING record on disk can only be the debris of a session
+        // that was killed mid-fetch — a download cannot outlive the page that
+        // started it — so adopting one as-is leaves a progress bar that never
+        // moves and a Download button that refuses to start.
+        const interpreted = LocalLlmModelInventory.interpretStoredInventory({
+            version: 1,
+            models: {
+                STALE_DOWNLOAD: { state: localLlmDownloadStates.DOWNLOADING, fraction: 0.62 },
+                GENUINELY_READY: { state: localLlmDownloadStates.READY, fraction: 1 },
+                PREVIOUSLY_FAILED: { state: localLlmDownloadStates.FAILED, fraction: 0 },
+            },
+        });
+        report.staleDownloadState = interpreted.get("STALE_DOWNLOAD").state;
+        report.staleDownloadFraction = interpreted.get("STALE_DOWNLOAD").fraction;
+        report.readySurvives = interpreted.get("GENUINELY_READY").state;
+        report.failedSurvives = interpreted.get("PREVIOUSLY_FAILED").state;
+
+        report.migratesReady = LocalLlmModelInventory.isLegacyRecordWorthMigrating(
+            { state: localLlmDownloadStates.READY, modelKey: "SOME_MODEL" });
+        report.migratesDownloading = LocalLlmModelInventory.isLegacyRecordWorthMigrating(
+            { state: localLlmDownloadStates.DOWNLOADING, modelKey: "SOME_MODEL" });
+        report.migratesKeylessReady = LocalLlmModelInventory.isLegacyRecordWorthMigrating(
+            { state: localLlmDownloadStates.READY });
+
+        report.stateNames = localLlmDownloadStates;
+        process.stdout.write(JSON.stringify(report));
+    `;
+
+    const childResult = spawnSync(process.execPath, ["--input-type=module", "-e", childSource],
+    {
+        encoding: "utf8",
+        cwd: repositoryRoot,
+    });
+
+    if (childResult.status !== 0)
+    {
+        assert(false, `the inventory exercises cleanly (${(childResult.stderr || "").trim().split("\n").slice(-3).join(" | ")})`);
+        return;
+    }
+
+    let report;
+    try
+    {
+        report = JSON.parse(childResult.stdout);
+    }
+    catch (parseError)
+    {
+        assert(false, `the inventory probe returned JSON (${parseError.message})`);
+        return;
+    }
+
+    const states = report.stateNames;
+
+    // The regression itself.
+    assert(
+        report.heldStateWhileOtherDownloads === states.READY,
+        "a downloaded model stays READY while a DIFFERENT model is downloading",
+    );
+    assert(
+        report.bHeldStillDownloaded === true,
+        "a downloaded model still reports as downloaded while another is downloading",
+    );
+    assert(report.fetchingState === states.DOWNLOADING, "the model being fetched reports DOWNLOADING");
+    assert(report.downloadingModelKey === "MODEL_BEING_FETCHED", "the inventory names which model is downloading");
+    assert(
+        report.downloadedKeys.length === 1 && report.downloadedKeys[0] === "MODEL_ALREADY_HELD",
+        "only genuinely downloaded models are listed as held",
+    );
+    assert(report.unknownModelState === states.NOT_STARTED, "a model with no record reads as NOT_STARTED");
+
+    // Deletion forgets one model and leaves the rest alone.
+    assert(report.heldStateAfterForget === states.NOT_STARTED, "a forgotten model reads as NOT_STARTED");
+    assert(report.bHeldDownloadedAfterForget === false, "a forgotten model no longer reports as downloaded");
+    assert(
+        report.fetchingStateAfterForget === states.DOWNLOADING,
+        "forgetting one model does not disturb another model's record",
+    );
+
+    // Boot-time interpretation.
+    assert(
+        report.staleDownloadState === states.NOT_STARTED,
+        "a DOWNLOADING record found on disk is treated as stale, not as a live download",
+    );
+    assert(
+        report.staleDownloadFraction === 0.62,
+        "a stale download keeps its fraction, so a resumable fetch still reports where it got to",
+    );
+    assert(report.readySurvives === states.READY, "a READY record on disk survives being read back");
+    assert(report.failedSurvives === states.FAILED, "a FAILED record on disk survives being read back");
+
+    // Migration off the pre-inventory single record.
+    assert(report.migratesReady === true, "a legacy READY record migrates rather than forcing a re-download");
+    assert(report.migratesDownloading === false, "a legacy DOWNLOADING record is not mistaken for a held model");
+    assert(report.migratesKeylessReady === false, "a legacy READY record naming no model is not migrated");
+}
+
+
+// ── Tier 1e6: deleting the model in use leaves the tier working ────────────
+
+/**
+ * Deleting a model the tier is currently running has to move the tier
+ * somewhere, and where it moves decides whether "Delete" is a tidy-up or a
+ * self-inflicted outage. Left pointing at the model it just removed, the next
+ * question either fails or quietly re-downloads what the learner deliberately
+ * threw away — the two worst possible readings of the button they pressed.
+ *
+ * The rule: prefer a model already on the device, in the selector's own
+ * ranking, so the tier keeps answering with no download at all. Fall back to
+ * automatic when nothing else is held, because with no present model to move
+ * to, naming one would be a guess that silently commits the learner to
+ * fetching it.
+ */
+function runReplacementChoiceTier()
+{
+    section("Deleting the model in use switches to one that still works");
+
+    const capabilityModuleUrl = pathToFileURL(path.join(
+        repositoryRoot, "Main", "Globals", "Classes", "LocalLlm", "LocalLlmCapability.js"
+    )).href;
+
+    const childSource = `
+        globalThis.window = { dispatchEvent: () => {}, location: { origin: "http://verification.invalid" } };
+
+        const LocalLlmCapability = (await import(${JSON.stringify(capabilityModuleUrl)})).default;
+
+        // Ranked best first, the way the selector returns them.
+        const eligibleModels = [
+            { modelKey: "BIG_MODEL" },
+            { modelKey: "MEDIUM_MODEL" },
+            { modelKey: "SMALL_MODEL" },
+        ];
+
+        const report = {
+            prefersHeldModel: LocalLlmCapability.chooseReplacementModelKey(
+                eligibleModels, "BIG_MODEL", ["SMALL_MODEL"]),
+            prefersBestHeldModel: LocalLlmCapability.chooseReplacementModelKey(
+                eligibleModels, "BIG_MODEL", ["SMALL_MODEL", "MEDIUM_MODEL"]),
+            neverPicksTheRemovedModel: LocalLlmCapability.chooseReplacementModelKey(
+                eligibleModels, "BIG_MODEL", ["BIG_MODEL"]),
+            fallsBackToAutomatic: LocalLlmCapability.chooseReplacementModelKey(
+                eligibleModels, "BIG_MODEL", []),
+            ignoresUnheldModels: LocalLlmCapability.chooseReplacementModelKey(
+                eligibleModels, "BIG_MODEL", ["A_MODEL_THIS_DEVICE_CANNOT_RUN"]),
+            toleratesMissingArguments: LocalLlmCapability.chooseReplacementModelKey(null, "BIG_MODEL", null),
+        };
+
+        process.stdout.write(JSON.stringify(report));
+    `;
+
+    const childResult = spawnSync(process.execPath, ["--input-type=module", "-e", childSource],
+    {
+        encoding: "utf8",
+        cwd: repositoryRoot,
+    });
+
+    if (childResult.status !== 0)
+    {
+        assert(false, `the replacement choice exercises cleanly (${(childResult.stderr || "").trim().split("\n").slice(-3).join(" | ")})`);
+        return;
+    }
+
+    let report;
+    try
+    {
+        report = JSON.parse(childResult.stdout);
+    }
+    catch (parseError)
+    {
+        assert(false, `the replacement-choice probe returned JSON (${parseError.message})`);
+        return;
+    }
+
+    assert(
+        report.prefersHeldModel === "SMALL_MODEL",
+        "deleting the model in use switches to one the device already holds, not to one needing a download",
+    );
+    assert(
+        report.prefersBestHeldModel === "MEDIUM_MODEL",
+        "when several held models remain, the best-ranked one is chosen",
+    );
+    assert(
+        report.neverPicksTheRemovedModel === null,
+        "the model being deleted is never chosen as its own replacement",
+    );
+    assert(
+        report.fallsBackToAutomatic === null,
+        "with nothing else downloaded the choice falls back to automatic rather than committing to a download",
+    );
+    assert(
+        report.ignoresUnheldModels === null,
+        "a held model that this device cannot run is not offered as a replacement",
+    );
+    assert(
+        report.toleratesMissingArguments === null,
+        "a missing model list falls back to automatic rather than throwing mid-deletion",
+    );
+}
+
+
+// ── Tier 1e5: the inventory is device-scoped, not per-user ─────────────────
+
+/**
+ * The inventory describes weights held in a store every identity on the device
+ * shares, so it has to be readable before any session resolves and has to
+ * survive an identity change. Behind the per-user prefix Persistence applies by
+ * default it would be neither, and the symptom is specific and expensive: the
+ * record is written under Users/<id> and read at boot under Users/anonymous,
+ * so every reload finds nothing and offers a fresh multi-gigabyte download for
+ * models that are already on the device. That exact failure has already
+ * happened here twice — to the old download record and to the tier choice.
+ */
+function runInventoryScopingTier()
+{
+    section("The model inventory is stored device-wide");
+
+    const identityConstantsSource = fs.readFileSync(
+        path.join(repositoryRoot, "Main", "Globals", "Constants", "UserIdentityConstants.js"),
+        "utf8",
+    );
+
+    assert(
+        /GLOBAL_KEYS[\s\S]*LOCAL_MODEL_INVENTORY_PERSISTENCE_KEY/.test(identityConstantsSource),
+        "the inventory key is in UserIdentityConstants.GLOBAL_KEYS, so it escapes the per-user prefix",
+    );
+    assert(
+        /GLOBAL_KEYS[\s\S]*LOCAL_STATE_PERSISTENCE_KEY/.test(identityConstantsSource),
+        "the legacy download-record key stays device-scoped, so the migration can still read it",
+    );
+
+    const downloadConstants = JSON.parse(fs.readFileSync(
+        path.join(repositoryRoot, "Common", "Constants", "LocalLlmDownloadConstants.json"),
+        "utf8",
+    ));
+
+    assert(
+        typeof downloadConstants.LOCAL_MODEL_INVENTORY_PERSISTENCE_KEY === "string"
+            && downloadConstants.LOCAL_MODEL_INVENTORY_PERSISTENCE_KEY.length > 0,
+        "the inventory persistence key is declared in Common/",
+    );
+    assert(
+        downloadConstants.LOCAL_MODEL_INVENTORY_PERSISTENCE_KEY !== downloadConstants.LOCAL_STATE_PERSISTENCE_KEY,
+        "the inventory uses its own key rather than overwriting the legacy record it migrates from",
+    );
+}
+
+
 async function main()
 {
     console.log("Verifying the Free tier's on-device model provisioning\n");
@@ -1417,6 +1719,9 @@ async function main()
     runSelfHostingTier();
     runManifestFieldCoverageTier();
     runDriverContractTier();
+    runModelInventoryTier();
+    runReplacementChoiceTier();
+    runInventoryScopingTier();
     runNativeProtocolMirrorTier();
     runDeviceLostMirrorTier();
     runManifestWalkTier();

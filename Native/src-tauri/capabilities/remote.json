@@ -24,6 +24,8 @@
     "notification:default",
     "allow-probe-native-llm-capability",
     "allow-ensure-native-model-present",
+    "allow-probe-native-model-presence",
+    "allow-delete-native-model",
     "allow-load-native-model",
     "allow-generate-native-completion",
     "allow-interrupt-native-generation",

@@ -1,0 +1,182 @@
+/* The Free-tier model manager. Deliberately its own selectors rather than
+   shared with LlmTierSelect.css: the two sit in adjacent Settings rows and
+   should read as a family, but they are independent controls with independent
+   lifecycles, and reusing the other's class names would make a change to the
+   tier picker silently restyle this one. */
+local-llm-model-table
+{
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.local-llm-model-table-body
+{
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    /* The row is a four-column grid rather than a real <table> so it can
+       collapse to two columns on a narrow screen without the cells losing
+       their association. Settings is reachable on a phone. */
+    font-size: 12.5px;
+}
+
+.local-llm-model-row
+{
+    display: grid;
+    grid-template-columns: minmax(48px, 0.8fr) minmax(56px, 0.8fr) minmax(96px, 1.4fr) auto;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background-color: var(--tertiary-background-color);
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+}
+
+.local-llm-model-row-header
+{
+    background-color: transparent;
+    outline: none;
+    padding-bottom: 2px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--secondary-text-color);
+}
+
+/* The model actually answering questions. A left edge rather than a fill:
+   the row already carries an "In use" label, and a filled row competes with
+   the buttons it contains. */
+.local-llm-model-row-active
+{
+    outline-color: var(--outline-color-strong);
+    border-left: 3px solid var(--accent-color, var(--outline-color-strong));
+}
+
+.local-llm-model-cell-name
+{
+    font-weight: 600;
+    color: var(--primary-text-color);
+}
+
+.local-llm-model-cell-size,
+.local-llm-model-cell-status
+{
+    color: var(--secondary-text-color);
+}
+
+.local-llm-model-cell-actions
+{
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.local-llm-model-status-active
+{
+    color: var(--primary-text-color);
+    font-weight: 600;
+}
+
+.local-llm-model-status-downloading,
+.local-llm-model-status-busy
+{
+    color: var(--primary-text-color);
+}
+
+.local-llm-model-status-failed
+{
+    color: var(--error-color, #c0392b);
+}
+
+.local-llm-model-action
+{
+    padding: 4px 10px;
+    border: none;
+    outline: 1px solid var(--outline-color);
+    outline-offset: -1px;
+    border-radius: 6px;
+    background-color: var(--secondary-background-color);
+    color: var(--primary-text-color);
+    font-size: 12px;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: outline-color 0.15s ease-out, background-color 0.15s ease-out;
+}
+
+.local-llm-model-action:hover:not(:disabled),
+.local-llm-model-action:focus:not(:disabled)
+{
+    outline-color: var(--outline-color-strong);
+}
+
+/* Disabled means "not now", not "not ever" — a download button while another
+   download runs. Kept legible rather than faded to nothing, because its
+   tooltip is the explanation. */
+.local-llm-model-action:disabled
+{
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.local-llm-model-action-danger
+{
+    color: var(--error-color, #c0392b);
+}
+
+.local-llm-model-confirm-text
+{
+    color: var(--primary-text-color);
+    font-size: 12px;
+}
+
+.local-llm-model-table-note
+{
+    padding: 4px 2px 0;
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--secondary-text-color);
+}
+
+.local-llm-model-link
+{
+    padding: 0;
+    border: none;
+    outline: none;
+    background: none;
+    color: var(--primary-text-color);
+    font-size: 11px;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+/* Below this the four columns stop fitting side by side without the status
+   text wrapping mid-word. Name and size share a line, status and actions take
+   the next. */
+@media (max-width: 520px)
+{
+    .local-llm-model-row
+    {
+        grid-template-columns: 1fr auto;
+        row-gap: 4px;
+    }
+
+    .local-llm-model-row-header
+    {
+        display: none;
+    }
+
+    .local-llm-model-cell-status
+    {
+        grid-column: 1;
+    }
+
+    .local-llm-model-cell-actions
+    {
+        grid-column: 2;
+    }
+}

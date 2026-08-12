@@ -1,6 +1,8 @@
 class NativeLlmProtocolConstants:
     COMMAND_PROBE_CAPABILITY = 'probe_native_llm_capability'
     COMMAND_ENSURE_MODEL_PRESENT = 'ensure_native_model_present'
+    COMMAND_PROBE_MODEL_PRESENCE = 'probe_native_model_presence'
+    COMMAND_DELETE_MODEL = 'delete_native_model'
     COMMAND_LOAD_MODEL = 'load_native_model'
     COMMAND_GENERATE_COMPLETION = 'generate_native_completion'
     COMMAND_INTERRUPT_GENERATION = 'interrupt_native_generation'

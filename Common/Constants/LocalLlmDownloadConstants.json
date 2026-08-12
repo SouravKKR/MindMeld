@@ -6,6 +6,7 @@
     "WORKER_SCRIPT_PATH": "/ThirdParty/BrowserLlm/BrowserLlmWorker.js",
     "ENGINE_RUNNER_MODULE_PATH": "/ThirdParty/BrowserLlm/BrowserLlmEngineRunner.js",
     "LOCAL_STATE_PERSISTENCE_KEY": "BrowserLlm/DownloadState.mmsd",
+    "LOCAL_MODEL_INVENTORY_PERSISTENCE_KEY": "BrowserLlm/ModelInventory.mmsd",
     "LOCAL_DECLINED_PERSISTENCE_KEY": "BrowserLlm/Declined.mmsd",
     "LOCAL_PREFERRED_TIER_PERSISTENCE_KEY": "BrowserLlm/PreferredTier.mmsd",
     "LOCAL_PREFERRED_MODEL_PERSISTENCE_KEY": "BrowserLlm/PreferredModel.mmsd",

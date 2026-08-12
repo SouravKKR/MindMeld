@@ -3,5 +3,7 @@
     "LOAD_COMPLETE": 1,
     "TOKEN": 2,
     "GENERATION_COMPLETE": 3,
-    "FAILED": 4
+    "FAILED": 4,
+    "MODEL_PRESENCE": 5,
+    "MODEL_DELETED": 6
 }

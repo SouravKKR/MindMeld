@@ -23,6 +23,8 @@ class BrowserLlmWorkerProtocol
     static GENERATE = 1;
     static INTERRUPT = 2;
     static UNLOAD = 3;
+    static HAS_MODEL = 4;
+    static DELETE_MODEL = 5;
 
     // Mirrors Common/Enumerations/LocalLlmWorkerEvents.json
     static LOAD_PROGRESS = 0;
@@ -30,6 +32,8 @@ class BrowserLlmWorkerProtocol
     static TOKEN = 2;
     static GENERATION_COMPLETE = 3;
     static FAILED = 4;
+    static MODEL_PRESENCE = 5;
+    static MODEL_DELETED = 6;
 }
 
 export default BrowserLlmWorkerProtocol;

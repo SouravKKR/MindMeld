@@ -5,3 +5,5 @@ class LocalLlmWorkerCommands(IntEnum):
     GENERATE = 1
     INTERRUPT = 2
     UNLOAD = 3
+    HAS_MODEL = 4
+    DELETE_MODEL = 5

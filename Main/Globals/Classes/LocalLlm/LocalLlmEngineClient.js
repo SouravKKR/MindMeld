@@ -134,6 +134,55 @@ class LocalLlmEngineClient
         return LocalLlmEngineClient.#worker !== null || LocalLlmEngineClient.#mainThreadRunner !== null;
     }
 
+    /**
+     * Whether the browser's store already holds this model's weights.
+     * Resolves null when the question cannot be answered — see
+     * LocalLlmDriver.hasModel for why that is not the same as false.
+     */
+    static async hasModel(descriptor)
+    {
+        if (LocalLlmEngineClient.#shouldUseMainThread())
+        {
+            const runner = await LocalLlmEngineClient.#getMainThreadRunner();
+            return await runner.hasModel(descriptor);
+        }
+
+        const presencePayload = await LocalLlmEngineClient.#sendCommand(
+            localLlmWorkerCommands.HAS_MODEL,
+            { descriptor: descriptor },
+            { completionEvent: localLlmWorkerEvents.MODEL_PRESENCE }
+        );
+
+        return presencePayload && typeof presencePayload.bPresent === "boolean" ? presencePayload.bPresent : null;
+    }
+
+    /**
+     * Removes this model's weights from the browser's store.
+     *
+     * The worker is terminated first. It holds the engine, and on the graphics
+     * backend that engine keeps the weights open — deleting underneath a live
+     * engine leaves the two disagreeing about what exists, and the next load
+     * reads a cache that is half gone. Terminating costs a reload the learner
+     * has already accepted by asking for a deletion.
+     */
+    static async deleteModel(descriptor)
+    {
+        if (LocalLlmEngineClient.#shouldUseMainThread())
+        {
+            const runner = await LocalLlmEngineClient.#getMainThreadRunner();
+            await runner.deleteModel(descriptor);
+            return;
+        }
+
+        await LocalLlmEngineClient.#sendCommand(
+            localLlmWorkerCommands.DELETE_MODEL,
+            { descriptor: descriptor },
+            { completionEvent: localLlmWorkerEvents.MODEL_DELETED }
+        );
+
+        LocalLlmEngineClient.terminate();
+    }
+
     static #shouldUseMainThread()
     {
         return LocalLlmEngineClient.#bWorkerUnavailable || typeof Worker === "undefined";

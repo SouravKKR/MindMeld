@@ -41,6 +41,22 @@ class BrowserWebGpuDriver extends LocalLlmDriver
         await LocalLlmEngineClient.load(descriptor, onProgress);
     }
 
+    /**
+     * The same operation as load(), because this engine has no separate fetch:
+     * weights arrive in the browser's store as a side effect of initialising
+     * the model, and there is no way to ask for the bytes alone.
+     *
+     * So pre-fetching a model on this backend does displace whatever was
+     * loaded. That costs a re-load when the learner goes back to the model
+     * they were using — seconds, from a store that already holds it — which is
+     * a far better trade than refusing to let them fetch a second model at
+     * all.
+     */
+    async download(descriptor, onProgress)
+    {
+        await LocalLlmEngineClient.load(descriptor, onProgress);
+    }
+
     async generate(request, onToken)
     {
         return await LocalLlmEngineClient.generate(request, onToken);
@@ -59,6 +75,16 @@ class BrowserWebGpuDriver extends LocalLlmDriver
     isReady()
     {
         return LocalLlmEngineClient.isEngineReady();
+    }
+
+    async hasModel(descriptor)
+    {
+        return await LocalLlmEngineClient.hasModel(descriptor);
+    }
+
+    async deleteModel(descriptor)
+    {
+        await LocalLlmEngineClient.deleteModel(descriptor);
     }
 }
 

@@ -69,6 +69,30 @@ class LocalLlmDriver
     }
 
     /**
+     * Gets `descriptor`'s weights onto the device WITHOUT promising that the
+     * model is ready to answer, and without disturbing whichever model is
+     * loaded now.
+     *
+     * It exists because acquiring and using are separate acts for a learner:
+     * fetching the 3B while continuing to ask questions of the 1.5B is an
+     * ordinary thing to want, and `load()` cannot express it — one engine
+     * holds one model, so loading the new one displaces the old.
+     *
+     * A driver whose engine has no separate fetch step may implement this as
+     * `load()`; the contract asks for the weights to be present afterwards,
+     * not for them to be absent from the engine. What it must NOT do is
+     * promise readiness, because callers use this to pre-fetch models they are
+     * not switching to.
+     *
+     * @param {object}   descriptor
+     * @param {Function} onProgress  same shape as load()'s
+     */
+    async download(descriptor, onProgress)
+    {
+        throw new Error(`${this.constructor.name} does not implement download().`);
+    }
+
+    /**
      * Streams a completion, calling `onToken` with each fragment as it
      * arrives, and resolving with the complete text.
      *
@@ -115,6 +139,50 @@ class LocalLlmDriver
     isReady()
     {
         throw new Error(`${this.constructor.name} does not implement isReady().`);
+    }
+
+    /**
+     * Whether this device already holds `descriptor`'s weights, asked of the
+     * store that actually holds them.
+     *
+     * This exists because the app's own record of what it downloaded is a
+     * belief, not a fact. A browser can evict an origin's cache under storage
+     * pressure, a learner can clear site data, and an app's data directory can
+     * be emptied by the operating system or by hand — none of which tell the
+     * app anything. Believing the record over the store is what makes an
+     * application insist a model is ready and then fail to load it.
+     *
+     * Returning `null` means "cannot tell" — an older app shell that does not
+     * implement the query, say — and is deliberately distinct from `false`.
+     * The caller keeps its recorded belief when the answer is null, and
+     * corrects it only on a definite one.
+     *
+     * @param {object} descriptor
+     * @returns {Promise<boolean|null>}
+     */
+    async hasModel(descriptor)
+    {
+        throw new Error(`${this.constructor.name} does not implement hasModel().`);
+    }
+
+    /**
+     * Removes `descriptor`'s weights from wherever this driver put them, and
+     * resolves once the space is actually reclaimed.
+     *
+     * Deleting the model that is currently loaded must also unload it: the
+     * caller does that before calling here, because a driver holding open
+     * handles to files it is deleting behaves differently on every platform.
+     *
+     * It must reject rather than resolve when the removal did not happen. A
+     * silent failure here reads to the caller as reclaimed space, and the
+     * learner is told a couple of gigabytes were freed while the disk says
+     * otherwise.
+     *
+     * @param {object} descriptor
+     */
+    async deleteModel(descriptor)
+    {
+        throw new Error(`${this.constructor.name} does not implement deleteModel().`);
     }
 }
 

@@ -47,6 +47,22 @@ pub enum ModelDownloadError
 
     #[error("the downloaded model failed its integrity check (expected {expected}, got {actual})")]
     IntegrityMismatch { expected: String, actual: String },
+
+    #[error("could not remove the model from disk: {0}")]
+    RemovalFailed(String),
+}
+
+/// What the device holds for one model.
+///
+/// The byte count travels with the flag because the two are read together and
+/// asking twice invites them to disagree — a file deleted between the check and
+/// the measurement would report present with a size of zero.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPresenceReport
+{
+    pub b_present: bool,
+    pub total_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -84,6 +100,77 @@ impl ModelDownloadManager
             .unwrap_or_else(|| weights_file_name.to_string());
 
         Ok(Self::resolve_models_directory(app_handle)?.join(safe_file_name))
+    }
+
+    /// Whether the device holds this model's weights, and how much space they
+    /// occupy.
+    ///
+    /// Asked of the filesystem rather than of any record the app keeps. The
+    /// data directory is not the app's private property in practice — an
+    /// operating system can reclaim it under storage pressure, a user can
+    /// empty it, a reinstall can move it — so the app's belief about what it
+    /// downloaded is exactly the thing that needs checking.
+    ///
+    /// A `.partial` file is deliberately NOT counted as present. It is a
+    /// download that was interrupted, and reporting it as present would send
+    /// the engine to map a truncated file.
+    pub fn describe_presence(
+        app_handle: &AppHandle,
+        weights_file_name: &str,
+    ) -> Result<ModelPresenceReport, ModelDownloadError>
+    {
+        let model_path = Self::resolve_model_path(app_handle, weights_file_name)?;
+
+        match std::fs::metadata(&model_path)
+        {
+            Ok(metadata) if metadata.is_file() => Ok(ModelPresenceReport
+            {
+                b_present: true,
+                total_bytes: metadata.len(),
+            }),
+            _ => Ok(ModelPresenceReport { b_present: false, total_bytes: 0 }),
+        }
+    }
+
+    /// Removes this model's weights, and any interrupted download beside them.
+    ///
+    /// Removing the `.partial` file too is the difference between "delete" and
+    /// "delete most of it". A learner reclaiming space after a failed download
+    /// would otherwise be told a gigabyte was freed while the interrupted
+    /// fragment stayed exactly where it was — and nothing in the interface
+    /// would ever mention it again, because a partial file is invisible to
+    /// every other path here.
+    ///
+    /// Absent files are not an error. The caller's goal is that the model is
+    /// gone, and it is; failing here would turn a successful cleanup into a
+    /// message about a file the learner never knew existed.
+    pub fn remove(
+        app_handle: &AppHandle,
+        weights_file_name: &str,
+    ) -> Result<(), ModelDownloadError>
+    {
+        let model_path = Self::resolve_model_path(app_handle, weights_file_name)?;
+
+        if model_path.exists()
+        {
+            std::fs::remove_file(&model_path)
+                .map_err(|error| ModelDownloadError::RemovalFailed(error.to_string()))?;
+        }
+
+        let models_directory = Self::resolve_models_directory(app_handle)?;
+        let safe_file_name = Path::new(weights_file_name)
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| weights_file_name.to_string());
+        let partial_path = models_directory.join(format!("{safe_file_name}{PARTIAL_FILE_SUFFIX}"));
+
+        if partial_path.exists()
+        {
+            std::fs::remove_file(&partial_path)
+                .map_err(|error| ModelDownloadError::RemovalFailed(error.to_string()))?;
+        }
+
+        Ok(())
     }
 
     /// Ensures the weights are present and verified, downloading them if not.

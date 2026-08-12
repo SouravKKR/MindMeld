@@ -63,6 +63,8 @@ pub fn run()
         .invoke_handler(tauri::generate_handler![
             llm_commands::probe_native_llm_capability,
             llm_commands::ensure_native_model_present,
+            llm_commands::probe_native_model_presence,
+            llm_commands::delete_native_model,
             llm_commands::load_native_model,
             llm_commands::generate_native_completion,
             llm_commands::interrupt_native_generation,

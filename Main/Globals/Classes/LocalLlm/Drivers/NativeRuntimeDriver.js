@@ -205,6 +205,59 @@ class NativeRuntimeDriver extends LocalLlmDriver
         }
     }
 
+    /**
+     * Fetches the weights and stops there.
+     *
+     * Genuinely independent of what is loaded on this backend, because the
+     * fetch is its own command: a learner can pull the 3B down in the
+     * background while the 1.5B keeps answering questions, with no reload
+     * either side of it. That is the case the contract's separate `download`
+     * exists for, and the graphics backend cannot offer it.
+     */
+    async download(descriptor, onProgress)
+    {
+        const requestId = this.#takeRequestId();
+
+        const stopDownloadListener = await NativeBridge.listen(
+            NativeLlmProtocolConstants.EVENT_DOWNLOAD_PROGRESS,
+            (nativeEvent) =>
+            {
+                const payload = nativeEvent?.payload;
+                if (typeof onProgress !== "function" || payload?.requestId !== requestId)
+                {
+                    return;
+                }
+
+                const totalBytes = Number.isFinite(payload.totalBytes) ? payload.totalBytes : 0;
+                const loadedBytes = Number.isFinite(payload.loadedBytes) ? payload.loadedBytes : 0;
+
+                onProgress({
+                    fraction: totalBytes > 0 ? Math.max(0, Math.min(1, loadedBytes / totalBytes)) : 0,
+                    loadedBytes: loadedBytes,
+                    totalBytes: totalBytes,
+                    statusText: "Downloading the on-device model",
+                });
+            }
+        );
+
+        try
+        {
+            await NativeBridge.invoke(NativeLlmProtocolConstants.COMMAND_ENSURE_MODEL_PRESENT,
+            {
+                requestId: requestId,
+                modelKey: descriptor.modelKey,
+                weightsUrl: NativeRuntimeDriver.#toAbsoluteUrl(descriptor.weightsUrl),
+                weightsFileName: descriptor.weightsFileName,
+                expectedSha256: descriptor.sha256 || null,
+                expectedTotalBytes: Number.isFinite(descriptor.totalBytes) ? descriptor.totalBytes : 0,
+            });
+        }
+        finally
+        {
+            stopDownloadListener();
+        }
+    }
+
     async generate(request, onToken)
     {
         const requestId = this.#takeRequestId();
@@ -300,6 +353,69 @@ class NativeRuntimeDriver extends LocalLlmDriver
     getLoadedModelKey()
     {
         return this.#loadedModelKey;
+    }
+
+    /**
+     * Whether the app's data directory holds this model's weights.
+     *
+     * A rejection here is treated as "cannot tell" rather than "absent,
+     * because an installed app updates on its own schedule and a shell older
+     * than this frontend simply does not know the command. Answering `false`
+     * for that shell would tell every learner on an older build that their
+     * downloaded models are gone and offer to fetch them again — several
+     * gigabytes of pure waste, triggered by a version skew that is entirely
+     * normal and resolves itself on the next app update.
+     */
+    async hasModel(descriptor)
+    {
+        if (!NativeBridge.isAvailable())
+        {
+            return null;
+        }
+
+        try
+        {
+            const presence = await NativeBridge.invoke(NativeLlmProtocolConstants.COMMAND_PROBE_MODEL_PRESENCE,
+            {
+                weightsFileName: descriptor.weightsFileName,
+            });
+
+            return presence?.bPresent === true;
+        }
+        catch (presenceError)
+        {
+            console.warn(`[NativeRuntimeDriver] The native runtime could not report whether "${descriptor.modelKey}" is present: ${presenceError?.message || presenceError}`);
+            return null;
+        }
+    }
+
+    /**
+     * Removes this model's weights from the app's data directory.
+     *
+     * Unlike the presence check, a failure here MUST reach the caller. The
+     * learner asked for space back; if the shell cannot do it, saying so is
+     * the only honest answer, and quietly forgetting the model would leave a
+     * couple of gigabytes on disk that nothing in the interface can ever
+     * reach again.
+     */
+    async deleteModel(descriptor)
+    {
+        if (!NativeBridge.isAvailable())
+        {
+            throw new Error("The on-device model can only be deleted from inside the CogniumLearn app.");
+        }
+
+        await NativeBridge.invoke(NativeLlmProtocolConstants.COMMAND_DELETE_MODEL,
+        {
+            modelKey: descriptor.modelKey,
+            weightsFileName: descriptor.weightsFileName,
+        });
+
+        if (this.#loadedModelKey === descriptor.modelKey)
+        {
+            this.#bModelLoaded = false;
+            this.#loadedModelKey = null;
+        }
     }
 }
 

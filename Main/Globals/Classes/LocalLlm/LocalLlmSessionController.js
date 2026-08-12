@@ -129,6 +129,35 @@ class LocalLlmSessionController
     }
 
     /**
+     * Fetches ONE named model's weights onto the device, whatever is selected.
+     *
+     * Separate from ensureReady because the two answer different questions.
+     * ensureReady means "make the tier usable" and is about the selected
+     * model; this means "get me these bytes" and is about a model the learner
+     * pointed at in a list — possibly one they are not switching to. Routing
+     * the second through the first would make every download a selection
+     * change, which is precisely the coupling that made switching models feel
+     * like a commitment.
+     *
+     * It deliberately does NOT touch #readyPromise or #activeDescriptor. On
+     * the graphics backend the download does happen to leave its model in the
+     * engine, but recording that here would tell the rest of the app the tier
+     * had switched models on its own.
+     */
+    static async downloadModel(descriptor, onProgress = null)
+    {
+        const driver = LocalLlmSessionController.#resolveDriver(descriptor);
+
+        await driver.download(descriptor, (progressReport) =>
+        {
+            if (typeof onProgress === "function")
+            {
+                onProgress(LocalLlmSessionController.#normaliseProgress(progressReport, descriptor));
+            }
+        });
+    }
+
+    /**
      * Runs the probe / manifest / selection chain without loading anything.
      * The picker and the capability state use this to know what the device
      * would get before a learner commits to a download.

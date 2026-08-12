@@ -5,6 +5,8 @@ const localLlmWorkerEvents =
   TOKEN: 2,
   GENERATION_COMPLETE: 3,
   FAILED: 4,
+  MODEL_PRESENCE: 5,
+  MODEL_DELETED: 6,
 }
 
 module.exports = { localLlmWorkerEvents };

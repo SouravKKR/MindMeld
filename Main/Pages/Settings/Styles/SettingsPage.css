@@ -92,6 +92,22 @@ settings-page
     word-break: break-word;
 }
 
+/* A row whose control needs the full width — the on-device model table, which
+   is four columns of its own and would be squeezed into unreadability by the
+   140px label column that suits a single dropdown. The label sits above rather
+   than beside it. */
+.settings-row-stacked
+{
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+}
+
+.settings-row-stacked .settings-row-label
+{
+    width: auto;
+}
+
 .settings-row.credits-row .settings-row-value
 {
     background: var(--primary-background-gradient);

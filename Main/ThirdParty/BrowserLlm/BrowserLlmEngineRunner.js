@@ -171,10 +171,21 @@ class BrowserLlmEngineRunner
         return new URL(servedPath, self.location.origin).href;
     }
 
-    async #loadWebLlmEngine(descriptor, onProgress)
+    /**
+     * The engine configuration for one descriptor.
+     *
+     * Extracted because loading, presence-checking and deleting MUST all use
+     * an identical configuration. The cache helpers resolve a model's stored
+     * entries from the very fields below — the base URL, the model id, and
+     * above all `cacheBackend`, which decides whether the weights live in the
+     * Cache API or in IndexedDB. Handing the delete a config that differs from
+     * the load's by that one key makes it search a store the weights were
+     * never written to, find nothing, and report a successful deletion having
+     * freed nothing at all.
+     */
+    static buildApplicationConfiguration(descriptor)
     {
-        const applicationConfiguration =
-        {
+        return {
             cacheBackend: BrowserLlmEngineRunner.WEB_LLM_CACHE_BACKEND,
             model_list: [
                 {
@@ -187,10 +198,73 @@ class BrowserLlmEngineRunner
                 }
             ]
         };
+    }
 
+    /**
+     * Whether the weights this descriptor names are already in the browser's
+     * store, asked of the store itself rather than of any record the app keeps.
+     *
+     * Null means "cannot tell", which for this backend covers a browser whose
+     * storage APIs refuse the query. The caller treats null as "keep believing
+     * whatever you already believed" — the one safe reading, since answering
+     * `false` would present a fresh multi-hundred-megabyte download for
+     * weights that are very likely right there.
+     */
+    async hasModel(descriptor)
+    {
+        if (descriptor.executionBackend === "WASM")
+        {
+            return null;
+        }
+
+        try
+        {
+            return await WebLLM.hasModelInCache(
+                descriptor.engineModelId,
+                BrowserLlmEngineRunner.buildApplicationConfiguration(descriptor)
+            );
+        }
+        catch (presenceError)
+        {
+            console.warn(`[BrowserLlmEngineRunner] Could not check whether "${descriptor.modelKey}" is cached: ${presenceError?.message || presenceError}`);
+            return null;
+        }
+    }
+
+    /**
+     * Removes every cached artefact for this model — weights, compiled library
+     * and chat config.
+     *
+     * `deleteModelAllInfoInCache` rather than `deleteModelInCache`: the latter
+     * removes the weight shards and leaves the compiled library and config
+     * behind. Those are small, but leaving them means the space the learner
+     * asked to reclaim is not entirely reclaimed, and a later load finds a
+     * partial cache — config present, weights absent — which is a stranger
+     * starting state than a clean miss.
+     */
+    async deleteModel(descriptor)
+    {
+        if (descriptor.executionBackend === "WASM")
+        {
+            throw new Error("Deleting a processor-backend model from the browser store is not supported.");
+        }
+
+        if (this.#loadedModelKey === descriptor.modelKey)
+        {
+            await this.unload();
+        }
+
+        await WebLLM.deleteModelAllInfoInCache(
+            descriptor.engineModelId,
+            BrowserLlmEngineRunner.buildApplicationConfiguration(descriptor)
+        );
+    }
+
+    async #loadWebLlmEngine(descriptor, onProgress)
+    {
         this.#engine = await WebLLM.CreateMLCEngine(descriptor.engineModelId,
         {
-            appConfig: applicationConfiguration,
+            appConfig: BrowserLlmEngineRunner.buildApplicationConfiguration(descriptor),
             initProgressCallback: (progressReport) =>
             {
                 // WebLLM reports a 0..1 fraction and a human string; it never

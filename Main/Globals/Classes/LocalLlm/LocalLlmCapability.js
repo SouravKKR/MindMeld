@@ -3,10 +3,13 @@ import { localLlmUnavailableReasons } from "../../Enumerations/LocalLlmUnavailab
 import LocalLlmDownloadConstants from "../../Constants/LocalLlmDownloadConstants.js";
 import LocalLlmDownloadEvents from "../../Events/LocalLlmDownloadEvents.js";
 import LocalLlmDeviceProbe from "./LocalLlmDeviceProbe.js";
+import LocalLlmDriverFactory from "./Drivers/LocalLlmDriverFactory.js";
 import LocalLlmManifestClient from "./LocalLlmManifestClient.js";
+import LocalLlmModelInventory from "./LocalLlmModelInventory.js";
 import LocalLlmModelSelector from "./LocalLlmModelSelector.js";
 import LocalLlmSessionController from "./LocalLlmSessionController.js";
 import Persistence from "../Persistence.js";
+import PreferredLocalLlmModel from "./PreferredLocalLlmModel.js";
 import UserIdentityManager from "../UserIdentityManager.js";
 import UserIdentityConstants from "../../Constants/UserIdentityConstants.js";
 import { dataFormats } from "../../Enumerations/DataFormats.js";
@@ -67,15 +70,10 @@ class LocalLlmCapability
 
         LocalLlmCapability.#initializePromise = (async () =>
         {
-            const persistedState = await LocalLlmCapability.#readPersistedState();
+            await LocalLlmModelInventory.hydrate();
+
             const bUserDeclined = await LocalLlmCapability.#readDeclinedFlag();
 
-            // Diagnostic snapshot, taken before anything reconciles it away.
-            // "Why is it asking me to download again?" is otherwise
-            // unanswerable from the outside: the record either did not exist,
-            // named a different model, or said DOWNLOADING — three very
-            // different faults that all render as the same NOT_STARTED line.
-            LocalLlmCapability.#persistedStateAtBoot = persistedState;
             LocalLlmCapability.#storagePrefixAtBoot = UserIdentityManager.getStoragePrefix();
 
             let selectionOutcome = null;
@@ -92,11 +90,13 @@ class LocalLlmCapability
             if (!selectionOutcome || !selectionOutcome.isAvailable())
             {
                 // Being offline must not revoke a model already sitting in the
-                // browser cache — running without a network is the entire
+                // device's store — running without a network is the entire
                 // premise of this tier. Only a reachable server saying "no
                 // model fits this device" is grounds for UNSUPPORTED.
                 const bManifestUnreachable = LocalLlmManifestClient.didLastFetchFail();
-                if (bManifestUnreachable && persistedState && persistedState.state === localLlmDownloadStates.READY)
+                const bHoldsAnyModel = LocalLlmModelInventory.listDownloadedModelKeys().length > 0;
+
+                if (bManifestUnreachable && bHoldsAnyModel)
                 {
                     LocalLlmCapability.#state = localLlmDownloadStates.READY;
                     LocalLlmCapability.#progressFraction = 1;
@@ -109,22 +109,25 @@ class LocalLlmCapability
                 return;
             }
 
-            // The user's explicit choice trumps an interrupted download whose
-            // last on-disk state was DOWNLOADING.
+            const selectedModelKey = selectionOutcome.getModelKey();
+            LocalLlmCapability.#persistedStateAtBoot = LocalLlmModelInventory.getRecord(selectedModelKey);
+
             if (bUserDeclined)
             {
                 LocalLlmCapability.#state = localLlmDownloadStates.DECLINED;
             }
-            else if (persistedState && typeof persistedState.state === "number")
-            {
-                LocalLlmCapability.#state = LocalLlmCapability.#reconcilePersistedState(persistedState, selectionOutcome);
-                LocalLlmCapability.#progressFraction = typeof persistedState.fraction === "number"
-                    ? persistedState.fraction
-                    : 0;
-            }
             else
             {
-                LocalLlmCapability.#state = localLlmDownloadStates.NOT_STARTED;
+                // Read straight off the inventory for THIS model. There is
+                // deliberately no reconciliation against what other models are
+                // doing any more: the old single record forced exactly that,
+                // and demoting a model to NOT_STARTED because a DIFFERENT one
+                // was mid-download is what made switching to an already-held
+                // model announce that the tier needed a download while the
+                // cached weights answered questions perfectly well.
+                LocalLlmCapability.#state = LocalLlmModelInventory.getState(selectedModelKey);
+                LocalLlmCapability.#progressFraction = LocalLlmModelInventory.getProgressFraction(selectedModelKey);
+                LocalLlmCapability.#lastError = LocalLlmModelInventory.getErrorMessage(selectedModelKey);
             }
 
             LocalLlmCapability.#bInitialized = true;
@@ -135,38 +138,84 @@ class LocalLlmCapability
     }
 
     /**
-     * Decides what a persisted record still means now that the device's model
-     * has been re-resolved.
+     * Corrects the inventory against what the device's store actually holds,
+     * for one model.
+     *
+     * The inventory records what the app believes it downloaded. The store can
+     * disagree without telling anyone — a browser evicting an origin's cache
+     * under storage pressure, a learner clearing site data, an operating
+     * system reclaiming an app's data directory. Believing the record over the
+     * store is what produces the worst version of this feature: a tier that
+     * reports itself ready and then fails to load, every time, with no way for
+     * the learner to find out why.
+     *
+     * A driver answering `null` means it cannot tell, and the recorded belief
+     * is left exactly as it was. That case is common and benign — an app shell
+     * older than this frontend does not know the question — and treating it as
+     * absence would offer a multi-gigabyte re-download to every learner who
+     * had not yet updated the app.
+     *
+     * Returns true when the record was changed.
      */
-    static #reconcilePersistedState(persistedState, selectionOutcome)
+    static async reconcileModelAgainstStorage(modelKey)
     {
-        // A DOWNLOADING record means the previous session was killed
-        // mid-fetch. How much survived in the cache is unknown, so the
-        // learner explicitly retriggers.
-        if (persistedState.state === localLlmDownloadStates.DOWNLOADING)
+        const descriptor = LocalLlmManifestClient.getDescriptor(modelKey);
+        if (!descriptor)
         {
-            return localLlmDownloadStates.NOT_STARTED;
+            return false;
         }
 
-        // A READY record for a different model is not evidence about this
-        // one. Its weights are still cached and will be reused if the app
-        // ever selects it again, so nothing is lost by starting over here.
-        if (persistedState.state === localLlmDownloadStates.READY
-            && persistedState.modelKey
-            && persistedState.modelKey !== selectionOutcome.getModelKey())
+        const driver = LocalLlmDriverFactory.resolveForDescriptor(descriptor);
+        if (driver === null)
         {
-            console.log(`[LocalLlmCapability] Cached model "${persistedState.modelKey}" no longer matches the resolved "${selectionOutcome.getModelKey()}" — re-downloading.`);
-            return localLlmDownloadStates.NOT_STARTED;
+            return false;
         }
 
-        // An UNSUPPORTED record cannot survive a successful resolution: the
-        // server may have provisioned a model that fits since it was written.
-        if (persistedState.state === localLlmDownloadStates.UNSUPPORTED)
+        let bPresent = null;
+        try
         {
-            return localLlmDownloadStates.NOT_STARTED;
+            bPresent = await driver.hasModel(descriptor);
+        }
+        catch (presenceError)
+        {
+            console.warn(`[LocalLlmCapability] Could not verify "${modelKey}" against storage: ${presenceError?.message || presenceError}`);
+            return false;
         }
 
-        return persistedState.state;
+        if (bPresent === null)
+        {
+            return false;
+        }
+
+        const recordedState = LocalLlmModelInventory.getState(modelKey);
+
+        if (bPresent && recordedState !== localLlmDownloadStates.READY)
+        {
+            // The weights are there and the record did not know. The common
+            // cause is a download that completed into the store while the
+            // session that started it was closed before it could write READY.
+            console.log(`[LocalLlmCapability] "${modelKey}" is present on this device — recording it as ready.`);
+            await LocalLlmModelInventory.setState(modelKey, localLlmDownloadStates.READY,
+            {
+                fraction: 1,
+                totalBytes: Number.isFinite(descriptor.totalBytes) ? descriptor.totalBytes : 0,
+                errorMessage: null,
+            });
+            return true;
+        }
+
+        if (!bPresent && recordedState === localLlmDownloadStates.READY)
+        {
+            console.log(`[LocalLlmCapability] "${modelKey}" is recorded as ready but is not on this device — clearing the record.`);
+            await LocalLlmModelInventory.setState(modelKey, localLlmDownloadStates.NOT_STARTED,
+            {
+                fraction: 0,
+                errorMessage: null,
+            });
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -185,8 +234,9 @@ class LocalLlmCapability
         const persistedRecord = LocalLlmCapability.#persistedStateAtBoot;
 
         const persistedDescription = persistedRecord && typeof persistedRecord.state === "number"
-            ? `${LocalLlmCapability.#nameForState(persistedRecord.state)}(${persistedRecord.modelKey || "no model key"})`
+            ? LocalLlmCapability.#nameForState(persistedRecord.state)
             : "no record on disk";
+        const heldModelKeys = LocalLlmModelInventory.listDownloadedModelKeys();
 
         // Whether the record escaped the per-identity prefix. Reported rather
         // than assumed: the fix is one entry in a Set built at class-init
@@ -194,9 +244,15 @@ class LocalLlmCapability
         // silently — the record goes back to being per-user and the repeat
         // download returns with nothing to show for it.
         const bRecordIsDeviceScoped = UserIdentityConstants.GLOBAL_KEYS.has(
-            LocalLlmDownloadConstants.LOCAL_STATE_PERSISTENCE_KEY
+            LocalLlmDownloadConstants.LOCAL_MODEL_INVENTORY_PERSISTENCE_KEY
         );
 
+        // Which models this device holds, not merely which one is selected.
+        // The single most common support question is "why is it downloading
+        // again" and the answer is usually that the device holds a different
+        // model from the one now chosen — invisible when only the selection is
+        // reported.
+        //
         // The device's real WebGPU ceilings, next to what the chosen model
         // demands. Android reports a far smaller maxStorageBufferBindingSize
         // than desktop (mlc-ai/web-llm#209 — a Pixel 7 reports 128 MB against a
@@ -212,6 +268,7 @@ class LocalLlmCapability
             : "no probe";
 
         return `state=${stateName} · resolved=${resolvedModelKey} · onDisk=${persistedDescription}`
+            + ` · held=[${heldModelKeys.join(", ") || "none"}]`
             + ` · prefix=${LocalLlmCapability.#storagePrefixAtBoot || "unknown"}`
             + ` · deviceScoped=${bRecordIsDeviceScoped ? "yes" : "NO"}`
             + ` · gpu=${gpuDescription}`;
@@ -295,6 +352,90 @@ class LocalLlmCapability
         }));
     }
 
+    /**
+     * Removes one model's weights from this device, and moves the tier onto
+     * something that still works.
+     *
+     * THE SWITCH IS THE POINT, not a courtesy. Deleting the model in use would
+     * otherwise leave the Free tier selected and pointing at weights that are
+     * gone: the next question either fails or silently re-downloads a
+     * gigabyte, and neither is what "delete" meant. So the preference moves
+     * first — to another model this device already holds if there is one,
+     * because switching to something present is instant and switching to
+     * something absent is another download.
+     *
+     * The order is deliberate throughout: unload before delete (a loaded model
+     * holds its weights open, and on Windows an open mapping makes the file
+     * undeletable), delete before forgetting (a forgotten record with the
+     * bytes still on disk is space the learner cannot see or ever reclaim),
+     * and re-resolve last, once the facts it reads are settled.
+     */
+    static async deleteModel(modelKey)
+    {
+        const descriptor = LocalLlmManifestClient.getDescriptor(modelKey);
+        if (!descriptor)
+        {
+            throw new Error(`This device has no record of a model called "${modelKey}".`);
+        }
+
+        const driver = LocalLlmDriverFactory.resolveForDescriptor(descriptor);
+        if (driver === null)
+        {
+            throw new Error(`Nothing in this build can manage "${modelKey}" (${descriptor.executionBackend}).`);
+        }
+
+        if (LocalLlmSessionController.getActiveDescriptor()?.modelKey === modelKey)
+        {
+            LocalLlmSessionController.release();
+        }
+
+        await driver.deleteModel(descriptor);
+        await LocalLlmModelInventory.forget(modelKey);
+
+        await PreferredLocalLlmModel.hydrate();
+        if (PreferredLocalLlmModel.getModelKey() === modelKey)
+        {
+            const eligibleModels = await LocalLlmCapability.listEligibleModels();
+
+            await PreferredLocalLlmModel.setModelKey(LocalLlmCapability.chooseReplacementModelKey(
+                eligibleModels,
+                modelKey,
+                LocalLlmModelInventory.listDownloadedModelKeys()
+            ));
+        }
+
+        await LocalLlmCapability.reresolve();
+    }
+
+    /**
+     * What to select once `removedModelKey` is gone.
+     *
+     * Prefers a model already on the device, taking `eligibleModels` in the
+     * order the selector ranked them, so the tier keeps working immediately
+     * rather than after another download. Falls back to null — "automatic" —
+     * which is the right answer when nothing else is held: with no present
+     * model to prefer, naming a specific one would be a guess the learner
+     * never made, and it would silently commit them to fetching it.
+     *
+     * Pure, and public for that reason. It is the entire decision behind
+     * "deleting the model in use must leave the tier working", and proving it
+     * needs neither a device nor a gigabyte of weights.
+     */
+    static chooseReplacementModelKey(eligibleModels, removedModelKey, downloadedModelKeys)
+    {
+        const downloadedKeySet = new Set(Array.isArray(downloadedModelKeys) ? downloadedModelKeys : []);
+
+        for (const candidate of (Array.isArray(eligibleModels) ? eligibleModels : []))
+        {
+            if (candidate.modelKey !== removedModelKey && downloadedKeySet.has(candidate.modelKey))
+            {
+                return candidate.modelKey;
+            }
+        }
+
+        return null;
+    }
+
     static getState()
     {
         return LocalLlmCapability.#state;
@@ -370,11 +511,43 @@ class LocalLlmCapability
     }
 
     /**
-     * Update the cached state, persist it (best-effort), and broadcast a
-     * CAPABILITY_CHANGED event so the picker and activity surfaces re-render.
+     * Records a state transition for one model and broadcasts it.
+     *
+     * `extra.modelKey` names the model the transition is ABOUT, defaulting to
+     * the one currently selected. The download manager always passes it
+     * explicitly, and must: it captures the model at the moment the download
+     * starts, and the learner is free to select a different one while those
+     * bytes are still arriving. Without that, a switch mid-download would file
+     * the finished download's READY against whichever model happened to be
+     * selected when it landed — recording the wrong model as present and
+     * leaving the real one looking as though it had never been fetched.
+     *
+     * The tier-facing cached state is updated only when the transition
+     * concerns the SELECTED model, so a background download of something else
+     * cannot make the picker announce that the tier is busy.
      */
     static async setState(newState, extra = {})
     {
+        const selectedModelKey = LocalLlmCapability.getSelectedModelKey();
+        const affectedModelKey = typeof extra.modelKey === "string" && extra.modelKey.length > 0
+            ? extra.modelKey
+            : selectedModelKey;
+
+        if (affectedModelKey)
+        {
+            await LocalLlmModelInventory.setState(affectedModelKey, newState,
+            {
+                fraction: typeof extra.fraction === "number" ? extra.fraction : undefined,
+                totalBytes: typeof extra.totalBytes === "number" ? extra.totalBytes : undefined,
+                errorMessage: extra.error !== undefined ? (extra.error ? String(extra.error) : null) : undefined,
+            });
+        }
+
+        if (affectedModelKey !== selectedModelKey)
+        {
+            return;
+        }
+
         LocalLlmCapability.#state = newState;
 
         if (typeof extra.fraction === "number")
@@ -386,15 +559,6 @@ class LocalLlmCapability
             LocalLlmCapability.#lastError = extra.error;
         }
 
-        await LocalLlmCapability.#writePersistedState(
-        {
-            state: newState,
-            modelKey: LocalLlmCapability.getSelectedModelKey(),
-            fraction: LocalLlmCapability.#progressFraction,
-            errorMessage: LocalLlmCapability.#lastError ? String(LocalLlmCapability.#lastError) : null,
-            lastTransitionAt: Date.now(),
-        });
-
         window.dispatchEvent(new CustomEvent(LocalLlmDownloadEvents.CAPABILITY_CHANGED,
         {
             detail: { state: newState }
@@ -403,12 +567,46 @@ class LocalLlmCapability
 
     /**
      * Update progress without changing state. Cheaper than setState because
-     * we don't re-persist on every tick — the fraction is flushed on the next
+     * nothing is persisted on every tick — the fraction is flushed on the next
      * state change.
      */
-    static updateProgress(fraction)
+    static updateProgress(fraction, modelKey = null)
     {
-        LocalLlmCapability.#progressFraction = fraction;
+        const affectedModelKey = modelKey || LocalLlmCapability.getSelectedModelKey();
+
+        if (affectedModelKey)
+        {
+            LocalLlmModelInventory.updateProgress(affectedModelKey, fraction);
+        }
+
+        if (affectedModelKey === LocalLlmCapability.getSelectedModelKey())
+        {
+            LocalLlmCapability.#progressFraction = fraction;
+        }
+    }
+
+    /**
+     * What this device holds for one model, regardless of what is selected.
+     * The model table renders a row per catalogue entry from this.
+     */
+    static getModelState(modelKey)
+    {
+        return LocalLlmModelInventory.getState(modelKey);
+    }
+
+    static getModelProgressFraction(modelKey)
+    {
+        return LocalLlmModelInventory.getProgressFraction(modelKey);
+    }
+
+    static isModelDownloaded(modelKey)
+    {
+        return LocalLlmModelInventory.isDownloaded(modelKey);
+    }
+
+    static getDownloadingModelKey()
+    {
+        return LocalLlmModelInventory.getDownloadingModelKey();
     }
 
     static async setDeclined(bDeclined)
@@ -528,24 +726,6 @@ class LocalLlmCapability
             || LocalLlmCapability.#state === localLlmDownloadStates.FAILED;
     }
 
-    static async #readPersistedState()
-    {
-        try
-        {
-            const exists = await Persistence.exists(LocalLlmDownloadConstants.LOCAL_STATE_PERSISTENCE_KEY);
-            if (!exists)
-            {
-                return null;
-            }
-            return await Persistence.read(LocalLlmDownloadConstants.LOCAL_STATE_PERSISTENCE_KEY, dataFormats.JSON);
-        }
-        catch (readError)
-        {
-            console.warn(`[LocalLlmCapability] Could not read persisted state: ${readError?.message || readError}`);
-            return null;
-        }
-    }
-
     static async #readDeclinedFlag()
     {
         try
@@ -565,17 +745,6 @@ class LocalLlmCapability
         }
     }
 
-    static async #writePersistedState(record)
-    {
-        try
-        {
-            await Persistence.write(LocalLlmDownloadConstants.LOCAL_STATE_PERSISTENCE_KEY, record, dataFormats.JSON);
-        }
-        catch (writeError)
-        {
-            console.warn(`[LocalLlmCapability] Could not persist state: ${writeError?.message || writeError}`);
-        }
-    }
 }
 
 export default LocalLlmCapability;
